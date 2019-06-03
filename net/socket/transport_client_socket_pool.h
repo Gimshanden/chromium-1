@@ -20,6 +20,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/address_list.h"
@@ -52,6 +53,8 @@ namespace net {
 
 struct CommonConnectJobParams;
 struct NetLogSource;
+class ProxyServer;
+struct NetworkTrafficAnnotationTag;
 
 // TransportClientSocketPool establishes network connections through using
 // ConnectJobs, and maintains a list of idle persistent sockets available for
@@ -83,17 +86,19 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
    public:
     // If |proxy_auth_callback| is null, proxy auth challenges will
     // result in an error.
-    Request(ClientSocketHandle* handle,
-            CompletionOnceCallback callback,
-            const ProxyAuthCallback& proxy_auth_callback,
-            RequestPriority priority,
-            const SocketTag& socket_tag,
-            RespectLimits respect_limits,
-            Flags flags,
-            scoped_refptr<SocketParams> socket_params,
-            const NetLogWithSource& net_log);
+    Request(
+        ClientSocketHandle* handle,
+        CompletionOnceCallback callback,
+        const ProxyAuthCallback& proxy_auth_callback,
+        RequestPriority priority,
+        const SocketTag& socket_tag,
+        RespectLimits respect_limits,
+        Flags flags,
+        scoped_refptr<SocketParams> socket_params,
+        const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+        const NetLogWithSource& net_log);
 
-    virtual ~Request();
+    ~Request();
 
     ClientSocketHandle* handle() const { return handle_; }
     CompletionOnceCallback release_callback() { return std::move(callback_); }
@@ -105,6 +110,10 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     RespectLimits respect_limits() const { return respect_limits_; }
     Flags flags() const { return flags_; }
     SocketParams* socket_params() const { return socket_params_.get(); }
+    const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag()
+        const {
+      return proxy_annotation_tag_;
+    }
     const NetLogWithSource& net_log() const { return net_log_; }
     const SocketTag& socket_tag() const { return socket_tag_; }
     ConnectJob* job() const { return job_; }
@@ -117,16 +126,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     // request with a job.
     ConnectJob* ReleaseJob();
 
-    // TODO(eroman): Temporary until crbug.com/467797 is solved.
-    void CrashIfInvalid() const;
-
    private:
-    // TODO(eroman): Temporary until crbug.com/467797 is solved.
-    enum Liveness {
-      ALIVE = 0xCA11AB13,
-      DEAD = 0xDEADBEEF,
-    };
-
     ClientSocketHandle* const handle_;
     CompletionOnceCallback callback_;
     const ProxyAuthCallback proxy_auth_callback_;
@@ -134,12 +134,10 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     const RespectLimits respect_limits_;
     const Flags flags_;
     const scoped_refptr<SocketParams> socket_params_;
+    const base::Optional<NetworkTrafficAnnotationTag> proxy_annotation_tag_;
     const NetLogWithSource net_log_;
     const SocketTag socket_tag_;
     ConnectJob* job_;
-
-    // TODO(eroman): Temporary until crbug.com/467797 is solved.
-    Liveness liveness_ = ALIVE;
 
     DISALLOW_COPY_AND_ASSIGN(Request);
   };
@@ -150,9 +148,11 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     virtual ~ConnectJobFactory() {}
 
     virtual std::unique_ptr<ConnectJob> NewConnectJob(
+        ClientSocketPool::GroupId group_id,
+        scoped_refptr<ClientSocketPool::SocketParams> socket_params,
+        const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
         RequestPriority request_priority,
         SocketTag socket_tag,
-        scoped_refptr<SocketParams> socket_params,
         ConnectJob::Delegate* delegate) const = 0;
 
    private:
@@ -163,6 +163,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
       int max_sockets,
       int max_sockets_per_group,
       base::TimeDelta unused_idle_socket_timeout,
+      const ProxyServer& proxy_server,
+      bool is_for_websockets,
       const CommonConnectJobParams* common_connect_job_params,
       SSLConfigService* ssl_config_service);
 
@@ -191,27 +193,32 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
   void RemoveHigherLayeredPool(HigherLayeredPool* higher_pool) override;
 
   // ClientSocketPool implementation:
-  int RequestSocket(const GroupId& group_id,
-                    scoped_refptr<SocketParams> params,
-                    RequestPriority priority,
-                    const SocketTag& socket_tag,
-                    RespectLimits respect_limits,
-                    ClientSocketHandle* handle,
-                    CompletionOnceCallback callback,
-                    const ProxyAuthCallback& proxy_auth_callback,
-                    const NetLogWithSource& net_log) override;
-  void RequestSockets(const GroupId& group_id,
-                      scoped_refptr<SocketParams> params,
-                      int num_sockets,
-                      const NetLogWithSource& net_log) override;
+  int RequestSocket(
+      const GroupId& group_id,
+      scoped_refptr<SocketParams> params,
+      const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+      RequestPriority priority,
+      const SocketTag& socket_tag,
+      RespectLimits respect_limits,
+      ClientSocketHandle* handle,
+      CompletionOnceCallback callback,
+      const ProxyAuthCallback& proxy_auth_callback,
+      const NetLogWithSource& net_log) override;
+  void RequestSockets(
+      const GroupId& group_id,
+      scoped_refptr<SocketParams> params,
+      const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+      int num_sockets,
+      const NetLogWithSource& net_log) override;
   void SetPriority(const GroupId& group_id,
                    ClientSocketHandle* handle,
                    RequestPriority priority) override;
   void CancelRequest(const GroupId& group_id,
-                     ClientSocketHandle* handle) override;
+                     ClientSocketHandle* handle,
+                     bool cancel_connect_job) override;
   void ReleaseSocket(const GroupId& group_id,
                      std::unique_ptr<StreamSocket> socket,
-                     int id) override;
+                     int64_t group_generation) override;
   void FlushWithError(int error) override;
   void CloseIdleSockets() override;
   void CloseIdleSocketsInGroup(const GroupId& group_id) override;
@@ -255,6 +262,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     return HasGroup(group_id);
   }
 
+  void RefreshGroupForTesting(const GroupId& group_id);
+
   static bool connect_backup_jobs_enabled();
   static bool set_connect_backup_jobs_enabled(bool enabled);
 
@@ -262,6 +271,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
   void OnIPAddressChanged() override;
 
  private:
+  class ConnectJobFactoryImpl;
+
   // Entry for a persistent socket which became idle at time |start_time|.
   struct IdleSocket {
     IdleSocket() : socket(nullptr) {}
@@ -310,8 +321,33 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
    public:
     using JobList = std::list<std::unique_ptr<ConnectJob>>;
 
+    struct BoundRequest {
+      BoundRequest();
+      BoundRequest(std::unique_ptr<ConnectJob> connect_job,
+                   std::unique_ptr<Request> request,
+                   int64_t generation);
+      BoundRequest(BoundRequest&& other);
+      BoundRequest& operator=(BoundRequest&& other);
+      ~BoundRequest();
+
+      std::unique_ptr<ConnectJob> connect_job;
+      std::unique_ptr<Request> request;
+
+      // Generation of |connect_job|. If it doesn't match the current
+      // generation, ConnectJob will be destroyed, and a new one created on
+      // completion.
+      int64_t generation;
+
+      // It's not safe to fail a request in a |CancelAllRequestsWithError| call
+      // while it's waiting on user input, as the request may have raw pointers
+      // to objects owned by |connect_job| that it could racily write to after
+      // |connect_job| is destroyed. Instead, just track an error in that case,
+      // and fail the request once the ConnectJob completes.
+      int pending_error;
+    };
+
     Group(const GroupId& group_id,
-          TransportClientSocketPool* client_socket_pool_base_helper);
+          TransportClientSocketPool* client_socket_pool);
     ~Group() override;
 
     // ConnectJob::Delegate methods:
@@ -411,13 +447,10 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     // callback, returns nullptr.
     const Request* BindRequestToConnectJob(ConnectJob* connect_job);
 
-    // Finds the request, if any, bound to |connect_job|, and returns it.
-    // Destroys the ConnectJob bound to the request, if there was one. The
-    // pending error if written to |pending_error|. If there is no pending
-    // error, |pending_error| is set to OK.
-    std::unique_ptr<Request> FindAndRemoveBoundRequestForConnectJob(
-        ConnectJob* connect_job,
-        int* pending_error);
+    // Finds the request, if any, bound to |connect_job|, and returns the
+    // BoundRequest or base::nullopt if there was none.
+    base::Optional<BoundRequest> FindAndRemoveBoundRequestForConnectJob(
+        ConnectJob* connect_job);
 
     // Finds the bound request, if any, corresponding to |client_socket_handle|
     // and returns it. Destroys the ConnectJob bound to the request, if there
@@ -433,6 +466,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     void IncrementActiveSocketCount() { active_socket_count_++; }
     void DecrementActiveSocketCount() { active_socket_count_--; }
 
+    void IncrementGeneration() { generation_++; }
+
     // Whether the request in |unbound_requests_| with a given handle has a job.
     bool RequestWithHandleHasJobForTesting(
         const ClientSocketHandle* handle) const;
@@ -446,27 +481,9 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     size_t never_assigned_job_count() const {
       return never_assigned_job_count_;
     }
+    int64_t generation() const { return generation_; }
 
    private:
-    struct BoundRequest {
-      BoundRequest();
-      BoundRequest(std::unique_ptr<ConnectJob> connect_job,
-                   std::unique_ptr<Request> request);
-      BoundRequest(BoundRequest&& other);
-      BoundRequest& operator=(BoundRequest&& other);
-      ~BoundRequest();
-
-      std::unique_ptr<ConnectJob> connect_job;
-      std::unique_ptr<Request> request;
-
-      // It's not safe to fail a request in a |CancelAllRequestsWithError| call
-      // while it's waiting on user input, as the request may have raw pointers
-      // to objects owned by |connect_job| that it could racily write to after
-      // |connect_job| is destroyed. Instead, just track an error in that case,
-      // and fail the request once the ConnectJob completes.
-      int pending_error;
-    };
-
     // Returns the iterator's unbound request after removing it from
     // the queue. Expects the Group to pass SanityCheck() when called.
     std::unique_ptr<Request> RemoveUnboundRequest(
@@ -527,7 +544,7 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     void SanityCheck() const;
 
     const GroupId group_id_;
-    TransportClientSocketPool* const client_socket_pool_base_helper_;
+    TransportClientSocketPool* const client_socket_pool_;
 
     // Total number of ConnectJobs that have never been assigned to a Request.
     // Since jobs use late binding to requests, which ConnectJobs have or have
@@ -552,6 +569,14 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
     // The Requests and ConnectJobs in this list do not appear in
     // |unbound_requests_| or |jobs_|.
     std::vector<BoundRequest> bound_requests_;
+
+    // An id for the group.  It gets incremented every time we FlushWithError()
+    // the socket pool, or refresh the group.  This is so that when sockets get
+    // released back to the group, we can make sure that they are discarded
+    // rather than reused. Destroying a group will reset the generation number,
+    // but as that only happens once there are no outstanding sockets or
+    // requests associated with the group, that's harmless.
+    int64_t generation_;
   };
 
   using GroupMap = std::map<GroupId, Group*>;
@@ -724,6 +749,15 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
   // this pool is stalled.
   void TryToCloseSocketsInLayeredPools();
 
+  // If the specified group exists, closes all idle sockets and cancels all
+  // unbound ConnectJobs associated with the group. Also increments the group's
+  // generation number, ensuring any currently existing handed out socket will
+  // be siletly closed when its returned to the socket pool. Bound ConnectJobs
+  // will only be destroyed on once they compelete, as they may be waiting on
+  // user input. No request (including bound ones) will be failed as a result of
+  // this call - instead, new ConnectJobs will be created.
+  void RefreshGroup(const GroupId& group_id);
+
   GroupMap group_map_;
 
   // Map of the ClientSocketHandles for which we have a pending Task to invoke a
@@ -754,11 +788,6 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
 
   // TODO(vandebo) Remove when backup jobs move to TransportClientSocketPool
   bool connect_backup_jobs_enabled_;
-
-  // A unique id for the pool.  It gets incremented every time we
-  // FlushWithError() the pool.  This is so that when sockets get released back
-  // to the pool, we can make sure that they are discarded rather than reused.
-  int pool_generation_number_;
 
   // Pools that create connections through |this|.  |this| will try to close
   // their idle sockets when it stalls.  Must be empty on destruction.

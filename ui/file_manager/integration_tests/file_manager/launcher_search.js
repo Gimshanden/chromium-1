@@ -14,6 +14,12 @@
   testcase.launcherOpenSearchResult = async () => {
     const imageName = ENTRIES.desktop.nameText;
 
+    await sendTestMessage({
+      name: 'expectFileTask',
+      fileNames: [ENTRIES.desktop.targetPath],
+      openType: 'launch'
+    });
+
     // Create an image file in Drive.
     await addEntries(['drive'], [ENTRIES.desktop]);
 
@@ -44,6 +50,8 @@
   const hostedDocument = Object.assign(
       {}, ENTRIES.testDocument,
       {nameText: 'testDocument.txt.gdoc', targetPath: 'testDocument.txt'});
+  const photos = Object.assign(
+      {}, ENTRIES.photos, {nameText: 'photos.txt', targetPath: 'photos.txt'});
 
   /**
    * Tests Local and Drive files show up in search results.
@@ -51,16 +59,18 @@
   testcase.launcherSearch = async () => {
     // Create a file in Downloads, and a pinned and unpinned file in Drive.
     await setupAndWaitUntilReady(
-        'downloads', [ENTRIES.tallText],
-        [ENTRIES.hello, ENTRIES.pinned, hostedDocument]);
+        'downloads', [ENTRIES.tallText, photos],
+        [ENTRIES.hello, ENTRIES.pinned, hostedDocument, photos]);
 
     const result = JSON.parse(await sendTestMessage({
       name: 'runLauncherSearch',
-      query: '.txt',
+      query: '.Txt',
     }));
     chrome.test.assertEq(
         [
           ENTRIES.hello.targetPath,
+          photos.targetPath,
+          photos.targetPath,
           ENTRIES.pinned.targetPath,
           ENTRIES.tallText.targetPath,
           hostedDocument.targetPath,
@@ -74,8 +84,8 @@
   testcase.launcherSearchOffline = async () => {
     // Create a file in Downloads, and a pinned and unpinned file in Drive.
     await setupAndWaitUntilReady(
-        'downloads', [ENTRIES.tallText],
-        [ENTRIES.hello, ENTRIES.pinned, hostedDocument]);
+        'downloads', [ENTRIES.tallText, photos],
+        [ENTRIES.hello, ENTRIES.pinned, hostedDocument, photos]);
 
     const result = JSON.parse(await sendTestMessage({
       name: 'runLauncherSearch',
@@ -83,6 +93,8 @@
     }));
     chrome.test.assertEq(
         [
+          photos.targetPath,
+          photos.targetPath,
           ENTRIES.pinned.targetPath,
           ENTRIES.tallText.targetPath,
         ],

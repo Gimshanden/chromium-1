@@ -41,7 +41,6 @@
 #include "third_party/blink/renderer/core/layout/intrinsic_sizing_info.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/paint/image_element_timing.h"
 #include "third_party/blink/renderer/core/paint/image_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
@@ -69,7 +68,7 @@ LayoutImage::~LayoutImage() = default;
 void LayoutImage::WillBeDestroyed() {
   DCHECK(image_resource_);
   image_resource_->Shutdown();
-  if (origin_trials::ElementTimingEnabled(&GetDocument())) {
+  if (RuntimeEnabledFeatures::ElementTimingEnabled(&GetDocument())) {
     if (LocalDOMWindow* window = GetDocument().domWindow())
       ImageElementTiming::From(*window).NotifyWillBeDestroyed(this);
   }
@@ -220,7 +219,7 @@ void LayoutImage::ImageNotifyFinished(ImageResourceContent* new_image) {
 }
 
 void LayoutImage::PaintReplaced(const PaintInfo& paint_info,
-                                const LayoutPoint& paint_offset) const {
+                                const PhysicalOffset& paint_offset) const {
   ImagePainter(*this).PaintReplaced(paint_info, paint_offset);
 }
 
@@ -238,7 +237,7 @@ void LayoutImage::AreaElementFocusChanged(HTMLAreaElement* area_element) {
 }
 
 bool LayoutImage::ForegroundIsKnownToBeOpaqueInRect(
-    const LayoutRect& local_rect,
+    const PhysicalRect& local_rect,
     unsigned) const {
   if (!image_resource_->HasImage() || image_resource_->ErrorOccurred())
     return false;
@@ -276,7 +275,7 @@ bool LayoutImage::ComputeBackgroundIsKnownToBeObscured() const {
   if (!StyleRef().HasBackground())
     return false;
 
-  LayoutRect painted_extent;
+  PhysicalRect painted_extent;
   if (!GetBackgroundPaintedExtent(painted_extent))
     return false;
   return ForegroundIsKnownToBeOpaqueInRect(painted_extent, 0);
@@ -349,7 +348,7 @@ bool LayoutImage::OverrideIntrinsicSizingInfo(
 
 void LayoutImage::ComputeIntrinsicSizingInfo(
     IntrinsicSizingInfo& intrinsic_sizing_info) const {
-  DCHECK(!ShouldApplySizeContainment());
+  DCHECK(!ShouldApplySizeContainment() && !DisplayLockInducesSizeContainment());
   if (!OverrideIntrinsicSizingInfo(intrinsic_sizing_info)) {
     if (SVGImage* svg_image = EmbeddedSVGImage()) {
       svg_image->GetIntrinsicSizingInfo(intrinsic_sizing_info);

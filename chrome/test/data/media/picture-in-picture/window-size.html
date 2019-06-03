@@ -46,7 +46,7 @@
       }, { once: true });
 
       video.addEventListener('leavepictureinpicture', () => {
-        document.title = 'left';
+        document.title = 'leavepictureinpicture';
       }, { once: true });
 
       window.domAutomationController.send(true);
@@ -136,6 +136,21 @@
     video.addEventListener('leavepictureinpicture', () => {
       document.title = 'leavepictureinpicture';
     });
+  }
+
+  function tryToEnterPictureInPictureAfterLeaving() {
+    video.addEventListener('leavepictureinpicture', () => {
+      video.requestPictureInPicture()
+      .then(_ => { document.title = 'entered Picture-in-Picture after leaving'; })
+      .catch(e => { document.title = 'failed to enter Picture-in-Picture after leaving'; });
+    });
+  }
+
+  function resetVideo() {
+    video.addEventListener('emptied', () => {
+      document.title = 'emptied';
+    }, { once: true });
+    video.src = '';
   }
 </script>
 </html>

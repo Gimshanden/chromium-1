@@ -40,12 +40,12 @@ namespace blink {
 
 class ImageInputType final : public BaseButtonInputType {
  public:
-  static InputType* Create(HTMLInputElement&);
-  ImageInputType(HTMLInputElement&);
+  explicit ImageInputType(HTMLInputElement&);
   scoped_refptr<ComputedStyle> CustomStyleForLayoutObject(
       scoped_refptr<ComputedStyle>) override;
 
  private:
+  void CountUsage() override;
   const AtomicString& FormControlType() const override;
   bool IsFormDataAppendable() const override;
   void AppendToFormData(FormData&) const override;

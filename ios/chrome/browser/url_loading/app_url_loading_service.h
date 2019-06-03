@@ -12,7 +12,6 @@
 #include "ios/chrome/app/application_mode.h"
 #include "ui/base/page_transition_types.h"
 
-class GURL;
 struct UrlLoadParams;
 
 @class Tab;
@@ -40,9 +39,7 @@ class ChromeBrowserState;
 // |completion| is executed after the tab is opened. After Tab is open the
 // virtual URL is set to the pending navigation item.
 - (Tab*)openSelectedTabInMode:(ApplicationMode)targetMode
-                      withURL:(const GURL&)url
-                   virtualURL:(const GURL&)virtualURL
-                   transition:(ui::PageTransition)transition
+            withUrlLoadParams:(const UrlLoadParams&)urlLoadParams
                    completion:(ProceduralBlock)completion;
 
 // Opens a new tab as if originating from |originPoint| and |focusOmnibox|.
@@ -69,7 +66,10 @@ class AppUrlLoadingService {
   void SetDelegate(id<AppURLLoadingServiceDelegate> delegate);
 
   // Opens a url based on |params| in a new tab.
-  virtual void LoadUrlInNewTab(UrlLoadParams* params);
+  virtual void LoadUrlInNewTab(const UrlLoadParams& params);
+
+  // Returns the current browser state.
+  virtual ios::ChromeBrowserState* GetCurrentBrowserState();
 
  private:
   __weak id<AppURLLoadingServiceDelegate> delegate_;

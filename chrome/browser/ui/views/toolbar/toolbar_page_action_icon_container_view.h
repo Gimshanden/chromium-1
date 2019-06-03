@@ -10,8 +10,9 @@
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_icon_container_view.h"
 
+class AvatarToolbarButton;
 class Browser;
-class CommandUpdater;
+class ManagePasswordsIconViews;
 
 namespace autofill {
 class LocalCardMigrationIconView;
@@ -19,15 +20,12 @@ class SaveCardIconView;
 }  // namespace autofill
 
 // A container view for user-account-related PageActionIconViews and the profile
-// avatar icon. This container view is in the toolbar while the other
-// PageActionIconContainerView is in the omnibox and it is used to handle other
-// non user-account-related page action icons.
+// avatar icon.
 class ToolbarPageActionIconContainerView : public ToolbarIconContainerView,
                                            public PageActionIconContainer,
                                            public PageActionIconView::Delegate {
  public:
-  ToolbarPageActionIconContainerView(CommandUpdater* command_updater,
-                                     Browser* browser);
+  explicit ToolbarPageActionIconContainerView(Browser* browser);
   ~ToolbarPageActionIconContainerView() override;
 
   PageActionIconView* GetIconView(PageActionIconType icon_type);
@@ -46,6 +44,9 @@ class ToolbarPageActionIconContainerView : public ToolbarIconContainerView,
   SkColor GetPageActionInkDropColor() const override;
   content::WebContents* GetWebContentsForPageActionIconView() override;
 
+  // views::View:
+  void OnThemeChanged() override;
+
   autofill::LocalCardMigrationIconView* local_card_migration_icon_view() const {
     return local_card_migration_icon_view_;
   }
@@ -54,12 +55,20 @@ class ToolbarPageActionIconContainerView : public ToolbarIconContainerView,
     return save_card_icon_view_;
   }
 
+  ManagePasswordsIconViews* manage_passwords_icon_views() const {
+    return manage_passwords_icon_views_;
+  }
+
+  AvatarToolbarButton* avatar_button() { return avatar_; }
+
  private:
   bool FocusInactiveBubbleForIcon(PageActionIconView* icon_view);
 
   autofill::LocalCardMigrationIconView* local_card_migration_icon_view_ =
       nullptr;
   autofill::SaveCardIconView* save_card_icon_view_ = nullptr;
+  ManagePasswordsIconViews* manage_passwords_icon_views_ = nullptr;
+  AvatarToolbarButton* avatar_ = nullptr;
 
   std::vector<PageActionIconView*> page_action_icons_;
 

@@ -7,10 +7,8 @@
 #include <iterator>
 #include <utility>
 
-#include "ash/new_window_controller.h"
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/public/interfaces/wallpaper.mojom.h"
-#include "ash/shell.h"
+#include "ash/public/cpp/new_window_delegate.h"
+#include "ash/public/cpp/wallpaper_controller.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
@@ -102,6 +100,24 @@ class ArcIntentHelperBridgeFactory
 // Base URL for the Chrome settings pages.
 constexpr char kSettingsPageBaseUrl[] = "chrome://settings";
 
+// Keep in sync with ArcIntentHelperOpenType enum in
+// //tools/metrics/histograms/enums.xml.
+enum class ArcIntentHelperOpenType {
+  DOWNLOADS = 0,
+  URL = 1,
+  CUSTOM_TAB = 2,
+  WALLPAPER_PICKER = 3,
+  VOLUME_CONTROL = 4,
+  CHROME_PAGE = 5,
+  WEB_APP = 6,
+  kMaxValue = WEB_APP,
+};
+
+// Records Arc.IntentHelper.OpenType UMA histogram.
+void RecordOpenType(ArcIntentHelperOpenType type) {
+  UMA_HISTOGRAM_ENUMERATION("Arc.IntentHelper.OpenType", type);
+}
+
 }  // namespace
 
 // static
@@ -151,17 +167,18 @@ void ArcIntentHelperBridge::OnIconInvalidated(const std::string& package_name) {
 
 void ArcIntentHelperBridge::OnOpenDownloads() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::DOWNLOADS);
   // TODO(607411): If the FileManager is not yet open this will open to
   // downloads by default, which is what we want.  However if it is open it will
   // simply be brought to the forgeground without forcibly being navigated to
   // downloads, which is probably not ideal.
   // TODO(mash): Support this functionality without ash::Shell access in Chrome.
-  if (ash::Shell::HasInstance())
-    ash::Shell::Get()->new_window_controller()->OpenFileManager();
+  ash::NewWindowDelegate::GetInstance()->OpenFileManager();
 }
 
 void ArcIntentHelperBridge::OnOpenUrl(const std::string& url) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::URL);
   // Converts |url| to a fixed-up one and checks validity.
   const GURL gurl(url_formatter::FixupURL(url, /*desired_tld=*/std::string()));
   if (!gurl.is_valid())
@@ -177,6 +194,7 @@ void ArcIntentHelperBridge::OnOpenCustomTab(const std::string& url,
                                             int32_t top_margin,
                                             OnOpenCustomTabCallback callback) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::CUSTOM_TAB);
   // Converts |url| to a fixed-up one and checks validity.
   const GURL gurl(url_formatter::FixupURL(url, /*desired_tld=*/std::string()));
   if (!gurl.is_valid() ||
@@ -190,6 +208,7 @@ void ArcIntentHelperBridge::OnOpenCustomTab(const std::string& url,
 
 void ArcIntentHelperBridge::OnOpenChromePage(mojom::ChromePage page) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::CHROME_PAGE);
   auto it = allowed_chrome_pages_map_.find(page);
   if (it == allowed_chrome_pages_map_.end()) {
     LOG(WARNING) << "The requested ChromePage is invalid: "
@@ -208,11 +227,8 @@ void ArcIntentHelperBridge::OnOpenChromePage(mojom::ChromePage page) {
 
 void ArcIntentHelperBridge::OpenWallpaperPicker() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  ash::mojom::WallpaperControllerPtr wallpaper_controller_ptr;
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(ash::mojom::kServiceName, &wallpaper_controller_ptr);
-  wallpaper_controller_ptr->OpenWallpaperPickerIfAllowed();
+  RecordOpenType(ArcIntentHelperOpenType::WALLPAPER_PICKER);
+  ash::WallpaperController::Get()->OpenWallpaperPickerIfAllowed();
 }
 
 void ArcIntentHelperBridge::SetWallpaperDeprecated(
@@ -222,6 +238,8 @@ void ArcIntentHelperBridge::SetWallpaperDeprecated(
 }
 
 void ArcIntentHelperBridge::OpenVolumeControl() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::VOLUME_CONTROL);
   auto* audio = ArcAudioBridge::GetForBrowserContext(context_);
   DCHECK(audio);
   audio->ShowVolumeControls();
@@ -229,6 +247,7 @@ void ArcIntentHelperBridge::OpenVolumeControl() {
 
 void ArcIntentHelperBridge::OnOpenWebApp(const std::string& url) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  RecordOpenType(ArcIntentHelperOpenType::WEB_APP);
   // Converts |url| to a fixed-up one and checks validity.
   const GURL gurl(url_formatter::FixupURL(url, /*desired_tld=*/std::string()));
   if (!gurl.is_valid())

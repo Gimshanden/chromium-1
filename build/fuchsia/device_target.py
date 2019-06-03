@@ -4,6 +4,8 @@
 
 """Implements commands for running and interacting with Fuchsia on devices."""
 
+from __future__ import print_function
+
 import boot_data
 import filecmp
 import logging
@@ -165,12 +167,12 @@ class DeviceTarget(target.Target):
 
       # Handle the output of "dev_finder list".
       if len(name_host_pairs) > 1:
-        print 'More than one device was discovered on the network.'
-        print 'Use --node-name <name> to specify the device to use.'
-        print '\nList of devices:'
+        print('More than one device was discovered on the network.')
+        print('Use --node-name <name> to specify the device to use.')
+        print('\nList of devices:')
         for pair in name_host_pairs:
-          print '  ' + pair[1]
-        print
+          print('  ' + pair[1])
+        print()
         raise Exception('Ambiguous target device specification.')
 
       assert len(name_host_pairs) == 1
@@ -226,12 +228,6 @@ class DeviceTarget(target.Target):
                                                  'fvm.sparse.blk')),
         EnsurePathExists(boot_data.GetBootImage(self._output_dir,
                                                 self._GetTargetSdkArch()))]
-
-    if self._GetTargetSdkArch() == 'x64':
-      bootserver_command += [
-          '--efi',
-          EnsurePathExists(boot_data.GetTargetFile(self._GetTargetSdkArch(),
-                                                   'local.esp.blk'))]
 
     if self._node_name:
       bootserver_command += ['-n', self._node_name]

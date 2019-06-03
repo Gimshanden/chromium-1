@@ -57,6 +57,7 @@
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_factory_impl.h"
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_transaction_impl.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -79,10 +80,10 @@ class WebIDBGetDBNamesCallbacksImpl : public WebIDBCallbacks {
     if (promise_resolver_) {
       probe::AsyncTaskCanceled(
           ExecutionContext::From(promise_resolver_->GetScriptState()), this);
-      promise_resolver_->Reject(
-          DOMException::Create(DOMExceptionCode::kUnknownError,
-                               "An unexpected shutdown occured before the "
-                               "databases() promise could be resolved"));
+      promise_resolver_->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kUnknownError,
+          "An unexpected shutdown occured before the "
+          "databases() promise could be resolved"));
     }
   }
 
@@ -96,9 +97,9 @@ class WebIDBGetDBNamesCallbacksImpl : public WebIDBCallbacks {
     probe::AsyncTask async_task(
         ExecutionContext::From(promise_resolver_->GetScriptState()), this,
         "error");
-    promise_resolver_->Reject(
-        DOMException::Create(DOMExceptionCode::kUnknownError,
-                             "The databases() promise was rejected."));
+    promise_resolver_->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kUnknownError,
+        "The databases() promise was rejected."));
     promise_resolver_.Clear();
   }
 
@@ -268,7 +269,7 @@ IDBRequest* IDBFactory::GetDatabaseNames(ScriptState* script_state,
 
   if (!IndexedDBClient::From(ExecutionContext::From(script_state))
            ->AllowIndexedDB(ExecutionContext::From(script_state))) {
-    request->HandleResponse(DOMException::Create(
+    request->HandleResponse(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError, kPermissionDeniedErrorMessage));
     return request;
   }
@@ -316,7 +317,7 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(ScriptState* script_state,
                       WebFeature::kFileAccessedDatabase);
   }
 
-  IDBDatabaseCallbacks* database_callbacks = IDBDatabaseCallbacks::Create();
+  auto* database_callbacks = MakeGarbageCollected<IDBDatabaseCallbacks>();
   int64_t transaction_id = IDBDatabase::NextTransactionId();
 
   auto transaction_backend = std::make_unique<WebIDBTransactionImpl>(
@@ -325,13 +326,13 @@ IDBOpenDBRequest* IDBFactory::OpenInternal(ScriptState* script_state,
       transaction_id);
   mojom::blink::IDBTransactionAssociatedRequest transaction_request =
       transaction_backend->CreateRequest();
-  IDBOpenDBRequest* request = IDBOpenDBRequest::Create(
+  auto* request = MakeGarbageCollected<IDBOpenDBRequest>(
       script_state, database_callbacks, std::move(transaction_backend),
       transaction_id, version, std::move(metrics));
 
   if (!IndexedDBClient::From(ExecutionContext::From(script_state))
            ->AllowIndexedDB(ExecutionContext::From(script_state))) {
-    request->HandleResponse(DOMException::Create(
+    request->HandleResponse(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError, kPermissionDeniedErrorMessage));
     return request;
   }
@@ -393,13 +394,13 @@ IDBOpenDBRequest* IDBFactory::DeleteDatabaseInternal(
                       WebFeature::kFileAccessedDatabase);
   }
 
-  IDBOpenDBRequest* request = IDBOpenDBRequest::Create(
+  auto* request = MakeGarbageCollected<IDBOpenDBRequest>(
       script_state, nullptr, /*IDBTransactionAssociatedPtr=*/nullptr, 0,
       IDBDatabaseMetadata::kDefaultVersion, std::move(metrics));
 
   if (!IndexedDBClient::From(ExecutionContext::From(script_state))
            ->AllowIndexedDB(ExecutionContext::From(script_state))) {
-    request->HandleResponse(DOMException::Create(
+    request->HandleResponse(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError, kPermissionDeniedErrorMessage));
     return request;
   }

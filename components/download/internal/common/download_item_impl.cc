@@ -46,6 +46,7 @@
 #include "components/download/internal/common/download_job_impl.h"
 #include "components/download/internal/common/parallel_download_utils.h"
 #include "components/download/public/common/download_danger_type.h"
+#include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_file.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item_impl_delegate.h"
@@ -225,6 +226,7 @@ DownloadItemImpl::RequestInfo::RequestInfo(
     const GURL& site_url,
     const GURL& tab_url,
     const GURL& tab_referrer_url,
+    const base::Optional<url::Origin>& request_initiator,
     const std::string& suggested_filename,
     const base::FilePath& forced_file_path,
     ui::PageTransition transition_type,
@@ -236,6 +238,7 @@ DownloadItemImpl::RequestInfo::RequestInfo(
       site_url(site_url),
       tab_url(tab_url),
       tab_referrer_url(tab_referrer_url),
+      request_initiator(request_initiator),
       suggested_filename(suggested_filename),
       forced_file_path(forced_file_path),
       transition_type(transition_type),
@@ -290,6 +293,7 @@ DownloadItemImpl::DownloadItemImpl(
     const GURL& site_url,
     const GURL& tab_url,
     const GURL& tab_refererr_url,
+    const base::Optional<url::Origin>& request_initiator,
     const std::string& mime_type,
     const std::string& original_mime_type,
     base::Time start_time,
@@ -314,6 +318,7 @@ DownloadItemImpl::DownloadItemImpl(
                     site_url,
                     tab_url,
                     tab_refererr_url,
+                    request_initiator,
                     std::string(),
                     base::FilePath(),
                     ui::PAGE_TRANSITION_LINK,
@@ -363,6 +368,7 @@ DownloadItemImpl::DownloadItemImpl(DownloadItemImplDelegate* delegate,
                     info.site_url,
                     info.tab_url,
                     info.tab_referrer_url,
+                    info.request_initiator,
                     base::UTF16ToUTF8(info.save_info->suggested_name),
                     info.save_info->file_path,
                     info.transition_type ? info.transition_type.value()
@@ -421,7 +427,7 @@ DownloadItemImpl::DownloadItemImpl(
       weak_ptr_factory_(this) {
   job_ = DownloadJobFactory::CreateJob(this, std::move(request_handle),
                                        DownloadCreateInfo(), true, nullptr,
-                                       nullptr);
+                                       nullptr, nullptr);
   delegate_->Attach();
   Init(true /* actively downloading */, TYPE_SAVE_PAGE_AS);
 }
@@ -796,6 +802,11 @@ const GURL& DownloadItemImpl::GetTabReferrerUrl() const {
   return request_info_.tab_referrer_url;
 }
 
+const base::Optional<url::Origin>& DownloadItemImpl::GetRequestInitiator()
+    const {
+  return request_info_.request_initiator;
+}
+
 std::string DownloadItemImpl::GetSuggestedFilename() const {
   return request_info_.suggested_filename;
 }
@@ -1133,8 +1144,10 @@ ResumeMode DownloadItemImpl::GetResumeMode() const {
   // We also can't continue if we don't have some verifier to make sure
   // we're getting the same file.
   bool restart_required =
-      (GetFullPath().empty() || (etag_.empty() && last_modified_time_.empty()));
-
+      (GetFullPath().empty() ||
+       (etag_.empty() && last_modified_time_.empty() &&
+        !base::FeatureList::IsEnabled(
+            features::kAllowDownloadResumptionWithoutStrongValidators)));
   // We won't auto-restart if we've used up our attempts or the
   // download has been paused by user action.
   bool user_action_required =
@@ -1167,8 +1180,17 @@ void DownloadItemImpl::UpdateValidatorsOnResumption(
   // a full request rather than a partial. Full restarts clobber validators.
   if (etag_ != new_create_info.etag ||
       last_modified_time_ != new_create_info.last_modified) {
+    if (destination_info_.received_bytes > 0) {
+      RecordResumptionRestartCount(
+          ResumptionRestartCountTypes::kStrongValidatorChangesCount);
+    }
     received_slices_.clear();
     destination_info_.received_bytes = 0;
+  }
+
+  if (destination_info_.received_bytes > 0 && new_create_info.offset == 0) {
+    RecordResumptionRestartCount(
+        ResumptionRestartCountTypes::kRequestedByServerCount);
   }
 
   request_info_.url_chain.insert(request_info_.url_chain.end(), chain_iter,
@@ -1325,6 +1347,10 @@ void DownloadItemImpl::SetDownloadId(uint32_t download_id) {
   download_id_ = download_id;
 }
 
+void DownloadItemImpl::SetAutoResumeCountForTesting(int32_t auto_resume_count) {
+  auto_resume_count_ = auto_resume_count;
+}
+
 // **** Download progression cascade
 
 void DownloadItemImpl::Init(bool active,
@@ -1394,7 +1420,8 @@ void DownloadItemImpl::Start(
   download_file_ = std::move(file);
   job_ = DownloadJobFactory::CreateJob(
       this, std::move(req_handle), new_create_info, false,
-      std::move(url_loader_factory_getter), url_request_context_getter);
+      std::move(url_loader_factory_getter), url_request_context_getter,
+      delegate_ ? delegate_->GetServiceManagerConnector() : nullptr);
   if (job_->IsParallelizable()) {
     RecordParallelizableDownloadCount(START_COUNT, IsParallelDownloadEnabled());
   }
@@ -1640,9 +1667,9 @@ void DownloadItemImpl::OnDownloadRenamedToIntermediateName(
 #if defined(OS_ANDROID)
     // For content URIs, target file path is the same as the current path.
     if (full_path.IsContentUri()) {
-      if (display_name_.empty())
-        SetDisplayName(GetTargetFilePath().BaseName());
       destination_info_.target_path = full_path;
+      if (display_name_.empty())
+        SetDisplayName(download_file_->GetDisplayName());
     }
 #endif  // defined(OS_ANDROID)
   } else {
@@ -2308,6 +2335,13 @@ void DownloadItemImpl::ResumeInterruptedDownload(
       mode == ResumeMode::USER_RESTART) {
     LOG_IF(ERROR, !GetFullPath().empty())
         << "Download full path should be empty before resumption";
+    if (destination_info_.received_bytes > 0) {
+      if (etag_.empty() && last_modified_time_.empty()) {
+        RecordResumptionRestartCount(
+            ResumptionRestartCountTypes::kMissingStrongValidatorsCount);
+      }
+      RecordResumptionRestartReason(last_reason_);
+    }
     destination_info_.received_bytes = 0;
     last_modified_time_.clear();
     etag_.clear();
@@ -2359,6 +2393,17 @@ void DownloadItemImpl::ResumeInterruptedDownload(
   download_params->set_hash_of_partial_file(GetHash());
   download_params->set_hash_state(std::move(hash_state_));
   download_params->set_guid(guid_);
+  if (etag_.empty() && last_modified_time_.empty() &&
+      base::FeatureList::IsEnabled(
+          features::kAllowDownloadResumptionWithoutStrongValidators)) {
+    download_params->set_use_if_range(false);
+    download_params->set_file_offset(download_params->offset());
+    int64_t validation_length = GetDownloadValidationLengthConfig();
+    download_params->set_offset(download_params->offset() > validation_length
+                                    ? download_params->offset() -
+                                          validation_length
+                                    : 0);
+  }
 
   // TODO(xingliu): Read |fetch_error_body| and |request_headers_| from the
   // cache, and don't copy them into DownloadItemImpl.

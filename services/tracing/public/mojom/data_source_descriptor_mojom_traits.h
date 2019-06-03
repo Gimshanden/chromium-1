@@ -12,7 +12,7 @@
 
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/data_source_descriptor.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/data_source_descriptor.h"
 
 namespace mojo {
 template <>
@@ -27,6 +27,10 @@ class StructTraits<tracing::mojom::DataSourceRegistrationDataView,
   }
   static bool will_notify_on_stop(const perfetto::DataSourceDescriptor& src) {
     return src.will_notify_on_stop();
+  }
+  static bool handles_incremental_state_clear(
+      const perfetto::DataSourceDescriptor& src) {
+    return src.handles_incremental_state_clear();
   }
 
   static bool Read(tracing::mojom::DataSourceRegistrationDataView data,

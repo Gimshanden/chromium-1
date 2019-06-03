@@ -41,7 +41,6 @@
 #include "third_party/blink/renderer/core/dom/space_split_string.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/hosts_using_features.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints.h"
@@ -49,8 +48,10 @@
 #include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
 #include "third_party/blink/renderer/modules/mediastream/user_media_controller.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_center.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -194,11 +195,6 @@ void CountAudioConstraintUses(ExecutionContext* context,
   }
   if (RequestUsesDiscreteConstraint(
           constraints,
-          &WebMediaTrackConstraintSet::goog_typing_noise_detection)) {
-    counter.Count(WebFeature::kMediaStreamConstraintsGoogTypingNoiseDetection);
-  }
-  if (RequestUsesDiscreteConstraint(
-          constraints,
           &WebMediaTrackConstraintSet::goog_experimental_noise_suppression)) {
     counter.Count(
         WebFeature::kMediaStreamConstraintsGoogExperimentalNoiseSuppression);
@@ -295,12 +291,6 @@ WebMediaConstraints ParseOptions(ExecutionContext* context,
 
 class UserMediaRequest::V8Callbacks final : public UserMediaRequest::Callbacks {
  public:
-  static V8Callbacks* Create(
-      V8NavigatorUserMediaSuccessCallback* success_callback,
-      V8NavigatorUserMediaErrorCallback* error_callback) {
-    return MakeGarbageCollected<V8Callbacks>(success_callback, error_callback);
-  }
-
   V8Callbacks(V8NavigatorUserMediaSuccessCallback* success_callback,
               V8NavigatorUserMediaErrorCallback* error_callback)
       : success_callback_(ToV8PersistentCallbackFunction(success_callback)),
@@ -382,8 +372,7 @@ UserMediaRequest* UserMediaRequest::Create(
       error_state.ThrowTypeError("exact constraints are not supported");
       return nullptr;
     }
-    if (!options->audio().IsNull() && options->audio().GetAsBoolean() &&
-        (options->video().IsNull() || !options->video().GetAsBoolean())) {
+    if (!audio.IsNull() && video.IsNull()) {
       error_state.ThrowTypeError("Audio only requests are not supported");
       return nullptr;
     }
@@ -418,9 +407,10 @@ UserMediaRequest* UserMediaRequest::Create(
     V8NavigatorUserMediaSuccessCallback* success_callback,
     V8NavigatorUserMediaErrorCallback* error_callback,
     MediaErrorState& error_state) {
-  return Create(context, controller, WebUserMediaRequest::MediaType::kUserMedia,
-                options, V8Callbacks::Create(success_callback, error_callback),
-                error_state);
+  return Create(
+      context, controller, WebUserMediaRequest::MediaType::kUserMedia, options,
+      MakeGarbageCollected<V8Callbacks>(success_callback, error_callback),
+      error_state);
 }
 
 UserMediaRequest* UserMediaRequest::CreateForTesting(
@@ -442,17 +432,13 @@ UserMediaRequest::UserMediaRequest(ExecutionContext* context,
       audio_(audio),
       video_(video),
       should_disable_hardware_noise_suppression_(
-          origin_trials::DisableHardwareNoiseSuppressionEnabled(context)),
+          RuntimeEnabledFeatures::DisableHardwareNoiseSuppressionEnabled(
+              context)),
       controller_(controller),
       callbacks_(callbacks) {
   if (should_disable_hardware_noise_suppression_) {
     UseCounter::Count(context,
                       WebFeature::kUserMediaDisableHardwareNoiseSuppression);
-  }
-  if (origin_trials::ExperimentalHardwareEchoCancellationEnabled(context)) {
-    UseCounter::Count(
-        context,
-        WebFeature::kUserMediaEnableExperimentalHardwareEchoCancellation);
   }
 }
 
@@ -487,8 +473,8 @@ bool UserMediaRequest::IsSecureContextUse(String& error_message) {
 
   if (document->IsSecureContext(error_message)) {
     UseCounter::Count(document, WebFeature::kGetUserMediaSecureOrigin);
-    UseCounter::CountCrossOriginIframe(
-        *document, WebFeature::kGetUserMediaSecureOriginIframe);
+    document->CountUseOnlyInCrossOriginIframe(
+        WebFeature::kGetUserMediaSecureOriginIframe);
 
     // Feature policy deprecation messages.
     if (Audio()) {
@@ -598,9 +584,10 @@ void UserMediaRequest::Fail(WebUserMediaRequest::Error name,
     default:
       NOTREACHED();
   }
-  callbacks_->OnError(nullptr,
-                      DOMExceptionOrOverconstrainedError::FromDOMException(
-                          DOMException::Create(exception_code, message)));
+  callbacks_->OnError(
+      nullptr,
+      DOMExceptionOrOverconstrainedError::FromDOMException(
+          MakeGarbageCollected<DOMException>(exception_code, message)));
 }
 
 void UserMediaRequest::ContextDestroyed(ExecutionContext*) {

@@ -62,14 +62,19 @@ class ShillDeviceClientTest : public ShillClientUnittestBase {
   void SetUp() override {
     ShillClientUnittestBase::SetUp();
     // Create a client with the mock bus.
-    client_.reset(ShillDeviceClient::Create());
-    client_->Init(mock_bus_.get());
+    ShillDeviceClient::Initialize(mock_bus_.get());
+    client_ = ShillDeviceClient::Get();
     // Run the message loop to run the signal connection result callback.
     base::RunLoop().RunUntilIdle();
   }
 
+  void TearDown() override {
+    ShillDeviceClient::Shutdown();
+    ShillClientUnittestBase::TearDown();
+  }
+
  protected:
-  std::unique_ptr<ShillDeviceClient> client_;
+  ShillDeviceClient* client_ = nullptr;  // Unowned convenience pointer.
 };
 
 TEST_F(ShillDeviceClientTest, PropertyChanged) {
@@ -277,25 +282,6 @@ TEST_F(ShillDeviceClientTest, Register) {
   // Call method.
   client_->Register(dbus::ObjectPath(kExampleDevicePath), kNetworkId,
                     mock_closure.Get(), mock_error_callback.Get());
-  // Run the message loop.
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(ShillDeviceClientTest, SetCarrier) {
-  const char kCarrier[] = "carrier";
-  // Create response.
-  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
-
-  // Set expectations.
-  base::MockCallback<base::Closure> mock_closure;
-  base::MockCallback<ShillDeviceClient::ErrorCallback> mock_error_callback;
-  PrepareForMethodCall(shill::kSetCarrierFunction,
-                       base::Bind(&ExpectStringArgument, kCarrier),
-                       response.get());
-  EXPECT_CALL(mock_closure, Run()).Times(1);
-  // Call method.
-  client_->SetCarrier(dbus::ObjectPath(kExampleDevicePath), kCarrier,
-                      mock_closure.Get(), mock_error_callback.Get());
   // Run the message loop.
   base::RunLoop().RunUntilIdle();
 }

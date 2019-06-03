@@ -162,7 +162,7 @@ RoleMap BuildRoleMap() {
       {ax::mojom::Role::kMenuItemCheckBox, NSAccessibilityMenuItemRole},
       {ax::mojom::Role::kMenuItemRadio, NSAccessibilityMenuItemRole},
       {ax::mojom::Role::kMenuListOption, NSAccessibilityMenuItemRole},
-      {ax::mojom::Role::kMenuListPopup, NSAccessibilityUnknownRole},
+      {ax::mojom::Role::kMenuListPopup, NSAccessibilityMenuRole},
       {ax::mojom::Role::kMeter, NSAccessibilityLevelIndicatorRole},
       {ax::mojom::Role::kNavigation, NSAccessibilityGroupRole},
       {ax::mojom::Role::kNone, NSAccessibilityGroupRole},
@@ -374,8 +374,8 @@ bool AlsoUseShowMenuActionForDefaultAction(const ui::AXNodeData& data) {
 - (NSRect)boundsInScreen {
   if (!node_ || !node_->GetDelegate())
     return NSZeroRect;
-  return gfx::ScreenRectToNSRect(
-      node_->GetDelegate()->GetClippedScreenBoundsRect());
+  return gfx::ScreenRectToNSRect(node_->GetDelegate()->GetBoundsRect(
+      ui::AXCoordinateSystem::kScreen, ui::AXClippingBehavior::kClipped));
 }
 
 - (NSString*)getStringAttribute:(ax::mojom::StringAttribute)attribute {
@@ -398,12 +398,12 @@ bool AlsoUseShowMenuActionForDefaultAction(const ui::AXNodeData& data) {
     NSString* name =
         [self getStringAttribute:ax::mojom::StringAttribute::kName];
     return [name length] > 0 ? name
-                             : base::SysUTF16ToNSString(node_->GetText());
+                             : base::SysUTF16ToNSString(node_->GetInnerText());
   } else if (eventType == ax::mojom::Event::kLiveRegionChanged &&
              node_->GetData().HasStringAttribute(
                  ax::mojom::StringAttribute::kContainerLiveStatus)) {
     // Live regions announce their inner text.
-    return base::SysUTF16ToNSString(node_->GetText());
+    return base::SysUTF16ToNSString(node_->GetInnerText());
   }
   // Only alerts and live regions have something to announce.
   return nil;
@@ -929,6 +929,109 @@ bool AlsoUseShowMenuActionForDefaultAction(const ui::AXNodeData& data) {
   node_->GetDelegate()->AccessibilityPerformAction(data);
 }
 
+// "Configuring Text Elements" section of the NSAccessibility formal protocol.
+// These are all "required" methods, although in practice the ones that are left
+// NOTIMPLEMENTED() seem to not be called anywhere (and were NOTIMPLEMENTED in
+// the old API as well).
+
+- (NSInteger)accessibilityInsertionPointLineNumber {
+  return 0;
+}
+
+- (NSInteger)accessibilityNumberOfCharacters {
+  if (!node_)
+    return 0;
+
+  return [[self getAXValueAsString] length];
+}
+
+- (NSString*)accessibilityPlaceholderValue {
+  if (!node_)
+    return nil;
+
+  return [self AXPlaceholderValue];
+}
+
+- (NSString*)accessibilitySelectedText {
+  if (!node_)
+    return nil;
+
+  return [self AXSelectedText];
+}
+
+- (NSRange)accessibilitySelectedTextRange {
+  if (!node_)
+    return NSMakeRange(0, 0);
+
+  NSRange r;
+  [[self AXSelectedTextRange] getValue:&r];
+  return r;
+}
+
+- (NSArray*)accessibilitySelectedTextRanges {
+  if (!node_)
+    return nil;
+
+  return @[ [self AXSelectedTextRange] ];
+}
+
+- (NSRange)accessibilityVisibleCharacterRange {
+  if (!node_)
+    return NSMakeRange(0, 0);
+
+  return NSMakeRange(0, [self accessibilityNumberOfCharacters]);
+}
+
+- (NSString*)accessibilityStringForRange:(NSRange)range {
+  if (!node_)
+    return nil;
+
+  return [[self getAXValueAsString] substringWithRange:range];
+}
+
+- (NSAttributedString*)accessibilityAttributedStringForRange:(NSRange)range {
+  if (!node_)
+    return nil;
+
+  // TODO(https://crbug.com/958811): Implement this for real.
+  base::scoped_nsobject<NSAttributedString> attributedString(
+      [[NSAttributedString alloc]
+          initWithString:[self accessibilityStringForRange:range]]);
+  return attributedString.autorelease();
+}
+
+- (NSInteger)accessibilityLineForIndex:(NSInteger)index {
+  // Views textfields are single-line.
+  return 0;
+}
+
+- (NSRange)accessibilityRangeForIndex:(NSInteger)index {
+  NOTIMPLEMENTED();
+  return NSMakeRange(0, 0);
+}
+
+- (NSRange)accessibilityStyleRangeForIndex:(NSInteger)index {
+  if (!node_)
+    return NSMakeRange(0, 0);
+
+  // TODO(https://crbug.com/958811): Implement this for real.
+  return NSMakeRange(0, [self accessibilityNumberOfCharacters]);
+}
+
+- (NSRange)accessibilityRangeForLine:(NSInteger)line {
+  if (!node_)
+    return NSMakeRange(0, 0);
+
+  if (line != 0)
+    NOTIMPLEMENTED() << "Views textfields are single-line.";
+  return NSMakeRange(0, [self accessibilityNumberOfCharacters]);
+}
+
+- (NSRange)accessibilityRangeForPosition:(NSPoint)point {
+  NOTIMPLEMENTED();
+  return NSMakeRange(0, 0);
+}
+
 @end
 
 namespace ui {
@@ -992,7 +1095,7 @@ void AXPlatformNodeMac::NotifyAccessibilityEvent(ax::mojom::Event event_type) {
   NotifyMacEvent(native_node_, event_type);
 }
 
-void AXPlatformNodeMac::AnnounceText(base::string16& text) {
+void AXPlatformNodeMac::AnnounceText(const base::string16& text) {
   PostAnnouncementNotification(base::SysUTF16ToNSString(text));
 }
 

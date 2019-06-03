@@ -4,6 +4,9 @@
 
 #include "ash/wm/overview/rounded_label_widget.h"
 
+#include <memory>
+
+#include "ash/public/cpp/ash_features.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
@@ -34,10 +37,11 @@ class RoundedLabelView : public views::View {
     layer()->SetColor(background_color);
     layer()->SetFillsBoundsOpaquely(false);
 
-    const std::array<uint32_t, 4> kRadii = {rounding_dp, rounding_dp,
-                                            rounding_dp, rounding_dp};
-    layer()->SetRoundedCornerRadius(kRadii);
-    layer()->SetIsFastRoundedCorner(true);
+    if (ash::features::ShouldUseShaderRoundedCorner()) {
+      const gfx::RoundedCornersF radii(rounding_dp);
+      layer()->SetRoundedCornerRadius(radii);
+      layer()->SetIsFastRoundedCorner(true);
+    }
 
     label_ = new views::Label(l10n_util::GetStringUTF16(message_id),
                               views::style::CONTEXT_LABEL);
@@ -91,13 +95,17 @@ void RoundedLabelWidget::Init(const InitParams& params) {
   Show();
 }
 
-void RoundedLabelWidget::SetBoundsCenteredIn(const gfx::Rect& bounds) {
+gfx::Rect RoundedLabelWidget::GetBoundsCenteredIn(const gfx::Rect& bounds) {
   DCHECK(GetContentsView());
   RoundedLabelView* contents_view =
       static_cast<RoundedLabelView*>(GetContentsView());
   gfx::Rect widget_bounds = bounds;
   widget_bounds.ClampToCenteredSize(contents_view->GetPreferredSize());
-  GetNativeWindow()->SetBounds(widget_bounds);
+  return widget_bounds;
+}
+
+void RoundedLabelWidget::SetBoundsCenteredIn(const gfx::Rect& bounds) {
+  GetNativeWindow()->SetBounds(GetBoundsCenteredIn(bounds));
 }
 
 }  // namespace ash

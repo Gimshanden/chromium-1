@@ -367,9 +367,6 @@ class COMPONENTS_PREFS_EXPORT PrefService {
   void AddPrefObserverAllPrefs(PrefObserver* obs);
   void RemovePrefObserverAllPrefs(PrefObserver* obs);
 
-  // TODO(crbug.com/942491) Remove this one the bug is fixed.
-  bool HasInMemoryUserPrefStore() const;
-
  protected:
   // The PrefNotifier handles registering and notifying preference observers.
   // It is created and owned by this PrefService. Subclasses may access it for
@@ -449,11 +446,12 @@ class COMPONENTS_PREFS_EXPORT PrefService {
                                   base::Value::Type type);
 
   // GetPreferenceValue is the equivalent of FindPreference(path)->GetValue(),
-  // it has been added for performance. If is faster because it does
+  // it has been added for performance. It is faster because it does
   // not need to find or create a Preference object to get the
   // value (GetValue() calls back though the preference service to
   // actually get the value.).
   const base::Value* GetPreferenceValue(const std::string& path) const;
+  const base::Value* GetPreferenceValueChecked(const std::string& path) const;
 
   const scoped_refptr<PrefRegistry> pref_registry_;
 

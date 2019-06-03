@@ -789,8 +789,7 @@ class PrepareFrameAndViewForPrint : public blink::WebViewClient,
       blink::WebTreeScopeType scope,
       const blink::WebString& name,
       const blink::WebString& fallback_name,
-      blink::WebSandboxFlags sandbox_flags,
-      const blink::ParsedFeaturePolicy& container_policy,
+      const blink::FramePolicy& frame_policy,
       const blink::WebFrameOwnerProperties& frame_owner_properties,
       blink::FrameOwnerElementType owner_type) override;
   void FrameDetached(DetachType detach_type) override;
@@ -970,8 +969,7 @@ blink::WebLocalFrame* PrepareFrameAndViewForPrint::CreateChildFrame(
     blink::WebTreeScopeType scope,
     const blink::WebString& name,
     const blink::WebString& fallback_name,
-    blink::WebSandboxFlags sandbox_flags,
-    const blink::ParsedFeaturePolicy& container_policy,
+    const blink::FramePolicy& frame_policy,
     const blink::WebFrameOwnerProperties& frame_owner_properties,
     blink::FrameOwnerElementType frame_owner_type) {
   // This is called when printing a selection and when this selection contains
@@ -1369,7 +1367,7 @@ bool PrintRenderFrameHelper::CreatePreviewDocument() {
   while (!print_preview_context_.IsFinalPageRendered()) {
     int page_number = print_preview_context_.GetNextPageNumber();
     DCHECK_GE(page_number, 0);
-    if (!RenderPreviewPage(page_number, print_params))
+    if (!RenderPreviewPage(page_number))
       return false;
 
     if (CheckForCancel())
@@ -1396,9 +1394,8 @@ bool PrintRenderFrameHelper::CreatePreviewDocument() {
   return true;
 }
 
-bool PrintRenderFrameHelper::RenderPreviewPage(
-    int page_number,
-    const PrintMsg_Print_Params& print_params) {
+bool PrintRenderFrameHelper::RenderPreviewPage(int page_number) {
+  const PrintMsg_Print_Params& print_params = print_pages_params_->params;
   MetafileSkia* initial_render_metafile = print_preview_context_.metafile();
   base::TimeTicks begin_time = base::TimeTicks::Now();
   double scale_factor = GetScaleFactor(print_params.scale_factor,

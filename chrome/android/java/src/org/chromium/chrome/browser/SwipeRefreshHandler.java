@@ -15,8 +15,11 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.gesturenav.NavigationGlowFactory;
 import org.chromium.chrome.browser.gesturenav.NavigationHandler;
+import org.chromium.chrome.browser.gesturenav.TabbedActionDelegate;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabWebContentsUserData;
 import org.chromium.components.feature_engagement.EventConstants;
@@ -54,6 +57,8 @@ public class SwipeRefreshHandler
 
     // The Tab where the swipe occurs.
     private Tab mTab;
+
+    private EmptyTabObserver mTabObserver;
 
     // The container view the SwipeRefreshHandler instance is currently
     // associated with.
@@ -95,15 +100,30 @@ public class SwipeRefreshHandler
     private SwipeRefreshHandler(Tab tab) {
         super(tab);
         mTab = tab;
+        mTabObserver = new EmptyTabObserver() {
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean isAttached) {
+                if (!isAttached && mSwipeRefreshLayout != null) {
+                    cancelStopRefreshingRunnable();
+                    detachSwipeRefreshLayoutIfNecessary();
+                    mSwipeRefreshLayout.setOnRefreshListener(null);
+                    mSwipeRefreshLayout.setOnResetListener(null);
+                    mSwipeRefreshLayout = null;
+                }
+            }
+        };
+        mTab.addObserver(mTabObserver);
         mNavigationEnabled =
-                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERSCROLL_HISTORY_NAVIGATION);
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERSCROLL_HISTORY_NAVIGATION)
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.DELEGATE_OVERSCROLL_SWIPES);
     }
 
-    private void initSwipeRefreshLayout() {
-        final Context context = mTab.getThemedApplicationContext();
+    private void initSwipeRefreshLayout(final Context context) {
         mSwipeRefreshLayout = new SwipeRefreshLayout(context);
         mSwipeRefreshLayout.setLayoutParams(
                 new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        mSwipeRefreshLayout.setProgressBackgroundColorSchemeResource(
+                R.color.default_bg_color_elev_2);
         mSwipeRefreshLayout.setColorSchemeResources(R.color.light_active_color);
         if (mContainerView != null) mSwipeRefreshLayout.setEnabled(true);
 
@@ -133,15 +153,17 @@ public class SwipeRefreshHandler
     public void initWebContents(WebContents webContents) {
         webContents.setOverscrollRefreshHandler(this);
         mContainerView = mTab.getContentView();
-        if (mNavigationHandler != null) mNavigationHandler.setParentView(mContainerView);
         setEnabled(true);
     }
 
     @Override
     public void cleanupWebContents(WebContents webContents) {
         if (mSwipeRefreshLayout != null) detachSwipeRefreshLayoutIfNecessary();
-        if (mNavigationHandler != null) mNavigationHandler.setParentView(null);
         mContainerView = null;
+        if (mNavigationHandler != null) {
+            mNavigationHandler.destroy();
+            mNavigationHandler = null;
+        }
         setEnabled(false);
     }
 
@@ -166,7 +188,8 @@ public class SwipeRefreshHandler
     }
 
     @Override
-    public boolean start(@OverscrollAction int type, boolean navigateForward) {
+    public boolean start(
+            @OverscrollAction int type, float startX, float startY, boolean navigateForward) {
         if (mTab.getActivity() != null && mTab.getActivity().getBottomSheet() != null) {
             Tracker tracker = TrackerFactory.getTrackerForProfile(Profile.getLastUsedProfile());
             tracker.notifyEvent(EventConstants.PULL_TO_REFRESH);
@@ -174,25 +197,28 @@ public class SwipeRefreshHandler
 
         mSwipeType = type;
         if (type == OverscrollAction.PULL_TO_REFRESH) {
-            if (mSwipeRefreshLayout == null) initSwipeRefreshLayout();
+            if (mSwipeRefreshLayout == null) initSwipeRefreshLayout(mTab.getContext());
             attachSwipeRefreshLayoutIfNecessary();
             return mSwipeRefreshLayout.start();
         } else if (type == OverscrollAction.HISTORY_NAVIGATION && mNavigationEnabled) {
             if (mNavigationHandler == null) {
-                mNavigationHandler = new NavigationHandler(mContainerView.getContext(), () -> mTab);
-                mNavigationHandler.setParentView(mContainerView);
+                mNavigationHandler =
+                        new NavigationHandler(mContainerView, new TabbedActionDelegate(mTab),
+                                NavigationGlowFactory.forRenderedPage(
+                                        mContainerView, mTab.getWebContents()));
             }
-            boolean navigable = canNavigate(navigateForward);
-            boolean shouldStart = navigable || !navigateForward;
-            if (shouldStart) mNavigationHandler.start(navigateForward, false);
-            return shouldStart;
+            boolean navigable = navigateForward ? mTab.canGoForward() : mTab.canGoBack();
+            boolean showGlow = navigateForward && !mTab.canGoForward();
+            mNavigationHandler.onDown(); // Simulates the initial onDown event.
+            if (navigable) {
+                mNavigationHandler.showArrowWidget(navigateForward);
+            } else if (showGlow) {
+                mNavigationHandler.showGlow(startX, startY);
+            }
+            return navigable || showGlow;
         }
         mSwipeType = OverscrollAction.NONE;
         return false;
-    }
-
-    private boolean canNavigate(boolean forward) {
-        return forward ? mTab.canGoForward() : mTab.canGoBack();
     }
 
     @Override
@@ -244,7 +270,11 @@ public class SwipeRefreshHandler
 
     private Runnable getStopRefreshingRunnable() {
         if (mStopRefreshingRunnable == null) {
-            mStopRefreshingRunnable = () -> mSwipeRefreshLayout.setRefreshing(false);
+            mStopRefreshingRunnable = () -> {
+                if (mSwipeRefreshLayout != null) {
+                    mSwipeRefreshLayout.setRefreshing(false);
+                }
+            };
         }
         return mStopRefreshingRunnable;
     }

@@ -45,7 +45,8 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
   class WriteObserver {
    public:
     // Called before response info is written to storage.
-    virtual void WillWriteInfo(
+    // Returns net::OK if success. Other values are treated as errors.
+    virtual int WillWriteInfo(
         scoped_refptr<HttpResponseInfoIOBuffer> response_info) = 0;
 
     // Called before response data is written to storage.
@@ -138,6 +139,8 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
   }
 
  private:
+  friend class ServiceWorkerUpdateCheckTestUtils;
+
   // States for the state machine.
   //
   // The state machine flows roughly like this: if there is no existing cache

@@ -81,7 +81,8 @@ void AssistantPageView::InitLayout() {
     AddChildView(assistant_web_view_);
 
     // Update the view state based on the current UI mode.
-    OnUiModeChanged(assistant_view_delegate_->GetUiModel()->ui_mode());
+    OnUiModeChanged(assistant_view_delegate_->GetUiModel()->ui_mode(),
+                    /*due_to_interaction=*/false);
   }
 }
 
@@ -146,16 +147,9 @@ void AssistantPageView::OnGestureEvent(ui::GestureEvent* event) {
 
 gfx::Rect AssistantPageView::GetPageBoundsForState(
     ash::AppListState state) const {
-  gfx::Rect bounds;
-  if (state != ash::AppListState::kStateEmbeddedAssistant) {
-    // Hides this view behind the search box by using the same bounds.
-    bounds = AppListPage::contents_view()->GetSearchBoxBoundsForState(state);
-  } else {
-    bounds = AppListPage::GetSearchBoxBounds();
-    bounds.Offset((bounds.width() - ash::kPreferredWidthDip) / 2, 0);
-    bounds.set_size(GetPreferredSize());
-  }
-
+  gfx::Rect bounds = AppListPage::GetSearchBoxBounds();
+  bounds.Offset((bounds.width() - ash::kPreferredWidthDip) / 2, 0);
+  bounds.set_size(GetPreferredSize());
   return AddShadowBorderToBounds(bounds);
 }
 
@@ -178,9 +172,10 @@ views::View* AssistantPageView::GetLastFocusableView() {
       this, GetWidget(), /*reverse=*/true, /*dont_loop=*/false);
 }
 
-void AssistantPageView::OnUiModeChanged(ash::AssistantUiMode ui_mode) {
-  for (int i = 0; i < child_count(); ++i)
-    child_at(i)->SetVisible(false);
+void AssistantPageView::OnUiModeChanged(ash::AssistantUiMode ui_mode,
+                                        bool due_to_interaction) {
+  for (auto* child : children())
+    child->SetVisible(false);
 
   switch (ui_mode) {
     case ash::AssistantUiMode::kLauncherEmbeddedUi:

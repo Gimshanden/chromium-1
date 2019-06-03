@@ -11,10 +11,11 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "chrome/browser/performance_manager/web_contents_proxy_impl.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/resource_coordinator/public/cpp/coordination_unit_id.h"
 
 namespace performance_manager {
 
@@ -29,13 +30,9 @@ class PerformanceManager;
 // host to the frame graph entity.
 class PerformanceManagerTabHelper
     : public content::WebContentsObserver,
-      public content::WebContentsUserData<PerformanceManagerTabHelper> {
+      public content::WebContentsUserData<PerformanceManagerTabHelper>,
+      public WebContentsProxyImpl {
  public:
-  // TODO(siggi): Remove this once the PageSignalGenerator has been abolished.
-  static bool GetCoordinationIDForWebContents(
-      content::WebContents* web_contents,
-      resource_coordinator::CoordinationUnitID* id);
-
   // Detaches all instances from their WebContents and destroys them.
   static void DetachAndDestroyAll();
 
@@ -46,6 +43,8 @@ class PerformanceManagerTabHelper
   // WebContentsObserver overrides.
   void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  void RenderFrameHostChanged(content::RenderFrameHost* old_host,
+                              content::RenderFrameHost* new_host) override;
   void DidStartLoading() override;
   void DidStopLoading() override;
   void OnVisibilityChanged(content::Visibility visibility) override;
@@ -59,15 +58,27 @@ class PerformanceManagerTabHelper
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) override;
 
+  // WebContentsProxyImpl overrides.
+  content::WebContents* GetWebContents() const override;
+  int64_t LastNavigationId() const override;
+
   void SetUkmSourceIdForTesting(ukm::SourceId id) { ukm_source_id_ = id; }
 
  private:
+  friend class content::WebContentsUserData<PerformanceManagerTabHelper>;
+  friend class WebContentsProxyImpl;
+
   explicit PerformanceManagerTabHelper(content::WebContents* web_contents);
 
-  void OnMainFrameNavigation(int64_t navigation_id);
-  void UpdatePageNodeVisibility(content::Visibility visibility);
+  // Post a task to run in the performance manager sequence. The |node| will be
+  // passed as unretained, and the closure will be created with BindOnce.
+  template <typename Functor, typename NodeType, typename... Args>
+  void PostToGraph(const base::Location& from_here,
+                   Functor&& functor,
+                   NodeType* node,
+                   Args&&... args);
 
-  friend class content::WebContentsUserData<PerformanceManagerTabHelper>;
+  void OnMainFrameNavigation(int64_t navigation_id);
 
   // The performance manager for this process, if any.
   PerformanceManager* const performance_manager_;
@@ -81,6 +92,10 @@ class PerformanceManagerTabHelper
   bool first_time_favicon_set_ = false;
   bool first_time_title_set_ = false;
 
+  // The last navigation ID that was committed to a main frame in this web
+  // contents.
+  int64_t last_navigation_id_ = 0;
+
   // Maps from RenderFrameHost to the associated PM node.
   std::map<content::RenderFrameHost*, std::unique_ptr<FrameNodeImpl>> frames_;
 
@@ -92,6 +107,8 @@ class PerformanceManagerTabHelper
   PerformanceManagerTabHelper* prev_ = nullptr;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
+
+  base::WeakPtrFactory<PerformanceManagerTabHelper> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PerformanceManagerTabHelper);
 };

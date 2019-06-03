@@ -50,7 +50,12 @@ class UiController {
   virtual void OnActionsChanged(const std::vector<Chip>& actions);
 
   // Gets or clears request for payment information.
-  virtual void OnPaymentRequestChanged(const PaymentRequestOptions* options);
+  virtual void OnPaymentRequestOptionsChanged(
+      const PaymentRequestOptions* options);
+
+  // Updates the currently selected contact information / payment method.
+  virtual void OnPaymentRequestInformationChanged(
+      const PaymentInformation* state);
 
   // Called when details have changed. Details will be null if they have been
   // cleared.
@@ -75,6 +80,18 @@ class UiController {
   // can correspond to empty rectangles. Coordinates are relative to the width
   // or height of the visible viewport, as a number between 0 and 1.
   virtual void OnTouchableAreaChanged(const std::vector<RectF>& rectangles);
+
+  // Called when the viewport resize flag has changed.
+  virtual void OnResizeViewportChanged(bool resize_viewport);
+
+  // Called when the peek mode has changed.
+  virtual void OnPeekModeChanged(ConfigureBottomSheetProto::PeekMode peek_mode);
+
+  // Called when the overlay colors have changed.
+  virtual void OnOverlayColorsChanged(const UiDelegate::OverlayColors& colors);
+
+  // Called when the form has changed.
+  virtual void OnFormChanged(const FormProto* form);
 };
 }  // namespace autofill_assistant
 #endif  // COMPONENTS_AUTOFILL_ASSISTANT_BROWSER_UI_CONTROLLER_H_

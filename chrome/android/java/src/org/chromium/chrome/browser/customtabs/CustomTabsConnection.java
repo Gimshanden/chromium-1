@@ -415,7 +415,7 @@ public class CustomTabsConnection {
 
         // (1)
         if (!initialized) {
-            tasks.add(UiThreadTaskTraits.BOOTSTRAP, () -> {
+            tasks.add(() -> {
                 try (TraceEvent e = TraceEvent.scoped("CustomTabsConnection.initializeBrowser()")) {
                     initializeBrowser(ContextUtils.getApplicationContext());
                     ChromeBrowserInitializer.getInstance().initNetworkChangeNotifier();
@@ -426,7 +426,7 @@ public class CustomTabsConnection {
 
         // (2)
         if (mayCreateSpareWebContents && !mHiddenTabHolder.hasHiddenTab()) {
-            tasks.add(UiThreadTaskTraits.BOOTSTRAP, () -> {
+            tasks.add(() -> {
                 // Temporary fix for https://crbug.com/797832.
                 // TODO(lizeb): Properly fix instead of papering over the bug, this code should
                 // not be scheduled unless startup is done. See https://crbug.com/797832.
@@ -441,7 +441,7 @@ public class CustomTabsConnection {
         }
 
         // (3)
-        tasks.add(UiThreadTaskTraits.BOOTSTRAP, () -> {
+        tasks.add(() -> {
             try (TraceEvent e = TraceEvent.scoped("InitializeViewHierarchy")) {
                 WarmupManager.getInstance().initializeViewHierarchy(
                         ContextUtils.getApplicationContext(),
@@ -450,7 +450,7 @@ public class CustomTabsConnection {
         });
 
         if (!initialized) {
-            tasks.add(UiThreadTaskTraits.BOOTSTRAP, () -> {
+            tasks.add(() -> {
                 try (TraceEvent e = TraceEvent.scoped("WarmupInternalFinishInitialization")) {
                     // (4)
                     Profile profile = Profile.getLastUsedProfile();
@@ -460,12 +460,12 @@ public class CustomTabsConnection {
                     // The throttling database uses shared preferences, that can cause a
                     // StrictMode violation on the first access. Make sure that this access is
                     // not in mayLauchUrl.
-                    RequestThrottler.loadInBackground(ContextUtils.getApplicationContext());
+                    RequestThrottler.loadInBackground();
                 }
             });
         }
 
-        tasks.add(UiThreadTaskTraits.BOOTSTRAP, () -> notifyWarmupIsDone(uid));
+        tasks.add(() -> notifyWarmupIsDone(uid));
         tasks.start(false);
         mWarmupTasks = tasks;
         return true;
@@ -1464,11 +1464,6 @@ public class CustomTabsConnection {
             CustomTabsSessionToken session, String url, String origin, int referrerPolicy,
             @DetachedResourceRequestMotivation int motivation);
 
-    // TODO(amalova): remove this method as soon as it is safe to do
-    public ModuleLoader getModuleLoader(ComponentName componentName, int dexResourceId) {
-        return getModuleLoader(componentName, null);
-    }
-
     public ModuleLoader getModuleLoader(ComponentName componentName, @Nullable String assetName) {
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_MODULE_DEX_LOADING)) {
             assetName = null;
@@ -1479,8 +1474,12 @@ public class CustomTabsConnection {
                     !componentName.equals(mModuleLoader.getComponentName());
             boolean isAssetNameChanged =
                     !TextUtils.equals(assetName, mModuleLoader.getDexAssetName());
+            ModuleLoader.ModuleApkVersion newModuleApkVersion =
+                    ModuleLoader.ModuleApkVersion.getModuleVersion(componentName.getPackageName());
+            boolean isModuleVersionChanged =
+                    !mModuleLoader.getModuleApkVersion().equals(newModuleApkVersion);
 
-            if (isComponentNameChanged || isAssetNameChanged) {
+            if (isComponentNameChanged || isAssetNameChanged || isModuleVersionChanged) {
                 mModuleLoader.destroyModule(ModuleMetrics.DestructionReason.MODULE_LOADER_CHANGED);
                 mModuleLoader = null;
             }

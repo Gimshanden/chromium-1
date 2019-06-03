@@ -15,6 +15,7 @@
 #include "components/login/localized_values_builder.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
+#include "ui/base/l10n/l10n_util.h"
 
 namespace chromeos {
 namespace network_element {
@@ -71,7 +72,6 @@ void AddOncLocalizedStrings(content::WebUIDataSource* html_source) {
        IDS_ONC_CELLULAR_ACTIVATION_STATE_NOT_ACTIVATED},
       {"OncCellular-ActivationState_PartiallyActivated",
        IDS_ONC_CELLULAR_ACTIVATION_STATE_PARTIALLY_ACTIVATED},
-      {"OncCellular-Carrier", IDS_ONC_CELLULAR_CARRIER},
       {"OncCellular-Family", IDS_ONC_CELLULAR_FAMILY},
       {"OncCellular-FirmwareRevision", IDS_ONC_CELLULAR_FIRMWARE_REVISION},
       {"OncCellular-HardwareRevision", IDS_ONC_CELLULAR_HARDWARE_REVISION},
@@ -264,6 +264,8 @@ void AddConfigLocalizedStrings(content::WebUIDataSource* html_source) {
       {"networkConfigSaveCredentials",
        IDS_SETTINGS_INTERNET_CONFIG_SAVE_CREDENTIALS},
       {"networkConfigShare", IDS_SETTINGS_INTERNET_CONFIG_SHARE},
+      {"networkAutoConnect", IDS_SETTINGS_INTERNET_NETWORK_AUTO_CONNECT},
+      {"hiddenNetworkWarning", IDS_SETTINGS_HIDDEN_NETWORK_WARNING},
       {"hidePassword", IDS_SETTINGS_PASSWORD_HIDE},
       {"showPassword", IDS_SETTINGS_PASSWORD_SHOW},
   };

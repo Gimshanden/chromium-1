@@ -54,16 +54,13 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
   std::string GetActualFontNameForTesting() const override;
   int GetFontSize() const override;
   const FontRenderParams& GetFontRenderParams() override;
-  NativeFont GetNativeFont() const override;
+  NativeFont GetNativeFont() const;
 
   // Called once during initialization if we should be retrieving font metrics
   // from skia and DirectWrite.
   static void SetDirectWriteFactory(IDWriteFactory* factory);
 
-  static bool IsDirectWriteEnabled();
-
  private:
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, HarfBuzz_UniscribeFallback);
   FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, Metrics_SkiaVersusGDI);
   FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, DirectWriteFontSubstitution);
 
@@ -112,7 +109,6 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
 
    private:
     friend class base::RefCounted<HFontRef>;
-    FRIEND_TEST_ALL_PREFIXES(RenderTextTest, HarfBuzz_UniscribeFallback);
     FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, Metrics_SkiaVersusGDI);
     FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, DirectWriteFontSubstitution);
 
@@ -192,9 +188,6 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
 
   // Indirect reference to the HFontRef, which references the underlying HFONT.
   scoped_refptr<HFontRef> font_ref_;
-
-  // Pointer to the global IDWriteFactory interface.
-  static IDWriteFactory* direct_write_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformFontWin);
 };

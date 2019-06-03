@@ -27,18 +27,13 @@ public class NetworkImageFetcher extends ImageFetcher {
     }
 
     @Override
-    public void reportEvent(String clientName, @CachedImageFetcherEvent int eventId) {
-        mImageFetcherBridge.reportEvent(clientName, eventId);
-    }
-
-    @Override
     public void destroy() {
         // Do nothing, this lives for the lifetime of the application.
     }
 
     @Override
     public void fetchGif(String url, String clientName, Callback<BaseGifImage> callback) {
-        mImageFetcherBridge.fetchGif(url, clientName, callback);
+        mImageFetcherBridge.fetchGif(getConfig(), url, clientName, callback);
     }
 
     @Override
@@ -46,6 +41,9 @@ public class NetworkImageFetcher extends ImageFetcher {
             String url, String clientName, int width, int height, Callback<Bitmap> callback) {
         mImageFetcherBridge.fetchImage(getConfig(), url, clientName, width, height, callback);
     }
+
+    @Override
+    public void clear() {}
 
     @Override
     public @ImageFetcherConfig int getConfig() {

@@ -86,8 +86,22 @@ class WritableStreamDefaultController final : public ScriptWrappable {
                     v8::Local<v8::Value> chunk,
                     double chunk_size);
 
+  // https://streams.spec.whatwg.org/#writable-stream-default-controller-error
+  // TODO(yhirano): Make this private once we ship StreamsNative.
+  static void Error(ScriptState*,
+                    WritableStreamDefaultController*,
+                    v8::Local<v8::Value> error);
+
   // Exposed to WritableStreamNative. Not part of the standard.
   bool Started() const { return started_; }
+
+  //
+  // Used by TransformStream
+  //
+  // https://streams.spec.whatwg.org/#writable-stream-default-controller-error-if-needed
+  static void ErrorIfNeeded(ScriptState*,
+                            WritableStreamDefaultController*,
+                            v8::Local<v8::Value> error);
 
   void Trace(Visitor*) override;
 
@@ -99,11 +113,6 @@ class WritableStreamDefaultController final : public ScriptWrappable {
   static void AdvanceQueueIfNeeded(ScriptState*,
                                    WritableStreamDefaultController*);
 
-  // https://streams.spec.whatwg.org/#writable-stream-default-controller-error-if-needed
-  static void ErrorIfNeeded(ScriptState*,
-                            WritableStreamDefaultController*,
-                            v8::Local<v8::Value> error);
-
   // https://streams.spec.whatwg.org/#writable-stream-default-controller-process-close
   static void ProcessClose(ScriptState*, WritableStreamDefaultController*);
 
@@ -114,11 +123,6 @@ class WritableStreamDefaultController final : public ScriptWrappable {
 
   // https://streams.spec.whatwg.org/#writable-stream-default-controller-get-backpressure
   static bool GetBackpressure(const WritableStreamDefaultController*);
-
-  // https://streams.spec.whatwg.org/#writable-stream-default-controller-error
-  static void Error(ScriptState*,
-                    WritableStreamDefaultController*,
-                    v8::Local<v8::Value> error);
 
   // Most member variables correspond 1:1 with the internal slots in the
   // standard. See

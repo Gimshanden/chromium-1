@@ -23,7 +23,7 @@ namespace blink {
 namespace {
 
 void RunSynchronous(base::TestSimpleTaskRunner* thread,
-                    WTF::CrossThreadClosure closure) {
+                    CrossThreadOnceClosure closure) {
   if (thread->BelongsToCurrentThread()) {
     std::move(closure).Run();
     return;
@@ -34,8 +34,8 @@ void RunSynchronous(base::TestSimpleTaskRunner* thread,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   PostCrossThreadTask(
       *thread, FROM_HERE,
-      CrossThreadBind(
-          [](WTF::CrossThreadClosure closure, base::WaitableEvent* event) {
+      CrossThreadBindOnce(
+          [](CrossThreadOnceClosure closure, base::WaitableEvent* event) {
             std::move(closure).Run();
             event->Signal();
           },
@@ -54,9 +54,10 @@ class MockPeerConnectionHandler : public MockWebRTCPeerConnectionHandler {
       base::OnceClosure closure,
       const char* trace_event_name) override {
     closure_ = std::move(closure);
-    RunSynchronous(signaling_thread_.get(),
-                   CrossThreadBind(&MockPeerConnectionHandler::RunOnceClosure,
-                                   CrossThreadUnretained(this)));
+    RunSynchronous(
+        signaling_thread_.get(),
+        CrossThreadBindOnce(&MockPeerConnectionHandler::RunOnceClosure,
+                            CrossThreadUnretained(this)));
   }
 
  private:
@@ -97,41 +98,43 @@ class MockDataChannel : public webrtc::DataChannelInterface {
   void RegisterObserver(webrtc::DataChannelObserver* observer) override {
     RunSynchronous(
         signaling_thread_.get(),
-        CrossThreadBind(&MockDataChannel::RegisterObserverOnSignalingThread,
-                        CrossThreadUnretained(this),
-                        CrossThreadUnretained(observer)));
+        CrossThreadBindOnce(&MockDataChannel::RegisterObserverOnSignalingThread,
+                            CrossThreadUnretained(this),
+                            CrossThreadUnretained(observer)));
   }
 
   void UnregisterObserver() override {
-    RunSynchronous(
-        signaling_thread_.get(),
-        CrossThreadBind(&MockDataChannel::UnregisterObserverOnSignalingThread,
-                        CrossThreadUnretained(this)));
+    RunSynchronous(signaling_thread_.get(),
+                   CrossThreadBindOnce(
+                       &MockDataChannel::UnregisterObserverOnSignalingThread,
+                       CrossThreadUnretained(this)));
   }
 
   uint64_t buffered_amount() const override {
     uint64_t buffered_amount;
-    RunSynchronous(
-        signaling_thread_.get(),
-        CrossThreadBind(&MockDataChannel::GetBufferedAmountOnSignalingThread,
-                        CrossThreadUnretained(this),
-                        CrossThreadUnretained(&buffered_amount)));
+    RunSynchronous(signaling_thread_.get(),
+                   CrossThreadBindOnce(
+                       &MockDataChannel::GetBufferedAmountOnSignalingThread,
+                       CrossThreadUnretained(this),
+                       CrossThreadUnretained(&buffered_amount)));
     return buffered_amount;
   }
 
   DataState state() const override {
     DataState state;
-    RunSynchronous(signaling_thread_.get(),
-                   CrossThreadBind(&MockDataChannel::GetStateOnSignalingThread,
-                                   CrossThreadUnretained(this),
-                                   CrossThreadUnretained(&state)));
+    RunSynchronous(
+        signaling_thread_.get(),
+        CrossThreadBindOnce(&MockDataChannel::GetStateOnSignalingThread,
+                            CrossThreadUnretained(this),
+                            CrossThreadUnretained(&state)));
     return state;
   }
 
   bool Send(const webrtc::DataBuffer& buffer) override {
-    RunSynchronous(signaling_thread_.get(),
-                   CrossThreadBind(&MockDataChannel::SendOnSignalingThread,
-                                   CrossThreadUnretained(this), buffer.size()));
+    RunSynchronous(
+        signaling_thread_.get(),
+        CrossThreadBindOnce(&MockDataChannel::SendOnSignalingThread,
+                            CrossThreadUnretained(this), buffer.size()));
     return true;
   }
 
@@ -139,8 +142,8 @@ class MockDataChannel : public webrtc::DataChannelInterface {
   void ChangeState(DataState state) {
     RunSynchronous(
         signaling_thread_.get(),
-        CrossThreadBind(&MockDataChannel::ChangeStateOnSignalingThread,
-                        CrossThreadUnretained(this), state));
+        CrossThreadBindOnce(&MockDataChannel::ChangeStateOnSignalingThread,
+                            CrossThreadUnretained(this), state));
     // The observer posts the state change from the signaling thread to the main
     // thread. Wait for the posted task to be executed.
     base::RunLoop().RunUntilIdle();
@@ -219,9 +222,9 @@ TEST_F(RTCDataChannelTest, ChangeStateEarly) {
 
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
 
   // In RTCDataChannel::Create, the state change update is posted from the
   // signaling thread to the main thread. Wait for posted the task to be
@@ -237,9 +240,9 @@ TEST_F(RTCDataChannelTest, BufferedAmount) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   webrtc_channel->ChangeState(webrtc::DataChannelInterface::kOpen);
 
   String message(std::string(100, 'A').c_str());
@@ -252,9 +255,9 @@ TEST_F(RTCDataChannelTest, BufferedAmountLow) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   webrtc_channel->ChangeState(webrtc::DataChannelInterface::kOpen);
 
   channel->setBufferedAmountLowThreshold(1);
@@ -272,9 +275,9 @@ TEST_F(RTCDataChannelTest, Open) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   channel->OnStateChange(webrtc::DataChannelInterface::kOpen);
   ASSERT_EQ(1U, channel->scheduled_events_.size());
   EXPECT_EQ(
@@ -287,9 +290,9 @@ TEST_F(RTCDataChannelTest, Close) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   channel->OnStateChange(webrtc::DataChannelInterface::kClosed);
   ASSERT_EQ(1U, channel->scheduled_events_.size());
   EXPECT_EQ(
@@ -302,9 +305,9 @@ TEST_F(RTCDataChannelTest, Message) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
 
   std::unique_ptr<webrtc::DataBuffer> message(new webrtc::DataBuffer("A"));
   channel->OnMessage(std::move(message));
@@ -319,9 +322,9 @@ TEST_F(RTCDataChannelTest, SendAfterContextDestroyed) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   webrtc_channel->ChangeState(webrtc::DataChannelInterface::kOpen);
 
   channel->ContextDestroyed(nullptr);
@@ -338,9 +341,9 @@ TEST_F(RTCDataChannelTest, CloseAfterContextDestroyed) {
       new rtc::RefCountedObject<MockDataChannel>(signaling_thread()));
   std::unique_ptr<MockPeerConnectionHandler> pc(
       new MockPeerConnectionHandler(signaling_thread()));
-  RTCDataChannel* channel =
-      RTCDataChannel::Create(MakeGarbageCollected<NullExecutionContext>(),
-                             webrtc_channel.get(), pc.get());
+  auto* channel = MakeGarbageCollected<RTCDataChannel>(
+      MakeGarbageCollected<NullExecutionContext>(), webrtc_channel.get(),
+      pc.get());
   webrtc_channel->ChangeState(webrtc::DataChannelInterface::kOpen);
 
   channel->ContextDestroyed(nullptr);

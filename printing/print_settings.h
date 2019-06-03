@@ -82,9 +82,7 @@ class PRINTING_EXPORT PrintSettings {
   }
   // Media properties requested by the user. Translated into device media by the
   // platform specific layers.
-  const RequestedMedia& requested_media() const {
-    return requested_media_;
-  }
+  const RequestedMedia& requested_media() const { return requested_media_; }
 
   // Set printer printable area in in device units.
   // Some platforms already provide flipped area. Set |landscape_needs_flip|
@@ -126,7 +124,7 @@ class PRINTING_EXPORT PrintSettings {
   int device_units_per_inch() const {
 #if defined(OS_MACOSX)
     return 72;
-#else  // defined(OS_MACOSX)
+#else   // defined(OS_MACOSX)
     return dpi();
 #endif  // defined(OS_MACOSX)
   }
@@ -175,7 +173,7 @@ class PRINTING_EXPORT PrintSettings {
   bool printer_is_textonly() const {
     return printer_type_ == PrinterType::TYPE_TEXTONLY;
   }
-  bool printer_is_xps() const { return printer_type_ == PrinterType::TYPE_XPS;}
+  bool printer_is_xps() const { return printer_type_ == PrinterType::TYPE_XPS; }
   bool printer_is_ps2() const {
     return printer_type_ == PrinterType::TYPE_POSTSCRIPT_LEVEL2;
   }
@@ -200,6 +198,9 @@ class PRINTING_EXPORT PrintSettings {
 
   void set_username(const std::string& username) { username_ = username; }
   const std::string& username() const { return username_; }
+
+  void set_job_title(const std::string& job_title) { job_title_ = job_title; }
+  const std::string& job_title() const { return job_title_; }
 
   void set_pin_value(const std::string& pin_value) { pin_value_ = pin_value; }
   const std::string& pin_value() const { return pin_value_; }
@@ -290,6 +291,9 @@ class PRINTING_EXPORT PrintSettings {
 
   // Username if it's required by the printer.
   std::string username_;
+
+  // Job title if it's required by the printer.
+  std::string job_title_;
 
   // PIN code entered by the user.
   std::string pin_value_;

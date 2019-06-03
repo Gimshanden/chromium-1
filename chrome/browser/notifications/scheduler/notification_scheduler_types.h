@@ -7,6 +7,20 @@
 
 namespace notifications {
 
+// Enum to describe the time to process scheduled notification data.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: (
+//   org.chromium.chrome.browser.notifications.scheduler)
+enum class SchedulerTaskTime {
+  // The system is started from normal user launch or other background
+  // tasks.
+  kUnknown = 0,
+  // Background task runs in the morning.
+  kMorning = 1,
+  // Background task runs in the evening.
+  kEvening = 2,
+};
+
 // The type of a list of clients using the notification scheduler system.
 enum class SchedulerClientType {
   // Test only values.
@@ -21,8 +35,8 @@ enum class SchedulerClientType {
 
 // The type of user feedback from a displayed notification.
 enum class UserFeedback {
-  // Unknown feedback from the user.
-  kUnknown = 0,
+  // No user feedback yet.
+  kNoFeedback = 0,
   // The user taps the helpful button, potentially a strong indicator of user's
   // positive preference on the notification.
   kHelpful = 1,
@@ -38,17 +52,31 @@ enum class UserFeedback {
   kMaxValue = kIgnore
 };
 
-// The user impression of a particular notification.
+// The user impression of a particular notification, which may impact the
+// notification display frenquency.
 enum class ImpressionResult {
-  // Unknown user impression.
-  kUnknown = 0,
+  // Invalid user impression.
+  kInvalid = 0,
   // Positive user impression that the user may like the notification.
   kPositive = 1,
   // Positive user impression that the user may dislike the notification.
   kNegative = 2,
-  // The feedback is netural to the user.
-  kNetural = 3,
-  kMaxValue = kNetural
+  // The feedback is neutral to the user.
+  kNeutral = 3,
+  kMaxValue = kNeutral
+};
+
+// Categorizes type of notification buttons. Different type of button clicks
+// may result in change of notification shown frequency.
+enum class ActionButtonType {
+  // The action button is not categorized.
+  kUnknownAction = 0,
+
+  // Helpful button indicates the user likes to interact with the notification.
+  kHelpful = 1,
+
+  // Unhelpful button indicates dislike of the notification.
+  kUnhelpful = 2,
 };
 
 }  // namespace notifications

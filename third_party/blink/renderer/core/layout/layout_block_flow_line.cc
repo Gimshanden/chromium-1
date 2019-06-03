@@ -21,6 +21,7 @@
  *
  */
 
+#include "base/containers/span.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -56,7 +57,7 @@ class ExpansionOpportunities {
     unsigned opportunities_in_run;
     if (text.Is8Bit()) {
       opportunities_in_run = Character::ExpansionOpportunityCount(
-          text.Characters8() + run.start_, run.stop_ - run.start_,
+          {text.Characters8() + run.start_, run.stop_ - run.start_},
           run.box_->Direction(), is_after_expansion, text_justify);
     } else if (run.line_layout_item_.IsCombineText()) {
       // Justfication applies to before and after the combined text as if
@@ -66,7 +67,7 @@ class ExpansionOpportunities {
       is_after_expansion = true;
     } else {
       opportunities_in_run = Character::ExpansionOpportunityCount(
-          text.Characters16() + run.start_, run.stop_ - run.start_,
+          {text.Characters16() + run.start_, run.stop_ - run.start_},
           run.box_->Direction(), is_after_expansion, text_justify);
     }
     runs_with_expansions_.push_back(opportunities_in_run);
@@ -2340,10 +2341,10 @@ void LayoutBlockFlow::AddVisualOverflowFromInlineChildren() {
     for (const NGPaintFragment* child : paint_fragment->Children()) {
       if (child->HasSelfPaintingLayer())
         continue;
-      NGPhysicalOffsetRect child_rect = child->InkOverflow();
+      PhysicalRect child_rect = child->InkOverflow();
       if (!child_rect.IsEmpty()) {
         child_rect.offset += child->Offset();
-        AddContentsVisualOverflow(child_rect.ToLayoutRect());
+        AddContentsVisualOverflow(child_rect);
       }
     }
   } else {
@@ -2360,19 +2361,19 @@ void LayoutBlockFlow::AddVisualOverflowFromInlineChildren() {
 
   // Add outline rects of continuations of descendant inlines into visual
   // overflow of this block.
-  LayoutRect outline_bounds_of_all_continuations;
+  PhysicalRect outline_bounds_of_all_continuations;
   for (InlineWalker walker(LineLayoutBlockFlow(this)); !walker.AtEnd();
        walker.Advance()) {
     const LayoutObject& o = *walker.Current().GetLayoutObject();
     if (!IsInlineWithOutlineAndContinuation(o))
       continue;
 
-    Vector<LayoutRect> outline_rects;
+    Vector<PhysicalRect> outline_rects;
     ToLayoutInline(o).AddOutlineRectsForContinuations(
-        outline_rects, LayoutPoint(),
+        outline_rects, PhysicalOffset(),
         o.OutlineRectsShouldIncludeBlockVisualOverflow());
     if (!outline_rects.IsEmpty()) {
-      LayoutRect outline_bounds = UnionRectEvenIfEmpty(outline_rects);
+      PhysicalRect outline_bounds = UnionRectEvenIfEmpty(outline_rects);
       outline_bounds.Inflate(LayoutUnit(o.StyleRef().OutlineOutsetExtent()));
       outline_bounds_of_all_continuations.Unite(outline_bounds);
     }
@@ -2686,7 +2687,7 @@ void LayoutBlockFlow::SetShouldDoFullPaintInvalidationForFirstLine() {
   DCHECK(ChildrenInline());
   if (RootInlineBox* first_root_box = FirstRootBox())
     first_root_box->SetShouldDoFullPaintInvalidationRecursively();
-  else if (NGPaintFragment* paint_fragment = PaintFragment())
+  else if (const NGPaintFragment* paint_fragment = PaintFragment())
     paint_fragment->SetShouldDoFullPaintInvalidationForFirstLine();
 }
 

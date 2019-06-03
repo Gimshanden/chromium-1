@@ -4,6 +4,10 @@
 
 #include "chrome/browser/ui/webui/snippets_internals/snippets_internals_page_handler.h"
 
+#include <set>
+#include <string>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/feature_list.h"
@@ -11,8 +15,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/time/time_to_iso8601.h"
-#include "chrome/browser/android/ntp/android_content_suggestions_notifier.h"
 #include "chrome/common/pref_names.h"
 #include "components/ntp_snippets/category_info.h"
 #include "components/ntp_snippets/features.h"
@@ -60,16 +62,6 @@ std::set<variations::VariationID> GetSnippetsExperiments() {
 
 std::string BooleanToString(bool value) {
   return value ? "True" : "False";
-}
-
-ntp_snippets::BreakingNewsListener* GetBreakingNewsListener(
-    ntp_snippets::ContentSuggestionsService* service) {
-  DCHECK(service);
-  RemoteSuggestionsProvider* provider =
-      service->remote_suggestions_provider_for_debugging();
-  DCHECK(provider);
-  return static_cast<ntp_snippets::RemoteSuggestionsProviderImpl*>(provider)
-      ->breaking_news_listener_for_debugging();
 }
 
 std::string GetCategoryStatusName(CategoryStatus status) {
@@ -225,10 +217,6 @@ void SnippetsInternalsPageHandler::ReloadSuggestions() {
   }
 }
 
-void SnippetsInternalsPageHandler::GetDebugLog(GetDebugLogCallback callback) {
-  std::move(callback).Run(content_suggestions_service_->GetDebugLog());
-}
-
 void SnippetsInternalsPageHandler::ClearCachedSuggestions() {
   content_suggestions_service_->ClearAllCachedSuggestions();
   page_->OnSuggestionsChanged();
@@ -278,67 +266,6 @@ void SnippetsInternalsPageHandler::FetchSuggestionsInBackgroundImpl(
   std::move(callback).Run();
 }
 
-void SnippetsInternalsPageHandler::IsPushingDummySuggestionPossible(
-    IsPushingDummySuggestionPossibleCallback callback) {
-  ntp_snippets::BreakingNewsListener* listener =
-      GetBreakingNewsListener(content_suggestions_service_);
-
-  std::move(callback).Run(listener != nullptr && listener->IsListening());
-}
-
-void SnippetsInternalsPageHandler::PushDummySuggestionInBackground(
-    int64_t delaySeconds,
-    PushDummySuggestionInBackgroundCallback callback) {
-  DCHECK(delaySeconds >= 0);
-  suggestion_push_timer_.Start(
-      FROM_HERE, base::TimeDelta::FromSeconds(delaySeconds),
-      base::BindRepeating(
-          &SnippetsInternalsPageHandler::PushDummySuggestionInBackgroundImpl,
-          weak_ptr_factory_.GetWeakPtr(), base::Passed(std::move(callback))));
-}
-
-void SnippetsInternalsPageHandler::PushDummySuggestionInBackgroundImpl(
-    PushDummySuggestionInBackgroundCallback callback) {
-  std::string json = R"(
-    {"categories" : [{
-      "id": 1,
-      "localizedTitle": "section title",
-      "suggestions" : [{
-        "ids" : ["http://url.com"],
-        "title" : "Pushed Dummy Title %s",
-        "snippet" : "Pushed Dummy Snippet",
-        "fullPageUrl" : "http://url.com",
-        "creationTime" : "%s",
-        "expirationTime" : "%s",
-        "attribution" : "Pushed Dummy Publisher",
-        "imageUrl" : "https://www.google.com/favicon.ico",
-        "notificationInfo": {
-          "shouldNotify": true,
-          "deadline": "2100-01-01T00:00:01.000Z"
-          }
-      }]
-    }]}
-  )";
-
-  const base::Time now = base::Time::Now();
-  json = base::StringPrintf(
-      json.c_str(), base::UTF16ToUTF8(base::TimeFormatTimeOfDay(now)).c_str(),
-      base::TimeToISO8601(now).c_str(),
-      base::TimeToISO8601(now + base::TimeDelta::FromMinutes(60)).c_str());
-
-  gcm::IncomingMessage message;
-  message.data["payload"] = json;
-
-  ntp_snippets::BreakingNewsListener* listener =
-      GetBreakingNewsListener(content_suggestions_service_);
-  DCHECK(listener);
-  DCHECK(listener->IsListening());
-  static_cast<ntp_snippets::BreakingNewsGCMAppHandler*>(listener)->OnMessage(
-      "com.google.breakingnews.gcm", message);
-
-  std::move(callback).Run();
-}
-
 void SnippetsInternalsPageHandler::GetLastJson(GetLastJsonCallback callback) {
   std::string json = "";
   if (remote_suggestions_provider_) {
@@ -348,16 +275,6 @@ void SnippetsInternalsPageHandler::GetLastJson(GetLastJsonCallback callback) {
   }
 
   std::move(callback).Run(json);
-}
-
-void SnippetsInternalsPageHandler::ResetNotificationState() {
-  pref_service_->SetInteger(
-      prefs::kContentSuggestionsConsecutiveIgnoredPrefName, 0);
-  pref_service_->SetInteger(prefs::kContentSuggestionsNotificationsSentCount,
-                            0);
-  pref_service_->SetInteger(prefs::kContentSuggestionsNotificationsSentDay, 0);
-  AndroidContentSuggestionsNotifier().HideAllNotifications(
-      ContentSuggestionsNotificationAction::HIDE_FRONTMOST);
 }
 
 void SnippetsInternalsPageHandler::GetSuggestionsByCategory(

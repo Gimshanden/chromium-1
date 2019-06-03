@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/metrics/histogram_functions.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -123,11 +122,10 @@ void SimpleMenuModel::AddRadioItemWithStringId(int command_id, int string_id,
   AddRadioItem(command_id, l10n_util::GetStringUTF16(string_id), group_id);
 }
 
-void SimpleMenuModel::AddHighlightedItemWithStringIdAndIcon(
-    int command_id,
-    int string_id,
-    const gfx::ImageSkia& icon) {
-  Item item(command_id, TYPE_HIGHLIGHTED, l10n_util::GetStringUTF16(string_id));
+void SimpleMenuModel::AddHighlightedItemWithIcon(int command_id,
+                                                 const base::string16& label,
+                                                 const gfx::ImageSkia& icon) {
+  Item item(command_id, TYPE_HIGHLIGHTED, label);
   item.icon = gfx::Image(icon);
   AppendItem(std::move(item));
 }
@@ -170,6 +168,17 @@ void SimpleMenuModel::AddSubMenu(int command_id,
 void SimpleMenuModel::AddSubMenuWithStringId(int command_id,
                                              int string_id, MenuModel* model) {
   AddSubMenu(command_id, l10n_util::GetStringUTF16(string_id), model);
+}
+
+void SimpleMenuModel::AddSubMenuWithStringIdAndIcon(
+    int command_id,
+    int string_id,
+    MenuModel* model,
+    const gfx::ImageSkia& icon) {
+  Item item(command_id, TYPE_SUBMENU, l10n_util::GetStringUTF16(string_id));
+  item.submenu = model;
+  item.icon = gfx::Image(icon);
+  AppendItem(std::move(item));
 }
 
 void SimpleMenuModel::AddActionableSubMenu(int command_id,
@@ -431,12 +440,8 @@ void SimpleMenuModel::ActivatedAt(int index) {
 }
 
 void SimpleMenuModel::ActivatedAt(int index, int event_flags) {
-  if (!delegate_)
-    return;
-
-  int command_id = GetCommandIdAt(index);
-  RecordHistogram(command_id);
-  delegate_->ExecuteCommand(command_id, event_flags);
+  if (delegate_)
+    delegate_->ExecuteCommand(GetCommandIdAt(index), event_flags);
 }
 
 MenuModel* SimpleMenuModel::GetSubmenuModelAt(int index) const {
@@ -503,12 +508,6 @@ void SimpleMenuModel::ValidateItem(const Item& item) {
     DCHECK_GE(item.command_id, 0);
   }
 #endif  // NDEBUG
-}
-
-void SimpleMenuModel::RecordHistogram(int command_id) const {
-  if (histogram_name_.empty())
-    return;
-  base::UmaHistogramSparse(histogram_name_, command_id);
 }
 
 }  // namespace ui

@@ -11,6 +11,7 @@
 
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_content_browser_client.h"
+#include "android_webview/browser/aw_feature_list.h"
 #include "android_webview/browser/net/aw_cookie_store_wrapper.h"
 #include "android_webview/browser/net/aw_http_user_agent_settings.h"
 #include "android_webview/browser/net/aw_network_delegate.h"
@@ -207,19 +208,20 @@ AwURLRequestContextGetter::AwURLRequestContextGetter(
   // For net-log, use default capture mode and no channel information.
   // WebView can enable net-log only using commandline in userdebug
   // devices so there is no need to complicate things here. The net_log
-  // file is written under app_webview directory. The user is required to
-  // provide a file name using --log-net-log=<filename.json> and then
-  // pull the file to desktop and then import it to chrome://net-internals
-  // There is no good way to shutdown net-log at the moment. The file will
-  // always be truncated.
+  // file is written at an absolute path specified by the user using
+  // --log-net-log=<filename.json>. Note: the absolute path should be a
+  // subdirectory of the app's data directory, otherwise multiple WebView apps
+  // may write to the same file. The user should then 'adb pull' the file to
+  // desktop and then import it to chrome://net-internals There is no good way
+  // to shutdown net-log at the moment. The file will always be truncated.
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(network::switches::kLogNetLog)) {
-    FilePath net_log_path;
-    base::PathService::Get(base::DIR_ANDROID_APP_DATA, &net_log_path);
-    FilePath log_name =
+  // Note: Netlog is handled by the Network Service when that is enabled.
+  if (command_line.HasSwitch(network::switches::kLogNetLog) &&
+      !base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+    // Assume the user gave us a path we can write to
+    FilePath net_log_path =
         command_line.GetSwitchValuePath(network::switches::kLogNetLog);
-    net_log_path = net_log_path.Append(log_name);
 
     std::unique_ptr<base::DictionaryValue> constants_dict =
         net::GetNetConstants();
@@ -312,6 +314,9 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
   // Context copy allowed because NetworkService is confirmed disabled.
   builder.set_allow_copy();
 
+  builder.set_enable_brotli(base::FeatureList::IsEnabled(
+      android_webview::features::kWebViewBrotliSupport));
+
   url_request_context_ = builder.Build();
 
   // For Android WebView, do not enforce policies that are not consistent with
@@ -335,13 +340,6 @@ void AwURLRequestContextGetter::InitializeURLRequestContext() {
   url_request_context_->set_job_factory(job_factory_.get());
   url_request_context_->set_http_user_agent_settings(
       http_user_agent_settings_.get());
-}
-
-// static
-void AwURLRequestContextGetter::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterStringPref(prefs::kAuthServerWhitelist, std::string());
-  registry->RegisterStringPref(prefs::kAuthAndroidNegotiateAccountType,
-                               std::string());
 }
 
 // static
@@ -374,17 +372,12 @@ void AwURLRequestContextGetter::SetHandlersAndInterceptors(
 
 std::unique_ptr<net::HttpAuthHandlerFactory>
 AwURLRequestContextGetter::CreateAuthHandlerFactory() {
-  // In Chrome this is configurable via the AuthSchemes policy. For WebView
-  // there is no interest to have it available so far.
-  std::vector<std::string> supported_schemes = {"basic", "digest", "ntlm",
-                                                "negotiate"};
-
   http_auth_preferences_.reset(new net::HttpAuthPreferences());
   UpdateServerWhitelist();
   UpdateAndroidAuthNegotiateAccountType();
 
   return net::HttpAuthHandlerRegistryFactory::Create(
-      http_auth_preferences_.get(), supported_schemes);
+      http_auth_preferences_.get(), AwBrowserContext::GetAuthSchemes());
 }
 
 void AwURLRequestContextGetter::UpdateServerWhitelist() {

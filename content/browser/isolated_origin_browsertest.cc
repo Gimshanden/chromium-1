@@ -63,6 +63,10 @@ class IsolatedOriginTestBase : public ContentBrowserTest {
     return IsIsolatedOrigin(url::Origin::Create(url));
   }
 
+  WebContentsImpl* web_contents() const {
+    return static_cast<WebContentsImpl*>(shell()->web_contents());
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(IsolatedOriginTestBase);
 };
@@ -86,10 +90,6 @@ class IsolatedOriginTest : public IsolatedOriginTestBase {
     embedded_test_server()->StartAcceptingConnections();
   }
 
-  WebContentsImpl* web_contents() const {
-    return static_cast<WebContentsImpl*>(shell()->web_contents());
-  }
-
   void InjectAndClickLinkTo(GURL url) {
     EXPECT_TRUE(ExecuteScript(web_contents(),
                               "var link = document.createElement('a');"
@@ -101,6 +101,126 @@ class IsolatedOriginTest : public IsolatedOriginTestBase {
  private:
   DISALLOW_COPY_AND_ASSIGN(IsolatedOriginTest);
 };
+
+class StrictOriginIsolationTest : public IsolatedOriginTestBase {
+ public:
+  StrictOriginIsolationTest() {}
+  ~StrictOriginIsolationTest() override {}
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    IsolatedOriginTestBase::SetUpCommandLine(command_line);
+    ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
+
+    // This is needed for this test to run properly on platforms where
+    //  --site-per-process isn't the default, such as Android.
+    IsolateAllSitesForTesting(command_line);
+    feature_list_.InitAndEnableFeature(features::kStrictOriginIsolation);
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    embedded_test_server()->StartAcceptingConnections();
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(StrictOriginIsolationTest);
+};
+
+IN_PROC_BROWSER_TEST_F(StrictOriginIsolationTest, SubframesAreIsolated) {
+  GURL test_url(embedded_test_server()->GetURL(
+      "foo.com",
+      "/cross_site_iframe_factory.html?"
+      "foo.com(mail.foo.com,bar.foo.com(foo.com),foo.com)"));
+  EXPECT_TRUE(NavigateToURL(shell(), test_url));
+  EXPECT_EQ(5u, shell()->web_contents()->GetAllFrames().size());
+
+  // Make sure we have three separate processes.
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  RenderFrameHost* main_frame = root->current_frame_host();
+  int main_frame_id = main_frame->GetProcess()->GetID();
+  RenderFrameHost* child_frame0 = root->child_at(0)->current_frame_host();
+  int child_frame0_id = child_frame0->GetProcess()->GetID();
+  RenderFrameHost* child_frame1 = root->child_at(1)->current_frame_host();
+  int child_frame1_id = child_frame1->GetProcess()->GetID();
+  RenderFrameHost* child_frame2 = root->child_at(2)->current_frame_host();
+  int child_frame2_id = child_frame2->GetProcess()->GetID();
+  RenderFrameHost* grandchild_frame0 =
+      root->child_at(1)->child_at(0)->current_frame_host();
+  int grandchild_frame0_id = grandchild_frame0->GetProcess()->GetID();
+  EXPECT_NE(main_frame_id, child_frame0_id);
+  EXPECT_NE(main_frame_id, child_frame1_id);
+  EXPECT_EQ(main_frame_id, child_frame2_id);
+  EXPECT_EQ(main_frame_id, grandchild_frame0_id);
+
+  std::string port_string =
+      base::StringPrintf(":%u", embedded_test_server()->port());
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  EXPECT_EQ(GURL("http://foo.com" + port_string),
+            policy->GetOriginLock(main_frame_id));
+  EXPECT_EQ(GURL("http://mail.foo.com" + port_string),
+            policy->GetOriginLock(child_frame0_id));
+  EXPECT_EQ(GURL("http://bar.foo.com" + port_string),
+            policy->GetOriginLock(child_frame1_id));
+  EXPECT_EQ(GURL("http://foo.com" + port_string),
+            policy->GetOriginLock(child_frame2_id));
+  EXPECT_EQ(GURL("http://foo.com" + port_string),
+            policy->GetOriginLock(grandchild_frame0_id));
+
+  // Navigate child_frame1 to a new origin ... it should get its own process.
+  FrameTreeNode* child_frame2_node = root->child_at(2);
+  GURL foo_url(embedded_test_server()->GetURL("www.foo.com", "/title1.html"));
+  NavigateFrameToURL(child_frame2_node, foo_url);
+  EXPECT_NE(root->current_frame_host()->GetSiteInstance(),
+            child_frame2_node->current_frame_host()->GetSiteInstance());
+  // The old RenderFrameHost for subframe3 will no longer be valid, so get the
+  // new one.
+  child_frame2 = root->child_at(2)->current_frame_host();
+  EXPECT_NE(main_frame->GetProcess()->GetID(),
+            child_frame2->GetProcess()->GetID());
+  EXPECT_EQ(GURL("http://www.foo.com" + port_string),
+            policy->GetOriginLock(child_frame2->GetProcess()->GetID()));
+}
+
+IN_PROC_BROWSER_TEST_F(StrictOriginIsolationTest, MainframesAreIsolated) {
+  GURL foo_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+  EXPECT_EQ(1u, web_contents()->GetAllFrames().size());
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+
+  auto foo_process_id = web_contents()->GetMainFrame()->GetProcess()->GetID();
+  SiteInstance* foo_site_instance = shell()->web_contents()->GetSiteInstance();
+  EXPECT_EQ(foo_site_instance->GetSiteURL(),
+            policy->GetOriginLock(foo_process_id));
+
+  EXPECT_TRUE(NavigateToURL(
+      shell(), embedded_test_server()->GetURL("sub.foo.com", "/title1.html")));
+  auto sub_foo_process_id =
+      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID();
+  SiteInstance* sub_foo_site_instance =
+      shell()->web_contents()->GetSiteInstance();
+  EXPECT_EQ(sub_foo_site_instance->GetSiteURL(),
+            policy->GetOriginLock(sub_foo_process_id));
+
+  EXPECT_NE(foo_process_id, sub_foo_process_id);
+  EXPECT_NE(foo_site_instance->GetSiteURL(),
+            sub_foo_site_instance->GetSiteURL());
+
+  // Now verify with a renderer-initiated navigation.
+  GURL another_foo_url(
+      embedded_test_server()->GetURL("another.foo.com", "/title2.html"));
+  EXPECT_TRUE(NavigateToURLFromRenderer(shell(), another_foo_url));
+  auto another_foo_process_id =
+      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID();
+  SiteInstance* another_foo_site_instance =
+      shell()->web_contents()->GetSiteInstance();
+  EXPECT_NE(another_foo_process_id, sub_foo_process_id);
+  EXPECT_NE(another_foo_process_id, foo_process_id);
+  EXPECT_EQ(another_foo_site_instance->GetSiteURL(),
+            policy->GetOriginLock(another_foo_process_id));
+  EXPECT_NE(another_foo_site_instance, foo_site_instance);
+}
 
 // Check that navigating a main frame from an non-isolated origin to an
 // isolated origin and vice versa swaps processes and uses a new SiteInstance,
@@ -979,11 +1099,9 @@ IN_PROC_BROWSER_TEST_F(
   // A SiteInstance created for an isolated origin ServiceWorker should
   // not reuse the unsuitable first process.
   scoped_refptr<SiteInstanceImpl> sw_site_instance =
-      SiteInstanceImpl::CreateForURL(web_contents()->GetBrowserContext(),
-                                     hung_isolated_url);
-  sw_site_instance->set_is_for_service_worker();
-  sw_site_instance->set_process_reuse_policy(
-      SiteInstanceImpl::ProcessReusePolicy::REUSE_PENDING_OR_COMMITTED_SITE);
+      SiteInstanceImpl::CreateForServiceWorker(
+          web_contents()->GetBrowserContext(), hung_isolated_url,
+          /* can_reuse_process */ true);
   RenderProcessHost* sw_host = sw_site_instance->GetProcess();
   EXPECT_NE(new_shell->web_contents()->GetMainFrame()->GetProcess(), sw_host);
 
@@ -1395,7 +1513,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedOriginTrialOverrideTest, Test) {
 }
 
 // Ensure that --disable-site-isolation-trials and/or
-// --disable-site-isolation-for-enterprise-policy do not override the flag.
+// --disable-site-isolation-for-policy do not override the flag.
 class IsolatedOriginPolicyOverrideTest : public IsolatedOriginFieldTrialTest {
  public:
   IsolatedOriginPolicyOverrideTest() {}
@@ -1404,7 +1522,9 @@ class IsolatedOriginPolicyOverrideTest : public IsolatedOriginFieldTrialTest {
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(switches::kDisableSiteIsolation);
+#if defined(OS_ANDROID)
     command_line->AppendSwitch(switches::kDisableSiteIsolationForPolicy);
+#endif
   }
 
  private:
@@ -1419,7 +1539,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedOriginPolicyOverrideTest, Test) {
 }
 
 // Ensure that --disable-site-isolation-trials and/or
-// DisableSiteIsolationForPolicy do not override the flag.
+// --disable-site-isolation-for-policy do not override the flag.
 class IsolatedOriginNoFlagOverrideTest : public IsolatedOriginTest {
  public:
   IsolatedOriginNoFlagOverrideTest() {}
@@ -1429,7 +1549,9 @@ class IsolatedOriginNoFlagOverrideTest : public IsolatedOriginTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     IsolatedOriginTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kDisableSiteIsolation);
+#if defined(OS_ANDROID)
     command_line->AppendSwitch(switches::kDisableSiteIsolationForPolicy);
+#endif
   }
 
  private:
@@ -1640,6 +1762,14 @@ IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest, MainFrameNavigations) {
 
   Shell* shell3 = CreateBrowser();
   EXPECT_TRUE(NavigateToURL(shell3, foo_url));
+
+  // Create window.open popups in all three windows, which would prevent a
+  // BrowsingInstance swap on renderer-initiated navigations to newly isolated
+  // origins in these windows.
+  OpenPopup(shell(), foo_url, "");
+  OpenPopup(shell2, GURL(url::kAboutBlankURL), "");
+  OpenPopup(shell3, embedded_test_server()->GetURL("baz.com", "/title1.html"),
+            "");
 
   // Start isolating bar.com.
   GURL bar_url(embedded_test_server()->GetURL("bar.com", "/title2.html"));
@@ -1900,6 +2030,60 @@ IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest,
   EXPECT_EQ("foo=bar", EvalJs(child, "document.cookie"));
 }
 
+// Verify that a process locked to foo.com is not reused for a navigation to
+// foo.com that does not require a dedicated process.  See
+// https://crbug.com/950453.
+IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest,
+                       LockedProcessNotReusedForNonisolatedSameSiteNavigation) {
+  // This test is designed to run without strict site isolation.
+  if (AreAllSitesIsolatedForTesting())
+    return;
+
+  // Set the process limit to 1.
+  RenderProcessHost::SetMaxRendererProcessCount(1);
+
+  // Start on a non-isolated foo.com URL.
+  GURL foo_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+
+  // Navigate to a different isolated origin and wait for the original foo.com
+  // process to shut down.  Note that the foo.com SiteInstance will stick
+  // around in session history.
+  RenderProcessHostWatcher foo_process_observer(
+      web_contents()->GetMainFrame()->GetProcess(),
+      RenderProcessHostWatcher::WATCH_FOR_HOST_DESTRUCTION);
+  GURL isolated_bar_url(
+      embedded_test_server()->GetURL("isolated.bar.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), isolated_bar_url));
+  foo_process_observer.Wait();
+  EXPECT_TRUE(foo_process_observer.did_exit_normally());
+
+  // Start isolating foo.com.
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  policy->AddIsolatedOrigins({url::Origin::Create(foo_url)});
+
+  // Create a new window, forcing a new BrowsingInstance, and navigate it to
+  // foo.com, which will spin up a process locked to foo.com.
+  Shell* new_shell = CreateBrowser();
+  EXPECT_TRUE(NavigateToURL(new_shell, foo_url));
+  RenderProcessHost* new_process =
+      new_shell->web_contents()->GetMainFrame()->GetProcess();
+  EXPECT_EQ(GURL("http://foo.com"),
+            policy->GetOriginLock(new_process->GetID()));
+
+  // Go to foo.com in the older first tab, where foo.com does not require a
+  // dedicated process.  Ensure that the existing locked foo.com process is
+  // *not* reused in that case (if that were the case, LockToOriginIfNeeded
+  // would trigger a CHECK here).  Using a history navigation here ensures that
+  // the SiteInstance (from session history) will have a foo.com site URL,
+  // rather than a default site URL, since this case isn't yet handled by the
+  // default SiteInstance (see crbug.com/787576).
+  TestNavigationObserver observer(web_contents());
+  web_contents()->GetController().GoBack();
+  observer.Wait();
+  EXPECT_NE(web_contents()->GetMainFrame()->GetProcess(), new_process);
+}
+
 // Checks that isolated origins can be added only for a specific profile,
 // and that they don't apply to other profiles.
 IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest, PerProfileIsolation) {
@@ -1951,6 +2135,188 @@ IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest, PerProfileIsolation) {
             child->current_frame_host()->GetSiteInstance());
   EXPECT_EQ(root->current_frame_host()->GetProcess(),
             child->current_frame_host()->GetProcess());
+}
+
+// Check that a dynamically added isolated origin can take effect on the next
+// main frame navigation by forcing a BrowsingInstance swap, in the case that
+// there are no script references to the frame being navigated.
+IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest, ForceBrowsingInstanceSwap) {
+  // This test is designed to run without strict site isolation.
+  if (AreAllSitesIsolatedForTesting())
+    return;
+
+  // Navigate to a non-isolated page with a cross-site iframe.  The frame
+  // shouldn't be in an OOPIF.
+  GURL foo_url(embedded_test_server()->GetURL(
+      "foo.com", "/cross_site_iframe_factory.html?foo.com(bar.com)"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* child = root->child_at(0);
+  scoped_refptr<SiteInstance> first_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_EQ(first_instance, child->current_frame_host()->GetSiteInstance());
+  EXPECT_EQ(root->current_frame_host()->GetProcess(),
+            child->current_frame_host()->GetProcess());
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  EXPECT_EQ(GURL(),
+            policy->GetOriginLock(first_instance->GetProcess()->GetID()));
+
+  // Start isolating foo.com.
+  BrowserContext* context = shell()->web_contents()->GetBrowserContext();
+  policy->AddIsolatedOrigins({url::Origin::Create(foo_url)}, context);
+
+  // Try navigating to another foo URL.
+  GURL foo2_url(embedded_test_server()->GetURL(
+      "foo.com", "/cross_site_iframe_factory.html?foo.com(baz.com)"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo2_url));
+
+  // Verify that this navigation ended up in a dedicated process, and that we
+  // swapped BrowsingInstances in the process.
+  scoped_refptr<SiteInstance> second_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_NE(first_instance, second_instance);
+  EXPECT_FALSE(first_instance->IsRelatedSiteInstance(second_instance.get()));
+  EXPECT_NE(first_instance->GetProcess(), second_instance->GetProcess());
+  EXPECT_EQ(GURL("http://foo.com"),
+            policy->GetOriginLock(second_instance->GetProcess()->GetID()));
+
+  // The frame on that page should now be an OOPIF.
+  child = root->child_at(0);
+  EXPECT_NE(second_instance, child->current_frame_host()->GetSiteInstance());
+  EXPECT_NE(root->current_frame_host()->GetProcess(),
+            child->current_frame_host()->GetProcess());
+}
+
+// Same as the test above, but using a renderer-initiated navigation.  Check
+// that a dynamically added isolated origin can take effect on the next main
+// frame navigation by forcing a BrowsingInstance swap, in the case that there
+// are no script references to the frame being navigated.
+IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest,
+                       ForceBrowsingInstanceSwap_RendererInitiated) {
+  // This test is designed to run without strict site isolation.
+  if (AreAllSitesIsolatedForTesting())
+    return;
+
+  // Navigate to a foo.com page.
+  GURL foo_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  scoped_refptr<SiteInstance> first_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_FALSE(first_instance->RequiresDedicatedProcess());
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  EXPECT_EQ(GURL(),
+            policy->GetOriginLock(first_instance->GetProcess()->GetID()));
+
+  // Set a sessionStorage value, to sanity check that foo.com's session storage
+  // will still be accessible after the BrowsingInstance swap.
+  EXPECT_TRUE(ExecJs(root, "window.sessionStorage['foo'] = 'bar';"));
+
+  // Start isolating foo.com.
+  BrowserContext* context = shell()->web_contents()->GetBrowserContext();
+  policy->AddIsolatedOrigins({url::Origin::Create(foo_url)}, context);
+
+  // Do a renderer-initiated navigation to another foo URL.
+  GURL foo2_url(embedded_test_server()->GetURL(
+      "foo.com", "/cross_site_iframe_factory.html?foo.com(baz.com)"));
+  EXPECT_TRUE(NavigateToURLFromRenderer(shell(), foo2_url));
+
+  // Verify that this navigation ended up in a dedicated process, and that we
+  // swapped BrowsingInstances in the process.
+  scoped_refptr<SiteInstance> second_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_NE(first_instance, second_instance);
+  EXPECT_FALSE(first_instance->IsRelatedSiteInstance(second_instance.get()));
+  EXPECT_NE(first_instance->GetProcess(), second_instance->GetProcess());
+  EXPECT_EQ(GURL("http://foo.com"),
+            policy->GetOriginLock(second_instance->GetProcess()->GetID()));
+
+  // The frame on that page should be an OOPIF.
+  FrameTreeNode* child = root->child_at(0);
+  EXPECT_NE(second_instance, child->current_frame_host()->GetSiteInstance());
+  EXPECT_NE(root->current_frame_host()->GetProcess(),
+            child->current_frame_host()->GetProcess());
+
+  // Verify that the isolated foo.com page can still access session storage set
+  // by the previous foo.com page.
+  EXPECT_EQ("bar", EvalJs(root, "window.sessionStorage['foo']"));
+}
+
+IN_PROC_BROWSER_TEST_F(DynamicIsolatedOriginTest,
+                       DontForceBrowsingInstanceSwapWhenScriptReferencesExist) {
+  // This test is designed to run without strict site isolation.
+  if (AreAllSitesIsolatedForTesting())
+    return;
+
+  // Navigate to a page that won't be in a dedicated process.
+  GURL foo_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  scoped_refptr<SiteInstance> first_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_FALSE(first_instance->RequiresDedicatedProcess());
+
+  // Start isolating foo.com.
+  BrowserContext* context = shell()->web_contents()->GetBrowserContext();
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  policy->AddIsolatedOrigins({url::Origin::Create(foo_url)}, context);
+
+  // Open a popup.
+  GURL popup_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
+  OpenPopup(shell(), popup_url, "");
+
+  // Try navigating the main frame to another foo URL.
+  GURL foo2_url(embedded_test_server()->GetURL("foo.com", "/title2.html"));
+  EXPECT_TRUE(NavigateToURLFromRenderer(shell(), foo2_url));
+
+  // This navigation should not end up in a dedicated process.  The popup
+  // should prevent the BrowsingInstance swap heuristic from applying, since it
+  // should still be able to communicate with the opener after the navigation.
+  EXPECT_EQ(first_instance, root->current_frame_host()->GetSiteInstance());
+  EXPECT_FALSE(first_instance->RequiresDedicatedProcess());
+  EXPECT_EQ(GURL(),
+            policy->GetOriginLock(first_instance->GetProcess()->GetID()));
+}
+
+// This test ensures that when a page becomes isolated in the middle of
+// creating and navigating a new window, the new window prevents a
+// BrowsingInstance swap.
+IN_PROC_BROWSER_TEST_F(
+    DynamicIsolatedOriginTest,
+    DontForceBrowsingInstanceSwapWithPendingNavigationInNewWindow) {
+  // This test is designed to run without strict site isolation.
+  if (AreAllSitesIsolatedForTesting())
+    return;
+
+  // Navigate to a page that won't be in a dedicated process.
+  GURL foo_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), foo_url));
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  scoped_refptr<SiteInstance> first_instance =
+      root->current_frame_host()->GetSiteInstance();
+  EXPECT_FALSE(first_instance->RequiresDedicatedProcess());
+
+  // Open and start navigating a popup to a URL that never finishes loading.
+  GURL popup_url(embedded_test_server()->GetURL("a.com", "/hung"));
+  EXPECT_TRUE(ExecuteScript(root, JsReplace("window.open($1);", popup_url)));
+
+  // Start isolating foo.com.
+  BrowserContext* context = shell()->web_contents()->GetBrowserContext();
+  auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+  policy->AddIsolatedOrigins({url::Origin::Create(foo_url)}, context);
+
+  // Navigate the main frame to another foo URL.
+  GURL foo2_url(embedded_test_server()->GetURL("foo.com", "/title2.html"));
+  EXPECT_TRUE(NavigateToURLFromRenderer(shell(), foo2_url));
+
+  // This navigation should not end up in a dedicated process.  The pending
+  // navigation in the popup should prevent the BrowsingInstance swap heuristic
+  // from applying, since it should still be able to communicate with the
+  // opener after the navigation.
+  EXPECT_EQ(first_instance, root->current_frame_host()->GetSiteInstance());
+  EXPECT_FALSE(first_instance->RequiresDedicatedProcess());
+  EXPECT_EQ(GURL(),
+            policy->GetOriginLock(first_instance->GetProcess()->GetID()));
 }
 
 // This class allows intercepting the BroadcastChannelProvider::ConnectToChannel
@@ -2135,9 +2501,9 @@ IN_PROC_BROWSER_TEST_F(IsolatedOriginTestWithStrictSiteInstances,
   RenderProcessHost* host = root->current_frame_host()->GetProcess();
   EXPECT_EQ(host, child1->current_frame_host()->GetProcess());
   EXPECT_EQ(host, child2->current_frame_host()->GetProcess());
-  EXPECT_EQ(ChildProcessSecurityPolicyImpl::CheckOriginLockResult::NO_LOCK,
-            ChildProcessSecurityPolicyImpl::GetInstance()->CheckOriginLock(
-                host->GetID(), GURL()));
+  EXPECT_TRUE(ChildProcessSecurityPolicyImpl::GetInstance()
+                  ->GetOriginLock(host->GetID())
+                  .is_empty());
 }
 
 // Creates a non-isolated main frame with an isolated child and non-isolated

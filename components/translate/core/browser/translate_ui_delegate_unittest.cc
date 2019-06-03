@@ -50,8 +50,8 @@ class TranslateUIDelegateTest : public ::testing::Test {
   TranslateUIDelegateTest() {}
 
   void SetUp() override {
-    pref_service_.reset(new sync_preferences::TestingPrefServiceSyncable());
-
+    pref_service_ =
+        std::make_unique<sync_preferences::TestingPrefServiceSyncable>();
     language::LanguagePrefs::RegisterProfilePrefs(pref_service_->registry());
     pref_service_->SetString(language::prefs::kAcceptLanguages, std::string());
 #if defined(OS_CHROMEOS)
@@ -63,15 +63,16 @@ class TranslateUIDelegateTest : public ::testing::Test {
         prefs::kOfferTranslateEnabled, true);
     TranslatePrefs::RegisterProfilePrefs(pref_service_->registry());
 
-    client_.reset(new MockTranslateClient(&driver_, pref_service_.get()));
-    ranker_.reset(new MockTranslateRanker());
-    language_model_.reset(new MockLanguageModel());
-    manager_.reset(new TranslateManager(client_.get(), ranker_.get(),
-                                        language_model_.get()));
+    client_ =
+        std::make_unique<MockTranslateClient>(&driver_, pref_service_.get());
+    ranker_ = std::make_unique<MockTranslateRanker>();
+    language_model_ = std::make_unique<MockLanguageModel>();
+    manager_ = std::make_unique<TranslateManager>(client_.get(), ranker_.get(),
+                                                  language_model_.get());
     manager_->GetLanguageState().set_translation_declined(false);
 
-    delegate_.reset(
-        new TranslateUIDelegate(manager_->GetWeakPtr(), "ar", "fr"));
+    delegate_ = std::make_unique<TranslateUIDelegate>(manager_->GetWeakPtr(),
+                                                      "ar", "fr");
 
     ASSERT_FALSE(client_->GetTranslatePrefs()->IsTooOftenDenied("ar"));
   }
@@ -93,7 +94,6 @@ TEST_F(TranslateUIDelegateTest, CheckDeclinedFalse) {
   EXPECT_CALL(*ranker_, RecordTranslateEvent(
                             metrics::TranslateEventProto::USER_IGNORE, _, _))
       .Times(1);
-  EXPECT_CALL(*client_, RecordTranslateEvent(_)).Times(1);
 
   std::unique_ptr<TranslatePrefs> prefs(client_->GetTranslatePrefs());
   for (int i = 0; i < 10; i++) {
@@ -117,7 +117,6 @@ TEST_F(TranslateUIDelegateTest, CheckDeclinedTrue) {
   EXPECT_CALL(*ranker_, RecordTranslateEvent(
                             metrics::TranslateEventProto::USER_DECLINE, _, _))
       .Times(1);
-  EXPECT_CALL(*client_, RecordTranslateEvent(_)).Times(1);
 
   std::unique_ptr<TranslatePrefs> prefs(client_->GetTranslatePrefs());
   for (int i = 0; i < 10; i++) {
@@ -141,7 +140,6 @@ TEST_F(TranslateUIDelegateTest, SetLanguageBlocked) {
       RecordTranslateEvent(
           metrics::TranslateEventProto::USER_NEVER_TRANSLATE_LANGUAGE, _, _))
       .Times(1);
-  EXPECT_CALL(*client_, RecordTranslateEvent(_)).Times(1);
 
   std::unique_ptr<TranslatePrefs> prefs(client_->GetTranslatePrefs());
   manager_->GetLanguageState().SetTranslateEnabled(true);

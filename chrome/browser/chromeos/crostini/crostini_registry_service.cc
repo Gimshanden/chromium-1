@@ -8,6 +8,7 @@
 
 #include "ash/public/cpp/app_list/app_list_config.h"
 #include "base/bind.h"
+#include "base/files/file_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,7 +20,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/crostini/crostini_pref_names.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
-#include "chrome/browser/chromeos/plugin_vm/plugin_vm_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/dbus/vm_applications/apps.pb.h"
@@ -35,8 +35,7 @@ namespace crostini {
 
 namespace {
 
-// Prefixes of the ApplicationId set on exo windows.
-constexpr char kArcWindowAppIdPrefix[] = "org.chromium.arc";
+// Prefix of the ApplicationId set on exo windows for X apps.
 constexpr char kCrostiniWindowAppIdPrefix[] = "org.chromium.termina.";
 // This comes after kCrostiniWindowAppIdPrefix
 constexpr char kWMClassPrefix[] = "wmclass.";
@@ -380,6 +379,18 @@ bool CrostiniRegistryService::Registration::NoDisplay() const {
   return false;
 }
 
+std::string CrostiniRegistryService::Registration::PackageId() const {
+  if (is_terminal_app_)
+    return std::string();
+  if (pref_.is_none())
+    return std::string();
+  const base::Value* package_id =
+      pref_.FindKeyOfType(kAppPackageIdKey, base::Value::Type::STRING);
+  if (!package_id)
+    return std::string();
+  return package_id->GetString();
+}
+
 bool CrostiniRegistryService::Registration::CanUninstall() const {
   if (pref_.is_none())
     return false;
@@ -487,8 +498,8 @@ base::WeakPtr<CrostiniRegistryService> CrostiniRegistryService::GetWeakPtr() {
 }
 
 // The code follows these steps to identify apps and returns the first match:
-// 1) Ignore windows if the App Id is prefixed by org.chromium.arc.
-// 2) If the Startup Id is set, look for a matching desktop file id.
+// 1) If the Startup Id is set, look for a matching desktop file id.
+// 2) Ignore windows if the App Id is not set.
 // 3) If the App Id is not prefixed by org.chromium.termina., it's an app with
 // native Wayland support. Look for a matching desktop file id.
 // 4) If the App Id is prefixed by org.chromium.termina.wmclass.:
@@ -516,13 +527,8 @@ std::string CrostiniRegistryService::GetCrostiniShelfAppId(
     // Try a lookup with the window app id.
   }
 
-  // TODO(timloh): Crostini shouldn't need to know about Arc and PluginVm.
-  if (!window_app_id ||
-      base::StartsWith(*window_app_id, kArcWindowAppIdPrefix,
-                       base::CompareCase::SENSITIVE) ||
-      plugin_vm::IsPluginVmExoApplicationId(*window_app_id)) {
+  if (!window_app_id)
     return std::string();
-  }
 
   // Wayland apps won't be prefixed with org.chromium.termina.
   if (!base::StartsWith(*window_app_id, kCrostiniWindowAppIdPrefix,

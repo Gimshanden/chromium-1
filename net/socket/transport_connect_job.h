@@ -8,8 +8,10 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/host_port_pair.h"
@@ -23,10 +25,6 @@ namespace net {
 
 class NetLogWithSource;
 class SocketTag;
-
-typedef base::RepeatingCallback<int(const AddressList&,
-                                    const NetLogWithSource& net_log)>
-    OnHostResolutionCallback;
 
 class NET_EXPORT_PRIVATE TransportSocketParams
     : public base::RefCounted<TransportSocketParams> {
@@ -104,7 +102,7 @@ class NET_EXPORT_PRIVATE TransportConnectJob : public ConnectJob {
   // ConnectJob methods.
   LoadState GetLoadState() const override;
   bool HasEstablishedConnection() const override;
-  void GetAdditionalErrorState(ClientSocketHandle* handle) override;
+  ConnectionAttempts GetConnectionAttempts() const override;
 
   // Rolls |addrlist| forward until the first IPv4 address, if any.
   // WARNING: this method should only be used to implement the prefer-IPv4 hack.
@@ -171,6 +169,8 @@ class NET_EXPORT_PRIVATE TransportConnectJob : public ConnectJob {
   // it is returned.)
   ConnectionAttempts connection_attempts_;
   ConnectionAttempts fallback_connection_attempts_;
+
+  base::WeakPtrFactory<TransportConnectJob> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TransportConnectJob);
 };

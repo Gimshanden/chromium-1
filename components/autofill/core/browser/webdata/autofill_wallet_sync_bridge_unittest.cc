@@ -14,16 +14,15 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/country_names.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_bridge_test_util.h"
@@ -57,7 +56,6 @@ using sync_pb::ModelTypeState;
 using syncer::DataBatch;
 using syncer::EntityChange;
 using syncer::EntityData;
-using syncer::EntityDataPtr;
 using syncer::HasInitialSyncDone;
 using syncer::KeyAndData;
 using syncer::MockModelTypeChangeProcessor;
@@ -246,6 +244,8 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
   void ResetBridge(bool initial_sync_done) {
     ModelTypeState model_type_state;
     model_type_state.set_initial_sync_done(initial_sync_done);
+    model_type_state.mutable_progress_marker()->set_data_type_id(
+        GetSpecificsFieldNumberFromModelType(syncer::AUTOFILL_WALLET_DATA));
     EXPECT_TRUE(table()->UpdateModelTypeState(syncer::AUTOFILL_WALLET_DATA,
                                               model_type_state));
     bridge_ = std::make_unique<AutofillWalletSyncBridge>(
@@ -276,46 +276,7 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
     for (const AutofillWalletSpecifics& specifics : remote_data) {
       initial_updates.push_back(SpecificsToUpdateResponse(specifics));
     }
-    real_processor_->OnUpdateReceived(state, initial_updates);
-  }
-
-  void ExpectAddressesDiffInHistograms(int added, int removed) {
-    histogram_tester_.ExpectUniqueSample("Autofill.WalletAddresses2.Added",
-                                         /*bucket=*/added,
-                                         /*count=*/1);
-    histogram_tester_.ExpectUniqueSample("Autofill.WalletAddresses2.Removed",
-                                         /*bucket=*/removed,
-                                         /*count=*/1);
-    histogram_tester_.ExpectUniqueSample(
-        "Autofill.WalletAddresses2.AddedOrRemoved",
-        /*bucket=*/added + removed,
-        /*count=*/1);
-  }
-
-  void ExpectNoHistogramsForAddressesDiff() {
-    histogram_tester_.ExpectTotalCount("Autofill.WalletAddresses2.Added", 0);
-    histogram_tester_.ExpectTotalCount("Autofill.WalletAddresses2.Removed", 0);
-    histogram_tester_.ExpectTotalCount(
-        "Autofill.WalletAddresses2.AddedOrRemoved", 0);
-  }
-
-  void ExpectCardsDiffInHistograms(int added, int removed) {
-    histogram_tester_.ExpectUniqueSample("Autofill.WalletCards2.Added",
-                                         /*bucket=*/added,
-                                         /*count=*/1);
-    histogram_tester_.ExpectUniqueSample("Autofill.WalletCards2.Removed",
-                                         /*bucket=*/removed,
-                                         /*count=*/1);
-    histogram_tester_.ExpectUniqueSample("Autofill.WalletCards2.AddedOrRemoved",
-                                         /*bucket=*/added + removed,
-                                         /*count=*/1);
-  }
-
-  void ExpectNoHistogramsForCardsDiff() {
-    histogram_tester_.ExpectTotalCount("Autofill.WalletCards2.Added", 0);
-    histogram_tester_.ExpectTotalCount("Autofill.WalletCards2.Removed", 0);
-    histogram_tester_.ExpectTotalCount("Autofill.WalletCards2.AddedOrRemoved",
-                                       0);
+    real_processor_->OnUpdateReceived(state, std::move(initial_updates));
   }
 
   void ExpectCountsOfWalletMetadataInDB(unsigned int cards_count,
@@ -329,11 +290,12 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
     EXPECT_EQ(addresses_count, addresses_metadata.size());
   }
 
-  EntityData SpecificsToEntity(const AutofillWalletSpecifics& specifics) {
-    EntityData data;
-    *data.specifics.mutable_autofill_wallet() = specifics;
-    data.client_tag_hash = syncer::GenerateSyncableHash(
-        syncer::AUTOFILL_WALLET_DATA, bridge()->GetClientTag(data));
+  std::unique_ptr<EntityData> SpecificsToEntity(
+      const AutofillWalletSpecifics& specifics) {
+    auto data = std::make_unique<EntityData>();
+    *data->specifics.mutable_autofill_wallet() = specifics;
+    data->client_tag_hash = syncer::GenerateSyncableHash(
+        syncer::AUTOFILL_WALLET_DATA, bridge()->GetClientTag(*data));
     return data;
   }
 
@@ -350,10 +312,10 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
     return data;
   }
 
-  syncer::UpdateResponseData SpecificsToUpdateResponse(
+  std::unique_ptr<syncer::UpdateResponseData> SpecificsToUpdateResponse(
       const AutofillWalletSpecifics& specifics) {
-    syncer::UpdateResponseData data;
-    data.entity = SpecificsToEntity(specifics).PassToPtr();
+    auto data = std::make_unique<syncer::UpdateResponseData>();
+    data->entity = SpecificsToEntity(specifics);
     return data;
   }
 
@@ -381,7 +343,6 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
   testing::NiceMock<MockModelTypeChangeProcessor> mock_processor_;
   std::unique_ptr<syncer::ClientTagBasedModelTypeProcessor> real_processor_;
   std::unique_ptr<AutofillWalletSyncBridge> bridge_;
-  base::HistogramTester histogram_tester_;
   NiceMock<base::MockCallback<base::RepeatingCallback<void(bool)>>>
       active_callback_;
 
@@ -392,14 +353,14 @@ class AutofillWalletSyncBridgeTest : public UssSwitchToggler,
 TEST_P(AutofillWalletSyncBridgeTest, GetClientTagForAddress) {
   AutofillWalletSpecifics specifics =
       CreateAutofillWalletSpecificsForAddress(kAddr1SpecificsId);
-  EXPECT_EQ(bridge()->GetClientTag(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetClientTag(*SpecificsToEntity(specifics)),
             kAddr1SyncTag);
 }
 
 TEST_P(AutofillWalletSyncBridgeTest, GetClientTagForCard) {
   AutofillWalletSpecifics specifics =
       CreateAutofillWalletSpecificsForCard(kCard1SpecificsId);
-  EXPECT_EQ(bridge()->GetClientTag(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetClientTag(*SpecificsToEntity(specifics)),
             kCard1SyncTag);
 }
 
@@ -407,7 +368,7 @@ TEST_P(AutofillWalletSyncBridgeTest, GetClientTagForCustomerData) {
   AutofillWalletSpecifics specifics =
       CreateAutofillWalletSpecificsForPaymentsCustomerData(
           kCustomerDataSyncTag);
-  EXPECT_EQ(bridge()->GetClientTag(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetClientTag(*SpecificsToEntity(specifics)),
             kCustomerDataSyncTag);
 }
 
@@ -415,21 +376,21 @@ TEST_P(AutofillWalletSyncBridgeTest, GetClientTagForCustomerData) {
 TEST_P(AutofillWalletSyncBridgeTest, GetStorageKeyForAddress) {
   AutofillWalletSpecifics specifics1 =
       CreateAutofillWalletSpecificsForAddress(kAddr1SpecificsId);
-  EXPECT_EQ(bridge()->GetStorageKey(SpecificsToEntity(specifics1)),
+  EXPECT_EQ(bridge()->GetStorageKey(*SpecificsToEntity(specifics1)),
             kAddr1SpecificsId);
 }
 
 TEST_P(AutofillWalletSyncBridgeTest, GetStorageKeyForCard) {
   AutofillWalletSpecifics specifics2 =
       CreateAutofillWalletSpecificsForCard(kCard1SpecificsId);
-  EXPECT_EQ(bridge()->GetStorageKey(SpecificsToEntity(specifics2)),
+  EXPECT_EQ(bridge()->GetStorageKey(*SpecificsToEntity(specifics2)),
             kCard1SpecificsId);
 }
 
 TEST_P(AutofillWalletSyncBridgeTest, GetStorageKeyForCustomerData) {
   AutofillWalletSpecifics specifics3 =
       CreateAutofillWalletSpecificsForPaymentsCustomerData(kCustomerDataId);
-  EXPECT_EQ(bridge()->GetStorageKey(SpecificsToEntity(specifics3)),
+  EXPECT_EQ(bridge()->GetStorageKey(*SpecificsToEntity(specifics3)),
             kCustomerDataId);
 }
 
@@ -510,8 +471,6 @@ TEST_P(AutofillWalletSyncBridgeTest, MergeSyncData_NewWalletAddressAndCard) {
               UnorderedElementsAre(EqualsSpecifics(profile_specifics2),
                                    EqualsSpecifics(card_specifics2),
                                    EqualsSpecifics(customer_data_specifics)));
-  ExpectAddressesDiffInHistograms(/*added=*/1, /*removed=*/1);
-  ExpectCardsDiffInHistograms(/*added=*/1, /*removed=*/1);
 }
 
 // Tests that in initial sync, no metrics are recorded for new addresses and
@@ -549,8 +508,6 @@ TEST_P(AutofillWalletSyncBridgeTest,
               UnorderedElementsAre(EqualsSpecifics(profile_specifics),
                                    EqualsSpecifics(card_specifics),
                                    EqualsSpecifics(customer_data_specifics)));
-  ExpectNoHistogramsForAddressesDiff();
-  ExpectNoHistogramsForCardsDiff();
 }
 
 // Tests that when a new payments customer data is sent by the server, the
@@ -585,8 +542,6 @@ TEST_P(AutofillWalletSyncBridgeTest, MergeSyncData_NewPaymentsCustomerData) {
               UnorderedElementsAre(EqualsSpecifics(profile_specifics),
                                    EqualsSpecifics(card_specifics),
                                    EqualsSpecifics(customer_data_specifics2)));
-  ExpectAddressesDiffInHistograms(/*added=*/0, /*removed=*/0);
-  ExpectCardsDiffInHistograms(/*added=*/0, /*removed=*/0);
 }
 
 // Tests that when the server sends no cards or address, the client should
@@ -613,9 +568,6 @@ TEST_P(AutofillWalletSyncBridgeTest, MergeSyncData_NoWalletAddressOrCard) {
   }
 
   EXPECT_TRUE(GetAllLocalData().empty());
-  // No diff metrics reported when new data is empty.
-  ExpectNoHistogramsForAddressesDiff();
-  ExpectNoHistogramsForCardsDiff();
 }
 
 // Test that when the server sends the same address and card as the client has,
@@ -650,8 +602,6 @@ TEST_P(AutofillWalletSyncBridgeTest,
               UnorderedElementsAre(EqualsSpecifics(profile_specifics),
                                    EqualsSpecifics(card_specifics),
                                    EqualsSpecifics(customer_data_specifics)));
-  ExpectAddressesDiffInHistograms(/*added=*/0, /*removed=*/0);
-  ExpectCardsDiffInHistograms(/*added=*/0, /*removed=*/0);
 }
 
 // Tests that when there are multiple changes happening at the same time, the
@@ -700,8 +650,6 @@ TEST_P(AutofillWalletSyncBridgeTest,
               UnorderedElementsAre(EqualsSpecifics(profile_specifics),
                                    EqualsSpecifics(card2_specifics),
                                    EqualsSpecifics(customer_data_specifics)));
-  ExpectAddressesDiffInHistograms(/*added=*/0, /*removed=*/1);
-  ExpectCardsDiffInHistograms(/*added=*/1, /*removed=*/1);
 }
 
 // Test that all field values for a address sent form the server are copied on
@@ -841,9 +789,6 @@ TEST_P(AutofillWalletSyncBridgeTest, ApplyStopSyncChanges_ClearAllData) {
   }
 
   EXPECT_TRUE(GetAllLocalData().empty());
-  // No diff metrics reported when clearing data.
-  ExpectNoHistogramsForAddressesDiff();
-  ExpectNoHistogramsForCardsDiff();
 }
 
 TEST_P(AutofillWalletSyncBridgeTest, ApplyStopSyncChanges_KeepData) {
@@ -864,8 +809,6 @@ TEST_P(AutofillWalletSyncBridgeTest, ApplyStopSyncChanges_KeepData) {
   bridge()->ApplyStopSyncChanges(/*delete_metadata_change_list=*/nullptr);
 
   EXPECT_FALSE(GetAllLocalData().empty());
-  ExpectNoHistogramsForAddressesDiff();
-  ExpectNoHistogramsForCardsDiff();
 }
 
 TEST_P(AutofillWalletSyncBridgeTest, NotifiesWhenActivelySyncing) {

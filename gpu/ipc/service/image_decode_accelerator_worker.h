@@ -8,14 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
-
-namespace gfx {
-class Size;
-}  // namespace gfx
+#include "base/containers/span.h"
+#include "ui/gfx/buffer_types.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace gpu {
 
@@ -25,24 +25,26 @@ class ImageDecodeAcceleratorWorker {
  public:
   virtual ~ImageDecodeAcceleratorWorker() {}
 
+  // Encapsulates the result of a decode request.
+  struct DecodeResult {
+    gfx::GpuMemoryBufferHandle handle;
+    gfx::Size visible_size;
+    gfx::BufferFormat buffer_format;
+    size_t buffer_byte_size;
+  };
+
   using CompletedDecodeCB =
-      base::OnceCallback<void(std::vector<uint8_t> /* output */,
-                              size_t /* row_bytes */,
-                              SkImageInfo /* image_info */)>;
+      base::OnceCallback<void(std::unique_ptr<DecodeResult>)>;
 
   // Enqueue a decode of |encoded_data|. The |decode_cb| is called
-  // asynchronously when the decode completes passing as parameters a vector
-  // containing the decoded image (|output|), the stride (|row_bytes|), and a
-  // SkImageInfo (|image_info|) with information about the decoded output.
-  // For a successful decode, implementations must guarantee that:
+  // asynchronously when the decode completes passing as parameter DecodeResult
+  // containing a reference to the decoded image (in the form of a
+  // gfx::GpuMemoryBufferHandle). The |buffer_byte_size| is the size of the
+  // buffer that |handle| refers to. For a successful decode, implementations
+  // must guarantee that |visible_size| == |output_size|.
   //
-  // 1) |image_info|.width() == |output_size|.width().
-  // 2) |image_info|.height() == |output_size|.height().
-  // 3) |row_bytes| >= |image_info|.minRowBytes().
-  // 4) |output|.size() == |image_info|.computeByteSize(|row_bytes|).
-  //
-  // If the decode fails, |decode_cb| is called asynchronously with an empty
-  // vector. Callbacks should be called in the order that this method is called.
+  // If the decode fails, |decode_cb| is called asynchronously with nullptr.
+  // Callbacks should be called in the order that this method is called.
   virtual void Decode(std::vector<uint8_t> encoded_data,
                       const gfx::Size& output_size,
                       CompletedDecodeCB decode_cb) = 0;

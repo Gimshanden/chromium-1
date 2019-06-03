@@ -54,6 +54,7 @@
 #include "third_party/blink/public/common/mediastream/media_devices.h"
 #include "third_party/blink/public/common/mediastream/media_stream_controls.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 
 namespace media {
 class AudioSystem;
@@ -86,7 +87,7 @@ class CONTENT_EXPORT MediaStreamManager
                               std::unique_ptr<MediaStreamUIProxy> ui)>;
 
   using GenerateStreamCallback =
-      base::OnceCallback<void(blink::MediaStreamRequestResult result,
+      base::OnceCallback<void(blink::mojom::MediaStreamRequestResult result,
                               const std::string& label,
                               const blink::MediaStreamDevices& audio_devices,
                               const blink::MediaStreamDevices& video_devices)>;
@@ -351,7 +352,8 @@ class CONTENT_EXPORT MediaStreamManager
   // |DeviceRequests| is a list to ensure requests are processed in the order
   // they arrive. The first member of the pair is the label of the
   // |DeviceRequest|.
-  using LabeledDeviceRequest = std::pair<std::string, DeviceRequest*>;
+  using LabeledDeviceRequest =
+      std::pair<std::string, std::unique_ptr<DeviceRequest>>;
   using DeviceRequests = std::list<LabeledDeviceRequest>;
 
   void InitializeMaybeAsync(
@@ -362,7 +364,7 @@ class CONTENT_EXPORT MediaStreamManager
       const std::string& label,
       const media::AudioParameters& output_parameters,
       const blink::MediaStreamDevices& devices,
-      blink::MediaStreamRequestResult result);
+      blink::mojom::MediaStreamRequestResult result);
   void HandleChangeSourceRequestResponse(
       const std::string& label,
       DeviceRequest* request,
@@ -386,7 +388,7 @@ class CONTENT_EXPORT MediaStreamManager
   bool RequestDone(const DeviceRequest& request) const;
   MediaStreamProvider* GetDeviceManager(blink::MediaStreamType stream_type);
   void StartEnumeration(DeviceRequest* request, const std::string& label);
-  std::string AddRequest(DeviceRequest* request);
+  std::string AddRequest(std::unique_ptr<DeviceRequest> request);
   DeviceRequest* FindRequest(const std::string& label) const;
   void DeleteRequest(const std::string& label);
   // Prepare the request with label |label| by starting device enumeration if
@@ -446,7 +448,7 @@ class CONTENT_EXPORT MediaStreamManager
   void FinalizeGenerateStream(const std::string& label, DeviceRequest* request);
   void FinalizeRequestFailed(const std::string& label,
                              DeviceRequest* request,
-                             blink::MediaStreamRequestResult result);
+                             blink::mojom::MediaStreamRequestResult result);
   void FinalizeOpenDevice(const std::string& label, DeviceRequest* request);
   void FinalizeChangeDevice(const std::string& label, DeviceRequest* request);
   void FinalizeMediaAccessRequest(const std::string& label,

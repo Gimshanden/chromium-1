@@ -21,6 +21,7 @@ import org.chromium.chrome.browser.metrics.WebApkUma;
 import org.chromium.chrome.browser.notifications.NotificationBuilderBase;
 import org.chromium.chrome.browser.notifications.NotificationMetadata;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.webapk.lib.client.WebApkServiceConnectionManager;
 import org.chromium.webapk.lib.runtime_library.IWebApkApi;
 
@@ -72,8 +73,8 @@ public class WebApkServiceClient {
     }
 
     private WebApkServiceClient() {
-        mConnectionManager =
-                new WebApkServiceConnectionManager(CATEGORY_WEBAPK_API, null /* action */);
+        mConnectionManager = new WebApkServiceConnectionManager(
+                UiThreadTaskTraits.DEFAULT, CATEGORY_WEBAPK_API, null /* action */);
     }
 
     /**
@@ -157,6 +158,11 @@ public class WebApkServiceClient {
         String webApkPackage = webApkActivity.getWebApkPackageName();
         mConnectionManager.connect(
                 ContextUtils.getApplicationContext(), webApkPackage, connectionCallback);
+    }
+
+    /** Returns whether there are any WebAPK service API calls in progress. */
+    public static boolean hasPendingWork() {
+        return sInstance != null && !sInstance.mConnectionManager.didAllConnectCallbacksRun();
     }
 
     /** Disconnects all the connections to WebAPK services. */

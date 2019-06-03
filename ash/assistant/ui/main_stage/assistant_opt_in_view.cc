@@ -125,11 +125,11 @@ void AssistantOptInView::InitLayout() {
 
   layout_manager->set_cross_axis_alignment(
       app_list_features::IsEmbeddedAssistantUIEnabled()
-          ? views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER
-          : views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_END);
+          ? views::BoxLayout::CrossAxisAlignment::kCenter
+          : views::BoxLayout::CrossAxisAlignment::kEnd);
 
   layout_manager->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
 
   // Container.
   container_ = new AssistantOptInContainer(/*listener=*/this);
@@ -140,7 +140,7 @@ void AssistantOptInView::InitLayout() {
           gfx::Insets(0, kPaddingDip)));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   AddChildView(container_);
 
@@ -181,6 +181,12 @@ void AssistantOptInView::UpdateLabel(mojom::ConsentStatus consent_status) {
       CreateStyleInfo(gfx::Font::Weight::BOLD));
 
   container_->SetAccessibleName(label_text);
+
+  // After updating the |label_| we need to ensure that it is remeasured and
+  // repainted to address a timing bug in which the AssistantOptInView was
+  // sometimes drawn in an invalid state (b/130758812).
+  container_->Layout();
+  container_->SchedulePaint();
 }
 
 }  // namespace ash

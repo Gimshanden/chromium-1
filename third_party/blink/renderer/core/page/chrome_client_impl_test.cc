@@ -61,7 +61,6 @@ class ViewCreatingClient : public frame_test_helpers::TestWebViewClient {
                       const WebWindowFeatures&,
                       const WebString& name,
                       WebNavigationPolicy,
-                      bool,
                       WebSandboxFlags,
                       const FeaturePolicy::FeatureState&,
                       const SessionStorageNamespaceId&) override {
@@ -91,11 +90,11 @@ class CreateWindowTest : public testing::Test {
 TEST_F(CreateWindowTest, CreateWindowFromPausedPage) {
   ScopedPagePauser pauser;
   LocalFrame* frame = To<WebLocalFrameImpl>(main_frame_)->GetFrame();
-  FrameLoadRequest request(frame->GetDocument());
+  FrameLoadRequest request(frame->GetDocument(), ResourceRequest());
   request.SetNavigationPolicy(kNavigationPolicyNewForegroundTab);
   WebWindowFeatures features;
   EXPECT_EQ(nullptr, chrome_client_impl_->CreateWindow(
-                         frame, request, features, kSandboxNone,
+                         frame, request, "", features, WebSandboxFlags::kNone,
                          FeaturePolicy::FeatureState(), ""));
 }
 
@@ -169,10 +168,11 @@ class PagePopupSuppressionTest : public testing::Test {
   }
 
   bool CanOpenDateTimeChooser() {
+    LocalFrame* frame = main_frame_->GetFrame();
     DateTimeChooserParameters params;
     params.locale = DefaultLanguage();
-    return !!chrome_client_impl_->OpenDateTimeChooser(date_time_chooser_client_,
-                                                      params);
+    return !!chrome_client_impl_->OpenDateTimeChooser(
+        frame, date_time_chooser_client_, params);
   }
 
   Settings* GetSettings() {
@@ -191,7 +191,7 @@ class PagePopupSuppressionTest : public testing::Test {
         frame->GetDocument()->documentElement());
     date_time_chooser_client_ = MakeGarbageCollected<FakeDateTimeChooserClient>(
         frame->GetDocument()->documentElement());
-    select_ = HTMLSelectElement::Create(*(frame->GetDocument()));
+    select_ = MakeGarbageCollected<HTMLSelectElement>(*(frame->GetDocument()));
   }
 
  protected:

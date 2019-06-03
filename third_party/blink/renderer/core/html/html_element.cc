@@ -75,6 +75,7 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
 #include "third_party/blink/renderer/core/xml_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/text/bidi_resolver.h"
 #include "third_party/blink/renderer/platform/text/bidi_text_run.h"
@@ -101,9 +102,10 @@ namespace {
 
 // https://w3c.github.io/editing/execCommand.html#editing-host
 bool IsEditingHost(const Node& node) {
-  if (!node.IsHTMLElement())
+  auto* html_element = DynamicTo<HTMLElement>(node);
+  if (!html_element)
     return false;
-  String normalized_value = ToHTMLElement(node).contentEditable();
+  String normalized_value = html_element->contentEditable();
   if (normalized_value == "true" || normalized_value == "plaintext-only")
     return true;
   return node.GetDocument().InDesignMode() &&
@@ -114,13 +116,14 @@ bool IsEditingHost(const Node& node) {
 bool IsEditable(const Node& node) {
   if (IsEditingHost(node))
     return false;
-  if (node.IsHTMLElement() && ToHTMLElement(node).contentEditable() == "false")
+  auto* html_element = DynamicTo<HTMLElement>(node);
+  if (html_element && html_element->contentEditable() == "false")
     return false;
   if (!node.parentNode())
     return false;
   if (!IsEditingHost(*node.parentNode()) && !IsEditable(*node.parentNode()))
     return false;
-  if (node.IsHTMLElement())
+  if (html_element)
     return true;
   if (IsSVGSVGElement(node))
     return true;
@@ -133,8 +136,6 @@ bool IsEditable(const Node& node) {
 const WebFeature kNoWebFeature = static_cast<WebFeature>(0);
 
 }  // anonymous namespace
-
-DEFINE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLElement)
 
 String HTMLElement::DebugNodeName() const {
   if (GetDocument().IsHTMLDocument()) {
@@ -447,8 +448,8 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        nullptr},
       {kOnpointeroverAttr, kNoWebFeature, event_type_names::kPointerover,
        nullptr},
-      {kOnpointerrawmoveAttr, kNoWebFeature, event_type_names::kPointerrawmove,
-       nullptr},
+      {kOnpointerrawupdateAttr, kNoWebFeature,
+       event_type_names::kPointerrawupdate, nullptr},
       {kOnpointerupAttr, kNoWebFeature, event_type_names::kPointerup, nullptr},
       {kOnprogressAttr, kNoWebFeature, event_type_names::kProgress, nullptr},
       {kOnratechangeAttr, kNoWebFeature, event_type_names::kRatechange,
@@ -654,12 +655,10 @@ void HTMLElement::ParseAttribute(const AttributeModificationParams& params) {
 
   if (triggers->web_feature != kNoWebFeature) {
     // Count usage of attributes but ignore attributes in user agent shadow DOM.
-    if (ShadowRoot* shadow = ContainingShadowRoot()) {
-      if (shadow->IsUserAgent())
-        UseCounter::Count(GetDocument(), triggers->web_feature);
+    if (!IsInUserAgentShadowRoot()) {
+      UseCounter::Count(GetDocument(), triggers->web_feature);
     }
   }
-
   if (triggers->function)
     ((*this).*(triggers->function))(params);
 }
@@ -688,7 +687,7 @@ DocumentFragment* HTMLElement::TextToFragment(const String& text,
     if (i == length)
       break;
 
-    fragment->AppendChild(HTMLBRElement::Create(GetDocument()),
+    fragment->AppendChild(MakeGarbageCollected<HTMLBRElement>(GetDocument()),
                           exception_state);
     if (exception_state.HadException())
       return nullptr;
@@ -788,11 +787,13 @@ void HTMLElement::setOuterText(const String& text,
   parent->ReplaceChild(new_child, this, exception_state);
 
   Node* node = next ? next->previousSibling() : nullptr;
-  if (!exception_state.HadException() && node && node->IsTextNode())
-    MergeWithNextTextNode(ToText(node), exception_state);
+  auto* next_text_node = DynamicTo<Text>(node);
+  if (!exception_state.HadException() && next_text_node)
+    MergeWithNextTextNode(next_text_node, exception_state);
 
+  auto* prev_text_node = DynamicTo<Text>(prev);
   if (!exception_state.HadException() && prev && prev->IsTextNode())
-    MergeWithNextTextNode(ToText(prev), exception_state);
+    MergeWithNextTextNode(prev_text_node, exception_state);
 }
 
 void HTMLElement::ApplyAlignmentAttributeToStyle(
@@ -1006,8 +1007,9 @@ HTMLFormElement* HTMLElement::FindFormAncestor() const {
 }
 
 static inline bool ElementAffectsDirectionality(const Node* node) {
-  return node->IsHTMLElement() && (IsHTMLBDIElement(ToHTMLElement(*node)) ||
-                                   ToHTMLElement(*node).hasAttribute(kDirAttr));
+  auto* html_element = DynamicTo<HTMLElement>(node);
+  return html_element && (IsHTMLBDIElement(*html_element) ||
+                          html_element->hasAttribute(kDirAttr));
 }
 
 void HTMLElement::ChildrenChanged(const ChildrenChange& change) {
@@ -1031,18 +1033,11 @@ TextDirection HTMLElement::DirectionalityIfhasDirAutoAttribute(
   return Directionality();
 }
 
-TextDirection HTMLElement::Directionality(
-    Node** strong_directionality_text_node) const {
+TextDirection HTMLElement::Directionality() const {
   if (auto* input_element = ToHTMLInputElementOrNull(*this)) {
     bool has_strong_directionality;
     TextDirection text_direction = DetermineDirectionality(
         input_element->value(), &has_strong_directionality);
-    if (strong_directionality_text_node) {
-      *strong_directionality_text_node =
-          has_strong_directionality
-              ? const_cast<HTMLInputElement*>(input_element)
-              : nullptr;
-    }
     return text_direction;
   }
 
@@ -1072,16 +1067,11 @@ TextDirection HTMLElement::Directionality(
       bool has_strong_directionality;
       TextDirection text_direction = DetermineDirectionality(
           node->textContent(true), &has_strong_directionality);
-      if (has_strong_directionality) {
-        if (strong_directionality_text_node)
-          *strong_directionality_text_node = node;
+      if (has_strong_directionality)
         return text_direction;
-      }
     }
     node = FlatTreeTraversal::Next(*node, this);
   }
-  if (strong_directionality_text_node)
-    *strong_directionality_text_node = nullptr;
   return TextDirection::kLtr;
 }
 
@@ -1133,7 +1123,7 @@ void HTMLElement::AdjustDirectionalityIfNeededAfterChildrenChanged(
        element_to_adjust =
            FlatTreeTraversal::ParentElement(*element_to_adjust)) {
     if (ElementAffectsDirectionality(element_to_adjust)) {
-      ToHTMLElement(element_to_adjust)->CalculateAndAdjustDirectionality();
+      To<HTMLElement>(element_to_adjust)->CalculateAndAdjustDirectionality();
       return;
     }
   }
@@ -1420,11 +1410,10 @@ void HTMLElement::OnDirAttrChanged(const AttributeModificationParams& params) {
   if (!CanParticipateInFlatTree())
     return;
   UpdateDistributionForFlatTreeTraversal();
-  Element* parent = FlatTreeTraversal::ParentElement(*this);
-  if (parent && parent->IsHTMLElement() &&
-      ToHTMLElement(parent)->SelfOrAncestorHasDirAutoAttribute()) {
-    ToHTMLElement(parent)
-        ->AdjustDirectionalityIfNeededAfterChildAttributeChanged(this);
+  auto* parent =
+      DynamicTo<HTMLElement>(FlatTreeTraversal::ParentElement(*this));
+  if (parent && parent->SelfOrAncestorHasDirAutoAttribute()) {
+    parent->AdjustDirectionalityIfNeededAfterChildAttributeChanged(this);
   }
 
   if (DeprecatedEqualIgnoringCase(params.new_value, "auto"))
@@ -1478,7 +1467,7 @@ ElementInternals* HTMLElement::attachInternals(
       registry ? registry->DefinitionForName(localName()) : nullptr;
   if (!definition) {
     exception_state.ThrowDOMException(
-        DOMExceptionCode::kInvalidStateError,
+        DOMExceptionCode::kNotSupportedError,
         "Unable to attach ElementInternals to non-custom elements.");
     return nullptr;
   }
@@ -1490,7 +1479,7 @@ ElementInternals* HTMLElement::attachInternals(
   }
   if (DidAttachInternals()) {
     exception_state.ThrowDOMException(
-        DOMExceptionCode::kInvalidStateError,
+        DOMExceptionCode::kNotSupportedError,
         "ElementInternals for the specified element was already attached.");
     return nullptr;
   }

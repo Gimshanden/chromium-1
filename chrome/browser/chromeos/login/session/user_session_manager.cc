@@ -18,7 +18,6 @@
 #include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "base/base_paths.h"
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/location.h"
@@ -63,6 +62,7 @@
 #include "chrome/browser/chromeos/login/quick_unlock/pin_backend.h"
 #include "chrome/browser/chromeos/login/saml/saml_offline_signin_limiter.h"
 #include "chrome/browser/chromeos/login/saml/saml_offline_signin_limiter_factory.h"
+#include "chrome/browser/chromeos/login/saml/saml_password_expiry_notification.h"
 #include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen.h"
 #include "chrome/browser/chromeos/login/screens/sync_consent_screen.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_login_manager_factory.h"
@@ -76,12 +76,13 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/app_install_event_log_manager_wrapper.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/browser/chromeos/policy/tpm_auto_update_mode_policy_handler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/tether/tether_service.h"
 #include "chrome/browser/chromeos/tpm_firmware_update_notification.h"
 #include "chrome/browser/component_updater/crl_set_component_installer.h"
-#include "chrome/browser/component_updater/sth_set_component_installer.h"
+#include "chrome/browser/component_updater/sth_set_component_remover.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/google/google_brand_chromeos.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -102,6 +103,9 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/webui/chromeos/login/discover/discover_manager.h"
 #include "chrome/browser/ui/webui/chromeos/login/discover/modules/discover_module_pin_setup.h"
+#include "chrome/browser/ui/webui/chromeos/login/supervision_transition_screen_handler.h"
+#include "chrome/browser/ui/webui/chromeos/login/terms_of_service_screen_handler.h"
+#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
@@ -116,7 +120,8 @@
 #include "chromeos/dbus/cryptohome/tpm_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager/session_manager_client.h"
-#include "chromeos/login/auth/stub_authenticator.h"
+#include "chromeos/login/auth/stub_authenticator_builder.h"
+#include "chromeos/login/session/session_termination_manager.h"
 #include "chromeos/network/network_cert_loader.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "chromeos/network/portal_detector/network_portal_detector_strategy.h"
@@ -146,6 +151,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/page_zoom.h"
 #include "extensions/common/features/feature_session_type.h"
 #include "rlz/buildflags/buildflags.h"
 #include "services/identity/public/cpp/accounts_mutator.h"
@@ -447,27 +453,13 @@ void UserSessionManager::RegisterPrefs(PrefRegistrySimple* registry) {
 void UserSessionManager::MaybeAppendPolicySwitches(
     PrefService* user_profile_prefs,
     base::CommandLine* user_flags) {
-  // Get target values for --site-per-process and --isolate-origins for the user
-  // session according to policy. Values from command-line flags should not be
-  // honored at this point, so check |IsManaged()|.
+  // Get target value for --site-per-process for the user session according to
+  // policy. Values from command-line flags should not be honored at this point,
+  // so check |IsManaged()|.
   const PrefService::Preference* site_per_process_pref =
       user_profile_prefs->FindPreference(prefs::kSitePerProcess);
-  const PrefService::Preference* isolate_origins_pref =
-      user_profile_prefs->FindPreference(prefs::kIsolateOrigins);
   bool site_per_process = site_per_process_pref->IsManaged() &&
                           site_per_process_pref->GetValue()->GetBool();
-  std::string isolate_origins =
-      isolate_origins_pref->IsManaged()
-          ? isolate_origins_pref->GetValue()->GetString()
-          : std::string();
-
-  // The admin should also be able to use these policies to force site isolation
-  // off.  Note that disabling either SitePerProcess or IsolateOrigins via
-  // policy will disable both types of isolation.
-  bool disable_site_isolation =
-      (site_per_process_pref->IsManaged() &&
-       !site_per_process_pref->GetValue()->GetBool()) ||
-      (isolate_origins_pref->IsManaged() && isolate_origins.empty());
 
   // Append sentinels indicating that these values originate from policy.
   // This is important, because only command-line switches between the
@@ -478,19 +470,9 @@ void UserSessionManager::MaybeAppendPolicySwitches(
   // We use the policy-style sentinels because these values originate from
   // policy, and because login_manager uses the same sentinels when adding the
   // login-screen site isolation flags.
-  bool use_policy_sentinels = site_per_process || disable_site_isolation;
-  if (use_policy_sentinels) {
-    user_flags->AppendSwitch(chromeos::switches::kPolicySwitchesBegin);
-  }
-
   if (site_per_process) {
+    user_flags->AppendSwitch(chromeos::switches::kPolicySwitchesBegin);
     user_flags->AppendSwitch(::switches::kSitePerProcess);
-  }
-  if (disable_site_isolation) {
-    user_flags->AppendSwitch(::switches::kDisableSiteIsolationForPolicy);
-  }
-
-  if (use_policy_sentinels) {
     user_flags->AppendSwitch(chromeos::switches::kPolicySwitchesEnd);
   }
 }
@@ -587,9 +569,8 @@ scoped_refptr<Authenticator> UserSessionManager::CreateAuthenticator(
   }
 
   if (authenticator_.get() == NULL) {
-    if (injected_user_context_) {
-      authenticator_ =
-          new StubAuthenticator(consumer, *injected_user_context_.get());
+    if (injected_authenticator_builder_) {
+      authenticator_ = injected_authenticator_builder_->Create(consumer);
     } else {
       authenticator_ = new ChromeCryptohomeAuthenticator(consumer);
     }
@@ -889,7 +870,7 @@ bool UserSessionManager::RespectLocalePreference(
 bool UserSessionManager::RestartToApplyPerSessionFlagsIfNeed(
     Profile* profile,
     bool early_restart) {
-  if (!SessionManagerClient::Get()->SupportsRestartToApplyUserFlags())
+  if (!SessionManagerClient::Get()->SupportsBrowserRestart())
     return false;
 
   if (ProfileHelper::IsSigninProfile(profile) ||
@@ -1420,6 +1401,17 @@ void UserSessionManager::UserProfileInitialized(Profile* profile,
       }
     }
 
+    PrefService* prefs = profile->GetPrefs();
+    if (prefs->GetBoolean(prefs::kSamlInSessionPasswordChangeEnabled)) {
+      // Update password expiry data if new data came in during SAML login:
+      if (user_context_.GetSamlPasswordAttributes().has_value()) {
+        user_context_.GetSamlPasswordAttributes()->SaveToPrefs(prefs);
+      }
+      // Show password expiry notification if it is expiring - even if it wasn't
+      // a SAML login (ie, show it even if it was an offline login).
+      MaybeShowSamlPasswordExpiryNotification(profile);
+    }
+
     // Transfers authentication-related data from the profile that was used for
     // authentication to the user's profile. The proxy authentication state is
     // transferred unconditionally. If the user authenticated via an auth
@@ -1510,6 +1502,14 @@ void UserSessionManager::OnCryptohomeOperationCompleted(Profile* profile,
 }
 
 void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
+  // Record each user's "Page zoom" setting for https://crbug.com/955071.
+  // This can be removed after M79.
+  double zoom_level = profile->GetZoomLevelPrefs()->GetDefaultZoomLevelPref();
+  double zoom_factor = content::ZoomLevelToZoomFactor(zoom_level);
+  int zoom_percent = std::floor(zoom_factor * 100);
+  // Zoom can be greater than 100%.
+  UMA_HISTOGRAM_COUNTS_1000("Login.DefaultPageZoom", zoom_percent);
+
   BootTimesRecorder::Get()->AddLoginTimeMarker("TPMOwn-End", false);
 
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
@@ -1635,7 +1635,7 @@ void UserSessionManager::InitializeChildUserServices(Profile* profile) {
   ScreenTimeControllerFactory::GetForBrowserContext(profile);
 }
 
-void UserSessionManager::ActivateWizard(OobeScreen screen) {
+void UserSessionManager::ActivateWizard(OobeScreenId screen) {
   LoginDisplayHost* host = LoginDisplayHost::default_host();
   CHECK(host);
   host->StartWizard(screen);
@@ -1721,14 +1721,14 @@ bool UserSessionManager::InitializeUserSession(Profile* profile) {
       if (!StartupUtils::IsDeviceRegistered())
         StartupUtils::MarkDeviceRegistered(base::Closure());
 
-      ActivateWizard(OobeScreen::SCREEN_TERMS_OF_SERVICE);
+      ActivateWizard(TermsOfServiceScreenView::kScreenId);
       return false;
     } else if (base::FeatureList::IsEnabled(
                    chromeos::features::kEnableSupervisionTransitionScreens) &&
                !user_manager->IsCurrentUserNew() &&
                arc::GetSupervisionTransition(profile) !=
                    arc::ArcSupervisionTransition::NO_TRANSITION) {
-      ActivateWizard(OobeScreen::SCREEN_SUPERVISION_TRANSITION);
+      ActivateWizard(SupervisionTransitionScreenView::kScreenId);
       return false;
     }
   }
@@ -1776,9 +1776,6 @@ void UserSessionManager::RestoreAuthSessionImpl(
     return;
   }
 
-  // Remove legacy OAuth1 token if we have one. If it's valid, we should already
-  // have OAuth2 refresh token in OAuth2TokenService that could be used to
-  // retrieve all other tokens and user_context.
   OAuth2LoginManager* login_manager =
       OAuth2LoginManagerFactory::GetInstance()->GetForProfile(profile);
   login_manager->AddObserver(this);
@@ -1855,8 +1852,8 @@ void UserSessionManager::InitializeCRLSetFetcher(
     const user_manager::User* user) {
   const std::string username_hash = user->username_hash();
   if (!username_hash.empty()) {
-    base::FilePath path;
-    path = ProfileHelper::GetProfilePathByUserIdHash(username_hash);
+    base::FilePath path =
+        ProfileHelper::GetProfilePathByUserIdHash(username_hash);
     component_updater::ComponentUpdateService* cus =
         g_browser_process->component_updater();
     if (cus)
@@ -1867,13 +1864,10 @@ void UserSessionManager::InitializeCRLSetFetcher(
 void UserSessionManager::InitializeCertificateTransparencyComponents(
     const user_manager::User* user) {
   const std::string username_hash = user->username_hash();
-  component_updater::ComponentUpdateService* cus =
-      g_browser_process->component_updater();
-  if (!username_hash.empty() && cus) {
-    const base::FilePath path =
+  if (!username_hash.empty()) {
+    base::FilePath path =
         ProfileHelper::GetProfilePathByUserIdHash(username_hash);
-    // STH set fetcher.
-    RegisterSTHSetComponent(cus, path);
+    component_updater::DeleteLegacySTHSet(path);
   }
 }
 
@@ -1883,7 +1877,7 @@ void UserSessionManager::OnRestoreActiveSessions(
     LOG(ERROR) << "Could not get list of active user sessions after crash.";
     // If we could not get list of active user sessions it is safer to just
     // sign out so that we don't get in the inconsistent state.
-    SessionManagerClient::Get()->StopSession();
+    SessionTerminationManager::Get()->StopSession();
     return;
   }
 
@@ -2157,9 +2151,6 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
     browser_creator.LaunchBrowser(
         *base::CommandLine::ForCurrentProcess(), profile, base::FilePath(),
         chrome::startup::IS_PROCESS_STARTUP, first_run);
-  } else {
-    LOG(WARNING) << "Browser hasn't been launched, should_launch_browser_"
-                 << " is false. This is normal in some tests.";
   }
 
   if (HatsNotificationController::ShouldShowSurveyToProfile(profile))
@@ -2174,7 +2165,7 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
   if (login_host) {
     login_host->Finalize(std::move(login_host_finalized_callback));
   } else {
-    base::ResetAndReturn(&login_host_finalized_callback).Run();
+    std::move(login_host_finalized_callback).Run();
   }
 
   chromeos::BootTimesRecorder::Get()->LoginDone(
@@ -2187,6 +2178,11 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
   // Check to see if this profile should show TPM Firmware Update Notification
   // and show the message accordingly.
   tpm_firmware_update::ShowNotificationIfNeeded(profile);
+
+  g_browser_process->platform_part()
+      ->browser_policy_connector_chromeos()
+      ->GetTPMAutoUpdateModePolicyHandler()
+      ->ShowTPMAutoUpdateNotificationIfNeeded();
 
   if (should_launch_browser_) {
     ArcTermsOfServiceScreen::MaybeLaunchArcSettings(profile);
@@ -2224,9 +2220,9 @@ void UserSessionManager::RemoveProfileForTesting(Profile* profile) {
   default_ime_states_.erase(profile);
 }
 
-void UserSessionManager::InjectStubUserContext(
-    const UserContext& user_context) {
-  injected_user_context_.reset(new UserContext(user_context));
+void UserSessionManager::InjectAuthenticatorBuilder(
+    std::unique_ptr<StubAuthenticatorBuilder> builder) {
+  injected_authenticator_builder_ = std::move(builder);
   authenticator_ = NULL;
 }
 

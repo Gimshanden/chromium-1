@@ -23,14 +23,14 @@ class SyncService;
 
 namespace browser_sync {
 
-// Controls syncing of either AUTOFILL_WALLET or AUTOFILL_WALLET_METADATA.
+// Controls syncing of AUTOFILL_WALLET_METADATA.
 class AutofillWalletDataTypeController
     : public syncer::AsyncDirectoryTypeController {
  public:
   using PersonalDataManagerProvider =
       base::RepeatingCallback<autofill::PersonalDataManager*()>;
 
-  // |type| should be either AUTOFILL_WALLET or AUTOFILL_WALLET_METADATA.
+  // |type| should be AUTOFILL_WALLET_METADATA.
   // |dump_stack| is called when an unrecoverable error occurs.
   AutofillWalletDataTypeController(
       syncer::ModelType type,
@@ -42,20 +42,16 @@ class AutofillWalletDataTypeController
       const scoped_refptr<autofill::AutofillWebDataService>& web_data_service);
   ~AutofillWalletDataTypeController() override;
 
- private:
   // AsyncDirectoryTypeController implementation.
   bool StartModels() override;
-  void StopModels() override;
   bool ReadyForStart() const override;
 
+ private:
   // Callback for changes to the autofill pref.
   void OnUserPrefChanged();
 
   // Returns true if the prefs are set such that wallet sync should be enabled.
   bool IsEnabled();
-
-  // Report an error (which will stop the datatype asynchronously).
-  void DisableForPolicy();
 
   // Callback that allows accessing PersonalDataManager lazily.
   const PersonalDataManagerProvider pdm_provider_;

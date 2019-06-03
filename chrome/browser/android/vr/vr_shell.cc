@@ -47,7 +47,6 @@
 #include "chrome/browser/vr/ui_test_input.h"
 #include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/browser/vr/vr_web_contents_observer.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -86,6 +85,7 @@
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace vr {
@@ -568,22 +568,17 @@ void VrShell::OnLoadProgressChanged(JNIEnv* env,
 }
 
 void VrShell::OnTabListCreated(JNIEnv* env,
-                               const JavaParamRef<jobject>& obj,
-                               jobjectArray tabs,
-                               jobjectArray incognito_tabs) {
+                               const JavaRef<jobject>& obj,
+                               const JavaRef<jobjectArray>& tabs,
+                               const JavaRef<jobjectArray>& incognito_tabs) {
   incognito_tab_ids_.clear();
   regular_tab_ids_.clear();
-  size_t len = env->GetArrayLength(incognito_tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(
-        env, env->GetObjectArrayElement(incognito_tabs, i));
+  for (auto j_tab : incognito_tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     incognito_tab_ids_.insert(tab->GetAndroidId());
   }
 
-  len = env->GetArrayLength(tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(env, env->GetObjectArrayElement(tabs, i));
+  for (auto j_tab : tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     regular_tab_ids_.insert(tab->GetAndroidId());
   }
@@ -805,11 +800,17 @@ void VrShell::RecordVrStartAction(VrStartAction action) {
   }
 }
 
-void VrShell::RecordPresentationStartAction(PresentationStartAction action) {
+// TODO(https://crbug.com/965744): Rename below method to better reflect its
+// purpose (recording a start of immersive VR session).
+void VrShell::RecordPresentationStartAction(
+    PresentationStartAction action,
+    const device::mojom::XRRuntimeSessionOptions& options) {
+  DCHECK(options.immersive);
+  DCHECK(!options.environment_integration);
   SessionMetricsHelper* metrics_helper =
       SessionMetricsHelper::FromWebContents(web_contents_);
   if (metrics_helper)
-    metrics_helper->RecordPresentationStartAction(action);
+    metrics_helper->RecordPresentationStartAction(action, options);
 }
 
 void VrShell::ShowSoftInput(JNIEnv* env,
@@ -1378,8 +1379,6 @@ jlong JNI_VrShell_Init(JNIEnv* env,
       has_or_can_request_record_audio_permission;
   ui_initial_state.assets_supported = AssetsLoader::AssetsSupported();
   ui_initial_state.is_standalone_vr_device = is_standalone_vr_device;
-  ui_initial_state.use_new_incognito_strings =
-      base::FeatureList::IsEnabled(features::kIncognitoStrings);
 
   return reinterpret_cast<intptr_t>(new VrShell(
       env, obj, ui_initial_state,

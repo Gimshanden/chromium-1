@@ -35,7 +35,6 @@
 #include <set>
 
 #include "base/single_thread_task_runner.h"
-
 #include "third_party/blink/public/mojom/ad_tagging/ad_frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/find_in_page.mojom-blink.h"
@@ -114,6 +113,7 @@ class CORE_EXPORT WebLocalFrameImpl final
   WARN_UNUSED_RESULT v8::Local<v8::Value>
   ExecuteScriptInIsolatedWorldAndReturnValue(int world_id,
                                              const WebScriptSource&) override;
+  void ClearIsolatedWorldCSPForTesting(int world_id) override;
   void SetIsolatedWorldInfo(int world_id, const WebIsolatedWorldInfo&) override;
   void AddMessageToConsole(const WebConsoleMessage&) override;
   void Alert(const WebString& message) override;
@@ -133,7 +133,6 @@ class CORE_EXPORT WebLocalFrameImpl final
                                 int argc,
                                 v8::Local<v8::Value> argv[],
                                 WebScriptExecutionCallback*) override;
-  void PostPausableTask(PausableTaskCallback) override;
   void RequestExecuteScriptInIsolatedWorld(
       int world_id,
       const WebScriptSource* source_in,
@@ -154,7 +153,6 @@ class CORE_EXPORT WebLocalFrameImpl final
   void StartNavigation(const WebURLRequest&) override;
   void CheckCompleted() override;
   void StopLoading() override;
-  WebDocumentLoader* GetProvisionalDocumentLoader() const override;
   WebDocumentLoader* GetDocumentLoader() const override;
   void EnableViewSourceMode(bool enable) override;
   bool IsViewSourceModeEnabled() const override;
@@ -276,7 +274,8 @@ class CORE_EXPORT WebLocalFrameImpl final
                          bool had_redirect,
                          const WebSourceLocation&) override;
   void SendOrientationChangeEvent() override;
-  WebSandboxFlags EffectiveSandboxFlags() const override;
+  WebSandboxFlags EffectiveSandboxFlagsForTesting() const override;
+  bool IsAllowedToDownloadWithoutUserActivation() const override;
   void DidCallAddSearchProvider() override;
   void DidCallIsSearchProviderInstalled() override;
   void ReplaceSelection(const WebString&) override;
@@ -301,12 +300,15 @@ class CORE_EXPORT WebLocalFrameImpl final
                             WebString& clip_html,
                             WebRect& clip_rect) override;
   void AdvanceFocusInForm(WebFocusType) override;
+  bool CanFocusedFieldBeAutofilled() const override;
   void PerformMediaPlayerAction(const WebPoint&,
                                 const WebMediaPlayerAction&) override;
   void OnPortalActivated(const base::UnguessableToken& portal_token,
                          mojo::ScopedInterfaceEndpointHandle portal_pipe,
-                         TransferableMessage data) override;
-  void ForwardMessageToPortalHost(
+                         mojo::ScopedInterfaceEndpointHandle portal_client_pipe,
+                         TransferableMessage data,
+                         OnPortalActivatedCallback callback) override;
+  void ForwardMessageFromHost(
       TransferableMessage message,
       const WebSecurityOrigin& source_origin,
       const base::Optional<WebSecurityOrigin>& target_origin) override;
@@ -328,13 +330,16 @@ class CORE_EXPORT WebLocalFrameImpl final
   void RenderFallbackContent() const override;
   void SetCommittedFirstRealLoad() override;
   bool HasCommittedFirstRealLoad() override;
-  void ClientDroppedNavigation() override;
+  void DidDropNavigation() override;
   void MarkAsLoading() override;
-  bool CreatePlaceholderDocumentLoader(
+  bool IsClientNavigationInitialHistoryLoad() override;
+  bool WillStartNavigation(
       const WebNavigationInfo&,
-      std::unique_ptr<WebDocumentLoader::ExtraData>) override;
+      bool is_history_navigation_in_new_child_frame) override;
 
   void SetLifecycleState(mojom::FrameLifecycleState state) override;
+  void WasHidden() override;
+  void WasShown() override;
 
   void InitializeCoreFrame(Page&, FrameOwner*, const AtomicString& name);
   LocalFrame* GetFrame() const { return frame_.Get(); }
@@ -342,11 +347,6 @@ class CORE_EXPORT WebLocalFrameImpl final
   void WillBeDetached();
   void WillDetachParent();
 
-  static WebLocalFrameImpl* Create(WebTreeScopeType,
-                                   WebLocalFrameClient*,
-                                   InterfaceRegistry*,
-                                   mojo::ScopedMessagePipeHandle,
-                                   WebFrame* opener);
   static WebLocalFrameImpl* CreateMainFrame(WebView*,
                                             WebLocalFrameClient*,
                                             InterfaceRegistry*,
@@ -359,14 +359,9 @@ class CORE_EXPORT WebLocalFrameImpl final
                                               InterfaceRegistry*,
                                               mojo::ScopedMessagePipeHandle,
                                               WebFrame*,
-                                              WebSandboxFlags,
-                                              ParsedFeaturePolicy);
+                                              const FramePolicy&);
 
   WebLocalFrameImpl(WebTreeScopeType,
-                    WebLocalFrameClient*,
-                    blink::InterfaceRegistry*,
-                    mojo::ScopedMessagePipeHandle);
-  WebLocalFrameImpl(WebFrame*,
                     WebLocalFrameClient*,
                     blink::InterfaceRegistry*,
                     mojo::ScopedMessagePipeHandle);
@@ -376,7 +371,8 @@ class CORE_EXPORT WebLocalFrameImpl final
                                HTMLFrameOwnerElement*);
   std::pair<RemoteFrame*, base::UnguessableToken> CreatePortal(
       HTMLPortalElement*,
-      mojom::blink::PortalAssociatedRequest);
+      mojom::blink::PortalAssociatedRequest,
+      mojom::blink::PortalClientAssociatedPtrInfo);
   RemoteFrame* AdoptPortal(HTMLPortalElement*);
 
   void DidChangeContentsSize(const IntSize&);
@@ -408,9 +404,9 @@ class CORE_EXPORT WebLocalFrameImpl final
   // allows us to navigate by pressing Enter after closing the Find box.
   void SetFindEndstateFocusAndSelection();
 
-  void DidFail(const ResourceError&,
-               bool was_provisional,
-               WebHistoryCommitType);
+  void DidFailLoad(const ResourceError&, WebHistoryCommitType);
+  void DidFailProvisionalLoad(const ResourceError&,
+                              const AtomicString& http_method);
   void DidFinish();
 
   void SetClient(WebLocalFrameClient* client) { client_ = client; }

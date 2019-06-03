@@ -35,7 +35,9 @@ class VIEWS_EXPORT MenuButton : public LabelButton {
              int button_context = style::CONTEXT_BUTTON);
   ~MenuButton() override;
 
-  MenuButtonController* button_controller() const;
+  MenuButtonController* button_controller() const {
+    return menu_button_controller_;
+  }
 
   bool Activate(const ui::Event* event);
 
@@ -45,14 +47,13 @@ class VIEWS_EXPORT MenuButton : public LabelButton {
   // View:
   const char* GetClassName() const override;
 
-  // ui::EventHandler:
-  void OnGestureEvent(ui::GestureEvent* event) override;
-
  protected:
   // Button:
   void NotifyClick(const ui::Event& event) final;
 
  private:
+  MenuButtonController* menu_button_controller_;
+
   DISALLOW_COPY_AND_ASSIGN(MenuButton);
 };
 

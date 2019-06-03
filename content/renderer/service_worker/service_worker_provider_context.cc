@@ -56,14 +56,12 @@ void CreateSubresourceLoaderFactoryForProviderContext(
 
 // For service worker clients.
 ServiceWorkerProviderContext::ServiceWorkerProviderContext(
-    int provider_id,
     blink::mojom::ServiceWorkerProviderType provider_type,
     blink::mojom::ServiceWorkerContainerAssociatedRequest request,
     blink::mojom::ServiceWorkerContainerHostAssociatedPtrInfo host_ptr_info,
     blink::mojom::ControllerServiceWorkerInfoPtr controller_info,
     scoped_refptr<network::SharedURLLoaderFactory> fallback_loader_factory)
     : provider_type_(provider_type),
-      provider_id_(provider_id),
       main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       binding_(this, std::move(request)),
       weak_factory_(this) {
@@ -279,8 +277,12 @@ void ServiceWorkerProviderContext::SetController(
          state->client_id == controller_info->client_id);
   state->client_id = controller_info->client_id;
 
-  if (controller_info->fetch_request_window_id)
+  if (controller_info->fetch_request_window_id) {
+    DCHECK(state->controller);
     state->fetch_request_window_id = *controller_info->fetch_request_window_id;
+  } else {
+    state->fetch_request_window_id = base::UnguessableToken();
+  }
 
   DCHECK((controller_info->mode ==
               blink::mojom::ControllerServiceWorkerMode::kNoController &&

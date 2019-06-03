@@ -13,6 +13,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
@@ -38,43 +39,28 @@ public class ProfilingProcessHostAndroidTest {
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_is_greater_than = 20, message = "https://crbug.com/964502")
     @CommandLineFlags.Add({"memlog=browser", "memlog-stack-mode=native-include-thread-names",
             "memlog-sampling-rate=1"})
     public void
     testModeBrowser() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode(
-                "browser", false, "native-include-thread-names", true, false, false));
-    }
-
-    @Test
-    @MediumTest
-    @CommandLineFlags.Add({"memlog-in-process=off"})
-    public void testModeBrowserDynamic() throws Exception {
-        HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "native", true, false, false));
+        Assert.assertTrue(
+                shim.runTestForMode("browser", false, "native-include-thread-names", false, false));
     }
 
     @Test
     @MediumTest
     public void testModeBrowserDynamicNonStreaming() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "native", false, false, false));
-    }
-
-    @Test
-    @MediumTest
-    @CommandLineFlags.Add({"memlog-in-process=off"})
-    public void testModeBrowserDynamicPseudo() throws Exception {
-        HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", true, false, false));
+        Assert.assertTrue(shim.runTestForMode("browser", true, "native", false, false));
     }
 
     @Test
     @MediumTest
     public void testModeBrowserDynamicPseudoNonStreaming() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", false, false, false));
+        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", false, false));
     }
 
     // Non-browser processes must be profiled with a command line flag, since
@@ -89,8 +75,7 @@ public class ProfilingProcessHostAndroidTest {
     Add({"memlog=all-renderers", "memlog-stack-mode=pseudo", "memlog-sampling-rate=1"})
     public void testModeRendererPseudo() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(
-                shim.runTestForMode("all-renderers", false, "pseudo", true, false, false));
+        Assert.assertTrue(shim.runTestForMode("all-renderers", false, "pseudo", false, false));
     }
 
     @Test
@@ -98,29 +83,20 @@ public class ProfilingProcessHostAndroidTest {
     @CommandLineFlags.Add({"memlog=gpu", "memlog-stack-mode=pseudo", "memlog-sampling-rate=1"})
     public void testModeGpuPseudo() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("gpu", false, "native", true, false, false));
-    }
-
-    @Test
-    @MediumTest
-    @CommandLineFlags.Add({"memlog-in-process=off"})
-    public void testModeBrowserDynamicPseudoSampleEverything() throws Exception {
-        HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", true, true, true));
+        Assert.assertTrue(shim.runTestForMode("gpu", false, "native", false, false));
     }
 
     @Test
     @MediumTest
     public void testModeBrowserDynamicPseudoSamplePartial() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", true, true, false));
+        Assert.assertTrue(shim.runTestForMode("browser", true, "pseudo", true, false));
     }
 
     @Test
     @MediumTest
     public void testModeBrowserAndAllUtility() throws Exception {
         HeapProfilingTestShim shim = new HeapProfilingTestShim();
-        Assert.assertTrue(
-                shim.runTestForMode("utility-and-browser", true, "pseudo", true, true, false));
+        Assert.assertTrue(shim.runTestForMode("utility-and-browser", true, "pseudo", true, false));
     }
 }

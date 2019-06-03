@@ -5,8 +5,8 @@
 cr.exportPath('management');
 /**
  * @typedef {{
- *    messageIds: !Array<string>,
- *    icon: string,
+ *   messageIds: !Array<string>,
+ *   icon: string,
  * }}
  */
 management.BrowserReportingData;
@@ -44,24 +44,30 @@ Polymer({
      * @private
      */
     localTrustRoots_: String,
-    // </if>
-
-    /**
-     * Indicates if the search field in visible in the toolbar.
-     * @private
-     */
-    showSearchInToolbar_: {
-      type: Boolean,
-      value: false,
-    },
 
     /** @private */
-    title_: String,
+    customerLogo_: String,
+
+    /** @private */
+    managementOverview_: String,
+
+    /** @private {?management.ManagedInfo} */
+    deviceManagedInfo_: Object,
+    // </if>
+
+    /** @private {?management.ManagedInfo} */
+    accountManagedInfo_: Object,
+
+    /** @private */
+    subtitle_: String,
 
     // <if expr="not chromeos">
     /** @private */
     managementNoticeHtml_: String,
     // </if>
+
+    /** @private */
+    managed_: Boolean,
 
     /** @private */
     extensionReportingSubtitle_: String,
@@ -81,8 +87,7 @@ Polymer({
         'browser-reporting-info-updated',
         reportingInfo => this.onBrowserReportingInfoReceived_(reportingInfo));
 
-    this.addWebUIListener('update-load-time-data', data => {
-      loadTimeData.overrideValues(data);
+    this.addWebUIListener('managed_data_changed', () => {
       this.updateManagedFields_();
     });
 
@@ -138,9 +143,9 @@ Polymer({
   /** @private */
   getLocalTrustRootsInfo_() {
     this.browserProxy_.getLocalTrustRootsInfo().then(trustRootsConfigured => {
-      this.localTrustRoots_ = loadTimeData.getString(
-          trustRootsConfigured ? 'managementTrustRootsConfigured' :
-                                 'managementTrustRootsNotConfigured');
+      this.localTrustRoots_ = trustRootsConfigured ?
+          loadTimeData.getString('managementTrustRootsConfigured') :
+          '';
     });
   },
 
@@ -223,13 +228,43 @@ Polymer({
     }
   },
 
+  /**
+   * Handles the 'search-changed' event fired from the toolbar.
+   * Redirects to the settings page initialized the the current
+   * search query.
+   * @param {!CustomEvent<string>} e
+   * @private
+   */
+  onSearchChanged_: function(e) {
+    const query = e.detail;
+    window.location.href =
+        `chrome://settings?search=${encodeURIComponent(query)}`;
+  },
+
+  /** @private */
+  onTapBack_() {
+    if (history.length > 1) {
+      history.back();
+    } else {
+      window.location.href = 'chrome://settings/help';
+    }
+  },
+
   /** @private */
   updateManagedFields_() {
-    this.title_ = this.browserProxy_.getPageTitle();
-    // <if expr="not chromeos">
-    this.managementNoticeHtml_ = this.browserProxy_.getManagementNotice();
-    // </if>
-    this.extensionReportingSubtitle_ =
-        this.browserProxy_.getExtensionReportingTitle();
+    this.browserProxy_.getContextualManagedData().then(data => {
+      this.managed_ = data.managed;
+      this.extensionReportingSubtitle_ = data.extensionReportingTitle;
+      this.subtitle_ = data.pageSubtitle;
+      this.accountManagedInfo_ = data.accountManagedInfo;
+      // <if expr="chromeos">
+      this.customerLogo_ = data.customerLogo;
+      this.managementOverview_ = data.overview;
+      this.deviceManagedInfo_ = data.deviceManagedInfo;
+      // </if>
+      // <if expr="not chromeos">
+      this.managementNoticeHtml_ = data.browserManagementNotice;
+      // </if>
+    });
   },
 });

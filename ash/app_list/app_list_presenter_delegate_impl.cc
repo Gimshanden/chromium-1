@@ -5,11 +5,13 @@
 #include "ash/app_list/app_list_presenter_delegate_impl.h"
 
 #include "ash/app_list/app_list_controller_impl.h"
+#include "ash/app_list/app_list_util.h"
 #include "ash/app_list/presenter/app_list_presenter_impl.h"
 #include "ash/app_list/views/app_list_main_view.h"
 #include "ash/app_list/views/app_list_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/app_list/views/search_box_view.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
 #include "ash/public/cpp/app_list/app_list_switches.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/shelf_types.h"
@@ -29,7 +31,7 @@
 #include "ui/aura/window.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/events/event.h"
-#include "ui/keyboard/keyboard_controller.h"
+#include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -71,40 +73,33 @@ void AppListPresenterDelegateImpl::SetPresenter(
 }
 
 void AppListPresenterDelegateImpl::Init(app_list::AppListView* view,
-                                        int64_t display_id,
-                                        int current_apps_page) {
+                                        int64_t display_id) {
+  view_ = view;
+  view->InitView(IsTabletMode(),
+                 controller_->GetContainerForDisplayId(display_id));
+
+  SnapAppListBoundsToDisplayEdge();
+
+  // By setting us as DnD recipient, the app list knows that we can
+  // handle items.
+  Shelf* shelf = Shelf::ForWindow(Shell::GetRootWindowForDisplayId(display_id));
+  view->SetDragAndDropHostOfCurrentAppList(
+      shelf->shelf_widget()->GetDragAndDropHostForAppList());
+}
+
+void AppListPresenterDelegateImpl::ShowForDisplay(int64_t display_id) {
+  is_visible_ = true;
+
+  controller_->UpdateLauncherContainer(display_id);
+
   // App list needs to know the new shelf layout in order to calculate its
   // UI layout when AppListView visibility changes.
   Shell::GetPrimaryRootWindowController()
       ->GetShelfLayoutManager()
       ->UpdateAutoHideState();
-  view_ = view;
-  aura::Window* root_window = Shell::GetRootWindowForDisplayId(display_id);
-
-  app_list::AppListView::InitParams params;
-  const bool is_tablet_mode = IsTabletMode();
-  aura::Window* parent_window =
-      RootWindowController::ForWindow(root_window)
-          ->GetContainer(is_tablet_mode ? kShellWindowId_HomeScreenContainer
-                                        : kShellWindowId_AppListContainer);
-  params.parent = parent_window;
-  params.initial_apps_page = current_apps_page;
-  params.is_tablet_mode = is_tablet_mode;
-  params.is_side_shelf = IsSideShelf(root_window);
-  view->Initialize(params);
-
-  SnapAppListBoundsToDisplayEdge();
+  view_->Show(IsSideShelf(view_->GetWidget()->GetNativeView()->GetRootWindow()),
+              IsTabletMode());
   Shell::Get()->AddPreTargetHandler(this);
-
-  // By setting us as DnD recipient, the app list knows that we can
-  // handle items.
-  Shelf* shelf = Shelf::ForWindow(root_window);
-  view->SetDragAndDropHostOfCurrentAppList(
-      shelf->shelf_widget()->GetDragAndDropHostForAppList());
-}
-
-void AppListPresenterDelegateImpl::OnShown(int64_t display_id) {
-  is_visible_ = true;
   controller_->ViewShown(display_id);
 }
 
@@ -112,25 +107,12 @@ void AppListPresenterDelegateImpl::OnClosing() {
   DCHECK(is_visible_);
   DCHECK(view_);
   is_visible_ = false;
+  Shell::Get()->RemovePreTargetHandler(this);
   controller_->ViewClosing();
 }
 
 void AppListPresenterDelegateImpl::OnClosed() {
   controller_->ViewClosed();
-}
-
-gfx::Vector2d AppListPresenterDelegateImpl::GetVisibilityAnimationOffset(
-    aura::Window* root_window) {
-  DCHECK(Shell::HasInstance());
-
-  Shelf* shelf = Shelf::ForWindow(root_window);
-
-  // App list needs to know the new shelf layout in order to calculate its
-  // UI layout when AppListView visibility changes.
-  int app_list_y = view_->GetBoundsInScreen().y();
-  return gfx::Vector2d(0, IsSideShelf(root_window)
-                              ? 0
-                              : shelf->GetIdealBounds().y() - app_list_y);
 }
 
 base::TimeDelta AppListPresenterDelegateImpl::GetVisibilityAnimationDuration(
@@ -230,7 +212,7 @@ void AppListPresenterDelegateImpl::ProcessLocatedEvent(
   }
 
   aura::Window* window = view_->GetWidget()->GetNativeView()->parent();
-  if (!window->Contains(target) && !presenter_->CloseOpenedPage() &&
+  if (!window->Contains(target) && !presenter_->HandleCloseOpenFolder() &&
       !app_list::switches::ShouldNotDismissOnBlur() && !IsTabletMode()) {
     const aura::Window* status_window =
         shelf->shelf_widget()->status_area_widget()->GetNativeWindow();
@@ -267,15 +249,43 @@ void AppListPresenterDelegateImpl::ProcessLocatedEvent(
 // AppListPresenterDelegateImpl, aura::EventFilter implementation:
 
 void AppListPresenterDelegateImpl::OnMouseEvent(ui::MouseEvent* event) {
+  // Moving the mouse shouldn't hide focus rings.
+  if (event->IsAnyButton())
+    controller_->SetKeyboardTraversalMode(false);
+
   if (event->type() == ui::ET_MOUSE_PRESSED)
     ProcessLocatedEvent(event);
 }
 
 void AppListPresenterDelegateImpl::OnGestureEvent(ui::GestureEvent* event) {
+  controller_->SetKeyboardTraversalMode(false);
+
   if (event->type() == ui::ET_GESTURE_TAP ||
       event->type() == ui::ET_GESTURE_TWO_FINGER_TAP ||
       event->type() == ui::ET_GESTURE_LONG_PRESS) {
     ProcessLocatedEvent(event);
+  }
+}
+
+void AppListPresenterDelegateImpl::OnKeyEvent(ui::KeyEvent* event) {
+  // If keyboard traversal is already engaged, no-op.
+  if (controller_->KeyboardTraversalEngaged())
+    return;
+
+  // If the home launcher is not shown in tablet mode, ignore events.
+  if (IsTabletMode() && !presenter_->home_launcher_shown())
+    return;
+
+  // Don't absorb the first event for the search box while it is open
+  if (view_->search_box_view()->is_search_box_active())
+    return;
+
+  // Arrow keys or Tab will engage the traversal mode.
+  if ((app_list::IsUnhandledArrowKeyEvent(*event) ||
+       event->key_code() == ui::VKEY_TAB)) {
+    // Handle the first arrow key event to just show the focus rings.
+    event->SetHandled();
+    controller_->SetKeyboardTraversalMode(true);
   }
 }
 

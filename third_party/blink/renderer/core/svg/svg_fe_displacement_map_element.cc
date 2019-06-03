@@ -35,21 +35,24 @@ const SVGEnumerationMap& GetEnumerationMap<ChannelSelectorType>() {
   return entries;
 }
 
-inline SVGFEDisplacementMapElement::SVGFEDisplacementMapElement(
-    Document& document)
+SVGFEDisplacementMapElement::SVGFEDisplacementMapElement(Document& document)
     : SVGFilterPrimitiveStandardAttributes(svg_names::kFEDisplacementMapTag,
                                            document),
-      scale_(SVGAnimatedNumber::Create(this, svg_names::kScaleAttr, 0.0f)),
-      in1_(SVGAnimatedString::Create(this, svg_names::kInAttr)),
-      in2_(SVGAnimatedString::Create(this, svg_names::kIn2Attr)),
-      x_channel_selector_(SVGAnimatedEnumeration<ChannelSelectorType>::Create(
-          this,
-          svg_names::kXChannelSelectorAttr,
-          CHANNEL_A)),
-      y_channel_selector_(SVGAnimatedEnumeration<ChannelSelectorType>::Create(
-          this,
-          svg_names::kYChannelSelectorAttr,
-          CHANNEL_A)) {
+      scale_(MakeGarbageCollected<SVGAnimatedNumber>(this,
+                                                     svg_names::kScaleAttr,
+                                                     0.0f)),
+      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)),
+      in2_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kIn2Attr)),
+      x_channel_selector_(
+          MakeGarbageCollected<SVGAnimatedEnumeration<ChannelSelectorType>>(
+              this,
+              svg_names::kXChannelSelectorAttr,
+              CHANNEL_A)),
+      y_channel_selector_(
+          MakeGarbageCollected<SVGAnimatedEnumeration<ChannelSelectorType>>(
+              this,
+              svg_names::kYChannelSelectorAttr,
+              CHANNEL_A)) {
   AddToPropertyMap(scale_);
   AddToPropertyMap(in1_);
   AddToPropertyMap(in2_);
@@ -65,8 +68,6 @@ void SVGFEDisplacementMapElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(y_channel_selector_);
   SVGFilterPrimitiveStandardAttributes::Trace(visitor);
 }
-
-DEFINE_NODE_FACTORY(SVGFEDisplacementMapElement)
 
 bool SVGFEDisplacementMapElement::SetFilterEffectAttribute(
     FilterEffect* effect,

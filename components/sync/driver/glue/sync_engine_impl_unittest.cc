@@ -31,7 +31,6 @@
 #include "components/sync/base/invalidation_helper.h"
 #include "components/sync/base/sync_prefs.h"
 #include "components/sync/base/test_unrecoverable_error_handler.h"
-#include "components/sync/device_info/device_info.h"
 #include "components/sync/engine/cycle/commit_counters.h"
 #include "components/sync/engine/cycle/status_counters.h"
 #include "components/sync/engine/cycle/update_counters.h"
@@ -51,10 +50,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
-
-using ::testing::_;
-using ::testing::InvokeWithoutArgs;
-using ::testing::StrictMock;
 
 namespace syncer {
 
@@ -81,7 +76,6 @@ class TestSyncEngineHost : public SyncEngineHostStub {
   void OnEngineInitialized(ModelTypeSet initial_types,
                            const WeakHandle<JsBackend>&,
                            const WeakHandle<DataTypeDebugInfoListener>&,
-                           const std::string&,
                            const std::string&,
                            const std::string&,
                            const std::string&,
@@ -144,23 +138,6 @@ class FakeSyncManagerFactory : public SyncManagerFactory {
   FakeSyncManager** fake_manager_;
 };
 
-class NullEncryptionObserver : public SyncEncryptionHandler::Observer {
- public:
-  void OnPassphraseRequired(
-      PassphraseRequiredReason reason,
-      const KeyDerivationParams& key_derivation_params,
-      const sync_pb::EncryptedData& pending_keys) override {}
-  void OnPassphraseAccepted() override {}
-  void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
-                               BootstrapTokenType type) override {}
-  void OnEncryptedTypesChanged(ModelTypeSet encrypted_types,
-                               bool encrypt_everything) override {}
-  void OnEncryptionComplete() override {}
-  void OnCryptographerStateChanged(Cryptographer* cryptographer) override {}
-  void OnPassphraseTypeChanged(PassphraseType type,
-                               base::Time passphrase_time) override {}
-};
-
 class MockInvalidationService : public invalidation::InvalidationService {
  public:
   MockInvalidationService() = default;
@@ -205,9 +182,6 @@ class SyncEngineImplTest : public testing::Test {
     backend_ = std::make_unique<SyncEngineImpl>(
         "dummyDebugName", &invalidator_, sync_prefs_->AsWeakPtr(),
         temp_dir_.GetPath().Append(base::FilePath(kTestSyncDir)));
-    credentials_.account_id = "user@example.com";
-    credentials_.email = "user@example.com";
-    credentials_.sync_token = "sync_token";
 
     fake_manager_factory_ = std::make_unique<FakeSyncManagerFactory>(
         &fake_manager_, network::TestNetworkConnectionTracker::GetInstance());
@@ -251,15 +225,12 @@ class SyncEngineImplTest : public testing::Test {
     params.host = &host_;
     params.registrar = std::make_unique<SyncBackendRegistrar>(
         std::string(), base::Bind(&CreateModelWorkerForGroup));
-    params.encryption_observer_proxy =
-        std::make_unique<NullEncryptionObserver>();
     params.http_factory_getter = std::move(http_post_provider_factory_getter);
-    params.credentials = credentials_;
+    params.authenticated_account_id = "user@example.com";
     params.sync_manager_factory = std::move(fake_manager_factory_);
     params.delete_sync_data_folder = true;
     params.unrecoverable_error_handler =
         MakeWeakHandle(test_unrecoverable_error_handler_.GetWeakPtr()),
-    params.saved_nigori_state = std::move(saved_nigori_state_);
     sync_prefs_->GetInvalidationVersions(&params.invalidation_versions);
 
     backend_->Initialize(std::move(params));
@@ -325,7 +296,6 @@ class SyncEngineImplTest : public testing::Test {
   sync_preferences::TestingPrefServiceSyncable pref_service_;
   base::Thread sync_thread_;
   TestSyncEngineHost host_;
-  SyncCredentials credentials_;
   TestUnrecoverableErrorHandler test_unrecoverable_error_handler_;
   std::unique_ptr<SyncPrefs> sync_prefs_;
   std::unique_ptr<SyncEngineImpl> backend_;
@@ -334,7 +304,6 @@ class SyncEngineImplTest : public testing::Test {
   ModelTypeSet engine_types_;
   ModelTypeSet enabled_types_;
   std::unique_ptr<NetworkResources> network_resources_;
-  std::unique_ptr<SyncEncryptionHandler::NigoriState> saved_nigori_state_;
   base::OnceClosure quit_loop_;
   testing::NiceMock<MockInvalidationService> invalidator_;
 };
@@ -719,7 +688,7 @@ TEST_F(SyncEngineImplTest, DownloadControlTypesRestart) {
             fake_manager_->GetAndResetConfigureReason());
 }
 
-// It is SyncBackendHostCore responsibility to cleanup Sync Data folder if sync
+// It is SyncEngineBackend's responsibility to cleanup Sync Data folder if sync
 // setup hasn't been completed. This test ensures that cleanup happens.
 TEST_F(SyncEngineImplTest, TestStartupWithOldSyncData) {
   const char* nonsense = "slon";

@@ -5,6 +5,7 @@
 #include "ash/system/unified/unified_system_tray_bubble.h"
 
 #include "ash/public/cpp/app_list/app_list_features.h"
+#include "ash/public/cpp/ash_features.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
@@ -15,9 +16,10 @@
 #include "ash/system/unified/unified_system_tray_view.h"
 #include "ash/wm/container_finder.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "ash/wm/widget_finder.h"
+#include "ash/wm/work_area_insets.h"
 #include "base/metrics/histogram_macros.h"
 #include "ui/aura/window.h"
+#include "ui/native_theme/native_theme_dark_aura.h"
 #include "ui/wm/core/window_util.h"
 #include "ui/wm/public/activation_client.h"
 
@@ -40,6 +42,7 @@ class ContainerView : public views::View {
 
   // views::View:
   void Layout() override { unified_view_->SetBoundsRect(GetContentsBounds()); }
+  const char* GetClassName() const override { return "ContainerView"; }
 
   gfx::Size CalculatePreferredSize() const override {
     // If transform is used, always return the maximum expanded height.
@@ -74,7 +77,7 @@ UnifiedSystemTrayBubble::UnifiedSystemTrayBubble(UnifiedSystemTray* tray,
     time_shown_by_click_ = base::TimeTicks::Now();
 
   TrayBubbleView::InitParams init_params;
-  init_params.anchor_alignment = tray_->GetAnchorAlignment();
+  init_params.shelf_alignment = tray_->shelf()->alignment();
   init_params.min_width = kTrayMenuWidth;
   init_params.max_width = kTrayMenuWidth;
   init_params.delegate = tray;
@@ -84,9 +87,9 @@ UnifiedSystemTrayBubble::UnifiedSystemTrayBubble(UnifiedSystemTray* tray,
   init_params.anchor_rect = tray->shelf()->GetSystemTrayAnchorRect();
   // Decrease bottom and right insets to compensate for the adjustment of
   // the respective edges in Shelf::GetSystemTrayAnchorRect().
-  init_params.insets =
-      gfx::Insets(kUnifiedMenuPadding, kUnifiedMenuPadding,
-                  kUnifiedMenuPadding - 1, kUnifiedMenuPadding - 1);
+  init_params.insets = gfx::Insets(
+      kUnifiedMenuPadding, kUnifiedMenuPadding, kUnifiedMenuPadding - 1,
+      kUnifiedMenuPadding - (base::i18n::IsRTL() ? 0 : 1));
   init_params.corner_radius = kUnifiedTrayCornerRadius;
   init_params.has_shadow = false;
   init_params.show_by_click = show_by_click;
@@ -239,8 +242,10 @@ int UnifiedSystemTrayBubble::CalculateMaxHeight() const {
       tray_->shelf()->GetSystemTrayAnchorView()->GetBoundsInScreen();
   int bottom = tray_->shelf()->IsHorizontalAlignment() ? anchor_bounds.y()
                                                        : anchor_bounds.bottom();
+  WorkAreaInsets* work_area =
+      WorkAreaInsets::ForWindow(tray_->shelf()->GetWindow()->GetRootWindow());
   int free_space_height_above_anchor =
-      bottom - tray_->shelf()->GetUserWorkAreaBounds().y();
+      bottom - work_area->user_work_area_bounds().y();
   return free_space_height_above_anchor - kUnifiedMenuPadding * 2;
 }
 
@@ -263,7 +268,7 @@ void UnifiedSystemTrayBubble::OnWindowActivated(ActivationReason reason,
 
   // Don't close the bubble if a transient child is gaining or losing
   // activation.
-  if (bubble_widget_ == GetInternalWidgetForWindow(gained_active) ||
+  if (bubble_widget_ == views::Widget::GetWidgetForNativeView(gained_active) ||
       ::wm::HasTransientAncestor(gained_active,
                                  bubble_widget_->GetNativeWindow()) ||
       (lost_active && ::wm::HasTransientAncestor(
@@ -302,7 +307,7 @@ void UnifiedSystemTrayBubble::UpdateBubbleBounds() {
   int max_height = CalculateMaxHeight();
   unified_view_->SetMaxHeight(max_height);
   bubble_view_->SetMaxHeight(max_height);
-  bubble_view_->ChangeAnchorAlignment(tray_->GetAnchorAlignment());
+  bubble_view_->ChangeAnchorAlignment(tray_->shelf()->alignment());
   bubble_view_->ChangeAnchorRect(tray_->shelf()->GetSystemTrayAnchorRect());
 }
 
@@ -317,8 +322,18 @@ void UnifiedSystemTrayBubble::CreateBlurLayerForAnimation() {
 
   bubble_widget_->client_view()->layer()->SetBackgroundBlur(0);
 
-  blur_layer_ = views::Painter::CreatePaintedLayer(
-      views::Painter::CreateSolidRoundRectPainter(SK_ColorTRANSPARENT, 0));
+  if (features::ShouldUseShaderRoundedCorner()) {
+    blur_layer_ = std::make_unique<ui::LayerOwner>(
+        std::make_unique<ui::Layer>(ui::LAYER_SOLID_COLOR));
+    blur_layer_->layer()->SetColor(SK_ColorTRANSPARENT);
+    blur_layer_->layer()->SetRoundedCornerRadius(
+        {kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius,
+         kUnifiedTrayCornerRadius, kUnifiedTrayCornerRadius});
+  } else {
+    blur_layer_ = views::Painter::CreatePaintedLayer(
+        views::Painter::CreateSolidRoundRectPainter(SK_ColorTRANSPARENT, 0));
+  }
+
   blur_layer_->layer()->SetFillsBoundsOpaquely(false);
 
   bubble_widget_->GetLayer()->Add(blur_layer_->layer());

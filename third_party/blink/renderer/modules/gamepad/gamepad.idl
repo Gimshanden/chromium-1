@@ -25,10 +25,19 @@
 
 // https://w3c.github.io/gamepad/extensions.html#gamepadhand-enum
 [
-    OriginTrialEnabled=WebVR
+    RuntimeEnabled=WebVR
 ] enum GamepadHand {
   "left",
   "right"
+};
+
+// https://www.w3.org/TR/gamepad/#gamepadmappingtype-enum
+enum GamepadMappingType {
+  "",
+  "standard",
+  // https://immersive-web.github.io/webxr/#xr-standard-gamepad-mapping
+  // Extended attributes are not supported for enum values.
+  /* [RuntimeEnabled=WebXR] */ "xr-standard",
 };
 
 // https://w3c.github.io/gamepad/#gamepad-interface
@@ -37,7 +46,7 @@ interface Gamepad {
     readonly attribute unsigned long index;
     readonly attribute boolean connected;
     readonly attribute DOMHighResTimeStamp timestamp;
-    readonly attribute DOMString mapping;
+    readonly attribute GamepadMappingType mapping;
     [CachedAttribute=isAxisDataDirty, MeasureAs=GamepadAxes] readonly attribute FrozenArray<double> axes;
     [CachedAttribute=isButtonDataDirty, MeasureAs=GamepadButtons] readonly attribute FrozenArray<GamepadButton> buttons;
 
@@ -45,9 +54,9 @@ interface Gamepad {
     // https://github.com/w3c/gamepad/pull/68
     [MeasureAs=GamepadVibrationActuator] readonly attribute GamepadHapticActuator? vibrationActuator;
 
-    [OriginTrialEnabled=WebVR, MeasureAs=GamepadPose] readonly attribute GamepadPose? pose;
-    [OriginTrialEnabled=WebVR, MeasureAs=GamepadHand] readonly attribute GamepadHand hand;
+    [RuntimeEnabled=WebVR, MeasureAs=GamepadPose] readonly attribute GamepadPose? pose;
+    [RuntimeEnabled=WebVR, MeasureAs=GamepadHand] readonly attribute GamepadHand hand;
 
     // https://w3c.github.io/webvr/#interface-gamepad
-    [OriginTrialEnabled=WebVR, MeasureAs=GamepadDisplayId] readonly attribute unsigned long displayId;
+    [RuntimeEnabled=WebVR, MeasureAs=GamepadDisplayId] readonly attribute unsigned long displayId;
 };

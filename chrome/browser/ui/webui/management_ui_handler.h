@@ -12,12 +12,14 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "chrome/common/url_constants.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "extensions/buildflags/buildflags.h"
+#include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "components/policy/core/common/policy_service.h"
@@ -84,9 +86,11 @@ class Profile;
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 class ManagementUIHandler : public content::WebUIMessageHandler,
                             public extensions::ExtensionRegistryObserver,
-                            public policy::PolicyService::Observer {
+                            public policy::PolicyService::Observer,
+                            public BitmapFetcherDelegate {
 #else
-class ManagementUIHandler : public content::WebUIMessageHandler {
+class ManagementUIHandler : public content::WebUIMessageHandler,
+                            public BitmapFetcherDelegate {
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
  public:
   ManagementUIHandler();
@@ -98,30 +102,36 @@ class ManagementUIHandler : public content::WebUIMessageHandler {
   // content::WebUIMessageHandler implementation.
   void RegisterMessages() override;
 
-  void SetManagedForTesting(bool managed) { managed_ = managed; }
+  void SetAccountManagedForTesting(bool managed) { account_managed_ = managed; }
+  void SetDeviceManagedForTesting(bool managed) { device_managed_ = managed; }
+
+  static std::string GetAccountDomain(Profile* profile);
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   void OnJavascriptAllowed() override;
   void OnJavascriptDisallowed() override;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
  protected:
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Protected for testing.
-  std::unique_ptr<base::DictionaryValue>
-  GetDataManagementContextualSourceUpdate(Profile* profile) const;
   static void InitializeInternal(content::WebUI* web_ui,
                                  content::WebUIDataSource* source,
                                  Profile* profile);
   void AddExtensionReportingInfo(base::Value* report_sources);
 
+  base::DictionaryValue GetContextualManagedData(Profile* profile);
   virtual policy::PolicyService* GetPolicyService() const;
   virtual const extensions::Extension* GetEnabledExtension(
       const std::string& extensionId) const;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
+#if defined(OS_CHROMEOS)
+  // Protected for testing.
+  virtual const std::string GetDeviceDomain() const;
+#endif  // defined(OS_CHROMEOS)
  private:
-  base::string16 GetEnterpriseManagementStatusString();
-
-  void HandleGetDeviceManagementStatus(const base::ListValue* args);
+  void GetManagementStatus(Profile* profile, base::Value* status) const;
 
 #if defined(OS_CHROMEOS)
   void HandleGetDeviceReportingInfo(const base::ListValue* args);
@@ -133,7 +143,13 @@ class ManagementUIHandler : public content::WebUIMessageHandler {
   void HandleGetLocalTrustRootsInfo(const base::ListValue* args);
 #endif  // defined(OS_CHROMEOS)
 
+  void HandleGetContextualManagedData(const base::ListValue* args);
   void HandleInitBrowserReportingInfo(const base::ListValue* args);
+
+  void AsyncUpdateLogo();
+
+  // BitmapFetcherDelegate
+  void OnFetchComplete(const GURL& url, const SkBitmap* bitmap) override;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   void NotifyBrowserReportingInfoUpdated();
@@ -145,7 +161,7 @@ class ManagementUIHandler : public content::WebUIMessageHandler {
                            const extensions::Extension* extension,
                            extensions::UnloadedExtensionReason reason) override;
 
-  void OnManagedStateChanged();
+  void UpdateManagedState();
 
   // policy::PolicyService::Observer
   void OnPolicyUpdated(const policy::PolicyNamespace& ns,
@@ -155,16 +171,21 @@ class ManagementUIHandler : public content::WebUIMessageHandler {
   void AddObservers();
   void RemoveObservers();
 
+  bool managed_() const { return account_managed_ || device_managed_; }
+  bool account_managed_ = false;
+  bool device_managed_ = false;
   // To avoid double-removing the observers, which would cause a DCHECK()
   // failure.
   bool has_observers_ = false;
-  bool managed_ = false;
   std::string web_ui_data_source_name_;
 
   PrefChangeRegistrar pref_registrar_;
 
   std::set<extensions::ExtensionId> reporting_extension_ids_;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+  GURL logo_url_;
+  std::string fetched_image_;
+  std::unique_ptr<BitmapFetcher> icon_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagementUIHandler);
 };

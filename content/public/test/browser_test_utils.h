@@ -306,6 +306,10 @@ void ResendGestureScrollUpdateToEmbedder(WebContents* guest_web_contents,
 // tap gesture to its RenderWidgetHostView.
 void MaybeSendSyntheticTapGesture(WebContents* guest_web_contents);
 
+// Spins a run loop until effects of previously forwarded input are fully
+// realized.
+void RunUntilInputProcessed(RenderWidgetHost* host);
+
 // Holds down modifier keys for the duration of its lifetime and releases them
 // upon destruction. This allows simulating multiple input events without
 // simulating modifier key releases in between.
@@ -1445,7 +1449,7 @@ class ConsoleObserverDelegate : public WebContentsDelegate {
 
   // WebContentsDelegate method:
   bool DidAddMessageToConsole(WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
@@ -1574,6 +1578,7 @@ bool TestChildOrGuestAutoresize(bool is_guest,
 // BrowserPluginHostMsg_SynchronizeVisualProperties messages. This allows the
 // message to continue to the target child so that processing can be verified by
 // tests.
+// It also monitors for GesturePinchBegin/End events.
 class SynchronizeVisualPropertiesMessageFilter
     : public content::BrowserMessageFilter {
  public:
@@ -1591,6 +1596,11 @@ class SynchronizeVisualPropertiesMessageFilter
 
   // Waits for the next viz::LocalSurfaceId be received and returns it.
   viz::LocalSurfaceId WaitForSurfaceId();
+
+  bool pinch_gesture_active_set() { return pinch_gesture_active_set_; }
+  bool pinch_gesture_active_cleared() { return pinch_gesture_active_cleared_; }
+
+  void WaitForPinchGestureEnd();
 
  protected:
   ~SynchronizeVisualPropertiesMessageFilter() override;
@@ -1623,6 +1633,11 @@ class SynchronizeVisualPropertiesMessageFilter
   viz::LocalSurfaceId last_surface_id_;
   std::unique_ptr<base::RunLoop> surface_id_run_loop_;
 
+  bool pinch_gesture_active_set_;
+  bool pinch_gesture_active_cleared_;
+  bool last_pinch_gesture_active_;
+  std::unique_ptr<base::RunLoop> pinch_end_run_loop_;
+
   DISALLOW_COPY_AND_ASSIGN(SynchronizeVisualPropertiesMessageFilter);
 };
 
@@ -1648,6 +1663,31 @@ class RenderWidgetHostMouseEventMonitor {
   blink::WebMouseEvent event_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostMouseEventMonitor);
+};
+
+// Helper class to track and allow waiting for navigation start events.
+class DidStartNavigationObserver : public WebContentsObserver {
+ public:
+  explicit DidStartNavigationObserver(WebContents* web_contents);
+  ~DidStartNavigationObserver() override;
+
+  void Wait() { run_loop_.Run(); }
+  bool observed() { return observed_; }
+
+  // If the navigation was observed and is still not finished yet, this returns
+  // its handle, otherwise it returns nullptr.
+  NavigationHandle* navigation_handle() { return navigation_handle_; }
+
+  // WebContentsObserver override:
+  void DidStartNavigation(NavigationHandle* navigation_handle) override;
+  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
+
+ private:
+  bool observed_ = false;
+  base::RunLoop run_loop_;
+  NavigationHandle* navigation_handle_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(DidStartNavigationObserver);
 };
 
 }  // namespace content

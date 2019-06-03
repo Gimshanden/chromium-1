@@ -50,6 +50,7 @@ enum class TextFieldEventBehavior {
 
 enum class TextControlSetValueSelection {
   kSetSelectionToEnd,
+  kClamp,
   kDoNotSet,
 };
 
@@ -174,6 +175,7 @@ class CORE_EXPORT TextControlElement : public HTMLFormControlElementWithState {
                                        CloneChildrenFlag) override;
 
  private:
+  bool ShouldApplySelectionCache() const;
   unsigned ComputeSelectionStart() const;
   unsigned ComputeSelectionEnd() const;
   TextFieldSelectionDirection ComputeSelectionDirection() const;

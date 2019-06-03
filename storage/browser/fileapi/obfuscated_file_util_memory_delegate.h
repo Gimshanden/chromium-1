@@ -71,7 +71,17 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) ObfuscatedFileUtilMemoryDelegate
       const base::FilePath& dest_path,
       FileSystemOperation::CopyOrMoveOption option,
       NativeFileUtil::CopyOrMoveMode mode) override;
+  base::File::Error CopyInForeignFile(
+      const base::FilePath& src_path,
+      const base::FilePath& dest_path,
+      FileSystemOperation::CopyOrMoveOption option,
+      NativeFileUtil::CopyOrMoveMode mode) override;
   base::File::Error DeleteFile(const base::FilePath& path) override;
+
+  // Returns the total number of bytes used by all the files under |path|.
+  // If the path does not exist or the total number of bytes doesn't fit in
+  // |size_t|, the function returns 0.
+  size_t ComputeDirectorySize(const base::FilePath& path) override;
 
   // Reads |buf_len| bytes from the file at |path|, starting from |offset|.
   // If successful, read bytes are written to |buf| and actual number of read

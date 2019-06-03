@@ -9,10 +9,11 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/optional.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 
 class Browser;
 class GURL;
-class TabGroupData;
 
 namespace content {
 class WebContents;
@@ -55,7 +56,7 @@ class TabStripModelDelegate {
   virtual void AddTabAt(const GURL& url,
                         int index,
                         bool foreground,
-                        const TabGroupData* group = nullptr) = 0;
+                        base::Optional<TabGroupId> group = base::nullopt) = 0;
 
   // Asks for a new TabStripModel to be created and the given web contentses to
   // be added to it. Its size and position are reflected in |window_bounds|.

@@ -30,12 +30,14 @@
 
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "cc/test/test_ukm_recorder_factory.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_settings.h"
+#include "third_party/blink/public/common/frame/frame_policy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -53,6 +55,7 @@
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/fake_web_plugin.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
@@ -127,11 +130,14 @@ void LoadFrame(WebLocalFrame* frame, const std::string& url) {
 
 void LoadHTMLString(WebLocalFrame* frame,
                     const std::string& html,
-                    const WebURL& base_url) {
+                    const WebURL& base_url,
+                    const base::TickClock* clock) {
   auto* impl = To<WebLocalFrameImpl>(frame);
-  impl->CommitNavigation(
-      WebNavigationParams::CreateWithHTMLString(html, base_url),
-      nullptr /* extra_data */);
+  std::unique_ptr<WebNavigationParams> navigation_params =
+      WebNavigationParams::CreateWithHTMLString(html, base_url);
+  navigation_params->tick_clock = clock;
+  impl->CommitNavigation(std::move(navigation_params),
+                         nullptr /* extra_data */);
   PumpPendingRequestsForFrameToLoad(frame);
 }
 
@@ -227,7 +233,7 @@ WebLocalFrameImpl* CreateProvisional(WebRemoteFrame& old_frame,
   auto* frame = To<WebLocalFrameImpl>(WebLocalFrame::CreateProvisional(
       client, nullptr,
       mojo::MakeRequest(&document_interface_broker).PassMessagePipe(),
-      &old_frame, WebSandboxFlags::kNone, ParsedFeaturePolicy()));
+      &old_frame, FramePolicy()));
   client->Bind(frame, std::move(owned_client));
   std::unique_ptr<TestWebWidgetClient> widget_client;
   // Create a local root, if necessary.
@@ -254,7 +260,8 @@ WebLocalFrameImpl* CreateProvisional(WebRemoteFrame& old_frame,
 WebRemoteFrameImpl* CreateRemote(TestWebRemoteFrameClient* client) {
   std::unique_ptr<TestWebRemoteFrameClient> owned_client;
   client = CreateDefaultClientIfNeeded(client, owned_client);
-  auto* frame = WebRemoteFrameImpl::Create(WebTreeScopeType::kDocument, client);
+  auto* frame = MakeGarbageCollected<WebRemoteFrameImpl>(
+      WebTreeScopeType::kDocument, client);
   client->Bind(frame, std::move(owned_client));
   return frame;
 }
@@ -269,10 +276,9 @@ WebLocalFrameImpl* CreateLocalChild(WebRemoteFrame& parent,
   client = CreateDefaultClientIfNeeded(client, owned_client);
   mojom::blink::DocumentInterfaceBrokerPtrInfo document_interface_broker;
   auto* frame = To<WebLocalFrameImpl>(parent.CreateLocalChild(
-      WebTreeScopeType::kDocument, name, WebSandboxFlags::kNone, client,
-      nullptr, mojo::MakeRequest(&document_interface_broker).PassMessagePipe(),
-      previous_sibling, ParsedFeaturePolicy(), properties,
-      FrameOwnerElementType::kIframe, nullptr));
+      WebTreeScopeType::kDocument, name, FramePolicy(), client, nullptr,
+      mojo::MakeRequest(&document_interface_broker).PassMessagePipe(),
+      previous_sibling, properties, FrameOwnerElementType::kIframe, nullptr));
   client->Bind(frame, std::move(owned_client));
 
   std::unique_ptr<TestWebWidgetClient> owned_widget_client;
@@ -299,8 +305,8 @@ WebRemoteFrameImpl* CreateRemoteChild(
   std::unique_ptr<TestWebRemoteFrameClient> owned_client;
   client = CreateDefaultClientIfNeeded(client, owned_client);
   auto* frame = ToWebRemoteFrameImpl(parent.CreateRemoteChild(
-      WebTreeScopeType::kDocument, name, WebSandboxFlags::kNone,
-      ParsedFeaturePolicy(), FrameOwnerElementType::kIframe, client, nullptr));
+      WebTreeScopeType::kDocument, name, FramePolicy(),
+      FrameOwnerElementType::kIframe, client, nullptr));
   client->Bind(frame, std::move(owned_client));
   if (!security_origin)
     security_origin = SecurityOrigin::CreateUniqueOpaque();
@@ -511,8 +517,7 @@ WebLocalFrame* TestWebFrameClient::CreateChildFrame(
     WebTreeScopeType scope,
     const WebString& name,
     const WebString& fallback_name,
-    WebSandboxFlags sandbox_flags,
-    const ParsedFeaturePolicy& container_policy,
+    const FramePolicy&,
     const WebFrameOwnerProperties& frame_owner_properties,
     FrameOwnerElementType owner_type) {
   return CreateLocalChild(*parent, scope);
@@ -530,13 +535,14 @@ void TestWebFrameClient::DidStopLoading() {
 void TestWebFrameClient::BeginNavigation(
     std::unique_ptr<WebNavigationInfo> info) {
   navigation_callback_.Cancel();
-  if (DocumentLoader::WillLoadUrlAsEmpty(info->url_request.Url()) ||
+  if (DocumentLoader::WillLoadUrlAsEmpty(info->url_request.Url()) &&
       !frame_->HasCommittedFirstRealLoad()) {
     CommitNavigation(std::move(info));
     return;
   }
 
-  if (!frame_->CreatePlaceholderDocumentLoader(*info, nullptr /* extra_data */))
+  if (!frame_->WillStartNavigation(
+          *info, false /* is_history_navigation_in_new_child_frame */))
     return;
 
   navigation_callback_.Reset(
@@ -638,11 +644,28 @@ void TestWebWidgetClient::SetBackgroundColor(SkColor color) {
   layer_tree_host()->set_background_color(color);
 }
 
-void TestWebWidgetClient::SetPageScaleFactorAndLimits(float page_scale_factor,
-                                                      float minimum,
-                                                      float maximum) {
+void TestWebWidgetClient::SetAllowGpuRasterization(bool allow) {
+  layer_tree_host()->SetHasGpuRasterizationTrigger(allow);
+}
+
+void TestWebWidgetClient::SetPageScaleStateAndLimits(
+    float page_scale_factor,
+    bool is_pinch_gesture_active,
+    float minimum,
+    float maximum) {
   layer_tree_host()->SetPageScaleFactorAndLimits(page_scale_factor, minimum,
                                                  maximum);
+}
+
+void TestWebWidgetClient::InjectGestureScrollEvent(
+    WebGestureDevice device,
+    const WebFloatSize& delta,
+    ScrollGranularity granularity,
+    cc::ElementId scrollable_area_element_id,
+    WebInputEvent::Type injected_type) {
+  if (injected_type == WebInputEvent::kGestureScrollUpdate) {
+    injected_gesture_scroll_update_count_++;
+  }
 }
 
 void TestWebWidgetClient::RegisterViewportLayers(
@@ -679,7 +702,6 @@ WebView* TestWebViewClient::CreateView(WebLocalFrame* opener,
                                        const WebWindowFeatures&,
                                        const WebString& name,
                                        WebNavigationPolicy,
-                                       bool,
                                        WebSandboxFlags,
                                        const FeaturePolicy::FeatureState&,
                                        const SessionStorageNamespaceId&) {

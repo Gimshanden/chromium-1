@@ -53,14 +53,13 @@ ui::Layer* NativeViewHostMac::GetUiLayer() const {
   return host_->layer();
 }
 
-uint64_t NativeViewHostMac::GetViewsFactoryHostId() const {
-  auto* bridge_host = GetBridgedNativeWidgetHost();
-  if (bridge_host && bridge_host->bridge_factory_host())
-    return bridge_host->bridge_factory_host()->GetHostId();
-  // This matches content::NSViewBridgeFactoryHost::kLocalDirectHostId,
-  // indicating that this is a local window.
-  constexpr uint64_t kLocalDirectHostId = -1;
-  return kLocalDirectHostId;
+remote_cocoa::mojom::Application* NativeViewHostMac::GetRemoteCocoaApplication()
+    const {
+  if (auto* bridge_host = GetBridgedNativeWidgetHost()) {
+    if (auto* application_host = bridge_host->application_host())
+      return application_host->GetApplication();
+  }
+  return nullptr;
 }
 
 uint64_t NativeViewHostMac::GetNSViewId() const {

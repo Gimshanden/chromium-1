@@ -238,8 +238,6 @@ bool RendererWebMediaPlayerDelegate::OnMessageReceived(
                         OnMediaDelegateVolumeMultiplierUpdate)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_BecamePersistentVideo,
                         OnMediaDelegateBecamePersistentVideo)
-    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_EndPictureInPictureMode,
-                        OnPictureInPictureModeEnded)
     IPC_MESSAGE_UNHANDLED(return false)
   IPC_END_MESSAGE_MAP()
   return true;
@@ -270,17 +268,21 @@ void RendererWebMediaPlayerDelegate::SetFrameHiddenForTesting(bool is_hidden) {
   ScheduleUpdateTask();
 }
 
-void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(int player_id) {
+void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(
+    int player_id,
+    bool triggered_by_user) {
   RecordAction(base::UserMetricsAction("Media.Controls.RemotePause"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer) {
-    // TODO(avayvod): remove when default play/pause is handled via
-    // the MediaSession code path.
-    std::unique_ptr<blink::WebScopedUserGesture> gesture(
-        render_frame()
-            ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
-            : nullptr);
+    if (triggered_by_user) {
+      // TODO(avayvod): remove when default play/pause is handled via
+      // the MediaSession code path.
+      std::unique_ptr<blink::WebScopedUserGesture> gesture(
+          render_frame()
+              ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
+              : nullptr);
+    }
     observer->OnPause();
   }
 }
@@ -349,13 +351,6 @@ void RendererWebMediaPlayerDelegate::OnMediaDelegateBecamePersistentVideo(
   Observer* observer = id_map_.Lookup(player_id);
   if (observer)
     observer->OnBecamePersistentVideo(value);
-}
-
-void RendererWebMediaPlayerDelegate::OnPictureInPictureModeEnded(
-    int player_id) {
-  Observer* observer = id_map_.Lookup(player_id);
-  if (observer)
-    observer->OnPictureInPictureModeEnded();
 }
 
 void RendererWebMediaPlayerDelegate::ScheduleUpdateTask() {

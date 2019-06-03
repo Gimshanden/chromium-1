@@ -5,6 +5,7 @@
 #include "chrome/common/mac/staging_watcher.h"
 
 #include "base/mac/bundle_locations.h"
+#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_block.h"
 #include "base/mac/scoped_nsobject.h"
@@ -18,6 +19,14 @@
 // with that rewrite in 10.12. In macOS 10.11 and earlier, polling is the only
 // option. Note that NSUserDefaultsDidChangeNotification never notifies about
 // changes made by other programs, not even in 10.12 and later.
+//
+// On the other hand, KVO notification was broken in the NSUserDefaults rewrite
+// for 10.14; see:
+// - https://twitter.com/Catfish_Man/status/1116185288257105925
+// - rdar://49812220
+// The bug is that a change from "no value" to "value present" doesn't notify.
+// To work around that, a default is registered to ensure that there never is
+// a "no value" situation.
 
 namespace {
 
@@ -33,9 +42,10 @@ NSString* const kStagingKey = @"UpdatePending";
   base::mac::ScopedBlock<StagingKeyChangedObserver> callback_;
   BOOL lastStagingKeyValue_;
 
-  BOOL kvoDisabledForTesting_;
   BOOL lastWaitWasBlockedForTesting_;
 }
+
++ (NSString*)stagingLocationWithUserDefaults:(NSUserDefaults*)defaults;
 
 @end
 
@@ -43,16 +53,19 @@ NSString* const kStagingKey = @"UpdatePending";
 
 - (instancetype)initWithPollingTime:(NSTimeInterval)pollingTime {
   return [self initWithUserDefaults:[NSUserDefaults standardUserDefaults]
-                        pollingTime:pollingTime];
+                        pollingTime:pollingTime
+               disableKVOForTesting:NO];
 }
 
 - (instancetype)initWithUserDefaults:(NSUserDefaults*)defaults
-                         pollingTime:(NSTimeInterval)pollingTime {
+                         pollingTime:(NSTimeInterval)pollingTime
+                disableKVOForTesting:(BOOL)disableKVOForTesting {
   if ((self = [super init])) {
     pollingTime_ = pollingTime;
     defaults_.reset(defaults, base::scoped_policy::RETAIN);
+    [defaults_ registerDefaults:@{kStagingKey : @[]}];
     lastStagingKeyValue_ = [self isStagingKeySet];
-    if (base::mac::IsAtLeastOS10_12() && !kvoDisabledForTesting_) {
+    if (base::mac::IsAtLeastOS10_12() && !disableKVOForTesting) {
       // If a change is made in another process (which is the use case here),
       // the prior value is never provided in the observation callback change
       // dictionary, whether or not NSKeyValueObservingOptionPrior is specified.
@@ -68,14 +81,32 @@ NSString* const kStagingKey = @"UpdatePending";
   return self;
 }
 
-- (BOOL)isStagingKeySet {
-  NSArray<NSString*>* paths = [defaults_ stringArrayForKey:kStagingKey];
-  if (!paths)
-    return NO;
++ (NSString*)stagingLocationWithUserDefaults:(NSUserDefaults*)defaults {
+  NSDictionary<NSString*, id>* stagedPathPairs =
+      [defaults dictionaryForKey:kStagingKey];
+  if (!stagedPathPairs)
+    return nil;
 
   NSString* appPath = [base::mac::OuterBundle() bundlePath];
 
-  return [paths containsObject:appPath];
+  return base::mac::ObjCCast<NSString>([stagedPathPairs objectForKey:appPath]);
+}
+
+- (BOOL)isStagingKeySet {
+  return [self stagingLocation] != nil;
+}
+
++ (BOOL)isStagingKeySet {
+  return [self stagingLocation] != nil;
+}
+
+- (NSString*)stagingLocation {
+  return [CrStagingKeyWatcher stagingLocationWithUserDefaults:defaults_];
+}
+
++ (NSString*)stagingLocation {
+  return [self
+      stagingLocationWithUserDefaults:[NSUserDefaults standardUserDefaults]];
 }
 
 - (void)waitForStagingKeyToClear {
@@ -135,10 +166,6 @@ NSString* const kStagingKey = @"UpdatePending";
     [pollingTimer_ invalidate];
 
   [super dealloc];
-}
-
-- (void)disableKVOForTesting {
-  kvoDisabledForTesting_ = YES;
 }
 
 - (BOOL)lastWaitWasBlockedForTesting {

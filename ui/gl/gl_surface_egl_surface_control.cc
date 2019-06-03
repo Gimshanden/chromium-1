@@ -7,11 +7,18 @@
 #include <utility>
 
 #include "base/android/android_hardware_buffer_compat.h"
+#include "base/android/build_info.h"
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/bind.h"
+#include "base/strings/strcat.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
+#include "cc/base/math_util.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/overlay_transform_utils.h"
+#include "ui/gl/egl_util.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_fence_android_native_fence_sync.h"
 #include "ui/gl/gl_image_ahardwarebuffer.h"
 #include "ui/gl/gl_utils.h"
 
@@ -27,20 +34,30 @@ gfx::Size GetBufferSize(const AHardwareBuffer* buffer) {
   return gfx::Size(desc.width, desc.height);
 }
 
+std::string BuildSurfaceName(const char* suffix) {
+  return base::StrCat(
+      {base::android::BuildInfo::GetInstance()->package_name(), "/", suffix});
+}
+
 }  // namespace
 
 GLSurfaceEGLSurfaceControl::GLSurfaceEGLSurfaceControl(
     ANativeWindow* window,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : window_rect_(0,
+    : root_surface_name_(BuildSurfaceName(kRootSurfaceName)),
+      child_surface_name_(BuildSurfaceName(kChildSurfaceName)),
+      window_rect_(0,
                    0,
                    ANativeWindow_getWidth(window),
                    ANativeWindow_getHeight(window)),
-      root_surface_(new SurfaceControl::Surface(window, kRootSurfaceName)),
+      root_surface_(
+          new SurfaceControl::Surface(window, root_surface_name_.c_str())),
       gpu_task_runner_(std::move(task_runner)),
       weak_factory_(this) {}
 
-GLSurfaceEGLSurfaceControl::~GLSurfaceEGLSurfaceControl() = default;
+GLSurfaceEGLSurfaceControl::~GLSurfaceEGLSurfaceControl() {
+  Destroy();
+}
 
 int GLSurfaceEGLSurfaceControl::GetBufferCount() const {
   // Triple buffering to match framework's BufferQueue.
@@ -49,20 +66,56 @@ int GLSurfaceEGLSurfaceControl::GetBufferCount() const {
 
 bool GLSurfaceEGLSurfaceControl::Initialize(GLSurfaceFormat format) {
   format_ = format;
+
+  // Surfaceless is always disabled on Android so we create a 1x1 pbuffer
+  // surface.
+  if (!offscreen_surface_) {
+    EGLDisplay display = GetDisplay();
+    if (!display) {
+      LOG(ERROR) << "Trying to create surface with invalid display.";
+      return false;
+    }
+
+    EGLint pbuffer_attribs[] = {
+        EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE,
+    };
+    offscreen_surface_ =
+        eglCreatePbufferSurface(display, GetConfig(), pbuffer_attribs);
+    if (!offscreen_surface_) {
+      LOG(ERROR) << "eglCreatePbufferSurface failed with error "
+                 << ui::GetLastEGLErrorString();
+      return false;
+    }
+  }
+
   return true;
+}
+
+void GLSurfaceEGLSurfaceControl::PrepareToDestroy(bool have_context) {
+  // Drop all transaction callbacks since its not possible to make the context
+  // current after this point.
+  weak_factory_.InvalidateWeakPtrs();
 }
 
 void GLSurfaceEGLSurfaceControl::Destroy() {
   pending_transaction_.reset();
   surface_list_.clear();
   root_surface_.reset();
+
+  if (offscreen_surface_) {
+    if (!eglDestroySurface(GetDisplay(), offscreen_surface_)) {
+      LOG(ERROR) << "eglDestroySurface failed with error "
+                 << ui::GetLastEGLErrorString();
+    }
+    offscreen_surface_ = nullptr;
+  }
 }
 
 bool GLSurfaceEGLSurfaceControl::Resize(const gfx::Size& size,
                                         float scale_factor,
                                         ColorSpace color_space,
                                         bool has_alpha) {
-  window_rect_ = gfx::Rect(0, 0, size.width(), size.height());
+  window_rect_ = gfx::Rect(size);
   return true;
 }
 
@@ -127,13 +180,15 @@ void GLSurfaceEGLSurfaceControl::CommitPendingTransaction(
   // Mark the intersection of a surface's rect with the damage rect as the dirty
   // rect for that surface.
   DCHECK_LE(pending_surfaces_count_, surface_list_.size());
+  const gfx::Rect damage_rect_in_screen_space =
+      ApplyDisplayInverse(damage_rect);
   for (size_t i = 0; i < pending_surfaces_count_; ++i) {
     const auto& surface_state = surface_list_[i];
     if (!surface_state.buffer_updated_in_pending_transaction)
       continue;
 
     gfx::Rect surface_damage_rect = surface_state.dst;
-    surface_damage_rect.Intersect(damage_rect);
+    surface_damage_rect.Intersect(damage_rect_in_screen_space);
     pending_transaction_->SetDamageRect(*surface_state.surface,
                                         surface_damage_rect);
   }
@@ -205,7 +260,7 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
   bool uninitialized = false;
   if (pending_surfaces_count_ == surface_list_.size()) {
     uninitialized = true;
-    surface_list_.emplace_back(*root_surface_);
+    surface_list_.emplace_back(*root_surface_, child_surface_name_);
   }
   pending_surfaces_count_++;
   auto& surface_state = surface_list_.at(pending_surfaces_count_ - 1);
@@ -289,7 +344,7 @@ bool GLSurfaceEGLSurfaceControl::IsSurfaceless() const {
 }
 
 void* GLSurfaceEGLSurfaceControl::GetHandle() {
-  return nullptr;
+  return offscreen_surface_;
 }
 
 bool GLSurfaceEGLSurfaceControl::SupportsPostSubBuffer() {
@@ -304,10 +359,6 @@ bool GLSurfaceEGLSurfaceControl::SupportsPlaneGpuFences() const {
   return true;
 }
 
-bool GLSurfaceEGLSurfaceControl::SupportsPresentationCallback() {
-  return true;
-}
-
 bool GLSurfaceEGLSurfaceControl::SupportsCommitOverlayPlanes() {
   return true;
 }
@@ -317,6 +368,9 @@ void GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread(
     PresentationCallback presentation_callback,
     ResourceRefs released_resources,
     SurfaceControl::TransactionStats transaction_stats) {
+  TRACE_EVENT0("gpu",
+               "GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread");
+
   DCHECK(gpu_task_runner_->BelongsToCurrentThread());
   DCHECK(transaction_ack_pending_);
 
@@ -325,12 +379,12 @@ void GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread(
   // The presentation feedback callback must run after swap completion.
   std::move(completion_callback).Run(gfx::SwapResult::SWAP_ACK, nullptr);
 
-  // TODO(khushalsagar): Maintain a queue of present fences so we poll to see if
-  // they are signaled every frame, and get a signal timestamp to feed into this
-  // feedback.
-  gfx::PresentationFeedback feedback(base::TimeTicks::Now(), base::TimeDelta(),
-                                     0 /* flags */);
-  std::move(presentation_callback).Run(feedback);
+  PendingPresentationCallback pending_cb;
+  pending_cb.latch_time = transaction_stats.latch_time;
+  pending_cb.present_fence = std::move(transaction_stats.present_fence);
+  pending_cb.callback = std::move(presentation_callback);
+  pending_presentation_callback_queue_.push(std::move(pending_cb));
+  CheckPendingPresentationCallbacks();
 
   const bool has_context = context_->MakeCurrent(this);
   for (auto& surface_stat : transaction_stats.surface_stats) {
@@ -366,9 +420,71 @@ void GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread(
   }
 }
 
+void GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks() {
+  TRACE_EVENT0("gpu",
+               "GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks");
+  check_pending_presentation_callback_queue_task_.Cancel();
+
+  while (!pending_presentation_callback_queue_.empty()) {
+    auto& pending_cb = pending_presentation_callback_queue_.front();
+
+    base::TimeTicks signal_time;
+    auto status =
+        pending_cb.present_fence.is_valid()
+            ? GLFenceAndroidNativeFenceSync::GetStatusChangeTimeForFence(
+                  pending_cb.present_fence.get(), &signal_time)
+            : GLFenceAndroidNativeFenceSync::kInvalid;
+    if (status == GLFenceAndroidNativeFenceSync::kNotSignaled)
+      break;
+
+    auto flags = gfx::PresentationFeedback::kHWCompletion |
+                 gfx::PresentationFeedback::kVSync;
+    if (status == GLFenceAndroidNativeFenceSync::kInvalid) {
+      signal_time = pending_cb.latch_time;
+      flags = 0u;
+    }
+
+    TRACE_EVENT_INSTANT0(
+        "gpu",
+        "GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks - "
+        "presentation_feedback",
+        TRACE_EVENT_SCOPE_THREAD);
+    gfx::PresentationFeedback feedback(signal_time, base::TimeDelta(), flags);
+    std::move(pending_cb.callback).Run(feedback);
+    pending_presentation_callback_queue_.pop();
+  }
+
+  // If there are unsignaled fences and we don't have any pending transactions,
+  // schedule a task to poll the fences again. If there is a pending transaction
+  // already, then we'll poll when that transaction is acked.
+  if (!pending_presentation_callback_queue_.empty() &&
+      pending_transaction_queue_.empty()) {
+    check_pending_presentation_callback_queue_task_.Reset(base::BindOnce(
+        &GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks,
+        weak_factory_.GetWeakPtr()));
+    gpu_task_runner_->PostDelayedTask(
+        FROM_HERE, check_pending_presentation_callback_queue_task_.callback(),
+        base::TimeDelta::FromSeconds(1) / 60);
+  }
+}
+
+void GLSurfaceEGLSurfaceControl::SetDisplayTransform(
+    gfx::OverlayTransform transform) {
+  display_transform_ = transform;
+}
+
+gfx::Rect GLSurfaceEGLSurfaceControl::ApplyDisplayInverse(
+    const gfx::Rect& input) const {
+  gfx::Transform display_inverse = gfx::OverlayTransformToTransform(
+      gfx::InvertOverlayTransform(display_transform_), window_rect_.size());
+  return cc::MathUtil::MapEnclosedRectWith2dAxisAlignedTransform(
+      display_inverse, input);
+}
+
 GLSurfaceEGLSurfaceControl::SurfaceState::SurfaceState(
-    const SurfaceControl::Surface& parent)
-    : surface(new SurfaceControl::Surface(parent, kChildSurfaceName)) {}
+    const SurfaceControl::Surface& parent,
+    const std::string& name)
+    : surface(new SurfaceControl::Surface(parent, name.c_str())) {}
 
 GLSurfaceEGLSurfaceControl::SurfaceState::SurfaceState() = default;
 GLSurfaceEGLSurfaceControl::SurfaceState::SurfaceState(SurfaceState&& other) =
@@ -386,5 +502,15 @@ GLSurfaceEGLSurfaceControl::ResourceRef::ResourceRef(ResourceRef&& other) =
 GLSurfaceEGLSurfaceControl::ResourceRef&
 GLSurfaceEGLSurfaceControl::ResourceRef::operator=(ResourceRef&& other) =
     default;
+
+GLSurfaceEGLSurfaceControl::PendingPresentationCallback::
+    PendingPresentationCallback() = default;
+GLSurfaceEGLSurfaceControl::PendingPresentationCallback::
+    ~PendingPresentationCallback() = default;
+GLSurfaceEGLSurfaceControl::PendingPresentationCallback::
+    PendingPresentationCallback(PendingPresentationCallback&& other) = default;
+GLSurfaceEGLSurfaceControl::PendingPresentationCallback&
+GLSurfaceEGLSurfaceControl::PendingPresentationCallback::operator=(
+    PendingPresentationCallback&& other) = default;
 
 }  // namespace gl

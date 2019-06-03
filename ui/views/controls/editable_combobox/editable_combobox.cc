@@ -24,6 +24,7 @@
 #include "ui/base/models/menu_separator_types.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/event.h"
+#include "ui/events/event_constants.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/insets.h"
@@ -31,6 +32,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/range/range.h"
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/native_theme/native_theme.h"
@@ -42,6 +44,7 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/combobox/combobox_util.h"
 #include "ui/views/controls/editable_combobox/editable_combobox_listener.h"
+#include "ui/views/controls/menu/menu_config.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/menu/menu_types.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -155,6 +158,17 @@ class EditableCombobox::EditableComboboxMenuModel
 
   void EnableUpdateItemsShown() { update_items_shown_enabled_ = true; }
 
+  bool UseCheckmarks() const {
+    return MenuConfig::instance().check_selected_combobox_item;
+  }
+
+  base::string16 GetItemTextAt(int index, bool showing_password_text) const {
+    return showing_password_text
+               ? items_shown_[index]
+               : base::string16(items_shown_[index].length(),
+                                gfx::RenderText::kPasswordReplacementChar);
+  }
+
   //////////////////////////////////////////////////////////////////////////////
   // Overridden from ComboboxModelObserver:
   void OnComboboxModelChanged(ui::ComboboxModel* model) override {
@@ -166,22 +180,12 @@ class EditableCombobox::EditableComboboxMenuModel
 
   int GetItemCount() const override { return items_shown_.size(); }
 
-  base::string16 GetLabelAt(int index) const override {
-    // Inserting the Unicode formatting characters if necessary so that the text
-    // is displayed correctly in right-to-left UIs.
-    base::string16 text =
-        owner_->showing_password_text_
-            ? items_shown_[index]
-            : base::string16(items_shown_[index].length(),
-                             gfx::RenderText::kPasswordReplacementChar);
-    base::i18n::AdjustStringForLocaleDirection(&text);
-    return text;
-  }
-
  private:
   bool HasIcons() const override { return false; }
 
-  ItemType GetTypeAt(int index) const override { return TYPE_COMMAND; }
+  ItemType GetTypeAt(int index) const override {
+    return UseCheckmarks() ? TYPE_CHECK : TYPE_COMMAND;
+  }
 
   ui::MenuSeparatorType GetSeparatorTypeAt(int index) const override {
     return ui::NORMAL_SEPARATOR;
@@ -190,6 +194,12 @@ class EditableCombobox::EditableComboboxMenuModel
   int GetCommandIdAt(int index) const override {
     constexpr int kFirstMenuItemId = 1000;
     return index + kFirstMenuItemId;
+  }
+
+  base::string16 GetLabelAt(int index) const override {
+    base::string16 text = GetItemTextAt(index, owner_->showing_password_text_);
+    base::i18n::AdjustStringForLocaleDirection(&text);
+    return text;
   }
 
   bool IsItemDynamicAt(int index) const override { return false; }
@@ -203,7 +213,9 @@ class EditableCombobox::EditableComboboxMenuModel
     return false;
   }
 
-  bool IsItemCheckedAt(int index) const override { return false; }
+  bool IsItemCheckedAt(int index) const override {
+    return UseCheckmarks() && items_shown_[index] == owner_->GetText();
+  }
 
   int GetGroupIdAt(int index) const override { return -1; }
 
@@ -279,6 +291,7 @@ EditableCombobox::EditableCombobox(
 }
 
 EditableCombobox::~EditableCombobox() {
+  CloseMenu();
   textfield_->set_controller(nullptr);
   textfield_->RemoveObserver(this);
 }
@@ -297,6 +310,10 @@ void EditableCombobox::SetText(const base::string16& text) {
 
 const gfx::FontList& EditableCombobox::GetFontList() const {
   return style::GetFont(text_context_, text_style_);
+}
+
+void EditableCombobox::SelectRange(const gfx::Range& range) {
+  textfield_->SelectRange(range);
 }
 
 void EditableCombobox::SetAccessibleName(const base::string16& name) {
@@ -323,7 +340,7 @@ int EditableCombobox::GetItemCountForTest() {
 }
 
 base::string16 EditableCombobox::GetItemForTest(int index) {
-  return menu_model_->GetLabelAt(index);
+  return menu_model_->GetItemTextAt(index, showing_password_text_);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -342,8 +359,8 @@ void EditableCombobox::Layout() {
   }
 }
 
-void EditableCombobox::OnNativeThemeChanged(const ui::NativeTheme* theme) {
-  textfield_->OnNativeThemeChanged(theme);
+void EditableCombobox::OnThemeChanged() {
+  textfield_->OnThemeChanged();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -355,12 +372,40 @@ void EditableCombobox::ContentsChanged(Textfield* sender,
   ShowDropDownMenu(ui::MENU_SOURCE_KEYBOARD);
 }
 
+bool EditableCombobox::HandleMouseEvent(Textfield* sender,
+                                        const ui::MouseEvent& mouse_event) {
+  // We show the menu on mouse release instead of mouse press so that the menu
+  // showing up doesn't interrupt a potential text selection operation by the
+  // user.
+  if (mouse_event.type() == ui::ET_MOUSE_PRESSED) {
+    mouse_pressed_ = true;
+  } else if (mouse_event.type() == ui::ET_MOUSE_RELEASED) {
+    mouse_pressed_ = false;
+    ShowDropDownMenu(ui::MENU_SOURCE_MOUSE);
+  }
+  return false;
+}
+
+bool EditableCombobox::HandleGestureEvent(
+    Textfield* sender,
+    const ui::GestureEvent& gesture_event) {
+  ShowDropDownMenu(ui::MENU_SOURCE_TOUCH);
+  return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// EditableCombobox, View overrides:
+
 void EditableCombobox::OnViewBlurred(View* observed_view) {
-  menu_runner_.reset();
+  CloseMenu();
 }
 
 void EditableCombobox::OnViewFocused(View* observed_view) {
-  ShowDropDownMenu();
+  // We only show the menu if the mouse is not currently pressed to avoid
+  // interrupting a text selection operation. The menu will be shown on mouse
+  // release inside HandleMouseEvent.
+  if (!mouse_pressed_)
+    ShowDropDownMenu();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -368,7 +413,7 @@ void EditableCombobox::OnViewFocused(View* observed_view) {
 
 void EditableCombobox::ButtonPressed(Button* sender, const ui::Event& event) {
   if (menu_runner_ && menu_runner_->IsRunning()) {
-    menu_runner_.reset();
+    CloseMenu();
     return;
   }
   textfield_->RequestFocus();
@@ -383,16 +428,15 @@ void EditableCombobox::ButtonPressed(Button* sender, const ui::Event& event) {
 ////////////////////////////////////////////////////////////////////////////////
 // EditableCombobox, Private methods:
 
+void EditableCombobox::CloseMenu() {
+  menu_runner_.reset();
+}
+
 void EditableCombobox::OnItemSelected(int index) {
-  // We set |showing_password_text_| to true before calling GetLabelAt on the
-  // selected item so that even if it was false we still get the actual
-  // characters before setting them in the textfield, which can hide them on its
-  // own. Otherwise we would be setting
-  // gfx::RenderText::kPasswordReplacementChar characters.
-  bool showing_password_text = showing_password_text_;
-  showing_password_text_ = true;
-  base::string16 selected_item_text = menu_model_->GetLabelAt(index);
-  showing_password_text_ = showing_password_text;
+  // |textfield_| can hide the characters on its own so we read the actual
+  // characters instead of gfx::RenderText::kPasswordReplacementChar characters.
+  base::string16 selected_item_text =
+      menu_model_->GetItemTextAt(index, /*showing_password_text=*/true);
   textfield_->SetText(selected_item_text);
   // SetText does not actually notify the TextfieldController, so we call the
   // handling code directly.
@@ -417,17 +461,13 @@ void EditableCombobox::HandleNewContent(const base::string16& new_content) {
   menu_model_->UpdateItemsShown();
 }
 
-void EditableCombobox::OnMenuClosed() {
-  menu_runner_.reset();
-}
-
 void EditableCombobox::ShowDropDownMenu(ui::MenuSourceType source_type) {
   constexpr int kMenuBorderWidthLeft = 1;
   constexpr int kMenuBorderWidthTop = 1;
   constexpr int kMenuBorderWidthRight = 1;
 
   if (!menu_model_->GetItemCount()) {
-    menu_runner_.reset();
+    CloseMenu();
     return;
   }
   if (!textfield_->HasFocus() || (menu_runner_ && menu_runner_->IsRunning()))
@@ -446,7 +486,7 @@ void EditableCombobox::ShowDropDownMenu(ui::MenuSourceType source_type) {
 
   menu_runner_ = std::make_unique<MenuRunner>(
       menu_model_.get(), MenuRunner::EDITABLE_COMBOBOX,
-      base::BindRepeating(&EditableCombobox::OnMenuClosed,
+      base::BindRepeating(&EditableCombobox::CloseMenu,
                           base::Unretained(this)));
   menu_runner_->RunMenuAt(GetWidget(), nullptr, bounds,
                           MenuAnchorPosition::kTopLeft, source_type);

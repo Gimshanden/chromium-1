@@ -21,7 +21,7 @@ namespace chromeos {
 // The client can generate fake DBus signals when
 // ShillThirdPartyVpnDriverClient::TestInterface methods are called. The
 // DBus methods are nops that only acknowledge the caller.
-class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillThirdPartyVpnDriverClient
+class COMPONENT_EXPORT(SHILL_CLIENT) FakeShillThirdPartyVpnDriverClient
     : public ShillThirdPartyVpnDriverClient,
       public ShillThirdPartyVpnDriverClient::TestInterface {
  public:
@@ -29,7 +29,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillThirdPartyVpnDriverClient
   ~FakeShillThirdPartyVpnDriverClient() override;
 
   // ShillThirdPartyVpnDriverClient overrides
-  void Init(dbus::Bus* bus) override;
   void AddShillThirdPartyVpnObserver(
       const std::string& object_path_value,
       ShillThirdPartyVpnObserver* observer) override;

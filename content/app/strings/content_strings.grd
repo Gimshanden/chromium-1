@@ -627,6 +627,9 @@ below:
       <message name="IDS_AX_IMAGE_ANNOTATION_ADULT" desc="Accessibility message spoken out loud to screen reader users indicating that an image appears to be something like nudity or pornography or other policy violation that is not appropriate for children.">
         Appears to contain adult content. No description available.
       </message>
+      <message name="IDS_AX_IMAGE_ANNOTATION_NO_DESCRIPTION" desc="Accessibility message spoken out loud to screen reader users indicating that the browser was unable to provide a description for an image.">
+        No description available.
+      </message>
       <message name="IDS_AX_IMAGE_ANNOTATION_OCR_CONTEXT" desc="Accessibility message spoken out loud to screen reader users when reading text that was automatically extracted from an image, for an example the word 'stop' could be extracted from a photo of a stop sign. Because automatic text extraction sometimes contains errors it is important that the language used indicates some uncertainty - it may say 'stop' or it appears to say 'stop', not it definitely says 'stop'.">
         Appears to say: <ph name="OCR_TEXT">$1<ex>Stop</ex></ph>
       </message>
@@ -760,6 +763,14 @@ below:
 
       <message name="IDS_AX_MEDIA_OVERFLOW_BUTTON_HELP" desc="Accessibility help description for overflow button.">
         more options
+      </message>
+
+      <message name="IDS_AX_MEDIA_TOUCHLESS_SEEK_ACTION" desc="Accessibility help description for seek action on touchless device using DPAD.">
+        left and right to seek
+      </message>
+
+      <message name="IDS_AX_MEDIA_TOUCHLESS_VOLUME_ACTION" desc="Accessibility help description for volume change action on touchless device using DPAD.">
+        up and down to change volume
       </message>
 
       <message name="IDS_AX_MILLISECOND_FIELD_TEXT" desc="Accessible description of the millisecond field in a date/time control">
@@ -918,6 +929,9 @@ below:
         Please lengthen this text to <ph name="MIN_CHARACTERS">$2<ex>101</ex></ph> characters or more (you are currently using <ph name="CURRENT_LENGTH">$1<ex>100</ex></ph> characters).
       </message>
 
+      <message name="IDS_MEDIA_SESSION_FILE_SOURCE" desc="The name of the media session source if the media is a local file.">
+        Local File
+      </message>
       <message name="IDS_MEDIA_OVERFLOW_MENU_CLOSED_CAPTIONS" desc="Media controls overflow menu item label for a closed captions button. The text for this overflow menu should be short.">
         Captions
       </message>
@@ -949,7 +963,7 @@ below:
        Download
       </message>
       <if expr="is_macosx">
-        <message name="IDS_MEDIA_OVERFLOW_MENU_ENTER_PICTURE_IN_PICTURE" desc="Media contr  ls overflow menu item label for a button to enter Picture-in-Picture.">
+        <message name="IDS_MEDIA_OVERFLOW_MENU_ENTER_PICTURE_IN_PICTURE" desc="Media controls overflow menu item label for a button to enter Picture-in-Picture.">
           Picture in Picture
         </message>
       </if>
@@ -958,11 +972,18 @@ below:
           Picture in picture
         </message>
       </if>
-      <message name="IDS_MEDIA_OVERFLOW_MENU_EXIT_PICTURE_IN_PICTURE" desc="Media controls overflow menu item label for a button to exit Picture-in-Picture.">
-          Exit picture-in-picture mode
-      </message>
+      <if expr="is_macosx">
+        <message name="IDS_MEDIA_OVERFLOW_MENU_EXIT_PICTURE_IN_PICTURE" desc="Media controls overflow menu item label for a button to exit Picture-in-Picture.">
+          Exit Picture-in-Picture
+        </message>
+      </if>
+      <if expr="not is_macosx">
+        <message name="IDS_MEDIA_OVERFLOW_MENU_EXIT_PICTURE_IN_PICTURE" desc="Media controls overflow menu item label for a button to exit Picture-in-Picture.">
+          Exit picture-in-picture
+        </message>
+      </if>
       <message name="IDS_MEDIA_PICTURE_IN_PICTURE_INTERSTITIAL_TEXT" desc="Text message shown to user when in picture in picture mode. When a video is in picture in picture mode, an interstitial with this text appears where the video player is positioned. The video continues to play back in another window that gives the experience that the video is 'popped out'.">
-        Playing in picture-in-picture mode
+        Playing in picture-in-picture
       </message>
       <message name="IDS_MEDIA_REMOTING_CAST_TEXT" desc="Text message shown to the user when casting a video to a known remote device.">
        Now casting to <ph name="DEVICE_FRIENDLY_NAME">$1<ex>Living Room TV</ex></ph>

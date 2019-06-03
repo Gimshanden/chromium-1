@@ -11,7 +11,6 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.support.annotation.ColorRes;
-import android.support.annotation.DrawableRes;
 import android.support.annotation.Nullable;
 import android.support.annotation.StringRes;
 import android.util.AttributeSet;
@@ -23,6 +22,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ProgressBar;
 
+import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ThemeColorProvider;
@@ -42,6 +42,7 @@ import org.chromium.chrome.browser.toolbar.MenuButton;
 import org.chromium.chrome.browser.toolbar.TabCountProvider;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
 import org.chromium.chrome.browser.toolbar.ToolbarTabController;
+import org.chromium.chrome.browser.toolbar.top.TopToolbarCoordinator.UrlExpansionObserver;
 import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.browser.util.ViewUtils;
 import org.chromium.chrome.browser.widget.ToolbarProgressBar;
@@ -57,6 +58,8 @@ public abstract class ToolbarLayout
         extends FrameLayout implements TintObserver, ThemeColorObserver {
     private Invalidator mInvalidator;
 
+    protected final ObserverList<UrlExpansionObserver> mUrlExpansionObservers =
+            new ObserverList<>();
     private final int[] mTempPosition = new int[2];
 
     /**
@@ -68,6 +71,7 @@ public abstract class ToolbarLayout
 
     private ToolbarDataProvider mToolbarDataProvider;
     private ToolbarTabController mToolbarTabController;
+
     @Nullable
     protected ToolbarProgressBar mProgressBar;
 
@@ -106,19 +110,23 @@ public abstract class ToolbarLayout
      * Initialize the external dependencies required for view interaction.
      * @param toolbarDataProvider The provider for toolbar data.
      * @param tabController       The controller that handles interactions with the tab.
-     * @param appMenuButtonHelper The helper for managing menu button interactions.
      */
-    void initialize(ToolbarDataProvider toolbarDataProvider, ToolbarTabController tabController,
-            AppMenuButtonHelper appMenuButtonHelper) {
+    void initialize(ToolbarDataProvider toolbarDataProvider, ToolbarTabController tabController) {
         mToolbarDataProvider = toolbarDataProvider;
         mToolbarTabController = tabController;
+    }
+
+    /**
+     * @param appMenuButtonHelper The helper for managing menu button interactions.
+     */
+    void setAppMenuButtonHelper(AppMenuButtonHelper appMenuButtonHelper) {
         if (mMenuButtonWrapper != null) {
             mMenuButtonWrapper.setAppMenuButtonHelper(appMenuButtonHelper);
         } else {
             final ImageButton menuButton = getMenuButton();
             if (menuButton != null) {
                 menuButton.setOnTouchListener(appMenuButtonHelper);
-                menuButton.setAccessibilityDelegate(appMenuButtonHelper);
+                menuButton.setAccessibilityDelegate(appMenuButtonHelper.getAccessibilityDelegate());
             }
         }
     }
@@ -132,6 +140,22 @@ public abstract class ToolbarLayout
             mThemeColorProvider.removeThemeColorObserver(this);
             mThemeColorProvider = null;
         }
+
+        getLocationBar().destroy();
+    }
+
+    /**
+     * @param urlExpansionObserver The observer that observes URL expansion percentage change.
+     */
+    void addUrlExpansionObserver(UrlExpansionObserver urlExpansionObserver) {
+        mUrlExpansionObservers.addObserver(urlExpansionObserver);
+    }
+
+    /**
+     * @param urlExpansionObserver The observer that observes URL expansion percentage change.
+     */
+    void removeUrlExpansionObserver(UrlExpansionObserver urlExpansionObserver) {
+        mUrlExpansionObservers.removeObserver(urlExpansionObserver);
     }
 
     /**
@@ -207,6 +231,16 @@ public abstract class ToolbarLayout
         mToolbarDataProvider = new ToolbarDataProvider() {
             @Override
             public boolean isIncognito() {
+                return false;
+            }
+
+            @Override
+            public boolean isInOverviewAndShowingOmnibox() {
+                return false;
+            }
+
+            @Override
+            public boolean shouldShowLocationBarInOverviewMode() {
                 return false;
             }
 
@@ -817,19 +851,16 @@ public abstract class ToolbarLayout
     /**
      * Enable the experimental toolbar button.
      * @param onClickListener The {@link OnClickListener} to be called when the button is clicked.
-     * @param drawableResId The resource id of the drawable to display for the button.
+     * @param image The drawable to display for the button.
      * @param contentDescriptionResId The resource id of the content description for the button.
      */
-    void enableExperimentalButton(OnClickListener onClickListener, @DrawableRes int drawableResId,
+    void enableExperimentalButton(OnClickListener onClickListener, Drawable image,
             @StringRes int contentDescriptionResId) {}
 
     /**
-     * @return The experimental toolbar button if it exists.
+     * Updates image displayed on experimental button.
      */
-    @Nullable
-    View getExperimentalButtonView() {
-        return null;
-    }
+    void updateExperimentalButtonImage(Drawable image) {}
 
     /**
      * Disable the experimental toolbar button.

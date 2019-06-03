@@ -17,12 +17,13 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/country_names.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_bridge_test_util.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_bridge_util.h"
@@ -45,7 +46,6 @@ using base::ScopedTempDir;
 using sync_pb::WalletMetadataSpecifics;
 using syncer::DataBatch;
 using syncer::EntityData;
-using syncer::EntityDataPtr;
 using syncer::KeyAndData;
 using syncer::MockModelTypeChangeProcessor;
 using syncer::ModelType;
@@ -287,6 +287,8 @@ class AutofillWalletMetadataSyncBridgeTest : public testing::Test {
   void ResetBridge(bool initial_sync_done = true) {
     sync_pb::ModelTypeState model_type_state;
     model_type_state.set_initial_sync_done(initial_sync_done);
+    model_type_state.mutable_progress_marker()->set_data_type_id(
+        GetSpecificsFieldNumberFromModelType(syncer::AUTOFILL_WALLET_METADATA));
     EXPECT_TRUE(table()->UpdateModelTypeState(syncer::AUTOFILL_WALLET_METADATA,
                                               model_type_state));
     bridge_.reset(new AutofillWalletMetadataSyncBridge(
@@ -327,7 +329,7 @@ class AutofillWalletMetadataSyncBridgeTest : public testing::Test {
     for (const WalletMetadataSpecifics& specifics : remote_data) {
       updates.push_back(SpecificsToUpdateResponse(specifics));
     }
-    real_processor_->OnUpdateReceived(state, updates);
+    real_processor_->OnUpdateReceived(state, std::move(updates));
   }
 
   void ReceiveTombstones(
@@ -344,30 +346,31 @@ class AutofillWalletMetadataSyncBridgeTest : public testing::Test {
       updates.push_back(
           SpecificsToUpdateResponse(specifics, /*is_deleted=*/true));
     }
-    real_processor_->OnUpdateReceived(state, updates);
+    real_processor_->OnUpdateReceived(state, std::move(updates));
   }
 
-  EntityData SpecificsToEntity(const WalletMetadataSpecifics& specifics,
-                               bool is_deleted = false) {
-    EntityData data;
-    *data.specifics.mutable_wallet_metadata() = specifics;
-    data.client_tag_hash = syncer::GenerateSyncableHash(
-        syncer::AUTOFILL_WALLET_METADATA, bridge()->GetClientTag(data));
+  std::unique_ptr<EntityData> SpecificsToEntity(
+      const WalletMetadataSpecifics& specifics,
+      bool is_deleted = false) {
+    auto data = std::make_unique<EntityData>();
+    *data->specifics.mutable_wallet_metadata() = specifics;
+    data->client_tag_hash = syncer::GenerateSyncableHash(
+        syncer::AUTOFILL_WALLET_METADATA, bridge()->GetClientTag(*data));
     if (is_deleted) {
       // Specifics had to be set in order to generate the client tag. Since
       // deleted entity is defined by specifics being empty, we need to clear
       // them now.
-      data.specifics = sync_pb::EntitySpecifics();
+      data->specifics = sync_pb::EntitySpecifics();
     }
     return data;
   }
 
-  syncer::UpdateResponseData SpecificsToUpdateResponse(
+  std::unique_ptr<syncer::UpdateResponseData> SpecificsToUpdateResponse(
       const WalletMetadataSpecifics& specifics,
       bool is_deleted = false) {
-    syncer::UpdateResponseData data;
-    data.entity = SpecificsToEntity(specifics, is_deleted).PassToPtr();
-    data.response_version = response_version;
+    auto data = std::make_unique<syncer::UpdateResponseData>();
+    data->entity = SpecificsToEntity(specifics, is_deleted);
+    data->response_version = response_version;
     return data;
   }
 
@@ -418,7 +421,8 @@ class AutofillWalletMetadataSyncBridgeTest : public testing::Test {
     AutofillTable* table = AutofillTable::FromWebDatabase(&db_);
     syncer::MetadataBatch batch;
     if (table->GetAllSyncMetadata(syncer::AUTOFILL_WALLET_METADATA, &batch)) {
-      for (std::pair<std::string, sync_pb::EntityMetadata> entry :
+      for (const std::pair<const std::string,
+                           std::unique_ptr<sync_pb::EntityMetadata>>& entry :
            batch.GetAllMetadata()) {
         storage_keys.push_back(entry.first);
       }
@@ -464,7 +468,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, GetClientTagForAddress) {
   ResetBridge();
   WalletMetadataSpecifics specifics =
       CreateWalletMetadataSpecificsForAddress(kAddr1SpecificsId);
-  EXPECT_EQ(bridge()->GetClientTag(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetClientTag(*SpecificsToEntity(specifics)),
             kAddr1SyncTag);
 }
 
@@ -472,7 +476,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, GetClientTagForCard) {
   ResetBridge();
   WalletMetadataSpecifics specifics =
       CreateWalletMetadataSpecificsForCard(kCard1SpecificsId);
-  EXPECT_EQ(bridge()->GetClientTag(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetClientTag(*SpecificsToEntity(specifics)),
             kCard1SyncTag);
 }
 
@@ -481,7 +485,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, GetStorageKeyForAddress) {
   ResetBridge();
   WalletMetadataSpecifics specifics =
       CreateWalletMetadataSpecificsForAddress(kAddr1SpecificsId);
-  EXPECT_EQ(bridge()->GetStorageKey(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetStorageKey(*SpecificsToEntity(specifics)),
             GetAddressStorageKey(kAddr1SpecificsId));
 }
 
@@ -489,7 +493,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, GetStorageKeyForCard) {
   ResetBridge();
   WalletMetadataSpecifics specifics =
       CreateWalletMetadataSpecificsForCard(kCard1SpecificsId);
-  EXPECT_EQ(bridge()->GetStorageKey(SpecificsToEntity(specifics)),
+  EXPECT_EQ(bridge()->GetStorageKey(*SpecificsToEntity(specifics)),
             GetCardStorageKey(kCard1SpecificsId));
 }
 
@@ -582,9 +586,10 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
           kCard1SpecificsId, /*use_count=*/30, /*use_date=*/40);
   StartSyncing({profile, card});
 
-  // Now stop sync. This should wipe the data and notify the backend.
+  // Now stop sync. This should wipe the data but not notify the backend (as the
+  // data bridge will do that).
   EXPECT_CALL(*backend(), CommitChanges());
-  EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges());
+  EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges()).Times(0);
   StopSyncing();
 
   EXPECT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
@@ -820,10 +825,11 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
   EXPECT_CALL(*backend(), CommitChanges()).Times(0);
   EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges()).Times(0);
 
-  bridge()->AutofillProfileChanged(AutofillProfileChange(
-      AutofillProfileChange::REMOVE, existing_profile.server_id(), nullptr));
+  bridge()->AutofillProfileChanged(
+      AutofillProfileChange(AutofillProfileChange::REMOVE,
+                            existing_profile.server_id(), &existing_profile));
   bridge()->CreditCardChanged(CreditCardChange(
-      CreditCardChange::REMOVE, existing_card.server_id(), nullptr));
+      CreditCardChange::REMOVE, existing_card.server_id(), &existing_card));
 
   // Check that there is no metadata anymore.
   EXPECT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
@@ -849,10 +855,11 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
   EXPECT_CALL(*backend(), CommitChanges()).Times(0);
   EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges()).Times(0);
 
-  bridge()->AutofillProfileChanged(AutofillProfileChange(
-      AutofillProfileChange::REMOVE, existing_profile.server_id(), nullptr));
+  bridge()->AutofillProfileChanged(
+      AutofillProfileChange(AutofillProfileChange::REMOVE,
+                            existing_profile.server_id(), &existing_profile));
   bridge()->CreditCardChanged(CreditCardChange(
-      CreditCardChange::REMOVE, existing_card.server_id(), nullptr));
+      CreditCardChange::REMOVE, existing_card.server_id(), &existing_card));
 
   // Check that there is also no metadata at the end.
   EXPECT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
@@ -860,6 +867,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
 
 // Verify that old orphan metadata gets deleted on startup.
 TEST_F(AutofillWalletMetadataSyncBridgeTest, DeleteOldOrphanMetadataOnStartup) {
+  base::HistogramTester histogram_tester;
   WalletMetadataSpecifics profile =
       CreateWalletMetadataSpecificsForAddressWithDetails(
           kAddr1SpecificsId, /*use_count=*/10, /*use_date=*/20);
@@ -881,6 +889,8 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, DeleteOldOrphanMetadataOnStartup) {
   EXPECT_CALL(*backend(), CommitChanges());
 
   ResetBridge();
+  histogram_tester.ExpectBucketCount("Sync.WalletMetadata.DeletedOldOrphans",
+                                     /*bucket=*/2, /*count=*/1);
 
   ASSERT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
 }
@@ -888,6 +898,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest, DeleteOldOrphanMetadataOnStartup) {
 // Verify that recent orphan metadata does not get deleted on startup.
 TEST_F(AutofillWalletMetadataSyncBridgeTest,
        DoNotDeleteOldNonOrphanMetadataOnStartup) {
+  base::HistogramTester histogram_tester;
   WalletMetadataSpecifics profile =
       CreateWalletMetadataSpecificsForAddressWithDetails(
           kAddr1SpecificsId, /*use_count=*/10, /*use_date=*/20);
@@ -907,6 +918,8 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
   EXPECT_CALL(*backend(), CommitChanges()).Times(0);
 
   ResetBridge();
+  histogram_tester.ExpectTotalCount("Sync.WalletMetadata.DeletedOldOrphans",
+                                    /*count=*/0);
 
   EXPECT_THAT(
       GetAllLocalDataInclRestart(),
@@ -916,6 +929,7 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
 // Verify that recent orphan metadata does not get deleted on startup.
 TEST_F(AutofillWalletMetadataSyncBridgeTest,
        DoNotDeleteRecentOrphanMetadataOnStartup) {
+  base::HistogramTester histogram_tester;
   WalletMetadataSpecifics profile =
       CreateWalletMetadataSpecificsForAddressWithDetails(
           kAddr1SpecificsId, /*use_count=*/10, /*use_date=*/20);
@@ -934,6 +948,8 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
   EXPECT_CALL(*backend(), CommitChanges()).Times(0);
 
   ResetBridge();
+  histogram_tester.ExpectTotalCount("Sync.WalletMetadata.DeletedOldOrphans",
+                                    /*count=*/0);
 
   EXPECT_THAT(
       GetAllLocalDataInclRestart(),
@@ -1031,9 +1047,9 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
                                    EqualsSpecifics(remote_card)));
 }
 
-// Test that remote deletions are properly propagated into the local database.
+// Test that remote deletions are ignored.
 TEST_F(AutofillWalletMetadataSyncBridgeTest,
-       RemoteDeletion_ShouldDeleteExistingLocalData) {
+       RemoteDeletion_ShouldNotDeleteExistingLocalData) {
   // Perform initial sync to create sync data & metadata.
   ResetBridge(/*initial_sync_done=*/false);
   WalletMetadataSpecifics profile =
@@ -1050,87 +1066,19 @@ TEST_F(AutofillWalletMetadataSyncBridgeTest,
   ASSERT_THAT(GetLocalSyncMetadataStorageKeys(),
               UnorderedElementsAre(kAddr1StorageKey, kCard1StorageKey));
 
-  // Now delete the profile. Changes should happen in the local database.
+  // Now delete the profile.
+  // We still need to commit the updated progress marker and sync metadata.
   EXPECT_CALL(*backend(), CommitChanges());
-  EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges());
-  ReceiveTombstones({profile, card});
-
-  // Verify that both data and sync metadata is gone.
-  EXPECT_FALSE(real_processor()->IsTrackingEntityForTest(kAddr1StorageKey));
-  EXPECT_FALSE(real_processor()->IsTrackingEntityForTest(kCard1StorageKey));
-  EXPECT_THAT(GetLocalSyncMetadataStorageKeys(), IsEmpty());
-  EXPECT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
-}
-
-// Test that remote deletions are properly handled even when the local data is
-// already deleted. We should still delete sync metadata both from the DB and
-// from the processor internal memory.
-TEST_F(AutofillWalletMetadataSyncBridgeTest,
-       RemoteDeletion_ShouldNotNotifyChangesWhenLocalDataIsGone) {
-  // Perform initial sync to create sync data & metadata.
-  ResetBridge(/*initial_sync_done=*/false);
-  WalletMetadataSpecifics profile =
-      CreateWalletMetadataSpecificsForAddressWithDetails(
-          kAddr1SpecificsId, /*use_count=*/10, /*use_date=*/20);
-  WalletMetadataSpecifics card =
-      CreateWalletMetadataSpecificsForCardWithDetails(
-          kCard1SpecificsId, /*use_count=*/30, /*use_date=*/40);
-  StartSyncing({profile, card});
-
-  // Clear the data from the local DB, sync metadata stays untouched both in the
-  // processor and in the local DB.
-  table()->SetServerProfiles({});
-  table()->SetServerCreditCards({});
-  ASSERT_TRUE(real_processor()->IsTrackingEntityForTest(kAddr1StorageKey));
-  ASSERT_TRUE(real_processor()->IsTrackingEntityForTest(kCard1StorageKey));
-  ASSERT_THAT(GetLocalSyncMetadataStorageKeys(),
-              UnorderedElementsAre(kAddr1StorageKey, kCard1StorageKey));
-
-  // Send deletions from the server. We should commit to write the new progress
-  // marker down.
-  EXPECT_CALL(*backend(), CommitChanges());
-  // Since the data is already deleted, it should not notify about changes. The
-  // entities should however get deleted from the processor.
+  // Changes should _not_ happen in the local autofill database.
   EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges()).Times(0);
   ReceiveTombstones({profile, card});
 
-  // Verify that sync metadata is gone from both the processor and local DB.
+  // Verify that even though the processor does not track these entities any
+  // more and the sync metadata is gone, the actual data entities still exist in
+  // the local DB.
   EXPECT_FALSE(real_processor()->IsTrackingEntityForTest(kAddr1StorageKey));
   EXPECT_FALSE(real_processor()->IsTrackingEntityForTest(kCard1StorageKey));
   EXPECT_THAT(GetLocalSyncMetadataStorageKeys(), IsEmpty());
-  EXPECT_THAT(GetAllLocalDataInclRestart(), IsEmpty());
-}
-
-// Test that remote deletions are ignored if there is no sync metadata for the
-// entity.
-TEST_F(AutofillWalletMetadataSyncBridgeTest,
-       RemoteDeletion_ShouldNotDeleteLocalDataWithoutSyncMetadata) {
-  WalletMetadataSpecifics profile =
-      CreateWalletMetadataSpecificsForAddressWithDetails(
-          kAddr1SpecificsId, /*use_count=*/10, /*use_date=*/20);
-  WalletMetadataSpecifics card =
-      CreateWalletMetadataSpecificsForCardWithDetails(
-          kCard1SpecificsId, /*use_count=*/30, /*use_date=*/40);
-
-  table()->SetServerProfiles({CreateServerProfileFromSpecifics(profile)});
-  table()->SetServerCreditCards({CreateServerCreditCardFromSpecifics(card)});
-
-  // Do not perform initial sync. This way, no sync metadata gets created, the
-  // processor does not know about the entities and thus, it should not delete
-  // them.
-  ResetBridge(/*initial_sync_done=*/true);
-  StartSyncing({});
-  ASSERT_FALSE(real_processor()->IsTrackingEntityForTest(kAddr1StorageKey));
-  ASSERT_FALSE(real_processor()->IsTrackingEntityForTest(kCard1StorageKey));
-  ASSERT_THAT(GetLocalSyncMetadataStorageKeys(), IsEmpty());
-
-  // Send deletions from the server. We should commit to write the new progress
-  // marker down.
-  EXPECT_CALL(*backend(), CommitChanges());
-  // The actual deletion should get ignored.
-  EXPECT_CALL(*backend(), NotifyOfMultipleAutofillChanges()).Times(0);
-  ReceiveTombstones({profile, card});
-
   EXPECT_THAT(
       GetAllLocalDataInclRestart(),
       UnorderedElementsAre(EqualsSpecifics(profile), EqualsSpecifics(card)));

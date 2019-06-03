@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "services/network/network_service.h"
+
 #include <memory>
 #include <utility>
 
@@ -37,12 +39,13 @@
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "services/network/network_context.h"
-#include "services/network/network_service.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/net_log.mojom.h"
 #include "services/network/public/mojom/network_change_manager.mojom.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/test/test_network_context_client.h"
 #include "services/network/test/test_network_service_client.h"
 #include "services/network/test/test_url_loader_client.h"
 #include "services/service_manager/public/cpp/test/test_connector_factory.h"
@@ -166,10 +169,7 @@ TEST_F(NetworkServiceTest, AuthDefaultParams) {
 
 #if BUILDFLAG(USE_KERBEROS) && !defined(OS_ANDROID)
   ASSERT_TRUE(GetNegotiateFactory(&network_context));
-#if defined(OS_CHROMEOS)
-  EXPECT_TRUE(GetNegotiateFactory(&network_context)
-                  ->allow_gssapi_library_load_for_testing());
-#elif defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_CHROMEOS)
   EXPECT_EQ("",
             GetNegotiateFactory(&network_context)->GetLibraryNameForTesting());
 #endif
@@ -228,25 +228,6 @@ TEST_F(NetworkServiceTest, AuthSchemesNone) {
   EXPECT_FALSE(auth_handler_factory->GetSchemeFactory(net::kDigestAuthScheme));
   EXPECT_FALSE(auth_handler_factory->GetSchemeFactory(net::kNtlmAuthScheme));
 }
-
-// |allow_gssapi_library_load| is only supported on ChromeOS.
-#if defined(OS_CHROMEOS)
-TEST_F(NetworkServiceTest, AuthGssapiLibraryDisabled) {
-  mojom::HttpAuthStaticParamsPtr auth_params =
-      mojom::HttpAuthStaticParams::New();
-  auth_params->supported_schemes.push_back("negotiate");
-  auth_params->allow_gssapi_library_load = true;
-  service()->SetUpHttpAuth(std::move(auth_params));
-
-  mojom::NetworkContextPtr network_context_ptr;
-  NetworkContext network_context(service(),
-                                 mojo::MakeRequest(&network_context_ptr),
-                                 CreateContextParams());
-  ASSERT_TRUE(GetNegotiateFactory(&network_context));
-  EXPECT_TRUE(GetNegotiateFactory(&network_context)
-                  ->allow_gssapi_library_load_for_testing());
-}
-#endif  // defined(OS_CHROMEOS)
 
 // |gssapi_library_name| is only supported on certain POSIX platforms.
 #if BUILDFLAG(USE_KERBEROS) && defined(OS_POSIX) && !defined(OS_ANDROID) && \
@@ -550,51 +531,6 @@ TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
       service()->host_resolver_manager()->GetDnsOverHttpsServersForTesting());
 }
 
-// Make sure that enabling DNS over HTTP without a primary NetworkContext fails.
-TEST_F(NetworkServiceTest,
-       DnsOverHttpsEnableDoesNothingWithoutPrimaryNetworkContext) {
-  // HostResolver::GetDnsClientForTesting() returns nullptr if the stub resolver
-  // is disabled.
-  EXPECT_FALSE(service()->host_resolver_manager()->GetDnsConfigAsValue());
-
-  // Try to enable DnsClient and DNS over HTTPS. Only the first should take
-  // effect.
-  std::vector<mojom::DnsOverHttpsServerPtr> dns_over_https_servers;
-  mojom::DnsOverHttpsServerPtr dns_over_https_server =
-      mojom::DnsOverHttpsServer::New();
-  dns_over_https_server->server_template = "https://foo/{?dns}";
-  dns_over_https_servers.emplace_back(std::move(dns_over_https_server));
-  service()->ConfigureStubHostResolver(true /* stub_resolver_enabled */,
-                                       std::move(dns_over_https_servers));
-  // DnsClient is enabled.
-  EXPECT_TRUE(service()->host_resolver_manager()->GetDnsConfigAsValue());
-  // DNS over HTTPS is not.
-  EXPECT_FALSE(
-      service()->host_resolver_manager()->GetDnsOverHttpsServersForTesting());
-
-  // Create a NetworkContext that is not the primary one.
-  mojom::NetworkContextPtr network_context;
-  service()->CreateNetworkContext(mojo::MakeRequest(&network_context),
-                                  CreateContextParams());
-  // There should be no change in host resolver state.
-  EXPECT_TRUE(service()->host_resolver_manager()->GetDnsConfigAsValue());
-  EXPECT_FALSE(
-      service()->host_resolver_manager()->GetDnsOverHttpsServersForTesting());
-
-  // Try to enable DNS over HTTPS again, which should not work, since there's
-  // still no primary NetworkContext.
-  dns_over_https_servers.clear();
-  dns_over_https_server = mojom::DnsOverHttpsServer::New();
-  dns_over_https_server->server_template = "https://foo2/{?dns}";
-  dns_over_https_servers.emplace_back(std::move(dns_over_https_server));
-  service()->ConfigureStubHostResolver(true /* stub_resolver_enabled */,
-                                       std::move(dns_over_https_servers));
-  // There should be no change in host resolver state.
-  EXPECT_TRUE(service()->host_resolver_manager()->GetDnsConfigAsValue());
-  EXPECT_FALSE(
-      service()->host_resolver_manager()->GetDnsOverHttpsServersForTesting());
-}
-
 #endif  // !defined(OS_IOS)
 
 // |ntlm_v2_enabled| is only supported on POSIX platforms.
@@ -760,9 +696,8 @@ TEST_F(NetworkServiceTestWithService, StartsNetLog) {
 
   base::File log_file(log_path,
                       base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-  network_service_->StartNetLog(std::move(log_file),
-                                network::mojom::NetLogCaptureMode::DEFAULT,
-                                std::move(dict));
+  network_service_->StartNetLog(
+      std::move(log_file), net::NetLogCaptureMode::Default(), std::move(dict));
   CreateNetworkContext();
   LoadURL(test_server()->GetURL("/echo"));
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
@@ -1478,30 +1413,15 @@ class NetworkServiceNetworkDelegateTest : public NetworkServiceTest {
   DISALLOW_COPY_AND_ASSIGN(NetworkServiceNetworkDelegateTest);
 };
 
-class ClearSiteDataNetworkServiceClient : public TestNetworkServiceClient {
+class ClearSiteDataNetworkContextClient : public TestNetworkContextClient {
  public:
-  explicit ClearSiteDataNetworkServiceClient(
-      mojom::NetworkServiceClientRequest request)
-      : TestNetworkServiceClient(std::move(request)) {}
-  ~ClearSiteDataNetworkServiceClient() override = default;
+  explicit ClearSiteDataNetworkContextClient(
+      mojom::NetworkContextClientRequest request)
+      : binding_(this, std::move(request)) {}
+  ~ClearSiteDataNetworkContextClient() override = default;
 
-  // Needed these two cookie overrides to avoid NOTREACHED().
-  void OnCookiesRead(int process_id,
-                     int routing_id,
-                     const GURL& url,
-                     const GURL& first_party_url,
-                     const net::CookieList& cookie_list,
-                     bool blocked_by_policy) override {}
-
-  void OnCookieChange(int process_id,
-                      int routing_id,
-                      const GURL& url,
-                      const GURL& first_party_url,
-                      const net::CanonicalCookie& cookie,
-                      bool blocked_by_policy) override {}
-
-  void OnClearSiteData(int process_id,
-                       int routing_id,
+  void OnClearSiteData(uint32_t process_id,
+                       int32_t routing_id,
                        const GURL& url,
                        const std::string& header_value,
                        int load_flags,
@@ -1512,6 +1432,7 @@ class ClearSiteDataNetworkServiceClient : public TestNetworkServiceClient {
   }
 
   int on_clear_site_data_counter() const { return on_clear_site_data_counter_; }
+
   const std::string& last_on_clear_site_data_header_value() const {
     return last_on_clear_site_data_header_value_;
   }
@@ -1524,29 +1445,28 @@ class ClearSiteDataNetworkServiceClient : public TestNetworkServiceClient {
  private:
   int on_clear_site_data_counter_ = 0;
   std::string last_on_clear_site_data_header_value_;
+  mojo::Binding<mojom::NetworkContextClient> binding_;
 };
 
 // Check that |NetworkServiceNetworkDelegate| handles Clear-Site-Data header
-// w/ and w/o |NetworkServiceCient|.
-TEST_F(NetworkServiceNetworkDelegateTest, ClearSiteDataNetworkServiceCient) {
+// w/ and w/o |NetworkContextCient|.
+TEST_F(NetworkServiceNetworkDelegateTest, ClearSiteDataNetworkContextCient) {
   const char kClearCookiesHeader[] = "Clear-Site-Data: \"cookies\"";
   CreateNetworkContext();
 
-  // Null |NetworkServiceCient|. The request should complete without being
+  // Null |NetworkContextCient|. The request should complete without being
   // deferred.
-  EXPECT_EQ(nullptr, service()->client());
   GURL url = https_server()->GetURL("/foo");
   url = AddQuery(url, "header", kClearCookiesHeader);
   LoadURL(url);
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
 
-  // With |NetworkServiceCient|. The request should go through
-  // |ClearSiteDataNetworkServiceClient| and complete.
-  mojom::NetworkServiceClientPtr client_ptr;
-  auto client_impl = std::make_unique<ClearSiteDataNetworkServiceClient>(
+  // With |NetworkContextCient|. The request should go through
+  // |ClearSiteDataNetworkContextClient| and complete.
+  mojom::NetworkContextClientPtr client_ptr;
+  auto client_impl = std::make_unique<ClearSiteDataNetworkContextClient>(
       mojo::MakeRequest(&client_ptr));
-  service()->SetClient(std::move(client_ptr),
-                       network::mojom::NetworkServiceParams::New());
+  network_context_->SetClient(std::move(client_ptr));
   url = https_server()->GetURL("/bar");
   url = AddQuery(url, "header", kClearCookiesHeader);
   EXPECT_EQ(0, client_impl->on_clear_site_data_counter());
@@ -1561,11 +1481,10 @@ TEST_F(NetworkServiceNetworkDelegateTest, HandleClearSiteDataHeaders) {
   const char kClearCookiesHeader[] = "Clear-Site-Data: \"cookies\"";
   CreateNetworkContext();
 
-  mojom::NetworkServiceClientPtr client_ptr;
-  auto client_impl = std::make_unique<ClearSiteDataNetworkServiceClient>(
+  mojom::NetworkContextClientPtr client_ptr;
+  auto client_impl = std::make_unique<ClearSiteDataNetworkContextClient>(
       mojo::MakeRequest(&client_ptr));
-  service()->SetClient(std::move(client_ptr),
-                       network::mojom::NetworkServiceParams::New());
+  network_context_->SetClient(std::move(client_ptr));
 
   // |passed_header_value| are only checked if |should_call_client| is true.
   const struct TestCase {

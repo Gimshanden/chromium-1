@@ -274,7 +274,19 @@ bool ExtensionDownloader::AddPendingExtension(
   // Use a zero version to ensure that a pending extension will always
   // be updated, and thus installed (assuming all extensions have
   // non-zero versions).
-  base::Version version("0.0.0.0");
+  return AddPendingExtensionWithVersion(
+      id, update_url, install_location, is_corrupt_reinstall, request_id,
+      fetch_priority, base::Version("0.0.0.0"));
+}
+
+bool ExtensionDownloader::AddPendingExtensionWithVersion(
+    const std::string& id,
+    const GURL& update_url,
+    Manifest::Location install_location,
+    bool is_corrupt_reinstall,
+    int request_id,
+    ManifestFetchData::FetchPriority fetch_priority,
+    base::Version version) {
   DCHECK(version.IsValid());
   ExtraParams extra;
   if (is_corrupt_reinstall)
@@ -764,7 +776,9 @@ ExtensionDownloader::GetUpdateAvailability(
     const std::string& update_version_str = update->version;
     if (VLOG_IS_ON(2)) {
       if (update_version_str.empty())
-        VLOG(2) << "Manifest indicates " << extension_id << " has no update";
+        VLOG(2) << "Manifest indicates " << extension_id
+                << " has no update (info: " << update->info.value_or("no info")
+                << ")";
       else
         VLOG(2) << "Manifest indicates " << extension_id
                 << " latest version is '" << update_version_str << "'";
@@ -884,6 +898,9 @@ void ExtensionDownloader::FetchUpdatedExtension(
                   << "' for extension " << fetch_data->id;
     delegate_->OnExtensionDownloadStageChanged(
         fetch_data->id, ExtensionDownloaderDelegate::FINISHED);
+    NotifyExtensionsDownloadFailed(
+        {fetch_data->id}, fetch_data->request_ids,
+        ExtensionDownloaderDelegate::CRX_FETCH_FAILED);
     return;
   }
 

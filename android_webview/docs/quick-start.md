@@ -43,7 +43,8 @@ recommended.
 
 ## Setting up the build
 
-Assuming you took the advice from above:
+Assuming you took the advice from above, configure GN args (run `gn args
+out/Default`) as follows:
 
 ```gn
 # Minimal
@@ -87,6 +88,10 @@ troubleshoot the problem is to query the state of the on-device
 WebViewUpdateService:
 
 ```shell
+# If you don't have `adb` in your path, you can source this file to use
+# the copy from chromium's Android SDK
+$ source build/android/envsetup.sh
+
 # Only available on O+
 $ adb shell dumpsys webviewupdate
 
@@ -130,14 +135,30 @@ public OS versions (see [note](#Building-for-preview-Android-releases)).
 
 *** note
 **Note:** we only support local development using the latest revision of the
-master branch. Checkout out release branches introduces a lot of complexity, and
+master branch. Checking out release branches introduces a lot of complexity, and
 it might not even be possible to build WebView for your device.
 ***
 
-### Valid package ... is  installed/enabled for all users
+### Invalid package ... Incorrect signature
+
+This shouldn't happen for userdebug devices, and there's no workaround for user
+devices. Make sure you have a userdebug device (you can check with `adb shell
+getprop ro.build.type`).
+
+### Valid package ... **is**  installed/enabled for all users
 
 This is the correct state. If this is not the "preferred WebView package" or the
 "current WebView package", call `set-webview-implementation` again.
+
+### Valid package ... **is NOT** installed/enabled for all users
+
+This shouldn't happen for `com.google.android.apps.chrome` (the recommended
+package name). If you need to use a different package name, you may be able to
+workaround this by enabling "redundant packages" (`adb shell cmd webviewupdate
+enable-redundant-packages`), reinstalling, and running `set-webview-provider`
+again.
+
+Otherwise, please [reach out to the team][1].
 
 ### My package isn't in the list
 
@@ -154,11 +175,10 @@ APK](/android_webview/tools/remove_preinstalled_webview.py).
 Check the "Current WebView package" in the dumpsys output. You're probably
 hitting one of the cases above.
 
-### I couldn't install the APK
+### I couldn't install the APK/... is NOT installed.
 
 This could fail for an even wider variety of reasons than already listed. Please
-[reach out to the
-team](https://groups.google.com/a/chromium.org/forum/#!forum/android-webview-dev).
+[reach out to the team][1].
 
 ### I couldn't **build** the APK
 
@@ -177,3 +197,5 @@ which don't have any error messages).
 If you can't follow the quick start guide for some reason, please consult our
 [public](https://www.chromium.org/developers/how-tos/build-instructions-android-webview)
 or [internal](http://go/clank-webview) instructions.
+
+[1]: https://groups.google.com/a/chromium.org/forum/#!forum/android-webview-dev

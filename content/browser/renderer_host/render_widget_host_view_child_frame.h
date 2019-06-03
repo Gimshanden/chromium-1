@@ -63,12 +63,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   void SetFrameConnectorDelegate(FrameConnectorDelegate* frame_connector);
 
-#if defined(USE_AURA)
-  // When the viz::FrameSinkId for this child frame is created and registered
-  // remotely, it can be set here.
-  void SetFrameSinkId(const viz::FrameSinkId& frame_sink_id);
-#endif  // defined(USE_AURA)
-
   // This functions registers single-use callbacks that want to be notified when
   // the next frame is swapped. The callback is triggered by
   // SubmitCompositorFrame, which is the appropriate time to request pixel
@@ -89,25 +83,23 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   void SetSize(const gfx::Size& size) override;
   void SetBounds(const gfx::Rect& rect) override;
   void Focus() override;
-  bool HasFocus() const override;
-  bool IsSurfaceAvailableForCopy() const override;
+  bool HasFocus() override;
+  bool IsSurfaceAvailableForCopy() override;
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
       base::OnceCallback<void(const SkBitmap&)> callback) override;
   void EnsureSurfaceSynchronizedForWebTest() override;
-  uint32_t GetCaptureSequenceNumber() const override;
   void Show() override;
   void Hide() override;
   bool IsShowing() override;
   void WasUnOccluded() override;
   void WasOccluded() override;
-  gfx::Rect GetViewBounds() const override;
-  gfx::Size GetVisibleViewportSize() const override;
+  gfx::Rect GetViewBounds() override;
+  gfx::Size GetVisibleViewportSize() override;
   void SetInsets(const gfx::Insets& insets) override;
-  gfx::NativeView GetNativeView() const override;
+  gfx::NativeView GetNativeView() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
-  gfx::Size GetCompositorViewportPixelSize() const override;
   bool IsMouseLocked() override;
   void SetNeedsBeginFrames(bool needs_begin_frames) override;
   void SetWantsAnimateOnlyBeginFrames() override;
@@ -115,13 +107,14 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   // RenderWidgetHostViewBase implementation.
   RenderWidgetHostViewBase* GetRootView() override;
+  uint32_t GetCaptureSequenceNumber() const override;
+  gfx::Size GetCompositorViewportPixelSize() override;
   void InitAsPopup(RenderWidgetHostView* parent_host_view,
                    const gfx::Rect& bounds) override;
   void InitAsFullscreen(RenderWidgetHostView* reference_host_view) override;
   void UpdateCursor(const WebCursor& cursor) override;
   void SetIsLoading(bool is_loading) override;
-  void RenderProcessGone(base::TerminationStatus status,
-                         int error_code) override;
+  void RenderProcessGone() override;
   void Destroy() override;
   void SetTooltipText(const base::string16& tooltip_text) override;
   void GestureEventAck(const blink::WebGestureEvent& event,
@@ -190,7 +183,7 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   BrowserAccessibilityManager* CreateBrowserAccessibilityManager(
       BrowserAccessibilityDelegate* delegate,
       bool for_root_frame) override;
-  void GetScreenInfo(ScreenInfo* screen_info) const override;
+  void GetScreenInfo(ScreenInfo* screen_info) override;
   void EnableAutoResize(const gfx::Size& min_size,
                         const gfx::Size& max_size) override;
   void DisableAutoResize(const gfx::Size& new_size) override;

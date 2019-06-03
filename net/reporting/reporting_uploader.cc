@@ -234,7 +234,7 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
   }
 
   void OnAuthRequired(URLRequest* request,
-                      AuthChallengeInfo* auth_info) override {
+                      const AuthChallengeInfo& auth_info) override {
     request->Cancel();
   }
 
@@ -244,6 +244,7 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
   }
 
   void OnSSLCertificateError(URLRequest* request,
+                             int net_error,
                              const SSLInfo& ssl_info,
                              bool fatal) override {
     request->Cancel();

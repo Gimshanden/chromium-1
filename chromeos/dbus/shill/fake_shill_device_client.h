@@ -19,7 +19,7 @@ namespace chromeos {
 
 // A fake implementation of ShillDeviceClient.
 // Implemented: Stub cellular device for SMS testing.
-class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillDeviceClient
+class COMPONENT_EXPORT(SHILL_CLIENT) FakeShillDeviceClient
     : public ShillDeviceClient,
       public ShillDeviceClient::TestInterface {
  public:
@@ -27,7 +27,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillDeviceClient
   ~FakeShillDeviceClient() override;
 
   // ShillDeviceClient overrides
-  void Init(dbus::Bus* bus) override;
   void AddPropertyChangedObserver(
       const dbus::ObjectPath& device_path,
       ShillPropertyChangedObserver* observer) override;
@@ -67,10 +66,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillDeviceClient
                 const std::string& network_id,
                 const base::Closure& callback,
                 const ErrorCallback& error_callback) override;
-  void SetCarrier(const dbus::ObjectPath& device_path,
-                  const std::string& carrier,
-                  const base::Closure& callback,
-                  const ErrorCallback& error_callback) override;
   void Reset(const dbus::ObjectPath& device_path,
              const base::Closure& callback,
              const ErrorCallback& error_callback) override;

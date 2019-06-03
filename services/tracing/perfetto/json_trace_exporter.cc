@@ -11,7 +11,7 @@
 #include "base/json/json_writer.h"
 #include "base/json/string_escape.h"
 #include "base/trace_event/trace_event.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/trace_packet.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_packet.h"
 #include "third_party/perfetto/protos/perfetto/trace/chrome/chrome_trace_event.pbzero.h"
 #include "third_party/perfetto/protos/perfetto/trace/chrome/chrome_trace_packet.pb.h"
 
@@ -440,10 +440,11 @@ void JSONTraceExporter::StringBuffer::EscapeJSONAndAppend(
 
 void JSONTraceExporter::StringBuffer::Flush(base::DictionaryValue* metadata,
                                             bool has_more) {
-  callback_.Run(out_, metadata, has_more);
+  callback_.Run(&out_, metadata, has_more);
   if (has_more) {
     // We clear |out_| because we've processed all the current data in |out_|
-    // and we don't want any data to be repeated. We have to protect this by
+    // and we don't want any data to be repeated. The callback should have moved
+    // all the contents, but clear it to be safe. We have to protect this by
     // checking |has_more| because the callback could have deleted |this| in
     // which cause |out_| is a destroyed as well.
     out_.clear();

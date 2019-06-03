@@ -31,6 +31,7 @@
 #include "third_party/blink/public/platform/web_rtc_stats_request.h"
 #include "third_party/blink/public/platform/web_rtc_stats_response.h"
 #include "third_party/webrtc/api/stats/rtc_stats.h"
+#include "third_party/webrtc/api/stats/rtc_stats_collector_callback.h"
 
 namespace blink {
 class WebLocalFrame;
@@ -152,7 +153,7 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
                                        bool result);
 
   void GetStats(const blink::WebRTCStatsRequest& request) override;
-  void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback> callback,
+  void GetStats(blink::WebRTCStatsReportCallback callback,
                 const std::vector<webrtc::NonStandardGroupId>&
                     exposed_group_ids) override;
   webrtc::RTCErrorOr<std::unique_ptr<blink::WebRTCRtpTransceiver>>
@@ -179,12 +180,18 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
       const base::RepeatingClosure& closure,
       const char* trace_event_name) override;
 
+  void TrackIceConnectionStateChange(
+      WebRTCPeerConnectionHandler::IceConnectionStateVersion version,
+      webrtc::PeerConnectionInterface::IceConnectionState state) override;
+
   // Delegate functions to allow for mocking of WebKit interfaces.
   // getStats takes ownership of request parameter.
   virtual void getStats(const scoped_refptr<LocalRTCStatsRequest>& request);
 
   // Asynchronously calls native_peer_connection_->getStats on the signaling
   // thread.
+  void GetStandardStatsForTracker(
+      scoped_refptr<webrtc::RTCStatsCollectorCallback> observer);
   void GetStats(webrtc::StatsObserver* observer,
                 webrtc::PeerConnectionInterface::StatsOutputLevel level,
                 rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> selector);
@@ -320,7 +327,8 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
   size_t GetTransceiverIndex(
       const blink::WebRTCRtpTransceiver& web_transceiver);
   std::unique_ptr<RTCRtpTransceiver> CreateOrUpdateTransceiver(
-      RtpTransceiverState transceiver_state);
+      RtpTransceiverState transceiver_state,
+      TransceiverStateUpdateMode update_mode);
 
   scoped_refptr<base::SingleThreadTaskRunner> signaling_thread() const;
 

@@ -14,7 +14,7 @@
 namespace chromeos {
 
 // A fake implementation of ShillIPConfigClient.
-class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillIPConfigClient
+class COMPONENT_EXPORT(SHILL_CLIENT) FakeShillIPConfigClient
     : public ShillIPConfigClient,
       public ShillIPConfigClient::TestInterface {
  public:
@@ -22,7 +22,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillIPConfigClient
   ~FakeShillIPConfigClient() override;
 
   // ShillIPConfigClient overrides
-  void Init(dbus::Bus* bus) override;
   void AddPropertyChangedObserver(
       const dbus::ObjectPath& ipconfig_path,
       ShillPropertyChangedObserver* observer) override;

@@ -18,13 +18,13 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_clock.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "components/image_fetcher/core/cache/cached_image_fetcher_metrics_reporter.h"
 #include "components/image_fetcher/core/cache/image_cache.h"
 #include "components/image_fetcher/core/cache/image_data_store_disk.h"
 #include "components/image_fetcher/core/cache/image_metadata_store_leveldb.h"
 #include "components/image_fetcher/core/cache/proto/cached_image_metadata.pb.h"
 #include "components/image_fetcher/core/fake_image_decoder.h"
 #include "components/image_fetcher/core/image_fetcher_impl.h"
+#include "components/image_fetcher/core/image_fetcher_metrics_reporter.h"
 #include "components/image_fetcher/core/image_fetcher_types.h"
 #include "components/leveldb_proto/testing/fake_db.h"
 #include "components/prefs/testing_pref_service.h"
@@ -52,8 +52,7 @@ constexpr char kUmaClientName[] = "TestUma";
 constexpr char kImageData[] = "data";
 constexpr char kImageDataOther[] = "other";
 
-const char kCachedImageFetcherEventHistogramName[] =
-    "CachedImageFetcher.Events";
+const char kImageFetcherEventHistogramName[] = "ImageFetcher.Events";
 const char kCacheLoadHistogramName[] =
     "CachedImageFetcher.ImageLoadFromCacheTime";
 const char kNetworkLoadHistogramName[] =
@@ -83,8 +82,8 @@ class CachedImageFetcherTest : public testing::Test {
         std::make_unique<FakeDB<CachedImageMetadataProto>>(&metadata_store_);
     db_ = db.get();
 
-    auto metadata_store = std::make_unique<ImageMetadataStoreLevelDB>(
-        base::FilePath(), std::move(db), &clock_);
+    auto metadata_store =
+        std::make_unique<ImageMetadataStoreLevelDB>(std::move(db), &clock_);
     auto data_store = std::make_unique<ImageDataStoreDisk>(
         data_dir_.GetPath(), base::SequencedTaskRunnerHandle::Get());
 
@@ -95,7 +94,7 @@ class CachedImageFetcherTest : public testing::Test {
     // Use an initial request to start the cache up.
     image_cache_->SaveImage(kImageUrl.spec(), kImageData);
     RunUntilIdle();
-    db_->InitCallback(true);
+    db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
     image_cache_->DeleteImage(kImageUrl.spec());
     RunUntilIdle();
 
@@ -179,11 +178,10 @@ TEST_F(CachedImageFetcherTest, FetchImageFromCache) {
   RunUntilIdle();
 
   histogram_tester().ExpectTotalCount(kCacheLoadHistogramName, 1);
-  histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                       CachedImageFetcherEvent::kImageRequest,
-                                       1);
-  histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                       CachedImageFetcherEvent::kCacheHit, 1);
+  histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                       ImageFetcherEvent::kImageRequest, 1);
+  histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                       ImageFetcherEvent::kCacheHit, 1);
 }
 
 TEST_F(CachedImageFetcherTest, FetchImageFromCacheReadOnly) {
@@ -204,14 +202,13 @@ TEST_F(CachedImageFetcherTest, FetchImageFromCacheReadOnly) {
         ImageFetcherParams(TRAFFIC_ANNOTATION_FOR_TESTS, kUmaClientName));
     RunUntilIdle();
 
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kImageRequest,
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kImageRequest, 1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kCacheHit, 1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kCacheDecodingError,
                                          1);
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kCacheHit, 1);
-    histogram_tester().ExpectBucketCount(
-        kCachedImageFetcherEventHistogramName,
-        CachedImageFetcherEvent::kCacheDecodingError, 1);
   }
   {
     // Image should still be in the cache.
@@ -243,12 +240,10 @@ TEST_F(CachedImageFetcherTest, FetchImagePopulatesCache) {
     RunUntilIdle();
 
     histogram_tester().ExpectTotalCount(kNetworkLoadHistogramName, 1);
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kImageRequest,
-                                         1);
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kCacheMiss,
-                                         1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kImageRequest, 1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kCacheMiss, 1);
   }
   // Make sure the image data is in the database.
   {
@@ -294,12 +289,10 @@ TEST_F(CachedImageFetcherTest, FetchImagePopulatesCacheReadOnly) {
     RunUntilIdle();
 
     histogram_tester().ExpectTotalCount(kNetworkLoadHistogramName, 1);
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kImageRequest,
-                                         1);
-    histogram_tester().ExpectBucketCount(kCachedImageFetcherEventHistogramName,
-                                         CachedImageFetcherEvent::kCacheMiss,
-                                         1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kImageRequest, 1);
+    histogram_tester().ExpectBucketCount(kImageFetcherEventHistogramName,
+                                         ImageFetcherEvent::kCacheMiss, 1);
   }
   // Make sure the image data is not in the database.
   {

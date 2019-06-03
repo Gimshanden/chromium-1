@@ -704,11 +704,10 @@ HttpHandler::HttpHandler(
                                                        kSessionStorage),
                                    false /*w3c_standard_command*/)),
 
-      // No W3C equivalent.
+      // Non-standard command but supported in the foreseeable future.
       CommandMapping(
           kPost, "session/:sessionId/log",
-          WrapToCommand("GetLog", base::BindRepeating(&ExecuteGetLog),
-                        false /*w3c_standard_command*/)),
+          WrapToCommand("GetLog", base::BindRepeating(&ExecuteGetLog))),
 
       // No W3C equivalent.
       CommandMapping(
@@ -1060,6 +1059,9 @@ HttpHandler::PrepareStandardResponse(
     case kInvalidSelector:
       response.reset(new net::HttpServerResponseInfo(net::HTTP_BAD_REQUEST));
       break;
+    case kInvalidSessionId:
+      response.reset(new net::HttpServerResponseInfo(net::HTTP_NOT_FOUND));
+      break;
     case kJavaScriptError:
       response.reset(
           new net::HttpServerResponseInfo(net::HTTP_INTERNAL_SERVER_ERROR));
@@ -1085,7 +1087,7 @@ HttpHandler::PrepareStandardResponse(
       break;
     case kScriptTimeout:
       response.reset(
-          new net::HttpServerResponseInfo(net::HTTP_REQUEST_TIMEOUT));
+          new net::HttpServerResponseInfo(net::HTTP_INTERNAL_SERVER_ERROR));
       break;
     case kSessionNotCreated:
       response.reset(
@@ -1127,7 +1129,6 @@ HttpHandler::PrepareStandardResponse(
     case kNoSuchExecutionContext:
       response.reset(new net::HttpServerResponseInfo(net::HTTP_BAD_REQUEST));
       break;
-    case kInvalidSessionId:
     case kChromeNotReachable:
     case kDisconnected:
     case kForbidden:
@@ -1147,6 +1148,17 @@ HttpHandler::PrepareStandardResponse(
     inner_params->SetString("error", StatusCodeToString(status.code()));
     inner_params->SetString("message", status.message());
     inner_params->SetString("stacktrace", status.stack_trace());
+    // According to
+    // https://www.w3.org/TR/2018/REC-webdriver1-20180605/#dfn-annotated-unexpected-alert-open-error
+    // error UnexpectedAlertOpen should contain 'data.text' with alert text
+    if (status.code() == kUnexpectedAlertOpen) {
+      const std::string& message = status.message();
+      unsigned first = message.find("{");
+      unsigned last = message.find_last_of("}");
+      std::string alertText = message.substr(first, last-first);
+      alertText = alertText.substr(alertText.find(":") + 2);
+      inner_params->SetString("data.text", alertText);
+    }
     body_params.SetDictionary("value", std::move(inner_params));
   } else {
     body_params.Set("value", std::move(value));

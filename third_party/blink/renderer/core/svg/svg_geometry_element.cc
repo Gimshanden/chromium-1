@@ -37,19 +37,16 @@
 #include "third_party/blink/renderer/core/svg/svg_point_tear_off.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/stroke_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
 class SVGAnimatedPathLength final : public SVGAnimatedNumber {
  public:
-  static SVGAnimatedPathLength* Create(SVGGeometryElement* context_element) {
-    return MakeGarbageCollected<SVGAnimatedPathLength>(context_element);
-  }
-
   explicit SVGAnimatedPathLength(SVGGeometryElement* context_element)
       : SVGAnimatedNumber(context_element,
                           svg_names::kPathLengthAttr,
-                          SVGNumber::Create()) {}
+                          MakeGarbageCollected<SVGNumber>()) {}
 
   SVGParsingError AttributeChanged(const String& value) override {
     SVGParsingError parse_status = SVGAnimatedNumber::AttributeChanged(value);
@@ -63,7 +60,7 @@ SVGGeometryElement::SVGGeometryElement(const QualifiedName& tag_name,
                                        Document& document,
                                        ConstructionType construction_type)
     : SVGGraphicsElement(tag_name, document, construction_type),
-      path_length_(SVGAnimatedPathLength::Create(this)) {
+      path_length_(MakeGarbageCollected<SVGAnimatedPathLength>(this)) {
   AddToPropertyMap(path_length_);
 }
 

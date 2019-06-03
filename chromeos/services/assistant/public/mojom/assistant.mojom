@@ -18,6 +18,12 @@ interface Assistant {
   // without having first cached screen context (see CacheScreenContext()).
   StartCachedScreenContextInteraction();
 
+  // Starts an interaction to edit the reminder uniquely identified by
+  // |client_id|. In response to the request, LibAssistant will initiate
+  // a user facing interaction with the context pre-populated with details
+  // to edit the specified reminder.
+  StartEditReminderInteraction(string client_id);
+
   // Starts a metalayer interaction for the selected screen |region|. Results
   // related to the selected region will be returned through the
   // |AssistantInteractionSubscriber| interface to registered subscribers.
@@ -75,6 +81,13 @@ interface Assistant {
 
   // Send Assistant feedback to Assistant server.
   SendAssistantFeedback(AssistantFeedback feedback);
+
+  // ===== Alarm/Timer management methods =====
+  // Stops timer or alarm ringing.
+  StopAlarmTimerRinging();
+
+  // Create timer with |duration|.
+  CreateTimer(mojo_base.mojom.TimeDelta duration);
 };
 
 // Subscribes to Assistant's interaction event. These events are server driven
@@ -167,9 +180,18 @@ interface DeviceActions {
   // Open the Android app if the app is available.
   OpenAndroidApp(AndroidAppInfo app_info) => (bool app_opened);
 
-  // Verify the status of the Android apps.
-  VerifyAndroidApp(array<AndroidAppInfo> apps_info) => (array<AndroidAppInfo>
-                                                        apps_info);
+  // Launch Android intent. The intent is encoded as a URI string.
+  // See Intent.toUri().
+  LaunchAndroidIntent(string intent);
+
+  // Register App list event subscriber.
+  AddAppListEventSubscriber(AppListEventSubscriber subscriber);
+};
+
+// Subscribes to App list events.
+interface AppListEventSubscriber {
+  // Called when the android app list changed.
+  OnAndroidAppListRefreshed(array<AndroidAppInfo> apps_info);
 };
 
 // Enumeration of possible completions for an Assistant interaction.

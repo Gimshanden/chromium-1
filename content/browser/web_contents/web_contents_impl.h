@@ -56,7 +56,6 @@
 #include "net/http/http_response_headers.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/mojom/geolocation_context.mojom.h"
-#include "services/device/public/mojom/wake_lock.mojom.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "third_party/blink/public/mojom/choosers/color_chooser.mojom.h"
 #include "third_party/blink/public/mojom/page/display_cutout.mojom.h"
@@ -66,13 +65,13 @@
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/native_theme/dark_mode_observer.h"
+#include "ui/native_theme/native_theme.h"
 
 #if defined(OS_ANDROID)
 #include "content/browser/android/nfc_host.h"
 #include "content/public/browser/android/child_process_importance.h"
 #endif
-
-struct ViewHostMsg_DateTimeDialogValue_Params;
 
 namespace service_manager {
 class InterfaceProvider;
@@ -344,6 +343,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void SetAudioMuted(bool mute) override;
   bool IsCurrentlyAudible() override;
   bool IsConnectedToBluetoothDevice() override;
+  bool IsConnectedToSerialPort() const override;
   bool HasPictureInPictureVideo() override;
   bool IsCrashed() override;
   void SetIsCrashed(base::TerminationStatus status, int error_code) override;
@@ -462,7 +462,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
 #if defined(OS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetJavaWebContents() override;
-  virtual WebContentsAndroid* GetWebContentsAndroid();
+  WebContentsAndroid* GetWebContentsAndroid();
+  void ClearWebContentsAndroid();
   void ActivateNearestFindResult(float x, float y) override;
   void RequestFindMatchRects(int current_version) override;
   service_manager::InterfaceProvider* GetJavaInterfaces() override;
@@ -538,7 +539,6 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       int browser_plugin_instance_id) override;
   device::mojom::GeolocationContext* GetGeolocationContext() override;
   device::mojom::WakeLockContext* GetWakeLockContext() override;
-  device::mojom::WakeLock* GetRendererWakeLock() override;
 #if defined(OS_ANDROID)
   void GetNFC(device::mojom::NFCRequest request) override;
 #endif
@@ -605,6 +605,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                    int context_id) override;
   void AudioContextPlaybackStopped(RenderFrameHost* host,
                                    int context_id) override;
+  RenderFrameHostImpl* GetMainFrameForInnerDelegate(
+      FrameTreeNode* frame_tree_node) override;
 
   // RenderViewHostDelegate ----------------------------------------------------
   RenderViewHostDelegateView* GetDelegateView() override;
@@ -625,7 +627,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void RequestSetBounds(const gfx::Rect& new_bounds) override;
   void DocumentAvailableInMainFrame(RenderViewHost* render_view_host) override;
   void RouteCloseEvent(RenderViewHost* rvh) override;
-  bool DidAddMessageToConsole(int32_t level,
+  bool DidAddMessageToConsole(blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
@@ -758,6 +760,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       RenderWidgetHostImpl* render_widget_host,
       base::RepeatingClosure hang_monitor_restarter) override;
   void RendererResponsive(RenderWidgetHostImpl* render_widget_host) override;
+  void SubframeCrashed(blink::mojom::FrameVisibility visibility) override;
   void RequestToLockMouse(RenderWidgetHostImpl* render_widget_host,
                           bool user_gesture,
                           bool last_unlocked_by_target,
@@ -884,6 +887,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Unpause the throbber if it was paused.
   void DidProceedOnInterstitial() override;
 
+  bool HadInnerWebContents() override;
+
   // Forces overscroll to be disabled (used by touch emulation).
   void SetForceDisableOverscrollContent(bool force_disable);
 
@@ -934,6 +939,11 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Modify the counter of connected devices for this WebContents.
   void IncrementBluetoothConnectedDeviceCount();
   void DecrementBluetoothConnectedDeviceCount();
+
+  // Modify the counter of frames in this WebContents actively using serial
+  // ports.
+  void IncrementSerialActiveFrameCount();
+  void DecrementSerialActiveFrameCount();
 
   // Called when the WebContents gains or loses a persistent video.
   void SetHasPersistentVideo(bool has_persistent_video);
@@ -1243,11 +1253,6 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                    const std::string& protocol,
                                    const GURL& url,
                                    bool user_gesture);
-#if defined(OS_ANDROID)
-  void OnOpenDateTimeDialog(
-      RenderViewHostImpl* source,
-      const ViewHostMsg_DateTimeDialogValue_Params& value);
-#endif
   void OnDomOperationResponse(RenderFrameHostImpl* source,
                               const std::string& json_string);
   void OnUpdatePageImportanceSignals(RenderFrameHostImpl* source,
@@ -1458,6 +1463,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // |current_fullscreen_frame_| and notify observers whenever it changes.
   void FullscreenFrameSetUpdated();
 
+  // Called by DarkModeObserver when the dark mode state changes; triggers a
+  // preference update.
+  void OnDarkModeChanged(bool dark_mode);
+
   // Data for core operation ---------------------------------------------------
 
   // Delegate for notifying our owner about stuff. Not owned by us.
@@ -1497,6 +1506,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // True if this tab was opened by another tab. This is not unset if the opener
   // is closed.
   bool created_with_opener_;
+
+#if defined(OS_ANDROID)
+  std::unique_ptr<WebContentsAndroid> web_contents_android_;
+#endif
 
   // Helper classes ------------------------------------------------------------
 
@@ -1726,8 +1739,6 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   std::unique_ptr<WakeLockContextHost> wake_lock_context_host_;
 
-  device::mojom::WakeLockPtr renderer_wake_lock_;
-
   service_manager::BinderRegistry registry_;
 
   mojo::BindingSet<blink::mojom::ColorChooserFactory>
@@ -1754,7 +1765,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Created on-demand to mute all audio output from this WebContents.
   std::unique_ptr<WebContentsAudioMuter> audio_muter_;
 
-  size_t bluetooth_connected_device_count_;
+  size_t bluetooth_connected_device_count_ = 0;
+  size_t serial_active_frame_count_ = 0;
 
   bool has_picture_in_picture_video_ = false;
 
@@ -1846,6 +1858,18 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // If non-null then this WebContents is embedded in a portal and its outer
   // WebContents can be found by using GetOuterWebContents().
   Portal* portal_ = nullptr;
+
+  // Observe dark mode native theme changes to notify the renderer about
+  // preferred color scheme changes.
+  ui::DarkModeObserver dark_mode_observer_{
+      ui::NativeTheme::GetInstanceForWeb(),
+      base::BindRepeating(&WebContentsImpl::OnDarkModeChanged,
+                          base::Unretained(this))};
+
+  // TODO(crbug.com/934637): Remove this field when pdf/any inner web contents
+  // user gesture is properly propagated. This is a temporary fix for history
+  // intervention to be disabled for pdfs (crbug.com/965434).
+  bool had_inner_webcontents_;
 
   base::WeakPtrFactory<WebContentsImpl> loading_weak_factory_;
   base::WeakPtrFactory<WebContentsImpl> weak_factory_;

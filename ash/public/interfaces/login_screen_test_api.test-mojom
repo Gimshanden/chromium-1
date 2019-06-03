@@ -20,6 +20,15 @@ interface LoginScreenTestApi {
   // Returns true if Shutdown button is currently being shown.
   IsShutdownButtonShown() => (bool is_shown);
 
+  // Returns true if Auth Error Button is currently being shown.
+  IsAuthErrorBubbleShown() => (bool is_shown);
+
+  // Returns true if Guest button is currently being shown.
+  IsGuestButtonShown() => (bool is_shown);
+
+  // Returns true if Add User button is currently being shown.
+  IsAddUserButtonShown() => (bool is_shown);
+
   // Submit |password| for |account_id|.
   SubmitPassword(signin.mojom.AccountId account_id, string password) => ();
 
@@ -33,6 +42,10 @@ interface LoginScreenTestApi {
   // Simulate Click on AddUser button.
   // Returns true if request was successful.
   ClickAddUserButton() => (bool success);
+
+  // Simulate click on the guest login button.
+  // Returns whether the request was succesful.
+  ClickGuestButton() => (bool success);
 
   // Blocks until UI update counter is greated than |previous_update_count|.
   // Returns true on success, false on error.

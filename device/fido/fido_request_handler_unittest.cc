@@ -55,8 +55,10 @@ enum class FakeTaskResponse : uint8_t {
 // DispatchRequest().
 class EmptyRequestHandler : public FidoRequestHandler<std::vector<uint8_t>> {
  public:
-  EmptyRequestHandler(const base::flat_set<FidoTransportProtocol>& protocols)
+  EmptyRequestHandler(const base::flat_set<FidoTransportProtocol>& protocols,
+                      test::FakeFidoDiscoveryFactory* fake_discovery_factory)
       : FidoRequestHandler(nullptr /* connector */,
+                           fake_discovery_factory,
                            protocols,
                            CompletionCallback()) {
     Start();
@@ -135,6 +137,8 @@ class TestObserver : public FidoRequestHandlerBase::Observer {
     NOTREACHED();
   }
 
+  void SetMightCreateResidentCredential(bool v) override {}
+
   void FinishCollectPIN() override { NOTREACHED(); }
 
  private:
@@ -154,10 +158,18 @@ class FakeFidoTask : public FidoTask {
       : FidoTask(device), callback_(std::move(callback)), weak_factory_(this) {}
   ~FakeFidoTask() override = default;
 
+  void Cancel() override {
+    if (token_) {
+      device()->Cancel(*token_);
+      token_.reset();
+    }
+  }
+
   void StartTask() override {
-    device()->DeviceTransact(std::vector<uint8_t>(),
-                             base::BindOnce(&FakeFidoTask::CompletionCallback,
-                                            weak_factory_.GetWeakPtr()));
+    token_ = device()->DeviceTransact(
+        std::vector<uint8_t>(),
+        base::BindOnce(&FakeFidoTask::CompletionCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void CompletionCallback(
@@ -187,6 +199,7 @@ class FakeFidoTask : public FidoTask {
   }
 
  private:
+  base::Optional<FidoDevice::CancelToken> token_;
   FakeTaskCallback callback_;
   base::WeakPtrFactory<FakeFidoTask> weak_factory_;
 };
@@ -194,21 +207,27 @@ class FakeFidoTask : public FidoTask {
 class FakeFidoRequestHandler : public FidoRequestHandler<std::vector<uint8_t>> {
  public:
   FakeFidoRequestHandler(service_manager::Connector* connector,
+                         test::FakeFidoDiscoveryFactory* fake_discovery_factory,
                          const base::flat_set<FidoTransportProtocol>& protocols,
                          CompletionCallback callback)
-      : FidoRequestHandler(connector, protocols, std::move(callback)),
+      : FidoRequestHandler(connector,
+                           fake_discovery_factory,
+                           protocols,
+                           std::move(callback)),
         weak_factory_(this) {
     Start();
   }
-  FakeFidoRequestHandler(const base::flat_set<FidoTransportProtocol>& protocols,
+  FakeFidoRequestHandler(test::FakeFidoDiscoveryFactory* fake_discovery_factory,
+                         const base::flat_set<FidoTransportProtocol>& protocols,
                          CompletionCallback callback)
       : FakeFidoRequestHandler(nullptr /* connector */,
+                               fake_discovery_factory,
                                protocols,
                                std::move(callback)) {}
   ~FakeFidoRequestHandler() override = default;
 
   void DispatchRequest(FidoAuthenticator* authenticator) override {
-    // FidoRequestHandlerTest uses ScopedFakeDiscovery to inject mock devices
+    // FidoRequestHandlerTest uses FakeDiscovery to inject mock devices
     // that get wrapped in a FidoDeviceAuthenticator, so we can safely cast
     // here.
     auto* device_authenticator =
@@ -218,11 +237,29 @@ class FakeFidoRequestHandler : public FidoRequestHandler<std::vector<uint8_t>> {
     // at this point.
     device_authenticator->SetTaskForTesting(std::make_unique<FakeFidoTask>(
         device_authenticator->device(),
-        base::BindOnce(&FakeFidoRequestHandler::OnAuthenticatorResponse,
+        base::BindOnce(&FakeFidoRequestHandler::HandleResponse,
                        weak_factory_.GetWeakPtr(), authenticator)));
   }
 
  private:
+  void HandleResponse(FidoAuthenticator* authenticator,
+                      CtapDeviceResponseCode status,
+                      base::Optional<std::vector<uint8_t>> response) {
+    const base::Optional<FidoReturnCode> maybe_result =
+        ConvertDeviceResponseCodeToFidoReturnCode(status);
+    if (!maybe_result) {
+      FIDO_LOG(ERROR) << "Ignoring status " << static_cast<int>(status)
+                      << " from " << authenticator->GetDisplayName();
+      active_authenticators().erase(authenticator->GetId());
+      return;
+    }
+
+    if (!is_complete()) {
+      CancelActiveAuthenticators(authenticator->GetId());
+    }
+    OnAuthenticatorResponse(authenticator, *maybe_result, std::move(response));
+  }
+
   base::WeakPtrFactory<FakeFidoRequestHandler> weak_factory_;
 };
 
@@ -254,13 +291,14 @@ class FidoRequestHandlerTest : public ::testing::Test {
   }
 
   void ForgeNextHidDiscovery() {
-    discovery_ = scoped_fake_discovery_factory_.ForgeNextHidDiscovery();
-    ble_discovery_ = scoped_fake_discovery_factory_.ForgeNextBleDiscovery();
+    discovery_ = fake_discovery_factory_.ForgeNextHidDiscovery();
+    ble_discovery_ = fake_discovery_factory_.ForgeNextBleDiscovery();
   }
 
   std::unique_ptr<FakeFidoRequestHandler> CreateFakeHandler() {
     ForgeNextHidDiscovery();
     auto handler = std::make_unique<FakeFidoRequestHandler>(
+        &fake_discovery_factory_,
         base::flat_set<FidoTransportProtocol>(
             {FidoTransportProtocol::kUsbHumanInterfaceDevice,
              FidoTransportProtocol::kBluetoothLowEnergy}),
@@ -286,7 +324,7 @@ class FidoRequestHandlerTest : public ::testing::Test {
  protected:
   base::test::ScopedTaskEnvironment scoped_task_environment_{
       base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME};
-  test::ScopedFakeFidoDiscoveryFactory scoped_fake_discovery_factory_;
+  test::FakeFidoDiscoveryFactory fake_discovery_factory_;
   scoped_refptr<::testing::NiceMock<MockBluetoothAdapter>> mock_adapter_;
   test::FakeFidoDiscovery* discovery_;
   test::FakeFidoDiscovery* ble_discovery_;
@@ -325,14 +363,14 @@ TEST_F(FidoRequestHandlerTest, TestAuthenticatorHandlerReset) {
       test_data::kTestAuthenticatorGetInfoResponse);
   EXPECT_CALL(*device0, GetId()).WillRepeatedly(testing::Return("device0"));
   device0->ExpectRequestAndDoNotRespond(std::vector<uint8_t>());
-  EXPECT_CALL(*device0, Cancel());
+  EXPECT_CALL(*device0, Cancel(_));
   auto device1 = std::make_unique<MockFidoDevice>();
   device1->ExpectCtap2CommandAndRespondWith(
       CtapRequestCommand::kAuthenticatorGetInfo,
       test_data::kTestAuthenticatorGetInfoResponse);
   EXPECT_CALL(*device1, GetId()).WillRepeatedly(testing::Return("device1"));
   device1->ExpectRequestAndDoNotRespond(std::vector<uint8_t>());
-  EXPECT_CALL(*device1, Cancel());
+  EXPECT_CALL(*device1, Cancel(_));
 
   discovery()->AddDevice(std::move(device0));
   discovery()->AddDevice(std::move(device1));
@@ -354,7 +392,7 @@ TEST_F(FidoRequestHandlerTest, TestRequestWithMultipleDevices) {
   EXPECT_CALL(*device0, GetId()).WillRepeatedly(testing::Return("device0"));
   // Device is unresponsive and cancel command is invoked afterwards.
   device0->ExpectRequestAndDoNotRespond(std::vector<uint8_t>());
-  EXPECT_CALL(*device0, Cancel());
+  EXPECT_CALL(*device0, Cancel(_));
 
   // Represents a connected device that response successfully.
   auto device1 = std::make_unique<MockFidoDevice>();
@@ -402,7 +440,7 @@ TEST_F(FidoRequestHandlerTest, TestRequestWithMultipleSuccessResponses) {
                                        CreateFakeSuccessDeviceResponse(),
                                        base::TimeDelta::FromMicroseconds(10));
   // Cancel command is invoked after receiving response from |device0|.
-  EXPECT_CALL(*device1, Cancel());
+  EXPECT_CALL(*device1, Cancel(_));
 
   discovery()->AddDevice(std::move(device0));
   discovery()->AddDevice(std::move(device1));
@@ -454,7 +492,7 @@ TEST_F(FidoRequestHandlerTest, TestRequestWithMultipleFailureResponses) {
   device2->ExpectRequestAndRespondWith(std::vector<uint8_t>(),
                                        CreateFakeDeviceProcesssingError(),
                                        base::TimeDelta::FromMicroseconds(10));
-  EXPECT_CALL(*device2, Cancel());
+  EXPECT_CALL(*device2, Cancel(_));
 
   discovery()->AddDevice(std::move(device0));
   discovery()->AddDevice(std::move(device1));
@@ -485,7 +523,7 @@ TEST_F(FidoRequestHandlerTest,
 
   auto device1 = MockFidoDevice::MakeCtapWithGetInfoExpectation();
   device1->ExpectRequestAndDoNotRespond(std::vector<uint8_t>());
-  EXPECT_CALL(*device1, Cancel());
+  EXPECT_CALL(*device1, Cancel(_));
 
   discovery()->AddDevice(std::move(device0));
   discovery()->AddDevice(std::move(device1));
@@ -511,7 +549,7 @@ TEST_F(FidoRequestHandlerTest,
 
   auto device1 = MockFidoDevice::MakeCtapWithGetInfoExpectation();
   device1->ExpectRequestAndDoNotRespond(std::vector<uint8_t>());
-  EXPECT_CALL(*device1, Cancel());
+  EXPECT_CALL(*device1, Cancel(_));
 
   discovery()->AddDevice(std::move(device0));
   discovery()->AddDevice(std::move(device1));
@@ -542,6 +580,7 @@ TEST_F(FidoRequestHandlerTest, TestSetPlatformAuthenticator) {
 
   TestObserver observer;
   auto request_handler = std::make_unique<FakeFidoRequestHandler>(
+      &fake_discovery_factory_,
       base::flat_set<FidoTransportProtocol>({FidoTransportProtocol::kInternal}),
       callback().callback());
   request_handler->set_observer(&observer);
@@ -578,6 +617,7 @@ TEST_F(FidoRequestHandlerTest,
 
   TestObserver observer;
   auto request_handler = std::make_unique<FakeFidoRequestHandler>(
+      &fake_discovery_factory_,
       base::flat_set<FidoTransportProtocol>({FidoTransportProtocol::kInternal}),
       callback().callback());
   request_handler->set_observer(&observer);
@@ -596,6 +636,7 @@ TEST_F(FidoRequestHandlerTest,
 TEST_F(FidoRequestHandlerTest, InternalTransportDisallowedIfMarkedUnavailable) {
   TestObserver observer;
   auto request_handler = std::make_unique<FakeFidoRequestHandler>(
+      &fake_discovery_factory_,
       base::flat_set<FidoTransportProtocol>({FidoTransportProtocol::kInternal}),
       callback().callback());
   request_handler->set_observer(&observer);
@@ -666,7 +707,8 @@ TEST_F(FidoRequestHandlerTest, TransportAvailabilityOfWindowsAuthenticator) {
   TestObserver observer;
   ForgeNextHidDiscovery();
   EmptyRequestHandler request_handler(
-      {FidoTransportProtocol::kUsbHumanInterfaceDevice});
+      {FidoTransportProtocol::kUsbHumanInterfaceDevice},
+      &fake_discovery_factory_);
   request_handler.SetPlatformAuthenticatorOrMarkUnavailable(base::nullopt);
   request_handler.set_observer(&observer);
   scoped_task_environment_.FastForwardUntilNoTasksRemain();

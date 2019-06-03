@@ -8,6 +8,8 @@
 
 namespace chromeos {
 
+constexpr StaticOobeScreenId DiscoverScreenView::kScreenId;
+
 DiscoverScreenHandler::DiscoverScreenHandler(
     JSCallsContainer* js_calls_container)
     : BaseScreenHandler(kScreenId, js_calls_container) {
@@ -20,7 +22,7 @@ void DiscoverScreenHandler::DeclareLocalizedValues(
     ::login::LocalizedValuesBuilder* builder) {}
 
 void DiscoverScreenHandler::RegisterMessages() {
-  BaseWebUIHandler::RegisterMessages();
+  BaseScreenHandler::RegisterMessages();
   discover_ui_.RegisterMessages(web_ui());
 }
 

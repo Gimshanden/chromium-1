@@ -18,6 +18,7 @@ goog.require('BrailleCommandHandler');
 goog.require('ChromeVoxState');
 goog.require('CommandHandler');
 goog.require('DesktopAutomationHandler');
+goog.require('DownloadHandler');
 goog.require('FindHandler');
 goog.require('GestureCommandHandler');
 goog.require('LiveRegions');
@@ -149,6 +150,7 @@ Background = function() {
 
   CommandHandler.init();
   FindHandler.init();
+  DownloadHandler.init();
 
   Notifications.onStartup();
 
@@ -439,11 +441,16 @@ Background.prototype = {
     if (prevRange && prevRange.start.node && start) {
       var entered =
           AutomationUtil.getUniqueAncestors(prevRange.start.node, start);
-      var embeddedObject = entered.find(function(f) {
-        return f.role == RoleType.EMBEDDED_OBJECT;
-      });
-      if (embeddedObject && !embeddedObject.state[StateType.FOCUSED])
-        embeddedObject.focus();
+
+      entered
+          .filter((f) => {
+            return f.role == RoleType.EMBEDDED_OBJECT ||
+                f.role == RoleType.IFRAME;
+          })
+          .forEach((container) => {
+            if (!container.state[StateType.FOCUSED])
+              container.focus();
+          });
     }
 
     if (start.state[StateType.FOCUSED] || end.state[StateType.FOCUSED])

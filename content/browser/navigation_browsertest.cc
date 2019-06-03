@@ -236,10 +236,12 @@ class NavigationBrowserTest : public NavigationBaseBrowserTest {
 
     base::RunLoop run_loop;
     base::OnceClosure quit_closure = run_loop.QuitClosure();
+    base::Lock lock;
 
     // Intercept network requests and record them.
     URLLoaderInterceptor interceptor(base::BindLambdaForTesting(
         [&](URLLoaderInterceptor::RequestParams* params) -> bool {
+          base::AutoLock top_frame_origins_lock(lock);
           (*top_frame_origins)[params->url_request.url] =
               *params->url_request.top_frame_origin;
 
@@ -663,7 +665,10 @@ IN_PROC_BROWSER_TEST_F(NavigationDisableWebSecurityTest,
       base::TimeTicks::Now() /* navigation_start */, "GET",
       nullptr /* post_data */, base::Optional<SourceLocation>(),
       false /* started_from_context_menu */, false /* has_user_gesture */,
-      InitiatorCSPInfo(), std::string() /* href_translate */);
+      InitiatorCSPInfo(),
+      std::vector<int>() /* initiator_origin_trial_features */,
+      std::string() /* href_translate */,
+      false /* is_history_navigation_in_new_child_frame */);
   mojom::BeginNavigationParamsPtr begin_params =
       mojom::BeginNavigationParams::New(
           std::string() /* headers */, net::LOAD_NORMAL,
@@ -785,8 +790,9 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, BrowserNavigationTopFrameOrigin) {
   std::map<GURL, url::Origin> top_frame_origins;
   GURL url(embedded_test_server()->GetURL("/title1.html"));
 
-  NavigateAndRecordTopFrameOrigins(url, url /*final_resource*/,
-                                   false /*from_renderer*/, &top_frame_origins);
+  NavigateAndRecordTopFrameOrigins(url, url /* final_resource */,
+                                   false /* from_renderer */,
+                                   &top_frame_origins);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[url]);
 }
 
@@ -794,8 +800,9 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, RenderNavigationTopFrameOrigin) {
   std::map<GURL, url::Origin> top_frame_origins;
   GURL url(embedded_test_server()->GetURL("/title2.html"));
 
-  NavigateAndRecordTopFrameOrigins(url, url /*final_resource*/,
-                                   true /*from_renderer*/, &top_frame_origins);
+  NavigateAndRecordTopFrameOrigins(url, url /* final_resource */,
+                                   true /* from_renderer */,
+                                   &top_frame_origins);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[url]);
 }
 
@@ -804,8 +811,9 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, SubframeTopFrameOrigin) {
   GURL url(embedded_test_server()->GetURL("/page_with_iframe.html"));
   GURL iframe_document = embedded_test_server()->GetURL("/title1.html");
 
-  NavigateAndRecordTopFrameOrigins(url, iframe_document /*final_resource*/,
-                                   false /*from_renderer*/, &top_frame_origins);
+  NavigateAndRecordTopFrameOrigins(url, iframe_document /* final_resource */,
+                                   false /* from_renderer */,
+                                   &top_frame_origins);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[url]);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[iframe_document]);
 }
@@ -815,12 +823,165 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, SubresourceTopFrameOrigin) {
   GURL url(embedded_test_server()->GetURL("/page_with_iframe_and_image.html"));
   GURL blank_image = embedded_test_server()->GetURL("/blank.jpg");
 
-  NavigateAndRecordTopFrameOrigins(url, blank_image /*final_resource*/,
-                                   false /*from_renderer*/, &top_frame_origins);
+  NavigateAndRecordTopFrameOrigins(url, blank_image /* final_resource */,
+                                   false /* from_renderer */,
+                                   &top_frame_origins);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[url]);
   EXPECT_EQ(url::Origin::Create(url),
             top_frame_origins[embedded_test_server()->GetURL("/image.jpg")]);
   EXPECT_EQ(url::Origin::Create(url), top_frame_origins[blank_image]);
+}
+
+// Helper class to extract the initiator values from URLLoaderFactory calls
+class InitiatorInterceptor {
+ public:
+  explicit InitiatorInterceptor(const GURL& final_url) {
+    // Intercept network requests and record them.
+    interceptor_ =
+        std::make_unique<URLLoaderInterceptor>(base::BindLambdaForTesting(
+            [&final_url,
+             this](URLLoaderInterceptor::RequestParams* params) -> bool {
+              base::AutoLock initiators_lock(lock_);
+              (initiators_)[params->url_request.url] =
+                  params->url_request.request_initiator;
+
+              if (params->url_request.url == final_url)
+                std::move(run_loop_.QuitClosure()).Run();
+              return false;
+            }));
+  }
+
+  void Run() {
+    // Wait until the last resource we care about has been requested.
+    run_loop_.Run();
+  }
+
+  // This method should be used only if the key already exists in the map.
+  const base::Optional<url::Origin>& GetInitiatorForURL(const GURL& url) const {
+    auto initiator_iterator = initiators_.find(url);
+    DCHECK(initiator_iterator != initiators_.end());
+
+    return initiator_iterator->second;
+  }
+
+ private:
+  std::map<GURL, base::Optional<url::Origin>> initiators_;
+  std::unique_ptr<URLLoaderInterceptor> interceptor_;
+  base::Lock lock_;
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(InitiatorInterceptor);
+};
+
+// Tests that the initiator is not set for a browser initiated top frame
+// navigation.
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, BrowserNavigationInitiator) {
+  GURL url(embedded_test_server()->GetURL("/title1.html"));
+
+  InitiatorInterceptor test_interceptor(url);
+
+  // Perform the actual navigation.
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+  test_interceptor.Run();
+
+  ASSERT_FALSE(test_interceptor.GetInitiatorForURL(url).has_value());
+}
+
+// Test that the initiator is set to the starting page when a renderer initiated
+// navigation goes from the starting page to another page.
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, RendererNavigationInitiator) {
+  GURL starting_page(embedded_test_server()->GetURL("a.com", "/title1.html"));
+  url::Origin starting_page_origin;
+  starting_page_origin = starting_page_origin.Create(starting_page);
+
+  NavigateToURL(shell(), starting_page);
+
+  GURL url(embedded_test_server()->GetURL("/title2.html"));
+
+  InitiatorInterceptor test_interceptor(url);
+
+  // Perform the actual navigation.
+  EXPECT_TRUE(NavigateToURLFromRenderer(shell(), url));
+  test_interceptor.Run();
+
+  EXPECT_EQ(starting_page_origin, test_interceptor.GetInitiatorForURL(url));
+}
+
+// Test that the initiator is set to the starting page when a sub frame is
+// navigated by Javascript from some starting page to another page.
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, SubFrameJsNavigationInitiator) {
+  GURL starting_page(embedded_test_server()->GetURL("/frame_tree/top.html"));
+  NavigateToURL(shell(), starting_page);
+
+  // It is safe to obtain the root frame tree node here, as it doesn't change.
+  FrameTreeNode* root = static_cast<WebContentsImpl*>(shell()->web_contents())
+                            ->GetFrameTree()
+                            ->root();
+
+  // The root and subframe should each have a live RenderFrame.
+  EXPECT_TRUE(
+      root->current_frame_host()->render_view_host()->IsRenderViewLive());
+  EXPECT_TRUE(root->current_frame_host()->IsRenderFrameLive());
+  EXPECT_TRUE(root->child_at(0)->current_frame_host()->IsRenderFrameLive());
+
+  GURL url(embedded_test_server()->GetURL("a.com", "/title1.html"));
+
+  InitiatorInterceptor test_interceptor(url);
+  std::string script = "location.href='" + url.spec() + "'";
+
+  // Perform the actual navigation.
+  EXPECT_TRUE(ExecJs(root->child_at(0)->current_frame_host(), script));
+  test_interceptor.Run();
+
+  EXPECT_TRUE(
+      root->current_frame_host()->render_view_host()->IsRenderViewLive());
+  EXPECT_TRUE(root->current_frame_host()->IsRenderFrameLive());
+  EXPECT_TRUE(root->child_at(0)->current_frame_host()->IsRenderFrameLive());
+
+  url::Origin starting_page_origin;
+  starting_page_origin = starting_page_origin.Create(starting_page);
+
+  EXPECT_EQ(starting_page_origin, test_interceptor.GetInitiatorForURL(url));
+}
+
+// Test that the initiator is set to the starting page when a sub frame,
+// selected by Id, is navigated by Javascript from some starting page to another
+// page.
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
+                       SubframeNavigationByTopFrameInitiator) {
+  // Go to a page on a.com with an iframe that is on b.com
+  GURL starting_page(embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(b)"));
+  NavigateToURL(shell(), starting_page);
+
+  // It is safe to obtain the root frame tree node here, as it doesn't change.
+  FrameTreeNode* root = static_cast<WebContentsImpl*>(shell()->web_contents())
+                            ->GetFrameTree()
+                            ->root();
+
+  // The root and subframe should each have a live RenderFrame.
+  EXPECT_TRUE(
+      root->current_frame_host()->render_view_host()->IsRenderViewLive());
+  EXPECT_TRUE(root->current_frame_host()->IsRenderFrameLive());
+  EXPECT_TRUE(root->child_at(0)->current_frame_host()->IsRenderFrameLive());
+
+  GURL url(embedded_test_server()->GetURL("c.com", "/title1.html"));
+
+  InitiatorInterceptor test_interceptor(url);
+
+  // Perform the actual navigation.
+  NavigateIframeToURL(shell()->web_contents(), "child-0", url);
+  test_interceptor.Run();
+
+  EXPECT_TRUE(
+      root->current_frame_host()->render_view_host()->IsRenderViewLive());
+  EXPECT_TRUE(root->current_frame_host()->IsRenderFrameLive());
+  EXPECT_TRUE(root->child_at(0)->current_frame_host()->IsRenderFrameLive());
+
+  url::Origin starting_page_origin;
+  starting_page_origin = starting_page_origin.Create(starting_page);
+
+  EXPECT_EQ(starting_page_origin, test_interceptor.GetInitiatorForURL(url));
 }
 
 // Navigation are started in the browser process. After the headers are
@@ -1165,97 +1326,6 @@ IN_PROC_BROWSER_TEST_F(NavigationDownloadBrowserTest,
   main_response.Done();
 
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
-}
-
-// This test reproduces the following race condition:
-// 1) A first navigation starts, the headers are received, the navigation
-//    reaches ready-to-commit. It is sent to the renderer to be committed.
-// 2) In the meantime, a second navigation reaches ready-to-commit in the
-//    browser.
-// 3) Before the renderer gets notified of the new navigation, the
-//    first navigation is committed.
-// 4) The browser gets notified of the commit of the first navigation. This
-//    should not destroy the NavigationRequest corresponding to the second
-//    navigation.
-IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
-                       RaceNewNavigationCommitWhileOldOneFinishesLoading) {
-  // Start the test with an initial document.
-  GURL main_url(embedded_test_server()->GetURL("/simple_page.html"));
-  EXPECT_TRUE(NavigateToURL(shell(), main_url));
-  RenderFrameHostImpl* render_frame_host = static_cast<RenderFrameHostImpl*>(
-      shell()->web_contents()->GetMainFrame());
-
-  NavigationRecorder recorder(shell()->web_contents());
-  // Note: These two pages contain an image that will never load. The goal is to
-  // prevent RenderFrameHostImpl::DidStopLoading() to be called since it will
-  // cancel any pending navigation.
-  GURL page_1(embedded_test_server()->GetURL("/infinite_load_1.html"));
-  GURL page_2(embedded_test_server()->GetURL("/infinite_load_2.html"));
-  // Intercept and cancel any FrameMsgHost_DidCommitProvisionalLoad events.
-  InterceptAndCancelDidCommitProvisionalLoad interceptor(
-      shell()->web_contents());
-
-  // 1) Navigate to page_1.
-  shell()->LoadURL(page_1);
-
-  // 2) The browser receives the response's headers. The navigation commits in
-  //    the browser.
-  recorder.WaitForEvents(2);
-  EXPECT_EQ(2u, recorder.records().size());
-  EXPECT_STREQ("start /infinite_load_1.html", recorder.records()[0].c_str());
-  EXPECT_STREQ("ready-to-commit /infinite_load_1.html",
-               recorder.records()[1].c_str());
-
-  // 3) Wait for the renderer to receive the response's body, but do not notify
-  //    the browser of it right now. It is delayed in 6).
-  interceptor.Wait(1);
-  EXPECT_EQ(1u, interceptor.intercepted_messages().size());
-
-  // 4) In the meantime, the browser starts a navigation to page_2.
-  shell()->LoadURL(page_2);
-
-  // 5) The response's headers are received, the navigation reaches
-  // ready-to-commit in the browser. This should not delete the ongoing
-  // NavigationRequest.
-  recorder.WaitForEvents(4);
-  EXPECT_EQ(4u, recorder.records().size());
-  EXPECT_STREQ("start /infinite_load_2.html", recorder.records()[2].c_str());
-  EXPECT_STREQ("ready-to-commit /infinite_load_2.html",
-               recorder.records()[3].c_str());
-
-  // 6) The browser receives the first DidCommitProvisionalLoad message. This
-  //    should not delete the second navigation. This is the end of the first
-  //    navigation.
-  ASSERT_GE(interceptor.intercepted_navigations().size(), 1u);
-  render_frame_host->DidCommitNavigationForTesting(
-      interceptor.intercepted_navigations()[0],
-      std::make_unique<::FrameHostMsg_DidCommitProvisionalLoad_Params>(
-          interceptor.intercepted_messages()[0]),
-      mojom::DidCommitProvisionalLoadInterfaceParams::New(
-          std::move(interceptor.intercepted_requests()[0]),
-          std::move(interceptor.intercepted_broker_content_requests()[0]),
-          std::move(interceptor.intercepted_broker_blink_requests()[0])));
-  recorder.WaitForEvents(5);
-  EXPECT_EQ(5u, recorder.records().size());
-  EXPECT_STREQ("did-commit /infinite_load_1.html",
-               recorder.records()[4].c_str());
-
-  // 7) Wait for the renderer to receive the second response's body. This is the
-  //    end of the second navigation.
-  interceptor.Wait(2);
-  EXPECT_EQ(2u, interceptor.intercepted_messages().size());
-  render_frame_host->DidCommitNavigationForTesting(
-      interceptor.intercepted_navigations()[1],
-      std::make_unique<::FrameHostMsg_DidCommitProvisionalLoad_Params>(
-          interceptor.intercepted_messages()[1]),
-      mojom::DidCommitProvisionalLoadInterfaceParams::New(
-          std::move(interceptor.intercepted_requests()[1]),
-          std::move(interceptor.intercepted_broker_content_requests()[1]),
-          std::move(interceptor.intercepted_broker_blink_requests()[1])));
-  recorder.WaitForEvents(6);
-  EXPECT_EQ(6u, recorder.records().size());
-  EXPECT_STREQ("did-commit /infinite_load_2.html",
-               recorder.records()[5].c_str());
 }
 
 // Renderer initiated back/forward navigation in beforeunload should not prevent
@@ -1861,7 +1931,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, WebViewRendererKillReload) {
   notification_registrar.Add(&crash_observer,
                              content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
                              content::NotificationService::AllSources());
-  NavigateToURLBlockUntilNavigationsComplete(web_contents, GURL("chrome:crash"),
+  NavigateToURLBlockUntilNavigationsComplete(web_contents, GetWebUIURL("crash"),
                                              1);
 
   // Wait for navigation in new WebContents to finish.

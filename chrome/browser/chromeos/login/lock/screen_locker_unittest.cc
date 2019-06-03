@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 
+#include "ash/public/cpp/login_screen_model.h"
+#include "ash/public/cpp/login_types.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
@@ -15,13 +17,14 @@
 #include "chrome/browser/chromeos/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/ui/ash/accessibility/fake_accessibility_controller.h"
 #include "chrome/browser/ui/ash/login_screen_client.h"
-#include "chrome/browser/ui/ash/session_controller_client.h"
+#include "chrome/browser/ui/ash/session_controller_client_impl.h"
 #include "chrome/browser/ui/ash/test_login_screen.h"
 #include "chrome/browser/ui/ash/test_session_controller.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #include "chromeos/dbus/biod/biod_client.h"
 #include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -51,15 +54,17 @@ class ScreenLockerUnitTest : public testing::Test {
   void SetUp() override {
     DBusThreadManager::Initialize();
     BiodClient::InitializeFake();
+    CrasAudioClient::InitializeFake();
     CryptohomeClient::InitializeFake();
 
     // MojoSystemInfoDispatcher dependency:
     bluez::BluezDBusManager::GetSetterForTesting();
 
-    // Initialize SessionControllerClient and dependencies:
+    // Initialize SessionControllerClientImpl and dependencies:
     LoginState::Initialize();
     CHECK(testing_profile_manager_.SetUp());
-    session_controller_client_ = std::make_unique<SessionControllerClient>();
+    session_controller_client_ =
+        std::make_unique<SessionControllerClientImpl>();
     session_controller_client_->Init();
 
     // Initialize AccessibilityManager and dependencies:
@@ -123,7 +128,7 @@ class ScreenLockerUnitTest : public testing::Test {
   session_manager::SessionManager session_manager_;
   TestLoginScreen test_login_screen_;
   LoginScreenClient login_screen_client_;
-  // * SessionControllerClient dependencies:
+  // * SessionControllerClientImpl dependencies:
   FakeChromeUserManager* fake_user_manager_{new FakeChromeUserManager()};
   user_manager::ScopedUserManager scoped_user_manager_{
       base::WrapUnique(fake_user_manager_)};
@@ -131,7 +136,7 @@ class ScreenLockerUnitTest : public testing::Test {
       TestingBrowserProcess::GetGlobal()};
   ScopedDeviceSettingsTestHelper device_settings_test_helper_;
   TestSessionController test_session_controller_;
-  std::unique_ptr<SessionControllerClient> session_controller_client_;
+  std::unique_ptr<SessionControllerClientImpl> session_controller_client_;
 
   std::unique_ptr<audio::TestObserver> observer_;
   DISALLOW_COPY_AND_ASSIGN(ScreenLockerUnitTest);

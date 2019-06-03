@@ -74,7 +74,8 @@ static std::vector<std::unique_ptr<VideoDecoder>> CreateVideoDecodersForTest(
 #endif
 
 #if BUILDFLAG(ENABLE_DAV1D_DECODER)
-  video_decoders.push_back(std::make_unique<Dav1dVideoDecoder>(media_log));
+  video_decoders.push_back(
+      std::make_unique<OffloadingDav1dVideoDecoder>(media_log));
 #elif BUILDFLAG(ENABLE_LIBAOM_DECODER)
   video_decoders.push_back(std::make_unique<AomVideoDecoder>(media_log));
 #endif
@@ -536,14 +537,14 @@ std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRenderer(
 }
 
 void PipelineIntegrationTestBase::OnVideoFramePaint(
-    const scoped_refptr<VideoFrame>& frame) {
+    scoped_refptr<VideoFrame> frame) {
   last_video_frame_format_ = frame->format();
   last_video_frame_color_space_ = frame->ColorSpace();
   if (!hashing_enabled_ || last_frame_ == frame)
     return;
-  last_frame_ = frame;
   DVLOG(3) << __func__ << " pts=" << frame->timestamp().InSecondsF();
-  VideoFrame::HashFrameForTesting(&md5_context_, *frame.get());
+  VideoFrame::HashFrameForTesting(&md5_context_, *frame);
+  last_frame_ = std::move(frame);
 }
 
 void PipelineIntegrationTestBase::CheckDuration() {

@@ -26,6 +26,7 @@
 #include "components/signin/core/browser/list_accounts_test_utils.h"
 #include "components/signin/core/browser/mice_account_reconcilor_delegate.h"
 #include "components/signin/core/browser/mirror_account_reconcilor_delegate.h"
+#include "components/signin/core/browser/set_accounts_in_cookie_result.h"
 #include "components/signin/core/browser/signin_buildflags.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/signin/core/browser/signin_pref_names.h"
@@ -45,6 +46,8 @@
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 #include "components/signin/core/browser/dice_account_reconcilor_delegate.h"
 #endif
+
+using signin_metrics::AccountReconcilorState;
 
 namespace {
 
@@ -249,7 +252,7 @@ class AccountReconcilorTest : public ::testing::Test {
 
   void SimulateSetAccountsInCookieCompleted(
       AccountReconcilor* reconcilor,
-      const GoogleServiceAuthError& error);
+      signin::SetAccountsInCookieResult result);
 
   void SetAccountConsistency(signin::AccountConsistencyMethod method);
 
@@ -270,6 +273,21 @@ class AccountReconcilorTest : public ::testing::Test {
 
   DISALLOW_COPY_AND_ASSIGN(AccountReconcilorTest);
 };
+
+#if defined(OS_ANDROID)
+// Same as AccountReconcilorTest, with Mice enabled.
+class AccountReconcilorMiceTest : public AccountReconcilorTest {
+ public:
+  AccountReconcilorMiceTest() {
+    scoped_feature_list_.InitAndEnableFeature(signin::kMiceFeature);
+    SetAccountConsistency(signin::AccountConsistencyMethod::kMirror);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  DISALLOW_COPY_AND_ASSIGN(AccountReconcilorMiceTest);
+};
+#endif
 
 class AccountReconcilorMirrorEndpointParamTest
     : public AccountReconcilorTest,
@@ -310,8 +328,8 @@ INSTANTIATE_TEST_SUITE_P(Dice_Mirror,
 
 AccountReconcilorTest::AccountReconcilorTest()
     : account_consistency_(signin::AccountConsistencyMethod::kDisabled),
-      test_signin_client_(&pref_service_),
-      identity_test_env_(&test_url_loader_factory_,
+      test_signin_client_(&pref_service_, &test_url_loader_factory_),
+      identity_test_env_(/*test_url_loader_factory=*/nullptr,
                          &pref_service_,
                          account_consistency_,
                          &test_signin_client_) {
@@ -373,8 +391,8 @@ void AccountReconcilorTest::SimulateAddAccountToCookieCompleted(
 
 void AccountReconcilorTest::SimulateSetAccountsInCookieCompleted(
     AccountReconcilor* reconcilor,
-    const GoogleServiceAuthError& error) {
-  reconcilor->OnSetAccountsInCookieCompleted(error);
+    signin::SetAccountsInCookieResult result) {
+  reconcilor->OnSetAccountsInCookieCompleted(result);
 }
 
 void AccountReconcilorTest::SimulateCookieContentSettingsChanged(
@@ -935,7 +953,16 @@ TEST_P(AccountReconcilorTestTable, TableRowTest) {
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+
+  if (GetParam().tokens == GetParam().tokens_after_reconcile) {
+    EXPECT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  } else {
+    // If the tokens were changed by the reconcile, a new reconcile should be
+    // scheduled.
+    EXPECT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+              reconcilor->GetState());
+  }
+
   VerifyCurrentTokens(ParseTokenString(GetParam().tokens_after_reconcile));
 
   testing::Mock::VerifyAndClearExpectations(GetMockReconcilor());
@@ -1014,11 +1041,18 @@ TEST_P(AccountReconcilorTestDiceMultilogin, TableRowTest) {
       GetParam().is_first_reconcile == IsFirstReconcile::kFirst ? true : false;
   reconcilor->StartReconcile();
 
-  SimulateSetAccountsInCookieCompleted(reconcilor,
-                                       GoogleServiceAuthError::AuthErrorNone());
+  SimulateSetAccountsInCookieCompleted(
+      reconcilor, signin::SetAccountsInCookieResult::kSuccess);
 
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  if (GetParam().tokens == GetParam().tokens_after_reconcile_multilogin) {
+    EXPECT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  } else {
+    // If the tokens were changed by the reconcile, a new reconcile should be
+    // scheduled.
+    EXPECT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+              reconcilor->GetState());
+  }
   VerifyCurrentTokens(
       ParseTokenString(GetParam().tokens_after_reconcile_multilogin));
 
@@ -1105,7 +1139,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, DiceReconcileWithoutSignin) {
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1141,7 +1175,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest,
   const std::string account_id_2 = account_info_2.account_id;
 
   auto* identity_manager = identity_test_env()->identity_manager();
-  std::vector<AccountInfo> accounts =
+  std::vector<CoreAccountInfo> accounts =
       identity_manager->GetAccountsWithRefreshTokens();
   ASSERT_EQ(2u, accounts.size());
   ASSERT_TRUE(identity_manager->HasAccountWithRefreshToken(account_id_1));
@@ -1179,7 +1213,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest,
         reconcilor, account_id_2, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1200,7 +1234,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, DiceLastKnownFirstAccount) {
       account_info_1.gaia, &test_url_loader_factory_);
 
   auto* identity_manager = identity_test_env()->identity_manager();
-  std::vector<AccountInfo> accounts =
+  std::vector<CoreAccountInfo> accounts =
       identity_manager->GetAccountsWithRefreshTokens();
   ASSERT_EQ(2u, accounts.size());
   ASSERT_TRUE(identity_manager->HasAccountWithRefreshToken(account_id_1));
@@ -1258,7 +1292,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, DiceLastKnownFirstAccount) {
         reconcilor, account_id_1, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1325,7 +1359,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, UnverifiedAccountMerge) {
         reconcilor, chrome_account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1421,7 +1455,7 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, DiceNoMigrationAfterReconcile) {
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1468,10 +1502,11 @@ TEST_P(AccountReconcilorDiceEndpointParamTest, MigrationClearSecondaryTokens) {
         reconcilor, account_id_1, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
 
   EXPECT_TRUE(identity_manager->HasAccountWithRefreshToken(account_id_1));
   EXPECT_FALSE(identity_manager->HasAccountWithRefreshToken(account_id_2));
@@ -1700,8 +1735,8 @@ TEST_P(AccountReconcilorTestMirrorMultilogin, TableRowTest) {
       GetParam().is_first_reconcile == IsFirstReconcile::kFirst ? true : false;
   reconcilor->StartReconcile();
 
-  SimulateSetAccountsInCookieCompleted(reconcilor,
-                                       GoogleServiceAuthError::AuthErrorNone());
+  SimulateSetAccountsInCookieCompleted(
+      reconcilor, signin::SetAccountsInCookieResult::kSuccess);
 
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1817,8 +1852,8 @@ TEST_P(AccountReconcilorTestMiceMultilogin, TableRowTest) {
       GetParam().is_first_reconcile == IsFirstReconcile::kFirst ? true : false;
   reconcilor->StartReconcile();
 
-  SimulateSetAccountsInCookieCompleted(reconcilor,
-                                       GoogleServiceAuthError::AuthErrorNone());
+  SimulateSetAccountsInCookieCompleted(
+      reconcilor, signin::SetAccountsInCookieResult::kSuccess);
 
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1840,6 +1875,75 @@ INSTANTIATE_TEST_SUITE_P(
     MiceTableMultilogin,
     AccountReconcilorTestMiceMultilogin,
     ::testing::ValuesIn(GenerateTestCasesFromParams(kMiceParams)));
+
+// Checks that the reconcilor state does:
+// RUNNING -> SCHEDULED -> RUNNING -> OK.
+TEST_F(AccountReconcilorMiceTest, AccountReconcilorStateScheduled) {
+  class TestAccountReconcilorObserver
+      : public testing::StrictMock<AccountReconcilor::Observer> {
+   public:
+    MOCK_METHOD1(OnStateChanged, void(AccountReconcilorState state));
+  };
+
+  AccountInfo account_info = ConnectProfileToAccount("user@gmail.com");
+  signin::SetListAccountsResponseNoAccounts(&test_url_loader_factory_);
+
+  EXPECT_CALL(*GetMockReconcilor(), PerformSetCookiesAction(testing::_));
+
+  // The reconcilor should run twice without going to the OK state in between.
+  // OK only happens at the end.
+  TestAccountReconcilorObserver observer;
+  testing::InSequence mock_sequence;
+  EXPECT_CALL(observer, OnStateChanged(
+                            AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING))
+      .Times(1);
+  EXPECT_CALL(
+      observer,
+      OnStateChanged(AccountReconcilorState::ACCOUNT_RECONCILOR_SCHEDULED))
+      .Times(1);
+  EXPECT_CALL(observer, OnStateChanged(
+                            AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING))
+      .Times(1);
+  EXPECT_CALL(observer,
+              OnStateChanged(AccountReconcilorState::ACCOUNT_RECONCILOR_OK))
+      .Times(1);
+
+  AccountReconcilor* reconcilor = GetMockReconcilor();
+  ASSERT_TRUE(reconcilor);
+  ScopedObserver<AccountReconcilor, AccountReconcilor::Observer>
+      scoped_observer(&observer);
+  scoped_observer.Add(reconcilor);
+
+  // Reconcile was scheduled when the account was added.
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
+
+  ASSERT_FALSE(reconcilor->is_reconcile_started_);
+  reconcilor->StartReconcile();
+  ASSERT_TRUE(reconcilor->is_reconcile_started_);
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING,
+            reconcilor->GetState());
+  base::RunLoop().RunUntilIdle();
+
+  // The reconcilor started a request to add the account to the cookie, and is
+  // waiting for the response.
+
+  // Change the token while the reconcilor is running, to trigger another
+  // reconcile after the current one.
+  identity_test_env()->SetInvalidRefreshTokenForAccount(
+      account_info.account_id);
+
+  // Unblock the first reconcile.
+  SimulateSetAccountsInCookieCompleted(
+      reconcilor, signin::SetAccountsInCookieResult::kSuccess);
+  // Wait until the first reconcile finishes, and a second reconcile is done.
+  // The second reconcile will be a no-op.
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_FALSE(reconcilor->is_reconcile_started_);
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_OK,
+            reconcilor->GetState());
+}
 #endif  // defined(OS_ANDROID)
 
 // Tests that reconcile cannot start before the tokens are loaded, and is
@@ -1877,7 +1981,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, TokensNotLoaded) {
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -1904,7 +2008,8 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, GetAccountsFromCookieSuccess) {
   AccountReconcilor* reconcilor = GetMockReconcilor();
   ASSERT_TRUE(reconcilor);
 
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
   reconcilor->StartReconcile();
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_RUNNING, reconcilor->GetState());
   base::RunLoop().RunUntilIdle();
@@ -1925,7 +2030,8 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, GetAccountsFromCookieFailure) {
   AccountReconcilor* reconcilor = GetMockReconcilor();
   ASSERT_TRUE(reconcilor);
 
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
   reconcilor->StartReconcile();
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_RUNNING, reconcilor->GetState());
   base::RunLoop().RunUntilIdle();
@@ -1935,8 +2041,6 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, GetAccountsFromCookieFailure) {
   ASSERT_FALSE(accounts_in_cookie_jar_info.accounts_are_fresh);
   ASSERT_EQ(0u, accounts_in_cookie_jar_info.signed_in_accounts.size());
   ASSERT_EQ(0u, accounts_in_cookie_jar_info.signed_out_accounts.size());
-
-  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_ERROR, reconcilor->GetState());
 }
 
@@ -1965,7 +2069,8 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
   AccountReconcilor* reconcilor = GetMockReconcilor();
   ASSERT_TRUE(reconcilor);
 
-  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
+  ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
   reconcilor->StartReconcile();
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_RUNNING, reconcilor->GetState());
 
@@ -1984,7 +2089,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_OK, reconcilor->GetState());
@@ -2189,7 +2294,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, StartReconcileAddToCookie) {
         reconcilor, account_id2, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2204,9 +2309,9 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, StartReconcileAddToCookie) {
   }
 
   base::HistogramTester::CountsMap expected_counts;
-  expected_counts["Signin.Reconciler.Duration.Success"] = 1;
+  expected_counts["Signin.Reconciler.Duration.UpTo3mins.Success"] = 1;
   EXPECT_THAT(histogram_tester()->GetTotalCountsForPrefix(
-                  "Signin.Reconciler.Duration.Success"),
+                  "Signin.Reconciler.Duration.UpTo3mins.Success"),
               testing::ContainerEq(expected_counts));
 }
 
@@ -2294,12 +2399,14 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
 
   base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(reconcilor->is_reconcile_started_);
-  GoogleServiceAuthError error(
-      GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
   if (!IsMultiloginEnabled()) {
-    SimulateAddAccountToCookieCompleted(reconcilor, account_id2, error);
+    SimulateAddAccountToCookieCompleted(
+        reconcilor, account_id2,
+        GoogleServiceAuthError(
+            GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
   } else {
-    SimulateSetAccountsInCookieCompleted(reconcilor, error);
+    SimulateSetAccountsInCookieCompleted(
+        reconcilor, signin::SetAccountsInCookieResult::kPersistentError);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2307,10 +2414,10 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
   identity_test_env()->ClearPrimaryAccount();
 
   base::HistogramTester::CountsMap expected_counts;
-  expected_counts["Signin.Reconciler.Duration.Failure"] = 1;
+  expected_counts["Signin.Reconciler.Duration.UpTo3mins.Failure"] = 1;
   if (!IsMultiloginEnabled()) {
     EXPECT_THAT(histogram_tester()->GetTotalCountsForPrefix(
-                    "Signin.Reconciler.Duration.Failure"),
+                    "Signin.Reconciler.Duration.UpTo3mins.Failure"),
                 testing::ContainerEq(expected_counts));
   }
 }
@@ -2348,7 +2455,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2417,7 +2524,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
         reconcilor, account_id2, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2455,7 +2562,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
         reconcilor, account_id3, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2513,7 +2620,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, StartReconcileBadPrimary) {
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 
@@ -2556,7 +2663,11 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, Lock) {
 
   class TestAccountReconcilorObserver : public AccountReconcilor::Observer {
    public:
-    void OnStartReconcile() override { ++started_count_; }
+    void OnStateChanged(AccountReconcilorState state) override {
+      if (state == AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING) {
+        ++started_count_;
+      }
+    }
     void OnBlockReconcile() override { ++blocked_count_; }
     void OnUnblockReconcile() override { ++unblocked_count_; }
 
@@ -2646,6 +2757,83 @@ TEST_P(AccountReconcilorMethodParamTest,
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 }
 
+// Checks that the reconcilor state does:
+// RUNNING -> SCHEDULED -> RUNNING -> OK.
+// This test is similar to
+// AccountReconcilorMiceTest.AccountReconctiorStateScheduled, but uses the
+// MergeSession endpoint. It also uses multiple accounts, because Mirror would
+// stop when the first account is in error.
+TEST_P(AccountReconcilorMethodParamTest, AccountReconcilorStateScheduled) {
+  class TestAccountReconcilorObserver
+      : public testing::StrictMock<AccountReconcilor::Observer> {
+   public:
+    MOCK_METHOD1(OnStateChanged, void(AccountReconcilorState state));
+  };
+
+  SetAccountConsistency(GetParam());
+  AccountInfo account_info = ConnectProfileToAccount("user@gmail.com");
+  AccountInfo account_info2 =
+      identity_test_env()->MakeAccountAvailable("other@gmail.com");
+  const std::string account_id2 = account_info2.account_id;
+  signin::SetListAccountsResponseOneAccount(
+      account_info.email, account_info.gaia, &test_url_loader_factory_);
+
+  EXPECT_CALL(*GetMockReconcilor(), PerformMergeAction(account_id2));
+
+  // The reconcilor should run twice without going to the OK state in between.
+  // OK only happens at the end.
+  TestAccountReconcilorObserver observer;
+  testing::InSequence mock_sequence;
+  EXPECT_CALL(observer, OnStateChanged(
+                            AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING))
+      .Times(1);
+  EXPECT_CALL(
+      observer,
+      OnStateChanged(AccountReconcilorState::ACCOUNT_RECONCILOR_SCHEDULED))
+      .Times(1);
+  EXPECT_CALL(observer, OnStateChanged(
+                            AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING))
+      .Times(1);
+  EXPECT_CALL(observer,
+              OnStateChanged(AccountReconcilorState::ACCOUNT_RECONCILOR_OK))
+      .Times(1);
+
+  AccountReconcilor* reconcilor = GetMockReconcilor();
+  ASSERT_TRUE(reconcilor);
+  ScopedObserver<AccountReconcilor, AccountReconcilor::Observer>
+      scoped_observer(&observer);
+  scoped_observer.Add(reconcilor);
+
+  // Reconcile was scheduled when the account was added.
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_SCHEDULED,
+            reconcilor->GetState());
+
+  ASSERT_FALSE(reconcilor->is_reconcile_started_);
+  reconcilor->StartReconcile();
+  ASSERT_TRUE(reconcilor->is_reconcile_started_);
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_RUNNING,
+            reconcilor->GetState());
+  base::RunLoop().RunUntilIdle();
+
+  // The reconcilor started a request to add the account to the cookie, and is
+  // waiting for the response.
+
+  // Change the token while the reconcilor is running, to trigger another
+  // reconcile after the current one.
+  identity_test_env()->RemoveRefreshTokenForAccount(account_id2);
+
+  // Unblock the first reconcile.
+  SimulateAddAccountToCookieCompleted(reconcilor, account_id2,
+                                      GoogleServiceAuthError::AuthErrorNone());
+  // Wait until the first reconcile finishes, and a second reconcile is done.
+  // The second reconcile will be a no-op.
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_FALSE(reconcilor->is_reconcile_started_);
+  EXPECT_EQ(AccountReconcilorState::ACCOUNT_RECONCILOR_OK,
+            reconcilor->GetState());
+}
+
 TEST_P(AccountReconcilorMirrorEndpointParamTest,
        AddAccountToCookieCompletedWithBogusAccount) {
   AccountInfo account_info = ConnectProfileToAccount("user@gmail.com");
@@ -2681,7 +2869,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest,
         reconcilor, account_id, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 }
@@ -2727,7 +2915,8 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, NoLoopWithBadPrimary) {
     SimulateAddAccountToCookieCompleted(
         reconcilor, account_id2, GoogleServiceAuthError::AuthErrorNone());
   } else {
-    SimulateSetAccountsInCookieCompleted(reconcilor, error);
+    SimulateSetAccountsInCookieCompleted(
+        reconcilor, signin::SetAccountsInCookieResult::kPersistentError);
   }
   base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
@@ -2787,7 +2976,7 @@ TEST_P(AccountReconcilorMirrorEndpointParamTest, WontMergeAccountsWithError) {
         reconcilor, account_id1, GoogleServiceAuthError::AuthErrorNone());
   } else {
     SimulateSetAccountsInCookieCompleted(
-        reconcilor, GoogleServiceAuthError::AuthErrorNone());
+        reconcilor, signin::SetAccountsInCookieResult::kSuccess);
   }
   base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(reconcilor->is_reconcile_started_);

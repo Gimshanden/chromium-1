@@ -36,7 +36,6 @@
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
-#include "third_party/blink/public/common/service_worker/service_worker_types.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "ui/base/page_transition_types.h"
@@ -111,7 +110,9 @@ class WebURLRequest {
     kLazyImageAutoReload = 1 << 11,    // Request the full version of an image
                                        // that was previously fetched as a
                                        // placeholder by lazyload.
-    kPreviewsStateLast = kLazyImageAutoReload
+    kDeferAllScriptOn = 1 << 12,  // Request that script execution be deferred
+                                  // until parsing completes.
+    kPreviewsStateLast = kDeferAllScriptOn
   };
 
   class ExtraData {
@@ -132,11 +133,12 @@ class WebURLRequest {
     void set_transition_type(ui::PageTransition transition_type) {
       transition_type_ = transition_type;
     }
-    int service_worker_provider_id() const {
-      return service_worker_provider_id_;
-    }
-    void set_service_worker_provider_id(int service_worker_provider_id) {
-      service_worker_provider_id_ = service_worker_provider_id;
+
+    // The request is for a prefetch-only client (i.e. running NoStatePrefetch)
+    // and should use LOAD_PREFETCH network flags.
+    bool is_for_no_state_prefetch() const { return is_for_no_state_prefetch_; }
+    void set_is_for_no_state_prefetch(bool prefetch) {
+      is_for_no_state_prefetch_ = prefetch;
     }
 
     // true if the request originated from within a service worker e.g. due to
@@ -164,7 +166,7 @@ class WebURLRequest {
     bool is_main_frame_ = false;
     bool allow_download_ = true;
     ui::PageTransition transition_type_ = ui::PAGE_TRANSITION_LINK;
-    int service_worker_provider_id_ = blink::kInvalidServiceWorkerProviderId;
+    bool is_for_no_state_prefetch_ = false;
     bool originated_from_service_worker_ = false;
     bool initiated_in_secure_context_ = false;
     bool attach_same_site_cookies_ = false;
@@ -179,7 +181,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT bool IsNull() const;
 
   BLINK_PLATFORM_EXPORT WebURL Url() const;
-  BLINK_PLATFORM_EXPORT void SetURL(const WebURL&);
+  BLINK_PLATFORM_EXPORT void SetUrl(const WebURL&);
 
   // Used to implement third-party cookie blocking.
   BLINK_PLATFORM_EXPORT WebURL SiteForCookies() const;
@@ -204,7 +206,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT base::TimeDelta TimeoutInterval() const;
 
   BLINK_PLATFORM_EXPORT WebString HttpMethod() const;
-  BLINK_PLATFORM_EXPORT void SetHTTPMethod(const WebString&);
+  BLINK_PLATFORM_EXPORT void SetHttpMethod(const WebString&);
 
   BLINK_PLATFORM_EXPORT WebString HttpHeaderField(const WebString& name) const;
   // It's not possible to set the referrer header using this method. Use
@@ -261,8 +263,8 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT void SetPluginChildID(int);
 
   // Allows the request to be matched up with its app cache host.
-  BLINK_PLATFORM_EXPORT int AppCacheHostID() const;
-  BLINK_PLATFORM_EXPORT void SetAppCacheHostID(int);
+  BLINK_PLATFORM_EXPORT const base::UnguessableToken& AppCacheHostID() const;
+  BLINK_PLATFORM_EXPORT void SetAppCacheHostID(const base::UnguessableToken&);
 
   // If true, the client expects to receive the raw response pipe. Similar to
   // UseStreamOnResponse but the stream will be a mojo DataPipe rather than a
@@ -369,16 +371,19 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT const WebString GetRequestedWithHeader() const;
   BLINK_PLATFORM_EXPORT void SetRequestedWithHeader(const WebString&);
 
-  // Remembers 'X-Client-Data' header value. Blink should not set this header
-  // value until CORS checks are done to avoid running checks even against
-  // headers that are internally set.
-  BLINK_PLATFORM_EXPORT const WebString GetClientDataHeader() const;
-  BLINK_PLATFORM_EXPORT void SetClientDataHeader(const WebString&);
+  // Remembers 'Purpose' header value. Blink should not set this header value
+  // until CORS checks are done to avoid running checks even against headers
+  // that are internally set.
+  BLINK_PLATFORM_EXPORT const WebString GetPurposeHeader() const;
 
   // https://fetch.spec.whatwg.org/#concept-request-window
   // See network::ResourceRequest::fetch_window_id for details.
   BLINK_PLATFORM_EXPORT const base::UnguessableToken& GetFetchWindowId() const;
   BLINK_PLATFORM_EXPORT void SetFetchWindowId(const base::UnguessableToken&);
+
+  BLINK_PLATFORM_EXPORT base::Optional<WebString> GetDevToolsId() const;
+
+  BLINK_PLATFORM_EXPORT int GetLoadFlagsForWebUrlRequest() const;
 
 #if INSIDE_BLINK
   BLINK_PLATFORM_EXPORT ResourceRequest& ToMutableResourceRequest();

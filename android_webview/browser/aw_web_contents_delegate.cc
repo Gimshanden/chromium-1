@@ -30,8 +30,9 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/AwWebContentsDelegate_jni.h"
-#include "net/base/escape.h"
+#include "net/base/filename_util.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF16ToJavaString;
@@ -274,9 +275,10 @@ void AwWebContentsDelegate::RequestMediaAccessPermission(
     content::MediaResponseCallback callback) {
   AwContents* aw_contents = AwContents::FromWebContents(web_contents);
   if (!aw_contents) {
-    std::move(callback).Run(blink::MediaStreamDevices(),
-                            blink::MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN,
-                            std::unique_ptr<content::MediaStreamUI>());
+    std::move(callback).Run(
+        blink::MediaStreamDevices(),
+        blink::mojom::MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN,
+        std::unique_ptr<content::MediaStreamUI>());
     return;
   }
   aw_contents->GetPermissionRequestHandler()->SendRequest(
@@ -356,13 +358,13 @@ static void JNI_AwWebContentsDelegate_FilesSelectedInChooser(
     GURL url(file_path_str[i]);
     if (!url.is_valid())
       continue;
-    base::FilePath path(
-        url.SchemeIsFile()
-            ? net::UnescapeURLComponent(
-                  url.path(), net::UnescapeRule::SPACES |
-                                  net::UnescapeRule::
-                                      URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS)
-            : file_path_str[i]);
+    base::FilePath path;
+    if (url.SchemeIsFile()) {
+      if (!net::FileURLToFilePath(url, &path))
+        continue;
+    } else {
+      path = base::FilePath(file_path_str[i]);
+    }
     auto file_info = blink::mojom::NativeFileInfo::New();
     file_info->file_path = path;
     if (!display_name_str[i].empty())

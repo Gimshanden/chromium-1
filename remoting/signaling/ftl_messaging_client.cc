@@ -11,12 +11,12 @@
 #include "base/guid.h"
 #include "base/logging.h"
 #include "base/time/time.h"
+#include "remoting/base/grpc_support/grpc_async_server_streaming_request.h"
+#include "remoting/base/grpc_support/grpc_async_unary_request.h"
+#include "remoting/base/grpc_support/grpc_authenticated_executor.h"
+#include "remoting/base/grpc_support/grpc_executor.h"
 #include "remoting/signaling/ftl_grpc_context.h"
 #include "remoting/signaling/ftl_message_reception_channel.h"
-#include "remoting/signaling/grpc_support/grpc_async_server_streaming_request.h"
-#include "remoting/signaling/grpc_support/grpc_async_unary_request.h"
-#include "remoting/signaling/grpc_support/grpc_authenticated_executor.h"
-#include "remoting/signaling/grpc_support/grpc_executor.h"
 #include "remoting/signaling/registration_manager.h"
 
 namespace remoting {
@@ -75,16 +75,17 @@ void FtlMessagingClient::PullMessages(DoneCallback on_done) {
   auto grpc_request = CreateGrpcAsyncUnaryRequest(
       base::BindOnce(&Messaging::Stub::AsyncPullMessages,
                      base::Unretained(messaging_stub_.get())),
-      FtlGrpcContext::CreateClientContext(), request,
+      request,
       base::BindOnce(&FtlMessagingClient::OnPullMessagesResponse,
                      base::Unretained(this), std::move(on_done)));
+  FtlGrpcContext::FillClientContext(grpc_request->context());
   executor_->ExecuteRpc(std::move(grpc_request));
 }
 
 void FtlMessagingClient::SendMessage(
     const std::string& destination,
     const std::string& destination_registration_id,
-    const std::string& message_text,
+    const ftl::ChromotingMessage& message,
     DoneCallback on_done) {
   ftl::InboxSendRequest request;
   *request.mutable_header() = FtlGrpcContext::CreateRequestHeader(
@@ -93,10 +94,8 @@ void FtlMessagingClient::SendMessage(
   // TODO(yuweih): See if we need to set requester_id
   *request.mutable_dest_id() = FtlGrpcContext::CreateIdFromString(destination);
 
-  ftl::ChromotingMessage crd_message;
-  crd_message.set_message(message_text);
   std::string serialized_message;
-  bool succeeded = crd_message.SerializeToString(&serialized_message);
+  bool succeeded = message.SerializeToString(&serialized_message);
   DCHECK(succeeded);
 
   request.mutable_message()->set_message(serialized_message);
@@ -112,18 +111,25 @@ void FtlMessagingClient::SendMessage(
   auto grpc_request = CreateGrpcAsyncUnaryRequest(
       base::BindOnce(&Messaging::Stub::AsyncSendMessage,
                      base::Unretained(messaging_stub_.get())),
-      FtlGrpcContext::CreateClientContext(), request,
+      request,
       base::BindOnce(&FtlMessagingClient::OnSendMessageResponse,
                      base::Unretained(this), std::move(on_done)));
+  FtlGrpcContext::FillClientContext(grpc_request->context());
   executor_->ExecuteRpc(std::move(grpc_request));
 }
 
-void FtlMessagingClient::StartReceivingMessages(DoneCallback on_done) {
-  reception_channel_->StartReceivingMessages(std::move(on_done));
+void FtlMessagingClient::StartReceivingMessages(base::OnceClosure on_ready,
+                                                DoneCallback on_closed) {
+  reception_channel_->StartReceivingMessages(std::move(on_ready),
+                                             std::move(on_closed));
 }
 
 void FtlMessagingClient::StopReceivingMessages() {
   reception_channel_->StopReceivingMessages();
+}
+
+bool FtlMessagingClient::IsReceivingMessages() const {
+  return reception_channel_->IsReceivingMessages();
 }
 
 void FtlMessagingClient::OnPullMessagesResponse(
@@ -152,7 +158,7 @@ void FtlMessagingClient::OnPullMessagesResponse(
     return;
   }
 
-  VLOG(0) << "Acking " << ack_request.messages_size() << " messages";
+  VLOG(1) << "Acking " << ack_request.messages_size() << " messages";
 
   AckMessages(ack_request, std::move(on_done));
 }
@@ -169,9 +175,10 @@ void FtlMessagingClient::AckMessages(const ftl::AckMessagesRequest& request,
   auto grpc_request = CreateGrpcAsyncUnaryRequest(
       base::BindOnce(&Messaging::Stub::AsyncAckMessages,
                      base::Unretained(messaging_stub_.get())),
-      FtlGrpcContext::CreateClientContext(), request,
+      request,
       base::BindOnce(&FtlMessagingClient::OnAckMessagesResponse,
                      base::Unretained(this), std::move(on_done)));
+  FtlGrpcContext::FillClientContext(grpc_request->context());
   executor_->ExecuteRpc(std::move(grpc_request));
 }
 
@@ -195,13 +202,26 @@ FtlMessagingClient::OpenReceiveMessagesStream(
   auto grpc_request = CreateGrpcAsyncServerStreamingRequest(
       base::BindOnce(&Messaging::Stub::AsyncReceiveMessages,
                      base::Unretained(messaging_stub_.get())),
-      FtlGrpcContext::CreateClientContext(), request, on_incoming_msg,
-      std::move(on_channel_closed), &stream);
+      request, on_incoming_msg, std::move(on_channel_closed), &stream);
+  FtlGrpcContext::FillClientContext(grpc_request->context());
   executor_->ExecuteRpc(std::move(grpc_request));
   return stream;
 }
 
 void FtlMessagingClient::RunMessageCallbacks(const ftl::InboxMessage& message) {
+  if (message_tracker_.IsIdTracked(message.message_id())) {
+    LOG(WARNING) << "Found message with duplicated message ID: "
+                 << message.message_id();
+    return;
+  }
+  message_tracker_.TrackId(message.message_id());
+
+  if (message.sender_id().type() != ftl::IdType_Type_SYSTEM &&
+      message.sender_registration_id().empty()) {
+    LOG(WARNING) << "Ignored peer message with no sender registration ID.";
+    return;
+  }
+
   if (message.message_type() !=
       ftl::InboxMessage_MessageType_CHROMOTING_MESSAGE) {
     LOG(WARNING) << "Received message with unknown type: "
@@ -212,9 +232,8 @@ void FtlMessagingClient::RunMessageCallbacks(const ftl::InboxMessage& message) {
 
   ftl::ChromotingMessage chromoting_message;
   chromoting_message.ParseFromString(message.message());
-  callback_list_.Notify(message.sender_id().id(),
-                        message.sender_registration_id(),
-                        chromoting_message.message());
+  callback_list_.Notify(message.sender_id(), message.sender_registration_id(),
+                        chromoting_message);
 }
 
 void FtlMessagingClient::OnMessageReceived(const ftl::InboxMessage& message) {

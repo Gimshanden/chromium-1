@@ -343,6 +343,11 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
     }
 
     @Override
+    public void clearNativeReference() {
+        if (mNativeWebContentsAndroid != 0) nativeClearNativeReference(mNativeWebContentsAndroid);
+    }
+
+    @Override
     public NavigationController getNavigationController() {
         return mNavigationController;
     }
@@ -351,6 +356,12 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
     public RenderFrameHost getMainFrame() {
         checkNotDestroyed();
         return nativeGetMainFrame(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public RenderFrameHost getFocusedFrame() {
+        checkNotDestroyed();
+        return nativeGetFocusedFrame(mNativeWebContentsAndroid);
     }
 
     @Override
@@ -623,6 +634,12 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
     public int getThemeColor() {
         checkNotDestroyed();
         return nativeGetThemeColor(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public int getLoadProgress() {
+        checkNotDestroyed();
+        return nativeGetLoadProgress(mNativeWebContentsAndroid);
     }
 
     @Override
@@ -941,6 +958,12 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
                 mNativeWebContentsAndroid, insets.top, insets.left, insets.bottom, insets.right);
     }
 
+    @Override
+    public void notifyRendererPreferenceUpdate() {
+        if (mNativeWebContentsAndroid == 0) return;
+        nativeNotifyRendererPreferenceUpdate(mNativeWebContentsAndroid);
+    }
+
     private void checkNotDestroyed() {
         if (mNativeWebContentsAndroid != 0) return;
         throw new IllegalStateException(
@@ -952,10 +975,13 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
 
     private static native WebContents nativeFromNativePtr(long webContentsAndroidPtr);
 
+    private native void nativeClearNativeReference(long nativeWebContentsAndroid);
+
     private native WindowAndroid nativeGetTopLevelNativeWindow(long nativeWebContentsAndroid);
     private native void nativeSetTopLevelNativeWindow(
             long nativeWebContentsAndroid, WindowAndroid windowAndroid);
     private native RenderFrameHost nativeGetMainFrame(long nativeWebContentsAndroid);
+    private native RenderFrameHost nativeGetFocusedFrame(long nativeWebContentsAndroid);
     private native String nativeGetTitle(long nativeWebContentsAndroid);
     private native String nativeGetVisibleURL(long nativeWebContentsAndroid);
     private native String nativeGetEncoding(long nativeWebContentsAndroid);
@@ -997,6 +1023,7 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
     private native boolean nativeHasAccessedInitialDocument(
             long nativeWebContentsAndroid);
     private native int nativeGetThemeColor(long nativeWebContentsAndroid);
+    private native int nativeGetLoadProgress(long nativeWebContentsAndroid);
     private native void nativeRequestSmartClipExtract(long nativeWebContentsAndroid,
             SmartClipCallback callback, int x, int y, int width, int height);
     private native void nativeRequestAccessibilitySnapshot(
@@ -1029,5 +1056,6 @@ public class WebContentsImpl implements WebContents, RenderFrameHostDelegate, Wi
     private native void nativeSetFocus(long nativeWebContentsAndroid, boolean focused);
     private native void nativeSetDisplayCutoutSafeArea(
             long nativeWebContentsAndroid, int top, int left, int bottom, int right);
+    private native void nativeNotifyRendererPreferenceUpdate(long nativeWebContentsAndroid);
     private native boolean nativeIsBeingDestroyed(long nativeWebContentsAndroid);
 }

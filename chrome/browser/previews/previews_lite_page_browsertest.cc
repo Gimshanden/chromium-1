@@ -9,6 +9,9 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/rand_util.h"
@@ -18,7 +21,9 @@
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
@@ -39,6 +44,9 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_service_client_test_utils.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_pingback_client.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
@@ -56,11 +64,14 @@
 #include "components/previews/content/previews_optimization_guide.h"
 #include "components/previews/content/previews_ui_service.h"
 #include "components/previews/content/previews_user_data.h"
+#include "components/previews/core/bloom_filter.h"
 #include "components/previews/core/previews_constants.h"
 #include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_features.h"
 #include "components/previews/core/previews_lite_page_redirect.h"
 #include "components/previews/core/previews_switches.h"
+#include "components/ukm/content/source_url_recorder.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
@@ -70,6 +81,8 @@
 #include "net/nqe/effective_connection_type.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/test/test_network_quality_tracker.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -84,7 +97,11 @@ const char kOriginHost[] = "origin.com";
 // This should match the value in //components/google/core/common/google_util.cc
 // so that the X-Client-Data header is sent for subresources.
 const char kPreviewsHost[] = "litepages.googlezip.net";
-}
+
+// A host that is blacklisted for Lite Page Redirect previews and won't trigger
+// on it.
+const char kBlacklistedHost[] = "blacklisted.com";
+}  // namespace
 
 class PreviewsLitePageServerBrowserTest
     : public InProcessBrowserTest,
@@ -111,9 +128,9 @@ class PreviewsLitePageServerBrowserTest
     // Previews server will respond with HTTP 403.
     kAuthFailure = 4,
 
-    // Previews server will respond with HTTP 307 to a non-preview page and set
-    // the host-blacklist header value.
-    kHostBlacklist = 5,
+    // Previews server will respond with HTTP 307 bypass to a non-preview page
+    // and set the host-blacklist header value.
+    kBypassAndBlacklistOriginHost = 5,
 
     // Previews server will respond with HTTP 200 and a content body that loads
     // a subresource. When the subresource is loaded, |subresources_requested|_
@@ -160,6 +177,10 @@ class PreviewsLitePageServerBrowserTest
     https_url_ =
         https_server_->GetURL(kOriginHost, "/previews/noscript_test.html");
     ASSERT_TRUE(https_url_.SchemeIs(url::kHttpsScheme));
+
+    blacklisted_https_url_ =
+        https_server_->GetURL(kBlacklistedHost, "/previews/noscript_test.html");
+    ASSERT_TRUE(blacklisted_https_url_.SchemeIs(url::kHttpsScheme));
 
     https_to_https_redirect_url_ =
         https_server_->GetURL(kOriginHost, "/previews/to_https_redirect.html");
@@ -284,6 +305,9 @@ class PreviewsLitePageServerBrowserTest
     PreviewsLitePageDecider* decider =
         previews_service->previews_lite_page_decider();
     decider->SetUserHasSeenUINotification();
+
+    decider->BlacklistBypassedHost(kBlacklistedHost,
+                                   base::TimeDelta::FromHours(1));
   }
 
   void InitializeOptimizationHints() {
@@ -525,6 +549,8 @@ class PreviewsLitePageServerBrowserTest
 
   virtual GURL previews_server_url() const { return previews_server_url_; }
 
+  const GURL& blacklisted_https_url() const { return blacklisted_https_url_; }
+
   const GURL& https_url() const { return https_url_; }
   const GURL& base_https_lite_page_url() const {
     return base_https_lite_page_url_;
@@ -547,6 +573,7 @@ class PreviewsLitePageServerBrowserTest
   }
   const GURL& client_redirect_url() const { return client_redirect_url_; }
   const GURL& subframe_url() const { return subframe_url_; }
+  uint64_t got_page_id() const { return got_page_id_; }
   int subresources_requested() const { return subresources_requested_; }
 
   void WaitForPingback() {
@@ -681,6 +708,12 @@ class PreviewsLitePageServerBrowserTest
           net::HttpStatusCode::HTTP_PROXY_AUTHENTICATION_REQUIRED);
       return response;
     }
+    net::HttpRequestHeaders headers;
+    headers.AddHeaderFromString("chrome-proxy: " +
+                                request.headers.find("chrome-proxy")->second);
+    got_page_id_ = data_reduction_proxy::DataReductionProxyRequestOptions::
+                       GetPageIdFromRequestHeaders(headers)
+                           .value();
 
     if (request.GetURL().spec().find("redirect_loop") != std::string::npos) {
       response->set_code(net::HTTP_TEMPORARY_REDIRECT);
@@ -725,7 +758,7 @@ class PreviewsLitePageServerBrowserTest
         break;
       case kRedirectNonPreview:
         response->set_code(net::HTTP_TEMPORARY_REDIRECT);
-        response->AddCustomHeader("Location", HttpLitePageURL(kSuccess).spec());
+        response->AddCustomHeader("Location", blacklisted_https_url().spec());
         break;
       case kRedirectPreview:
         response->set_code(net::HTTP_TEMPORARY_REDIRECT);
@@ -743,13 +776,13 @@ class PreviewsLitePageServerBrowserTest
         // test server will respond with HTTP 400.
         response->AddCustomHeader("Location", HttpsLitePageURL(kBypass).spec());
         break;
-      case kHostBlacklist:
+      case kBypassAndBlacklistOriginHost:
         response->set_code(net::HTTP_TEMPORARY_REDIRECT);
         // This will not cause a redirect loop because on following this
         // redirect, the URL will no longer be a preview URL and the embedded
         // test server will respond with HTTP 400.
-        response->AddCustomHeader("Location",
-                                  HttpsLitePageURL(kHostBlacklist).spec());
+        response->AddCustomHeader(
+            "Location", HttpsLitePageURL(kBypassAndBlacklistOriginHost).spec());
         response->AddCustomHeader("chrome-proxy", "host-blacklisted");
         break;
       case kAuthFailure:
@@ -787,6 +820,7 @@ class PreviewsLitePageServerBrowserTest
   std::unique_ptr<net::EmbeddedTestServer> slow_http_server_;
   std::unique_ptr<net::EmbeddedTestServer> pingback_server_;
   GURL https_url_;
+  GURL blacklisted_https_url_;
   GURL base_https_lite_page_url_;
   GURL https_media_url_;
   GURL http_url_;
@@ -799,6 +833,7 @@ class PreviewsLitePageServerBrowserTest
   GURL subframe_url_;
   GURL previews_server_url_;
   GURL slow_http_url_;
+  uint64_t got_page_id_ = 0;
   int subresources_requested_ = 0;
   base::OnceClosure waiting_for_pingback_closure_;
 };
@@ -850,9 +885,9 @@ IN_PROC_BROWSER_TEST_P(
     VerifyPreviewNotLoaded();
     ClearDeciderState();
     histogram_tester.ExpectBucketCount(
-        "Previews.ServerLitePage.BlacklistReasons",
-        PreviewsLitePageNavigationThrottle::BlacklistReason::
-            kPathSuffixBlacklisted,
+        "Previews.EligibilityReason.LitePageRedirect",
+        static_cast<int>(
+            previews::PreviewsEligibilityReason::EXCLUDED_BY_MEDIA_SUFFIX),
         1);
   }
 
@@ -886,12 +921,7 @@ IN_PROC_BROWSER_TEST_P(
     ui_test_utils::NavigateToURL(
         browser(), PreviewsLitePageNavigationThrottle::GetPreviewsURLForURL(
                        HttpsLitePageURL(kSuccess)));
-    if (GetParam() &&
-        base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-      VerifyPreviewLoaded();
-    } else {
       VerifyPreviewNotLoaded();
-    }
   }
 
   {
@@ -1025,53 +1055,23 @@ IN_PROC_BROWSER_TEST_P(
 
 IN_PROC_BROWSER_TEST_P(
     PreviewsLitePageServerBrowserTest,
-    DISABLE_ON_WIN_MAC_CHROMESOS(LitePagePreviewsReloadDisabled)) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      {}, {previews::features::kPreviewsReloadsAreSoftOptOuts});
-
-  content::ReloadType tests[] = {
-      content::ReloadType::NORMAL,
-      content::ReloadType::BYPASSING_CACHE,
-      content::ReloadType::ORIGINAL_REQUEST_URL,
-  };
-  for (content::ReloadType type : tests) {
-    // Start with a non-preview load.
-    g_browser_process->network_quality_tracker()
-        ->ReportEffectiveConnectionTypeForTesting(
-            net::EFFECTIVE_CONNECTION_TYPE_3G);
-
-    ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
-    VerifyPreviewNotLoaded();
-
-    // Set the conditions so a Preview would trigger if not for the reload.
-    g_browser_process->network_quality_tracker()
-        ->ReportEffectiveConnectionTypeForTesting(
-            net::EFFECTIVE_CONNECTION_TYPE_2G);
-    GetWebContents()->GetController().Reload(type, false);
-    VerifyPreviewNotLoaded();
-
-    // Verify that a reload on a preview page triggers a redirect back to the
-    // original page.
-    ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
-    VerifyPreviewLoaded();
-
-    GetWebContents()->GetController().Reload(type, false);
-    VerifyPreviewNotLoaded();
-  }
-}
-
-IN_PROC_BROWSER_TEST_P(
-    PreviewsLitePageServerBrowserTest,
-    DISABLE_ON_WIN_MAC_CHROMESOS(LitePagePreviewsReloadDisabled_SoftOptOut)) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      {previews::features::kPreviewsReloadsAreSoftOptOuts}, {});
-
+    DISABLE_ON_WIN_MAC_CHROMESOS(LitePagePreviewsReloadSoftOptOut)) {
   ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
   VerifyPreviewLoaded();
 
   GetWebContents()->GetController().Reload(content::ReloadType::NORMAL, false);
+  VerifyPreviewNotLoaded();
+}
+
+IN_PROC_BROWSER_TEST_P(
+    PreviewsLitePageServerBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(CoinFlipHoldbackTriggering)) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      {previews::features::kCoinFlipHoldback},
+      {{"force_coin_flip_always_holdback", "true"}});
+
+  ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
   VerifyPreviewNotLoaded();
 }
 
@@ -1176,7 +1176,8 @@ IN_PROC_BROWSER_TEST_P(PreviewsLitePageServerBrowserTest,
     // Verify the preview is not triggered when the server responds with bypass
     // 307 and host-blacklist.
     base::HistogramTester histogram_tester;
-    ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kHostBlacklist));
+    ui_test_utils::NavigateToURL(
+        browser(), HttpsLitePageURL(kBypassAndBlacklistOriginHost));
     VerifyPreviewNotLoaded();
     VerifyInfoStatus(&histogram_tester,
                      previews::ServerLitePageStatus::kBypass);
@@ -1292,9 +1293,8 @@ IN_PROC_BROWSER_TEST_P(
     base::RunLoop loop;
     history_service->QueryURL(
         HttpsLitePageURL(kSuccess), false /* want_visits */,
-        base::BindLambdaForTesting([&](bool success, const history::URLRow& row,
-                                       const history::VisitVector&) {
-          EXPECT_TRUE(success);
+        base::BindLambdaForTesting([&](history::QueryURLResult result) {
+          EXPECT_TRUE(result.success);
           loop.Quit();
         }),
         &tracker_);
@@ -1306,9 +1306,8 @@ IN_PROC_BROWSER_TEST_P(
         PreviewsLitePageNavigationThrottle::GetPreviewsURLForURL(
             HttpsLitePageURL(kSuccess)),
         false /* want_visits */,
-        base::BindLambdaForTesting([&](bool success, const history::URLRow& row,
-                                       const history::VisitVector&) {
-          EXPECT_FALSE(success);
+        base::BindLambdaForTesting([&](history::QueryURLResult result) {
+          EXPECT_FALSE(result.success);
           loop.Quit();
         }),
         &tracker_);
@@ -1324,9 +1323,9 @@ IN_PROC_BROWSER_TEST_P(
     base::RunLoop loop;
     history_service->QueryRedirectsFrom(
         HttpsLitePageURL(kRedirectNonPreview),
-        base::BindLambdaForTesting([&](const history::RedirectList* redirects) {
-          EXPECT_FALSE(redirects->empty());
-          for (const GURL& url : *redirects) {
+        base::BindLambdaForTesting([&](history::RedirectList redirects) {
+          EXPECT_FALSE(redirects.empty());
+          for (const GURL& url : redirects) {
             EXPECT_FALSE(previews::IsLitePageRedirectPreviewURL(url));
           }
           loop.Quit();
@@ -1378,29 +1377,44 @@ IN_PROC_BROWSER_TEST_P(
 IN_PROC_BROWSER_TEST_P(
     PreviewsLitePageServerBrowserTest,
     DISABLE_ON_WIN_MAC_CHROMESOS(LitePagePreviewsNavigation)) {
-  ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
-  VerifyPreviewLoaded();
+  {
+    SCOPED_TRACE("First preview load");
+    ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
+    VerifyPreviewLoaded();
+  }
 
-  // Go to a new page that doesn't Preview.
-  ui_test_utils::NavigateToURL(browser(), http_url());
-  VerifyPreviewNotLoaded();
-  ClearDeciderState();
+  {
+    SCOPED_TRACE("Go to a new page that doesn't Preview");
+    ui_test_utils::NavigateToURL(browser(), http_url());
+    VerifyPreviewNotLoaded();
+    ClearDeciderState();
+  }
 
   // Note: |VerifyPreviewLoaded| calls |content::WaitForLoadStop()| so these are
   // safe.
 
-  // Navigate back.
-  GetWebContents()->GetController().GoBack();
-  VerifyPreviewLoaded();
+  {
+    SCOPED_TRACE("Navigate back");
+    GetWebContents()->GetController().GoBack();
+    if (GetParam()) {
+      VerifyPreviewNotLoaded();
+    } else {
+      VerifyPreviewLoaded();
+    }
+  }
 
-  // Navigate forward.
-  GetWebContents()->GetController().GoForward();
-  VerifyPreviewNotLoaded();
-  ClearDeciderState();
+  {
+    SCOPED_TRACE("Navigate forward");
+    GetWebContents()->GetController().GoForward();
+    VerifyPreviewNotLoaded();
+    ClearDeciderState();
+  }
 
-  // Navigate back again.
-  GetWebContents()->GetController().GoBack();
-  VerifyPreviewLoaded();
+  {
+    SCOPED_TRACE("Navigate back again");
+    GetWebContents()->GetController().GoBack();
+    VerifyPreviewLoaded();
+  }
 }
 
 IN_PROC_BROWSER_TEST_P(PreviewsLitePageServerBrowserTest,
@@ -1411,6 +1425,83 @@ IN_PROC_BROWSER_TEST_P(PreviewsLitePageServerBrowserTest,
   // Starting a new page load will send a pingback for the previous page load.
   GetWebContents()->GetController().Reload(content::ReloadType::NORMAL, false);
   WaitForPingback();
+}
+
+class TestDataReductionProxyPingbackClient
+    : public data_reduction_proxy::DataReductionProxyPingbackClient {
+ public:
+  void WaitForPingback() {
+    base::RunLoop run_loop;
+    wait_for_pingback_closure_ = run_loop.QuitClosure();
+    run_loop.Run();
+  }
+
+  data_reduction_proxy::DataReductionProxyData* data() { return data_.get(); }
+
+ private:
+  void SendPingback(
+      const data_reduction_proxy::DataReductionProxyData& data,
+      const data_reduction_proxy::DataReductionProxyPageLoadTiming& timing)
+      override {
+    data_ = data.DeepCopy();
+    if (wait_for_pingback_closure_)
+      std::move(wait_for_pingback_closure_).Run();
+  }
+
+  void SetPingbackReportingFraction(
+      float pingback_reporting_fraction) override {}
+
+  base::OnceClosure wait_for_pingback_closure_;
+  std::unique_ptr<data_reduction_proxy::DataReductionProxyData> data_;
+};
+
+IN_PROC_BROWSER_TEST_P(PreviewsLitePageServerBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(PingbackContent)) {
+  TestDataReductionProxyPingbackClient* pingback_client =
+      new TestDataReductionProxyPingbackClient();
+  DataReductionProxyChromeSettingsFactory::GetForBrowserContext(
+      browser()->profile())
+      ->data_reduction_proxy_service()
+      ->SetPingbackClientForTesting(pingback_client);
+
+  // This test should pass whether or not
+  // |kDataReductionProxyPopulatePreviewsPageIDToPingback| is enabled.
+  for (const bool drp_pageid_feature_enabled : {false, true}) {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitWithFeatureState(
+        data_reduction_proxy::features::
+            kDataReductionProxyPopulatePreviewsPageIDToPingback,
+        drp_pageid_feature_enabled);
+
+    ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
+    VerifyPreviewLoaded();
+
+    PreviewsUITabHelper* ui_tab_helper =
+        PreviewsUITabHelper::FromWebContents(GetWebContents());
+    previews::PreviewsUserData* previews_data =
+        ui_tab_helper->previews_user_data();
+    // Grab the page id and session now because they may change after the
+    // reload.
+    uint64_t expected_page_id = previews_data->server_lite_page_info()->page_id;
+    std::string expected_session_key =
+        previews_data->server_lite_page_info()->drp_session_key;
+
+    // Starting a new page load will send a pingback for the previous page load.
+    GetWebContents()->GetController().Reload(content::ReloadType::NORMAL,
+                                             false);
+    pingback_client->WaitForPingback();
+
+    data_reduction_proxy::DataReductionProxyData* data =
+        pingback_client->data();
+    EXPECT_TRUE(data->used_data_reduction_proxy());
+    EXPECT_TRUE(data->lite_page_received());
+    EXPECT_FALSE(data->lofi_policy_received());
+    EXPECT_FALSE(data->lofi_received());
+    EXPECT_FALSE(data->was_cached_data_reduction_proxy_response());
+    EXPECT_EQ(data->page_id().value(), expected_page_id);
+    EXPECT_EQ(data->page_id().value(), got_page_id());
+    EXPECT_EQ(data->session_key(), expected_session_key);
+  }
 }
 
 class PreviewsLitePageServerTimeoutBrowserTest
@@ -1616,15 +1707,6 @@ IN_PROC_BROWSER_TEST_P(
   histogram_tester.ExpectBucketCount(
       "Previews.ServerLitePage.IneligibleReasons",
       PreviewsLitePageNavigationThrottle::IneligibleReason::kInfoBarNotSeen, 1);
-
-  ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
-  // Expect the "Saved Data" InfoBar.
-  ASSERT_EQ(1U, GetInfoBarService()->infobar_count());
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_PREVIEWS_INFOBAR_SAVED_DATA_TITLE),
-            static_cast<ConfirmInfoBarDelegate*>(
-                GetInfoBarService()->infobar_at(0)->delegate())
-                ->GetMessageText());
-  VerifyPreviewLoaded();
 }
 
 class PreviewsLitePageNotificationDSDisabledBrowserTest
@@ -1749,8 +1831,16 @@ class PreviewsLitePageAndPageHintsBrowserTest
     cmd->AppendSwitch("purge_hint_cache_store");
   }
 
- private:
+  void WriteConfigToFile(const optimization_guide::proto::Configuration& config,
+                         const base::FilePath& filePath) {
+    std::string serialized_config;
+    ASSERT_TRUE(config.SerializeToString(&serialized_config));
+    ASSERT_EQ(static_cast<int32_t>(serialized_config.length()),
+              base::WriteFile(filePath, serialized_config.data(),
+                              serialized_config.length()));
+  }
 
+ private:
   optimization_guide::testing::TestHintsComponentCreator
       test_hints_component_creator_;
 };
@@ -1759,6 +1849,42 @@ class PreviewsLitePageAndPageHintsBrowserTest
 INSTANTIATE_TEST_SUITE_P(URLLoaderImplementation,
                          PreviewsLitePageAndPageHintsBrowserTest,
                          testing::Bool());
+
+// Regression test for crbug.com/954554.
+IN_PROC_BROWSER_TEST_P(
+    PreviewsLitePageAndPageHintsBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(PreviewsServerIsInBloomFilter)) {
+  previews::BloomFilter blacklist_bloom_filter(7, 511);
+  blacklist_bloom_filter.Add(previews_server_url().host());
+  blacklist_bloom_filter.Add("subdomain." + previews_server_url().host());
+
+  std::string blacklist_data((char*)&blacklist_bloom_filter.bytes()[0],
+                             blacklist_bloom_filter.bytes().size());
+  optimization_guide::proto::Configuration config;
+  optimization_guide::proto::OptimizationFilter* blacklist_proto =
+      config.add_optimization_blacklists();
+  blacklist_proto->set_optimization_type(
+      optimization_guide::proto::LITE_PAGE_REDIRECT);
+  std::unique_ptr<optimization_guide::proto::BloomFilter> bloom_filter_proto =
+      std::make_unique<optimization_guide::proto::BloomFilter>();
+  bloom_filter_proto->set_num_hash_functions(7);
+  bloom_filter_proto->set_num_bits(511);
+  bloom_filter_proto->set_data(blacklist_data);
+  blacklist_proto->set_allocated_bloom_filter(bloom_filter_proto.release());
+
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  optimization_guide::HintsComponentInfo info(
+      base::Version("2.0.0"),
+      temp_dir.GetPath().Append(FILE_PATH_LITERAL("somefile.pb")));
+  ASSERT_NO_FATAL_FAILURE(WriteConfigToFile(config, info.path));
+  ProcessHintsComponent(info);
+
+  ui_test_utils::NavigateToURL(browser(), HttpsLitePageURL(kSuccess));
+  VerifyPreviewLoaded();
+}
 
 IN_PROC_BROWSER_TEST_P(
     PreviewsLitePageAndPageHintsBrowserTest,
@@ -1785,4 +1911,475 @@ IN_PROC_BROWSER_TEST_P(
             previews::PreviewsType::RESOURCE_LOADING_HINTS);
 
   ClearDeciderState();
+}
+
+class CoinFlipHoldbackExperimentBrowserTest
+    : public PreviewsLitePageAndPageHintsBrowserTest {
+ public:
+  CoinFlipHoldbackExperimentBrowserTest() = default;
+
+  ~CoinFlipHoldbackExperimentBrowserTest() override = default;
+
+  void SetUp() override {
+    ukm_feature_list_.InitAndEnableFeature(ukm::kUkmFeature);
+    PreviewsLitePageAndPageHintsBrowserTest::SetUp();
+  }
+
+  void SetUpCommandLine(base::CommandLine* cmd) override {
+    PreviewsLitePageAndPageHintsBrowserTest::SetUpCommandLine(cmd);
+    cmd->AppendSwitch("litepage_redirect_overrides_page_hints");
+  }
+
+  void PreRunTestOnMainThread() override {
+    InProcessBrowserTest::PreRunTestOnMainThread();
+    ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
+  }
+
+  // |coin_flip_holdback_enabled|: Whether the coin flip holdback feature flag
+  // should be enabled.
+  //
+  // |redirect_navigation|: Whether a preview should only be eligible on a
+  // redirect.
+  //
+  // |allow_lite_page_redirect|: Whether a lite page redirect preview should be
+  // eligible.
+  //
+  // |allow_resource_loading|: Whether a resource loading preview should be
+  // eligible.
+  //
+  // |set_random_navigation_coin_flip|: What the random coin flip should be.
+  // True is holdback, false is allowed.
+  void RunTest(bool coin_flip_holdback_enabled,
+               bool redirect_navigation,
+               bool allow_lite_page_redirect,
+               bool allow_resource_loading,
+               bool set_random_navigation_coin_flip) {
+    ukm::InitializeSourceUrlRecorderForWebContents(GetWebContents());
+
+    if (coin_flip_holdback_enabled) {
+      scoped_feature_list_.InitAndEnableFeatureWithParameters(
+          previews::features::kCoinFlipHoldback,
+          {{"force_coin_flip_always_holdback",
+            set_random_navigation_coin_flip ? "true" : "false"},
+           {"force_coin_flip_always_allow",
+            !set_random_navigation_coin_flip ? "true" : "false"}});
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          previews::features::kCoinFlipHoldback);
+    }
+
+    GURL final_url = blacklisted_https_url();
+    GURL starting_url = redirect_navigation
+                            ? HttpsLitePageURL(kRedirectNonPreview)
+                            : blacklisted_https_url();
+
+    if (allow_lite_page_redirect) {
+      final_url = HttpsLitePageURL(kSuccess);
+      starting_url = redirect_navigation ? http_to_https_redirect_url()
+                                         : HttpsLitePageURL(kSuccess);
+    }
+
+    if (allow_resource_loading)
+      SetResourceLoadingHints({final_url.host()});
+
+    ASSERT_EQ(redirect_navigation, starting_url != final_url);
+
+    ui_test_utils::NavigateToURL(browser(), starting_url);
+    base::RunLoop().RunUntilIdle();
+    content::WaitForLoadStop(GetWebContents());
+  }
+
+  void ValidateResult(bool want_lite_page_redirect_committed,
+                      bool want_resource_loading_committed,
+                      int want_ukm_coin_flip_holdback_result,
+                      bool want_ukm_previews_likely) {
+    PreviewsUITabHelper* ui_tab_helper =
+        PreviewsUITabHelper::FromWebContents(GetWebContents());
+    EXPECT_EQ(
+        want_lite_page_redirect_committed || want_resource_loading_committed,
+        ui_tab_helper->displayed_preview_ui());
+    previews::PreviewsUserData* previews_data =
+        ui_tab_helper->previews_user_data();
+
+    if (want_lite_page_redirect_committed) {
+      VerifyPreviewLoaded();
+      EXPECT_NE(previews_data->coin_flip_holdback_result(),
+                previews::CoinFlipHoldbackResult::kHoldback);
+    }
+
+    if (want_resource_loading_committed) {
+      EXPECT_EQ(previews_data->committed_previews_type(),
+                previews::PreviewsType::RESOURCE_LOADING_HINTS);
+      EXPECT_NE(previews_data->coin_flip_holdback_result(),
+                previews::CoinFlipHoldbackResult::kHoldback);
+    }
+
+    EXPECT_EQ(want_ukm_coin_flip_holdback_result,
+              static_cast<int>(previews_data->coin_flip_holdback_result()));
+
+    if (want_lite_page_redirect_committed || want_resource_loading_committed) {
+      // Navigate to a non-preview page to trigger the UKM PLM Observer to
+      // record.
+      ui_test_utils::NavigateToURL(browser(), GURL("http://nopreviews"));
+      base::RunLoop().RunUntilIdle();
+      content::WaitForLoadStop(GetWebContents());
+
+      using UkmEntry = ukm::builders::Previews;
+      auto entries = ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName);
+      ASSERT_EQ(1u, entries.size());
+      auto* entry = entries.at(0);
+
+      ukm_recorder_->ExpectEntryMetric(entry, UkmEntry::kcoin_flip_resultName,
+                                       want_ukm_coin_flip_holdback_result);
+      ukm_recorder_->ExpectEntryMetric(entry, UkmEntry::kpreviews_likelyName,
+                                       want_ukm_previews_likely ? 1 : 0);
+    }
+  }
+
+ private:
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> ukm_recorder_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList ukm_feature_list_;
+};
+
+// True if testing using the URLLoader Interceptor implementation.
+INSTANTIATE_TEST_SUITE_P(URLLoaderImplementation,
+                         CoinFlipHoldbackExperimentBrowserTest,
+                         testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(NoPreviews_NoCoinFlip)) {
+  // Set ECT so that we are sure to not trigger any preview.
+  g_browser_process->network_quality_tracker()
+      ->ReportEffectiveConnectionTypeForTesting(
+          net::EFFECTIVE_CONNECTION_TYPE_4G);
+
+  RunTest(false /* coin_flip_holdback_enabled */,
+          false /* redirect_navigation*/, false /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 false /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(BothPreviewsAllowedWantLPR_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */,
+          false /* redirect_navigation*/, true /* allow_lite_page_redirect*/,
+          true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(LPRAllowed_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */,
+          false /* redirect_navigation*/, true /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(RLHAllowed_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */,
+          false /* redirect_navigation*/, false /* allow_lite_page_redirect*/,
+          true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 true /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(NoPreviews_WithRedirect_NoCoinFlip)) {
+  // Set ECT so that we are sure to not trigger any preview.
+  g_browser_process->network_quality_tracker()
+      ->ReportEffectiveConnectionTypeForTesting(
+          net::EFFECTIVE_CONNECTION_TYPE_4G);
+
+  RunTest(false /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 false /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(
+        BothPreviewsAllowedWantLPR_WithRedirect_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(LPRAllowed_WithRedirect_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading */,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(RLHAllowed_WithRedirect_NoCoinFlip)) {
+  RunTest(false /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 true /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(NoPreviews_CoinFlipEnabled_Allowed)) {
+  // Set ECT so that we are sure to not trigger any preview.
+  g_browser_process->network_quality_tracker()
+      ->ReportEffectiveConnectionTypeForTesting(
+          net::EFFECTIVE_CONNECTION_TYPE_4G);
+
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 false /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(
+        BothPreviewsAllowedWantLPR_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(LPRAllowed_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(RLHAllowed_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 true /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(
+                           NoPreviews_WithRedirect_CoinFlipEnabled_Allowed)) {
+  // Set ECT so that we are sure to not trigger any preview.
+  g_browser_process->network_quality_tracker()
+      ->ReportEffectiveConnectionTypeForTesting(
+          net::EFFECTIVE_CONNECTION_TYPE_4G);
+
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 false /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(
+        BothPreviewsAllowedWantLPR_WithRedirect_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(
+                           LPRAllowed_WithRedirect_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading */,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(true /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(
+                           RLHAllowed_WithRedirect_CoinFlipEnabled_Allowed)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          false /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 true /* want_resource_loading_committed */,
+                 1 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(NoPreviews_CoinFlipEnabled_Holdback)) {
+  // Set ECT so that we are sure to not trigger any preview.
+  g_browser_process->network_quality_tracker()
+      ->ReportEffectiveConnectionTypeForTesting(
+          net::EFFECTIVE_CONNECTION_TYPE_4G);
+
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 0 /* want_ukm_coin_flip_holdback_result */,
+                 false /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(
+        BothPreviewsAllowedWantLPR_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(LPRAllowed_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, false /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(RLHAllowed_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, false /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    CoinFlipHoldbackExperimentBrowserTest,
+    DISABLE_ON_WIN_MAC_CHROMESOS(
+        BothPreviewsAllowedWantLPR_WithRedirect_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(
+                           LPRAllowed_WithRedirect_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          true /* allow_lite_page_redirect*/,
+          false /* allow_resource_loading */,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
+}
+
+IN_PROC_BROWSER_TEST_P(CoinFlipHoldbackExperimentBrowserTest,
+                       DISABLE_ON_WIN_MAC_CHROMESOS(
+                           RLHAllowed_WithRedirect_CoinFlipEnabled_Holdback)) {
+  RunTest(true /* coin_flip_holdback_enabled */, true /* redirect_navigation*/,
+          false /* allow_lite_page_redirect*/, true /* allow_resource_loading*/,
+          true /* set_random_navigation_coin_flip*/);
+
+  ValidateResult(false /* want_lite_page_redirect_committed */,
+                 false /* want_resource_loading_committed */,
+                 2 /* want_ukm_coin_flip_holdback_result */,
+                 true /* want_ukm_previews_likely */);
 }

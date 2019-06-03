@@ -21,7 +21,7 @@ namespace chromeos {
 // method called just once.
 class BaseScreen {
  public:
-  explicit BaseScreen(OobeScreen screen_id);
+  explicit BaseScreen(OobeScreenId screen_id);
   virtual ~BaseScreen();
 
   // Makes wizard screen visible.
@@ -31,14 +31,15 @@ class BaseScreen {
   virtual void Hide() = 0;
 
   // Returns the identifier of the screen.
-  OobeScreen screen_id() const { return screen_id_; }
+  OobeScreenId screen_id() const { return screen_id_; }
 
   // Called when user action event with |event_id|
   // happened. Notification about this event comes from the JS
   // counterpart.
   virtual void OnUserAction(const std::string& action_id);
 
-  virtual void SetConfiguration(base::Value* configuration, bool notify);
+  // Change the configuration for the screen. |configuration| is unowned.
+  virtual void SetConfiguration(base::Value* configuration);
 
  protected:
   // Global configuration for OOBE screens, that can be used to automate some
@@ -51,21 +52,12 @@ class BaseScreen {
   // triggering while the screen is not displayed.
   base::Value* GetConfiguration() { return configuration_; }
 
-  // This is called when configuration is changed while screen is displayed.
-  virtual void OnConfigurationChanged();
-
  private:
-  friend class BaseWebUIHandler;
-  friend class EnrollmentScreenTest;
-  friend class NetworkScreenTest;
-  friend class ScreenManager;
-  friend class UpdateScreenTest;
-
   // Configuration itself is owned by WizardController and is accessible
   // to screen only between OnShow / OnHide calls.
   base::Value* configuration_ = nullptr;
 
-  const OobeScreen screen_id_;
+  const OobeScreenId screen_id_;
 
   DISALLOW_COPY_AND_ASSIGN(BaseScreen);
 };

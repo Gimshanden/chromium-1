@@ -37,7 +37,7 @@ class ResourceLoaderDefersLoadingTest : public testing::Test {
 
   ResourceFetcher* CreateFetcher() {
     return MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
-        *MakeGarbageCollected<TestResourceFetcherProperties>(),
+        MakeGarbageCollected<TestResourceFetcherProperties>()->MakeDetachable(),
         MakeGarbageCollected<MockFetchContext>(),
         base::MakeRefCounted<scheduler::FakeTaskRunner>(),
         MakeGarbageCollected<TestLoaderFactory>()));
@@ -101,7 +101,6 @@ class ResourceLoaderDefersLoadingTest::TestWebURLLoader final
   }
   void LoadAsynchronously(const WebURLRequest&, WebURLLoaderClient*) override {}
 
-  void Cancel() override {}
   void SetDefersLoading(bool defers) override { *defers_flag_ptr_ = defers; }
   void DidChangePriority(WebURLRequest::Priority, int) override {
     NOTREACHED();
@@ -174,7 +173,7 @@ TEST_F(ResourceLoaderDefersLoadingTest, CodeCacheFetchCheckDefers) {
   auto* fetcher = CreateFetcher();
 
   ResourceRequest request;
-  request.SetURL(test_url_);
+  request.SetUrl(test_url_);
   request.SetRequestContext(mojom::RequestContextType::FETCH);
   FetchParameters fetch_parameters(request);
 
@@ -198,7 +197,7 @@ TEST_F(ResourceLoaderDefersLoadingTest, CodeCacheFetchSyncReturn) {
   auto* fetcher = CreateFetcher();
 
   ResourceRequest request;
-  request.SetURL(test_url_);
+  request.SetUrl(test_url_);
   request.SetRequestContext(mojom::RequestContextType::FETCH);
   FetchParameters fetch_parameters(request);
 
@@ -212,7 +211,7 @@ TEST_F(ResourceLoaderDefersLoadingTest, ChangeDefersToFalse) {
   auto* fetcher = CreateFetcher();
 
   ResourceRequest request;
-  request.SetURL(test_url_);
+  request.SetUrl(test_url_);
   request.SetRequestContext(mojom::RequestContextType::FETCH);
   FetchParameters fetch_parameters(request);
 
@@ -230,7 +229,7 @@ TEST_F(ResourceLoaderDefersLoadingTest, ChangeDefersToTrue) {
   auto* fetcher = CreateFetcher();
 
   ResourceRequest request;
-  request.SetURL(test_url_);
+  request.SetUrl(test_url_);
   request.SetRequestContext(mojom::RequestContextType::FETCH);
   FetchParameters fetch_parameters(request);
 
@@ -252,7 +251,7 @@ TEST_F(ResourceLoaderDefersLoadingTest, ChangeDefersMultipleTimes) {
   auto* fetcher = CreateFetcher();
 
   ResourceRequest request;
-  request.SetURL(test_url_);
+  request.SetUrl(test_url_);
   request.SetRequestContext(mojom::RequestContextType::FETCH);
 
   FetchParameters fetch_parameters(request);

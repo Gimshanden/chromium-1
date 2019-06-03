@@ -12,7 +12,6 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "chrome/browser/page_load_metrics/browser_page_track_decider.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_embedder_interface.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_update_dispatcher.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
@@ -39,6 +38,17 @@
 namespace page_load_metrics {
 
 namespace {
+
+// Returns the HTTP status code for the current page, or -1 if no status code
+// is available. Can only be called if the |navigation_handle| has committed.
+int GetHttpStatusCode(content::NavigationHandle* navigation_handle) {
+  DCHECK(navigation_handle->HasCommitted());
+  const net::HttpResponseHeaders* response_headers =
+      navigation_handle->GetResponseHeaders();
+  if (!response_headers)
+    return -1;
+  return response_headers->response_code();
+}
 
 content::RenderFrameHost* GetMainFrame(content::RenderFrameHost* rfh) {
   // Don't use rfh->GetRenderViewHost()->GetMainFrame() here because
@@ -243,7 +253,7 @@ PageLoadTracker* MetricsWebContentsObserver::GetTrackerOrNullForRequest(
     content::RenderFrameHost* render_frame_host_or_null,
     content::ResourceType resource_type,
     base::TimeTicks creation_time) {
-  if (resource_type == content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (resource_type == content::ResourceType::kMainFrame) {
     DCHECK(request_id != content::GlobalRequestID());
     // The main frame request can complete either before or after commit, so we
     // look at both provisional loads and the committed load to find a
@@ -272,7 +282,7 @@ PageLoadTracker* MetricsWebContentsObserver::GetTrackerOrNullForRequest(
     // TODO(bmcquade): consider tracking GlobalRequestIDs for sub-frame
     // navigations in each PageLoadTracker, and performing a lookup for
     // sub-frames similar to the main-frame lookup above.
-    if (resource_type == content::RESOURCE_TYPE_SUB_FRAME)
+    if (resource_type == content::ResourceType::kSubFrame)
       return committed_load_.get();
 
     // This was originally a DCHECK but it fails when the document load happened
@@ -740,9 +750,33 @@ bool MetricsWebContentsObserver::ShouldTrackNavigation(
   DCHECK(navigation_handle->IsInMainFrame());
   DCHECK(!navigation_handle->HasCommitted() ||
          !navigation_handle->IsSameDocument());
+  // If there is an outer WebContents, then this WebContents is embedded into
+  // another one (it is either a portal or a Chrome App <webview>). Ignore these
+  // navigations for now.
+  if (web_contents()->GetOuterWebContents())
+    return false;
 
-  return BrowserPageTrackDecider(embedder_interface_.get(), navigation_handle)
-      .ShouldTrack();
+  // Ignore non-HTTP schemes (e.g. chrome://).
+  if (!navigation_handle->GetURL().SchemeIsHTTPOrHTTPS())
+    return false;
+
+  // Ignore NTP loads.
+  if (embedder_interface_->IsNewTabPageUrl(navigation_handle->GetURL()))
+    return false;
+
+  if (navigation_handle->HasCommitted()) {
+    // Ignore Chrome error pages (e.g. No Internet connection).
+    if (navigation_handle->IsErrorPage())
+      return false;
+
+    // Ignore network error pages (e.g. 4xx, 5xx).
+    int http_status_code = GetHttpStatusCode(navigation_handle);
+    if (http_status_code > 0 &&
+        (http_status_code < 200 || http_status_code >= 400))
+      return false;
+  }
+
+  return true;
 }
 
 void MetricsWebContentsObserver::OnBrowserFeatureUsage(

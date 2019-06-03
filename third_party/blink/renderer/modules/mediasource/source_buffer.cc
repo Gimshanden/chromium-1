@@ -54,6 +54,7 @@
 #include "third_party/blink/renderer/modules/mediasource/source_buffer_track_base_supplement.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/network/mime/content_type.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -116,7 +117,7 @@ SourceBuffer::SourceBuffer(std::unique_ptr<WebSourceBuffer> web_source_buffer,
     : ContextLifecycleObserver(source->GetExecutionContext()),
       web_source_buffer_(std::move(web_source_buffer)),
       source_(source),
-      track_defaults_(TrackDefaultList::Create()),
+      track_defaults_(MakeGarbageCollected<TrackDefaultList>()),
       async_event_queue_(async_event_queue),
       mode_(SegmentsKeyword()),
       updating_(false),
@@ -228,7 +229,7 @@ TimeRanges* SourceBuffer::buffered(ExceptionState& exception_state) const {
 
   // 2. Return a new static normalized TimeRanges object for the media segments
   //    buffered.
-  return TimeRanges::Create(web_source_buffer_->Buffered());
+  return MakeGarbageCollected<TimeRanges>(web_source_buffer_->Buffered());
 }
 
 double SourceBuffer::timestampOffset() const {
@@ -1013,8 +1014,8 @@ bool SourceBuffer::InitializationSegmentReceived(
       const auto& kind = track_info.kind;
       // 5.2.7 TODO(servolk): Implement track kind processing.
       // 5.2.8.2 Let new audio track be a new AudioTrack object.
-      AudioTrack* audio_track =
-          AudioTrack::Create(track_info.id, kind, label, language, false);
+      auto* audio_track = MakeGarbageCollected<AudioTrack>(
+          track_info.id, kind, label, language, false);
       SourceBufferTrackBaseSupplement::SetSourceBuffer(*audio_track, this);
       // 5.2.8.7 If audioTracks.length equals 0, then run the following steps:
       if (audioTracks().length() == 0) {

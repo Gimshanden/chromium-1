@@ -40,15 +40,12 @@
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/platform/interface_provider.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
-#include "third_party/blink/public/platform/web_canvas_capture_handler.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/public/platform/web_image_capture_frame_grabber.h"
 #include "third_party/blink/public/platform/web_media_recorder_handler.h"
 #include "third_party/blink/public/platform/web_media_stream_center.h"
 #include "third_party/blink/public/platform/web_prerendering_support.h"
 #include "third_party/blink/public/platform/web_rtc_certificate_generator.h"
 #include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
-#include "third_party/blink/public/platform/web_storage_namespace.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
@@ -66,6 +63,7 @@
 #include "third_party/blink/renderer/platform/scheduler/common/simple_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/webrtc/api/async_resolver_factory.h"
 #include "third_party/webrtc/api/rtp_parameters.h"
@@ -76,6 +74,8 @@ namespace blink {
 namespace {
 
 class DefaultConnector {
+  USING_FAST_MALLOC(DefaultConnector);
+
  public:
   DefaultConnector() {
     service_manager::mojom::ConnectorRequest request;
@@ -110,7 +110,7 @@ static void CallOnMainThreadFunction(WTF::MainThreadFunction function,
                                      void* context) {
   PostCrossThreadTask(
       *Thread::MainThread()->GetTaskRunner(), FROM_HERE,
-      CrossThreadBind(function, CrossThreadUnretained(context)));
+      CrossThreadBindOnce(function, CrossThreadUnretained(context)));
 }
 
 Platform::Platform() {
@@ -257,15 +257,6 @@ InterfaceProvider* Platform::GetInterfaceProvider() {
   return InterfaceProvider::GetEmptyInterfaceProvider();
 }
 
-std::unique_ptr<WebStorageNamespace> Platform::CreateLocalStorageNamespace() {
-  return nullptr;
-}
-
-std::unique_ptr<WebStorageNamespace> Platform::CreateSessionStorageNamespace(
-    base::StringPiece namespace_id) {
-  return nullptr;
-}
-
 std::unique_ptr<Thread> Platform::CreateThread(
     const ThreadCreationParams& params) {
   return Thread::CreateThread(params);
@@ -329,18 +320,6 @@ Platform::CreateRTCCertificateGenerator() {
 }
 
 std::unique_ptr<WebMediaStreamCenter> Platform::CreateMediaStreamCenter() {
-  return nullptr;
-}
-
-std::unique_ptr<WebCanvasCaptureHandler> Platform::CreateCanvasCaptureHandler(
-    const WebSize&,
-    double,
-    WebMediaStreamTrack*) {
-  return nullptr;
-}
-
-std::unique_ptr<WebImageCaptureFrameGrabber>
-Platform::CreateImageCaptureFrameGrabber() {
   return nullptr;
 }
 

@@ -10,6 +10,8 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/environment.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
@@ -20,8 +22,8 @@
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "components/os_crypt/os_crypt.h"
+#include "mojo/core/embedder/embedder.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "mojo/public/cpp/bindings/type_converter.h"
 #include "net/base/logging_network_change_observer.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_change_notifier_posix.h"
@@ -29,6 +31,7 @@
 #include "net/cert/cert_database.h"
 #include "net/cert/ct_log_response_parser.h"
 #include "net/cert/signed_tree_head.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_config_overrides.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
@@ -44,7 +47,6 @@
 #include "services/network/cross_origin_read_blocking.h"
 #include "services/network/dns_config_change_manager.h"
 #include "services/network/http_auth_cache_copier.h"
-#include "services/network/net_log_capture_mode_type_converter.h"
 #include "services/network/net_log_exporter.h"
 #include "services/network/network_context.h"
 #include "services/network/network_usage_accumulator.h"
@@ -52,10 +54,6 @@
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/url_loader.h"
 #include "services/network/url_request_context_builder_mojo.h"
-
-#if BUILDFLAG(IS_CT_SUPPORTED)
-#include "components/certificate_transparency/sth_distributor.h"
-#endif  // BUILDFLAG(IS_CT_SUPPORTED)
 
 #if defined(OS_ANDROID) && defined(ARCH_CPU_ARMEL)
 #include "crypto/openssl_util.h"
@@ -207,6 +205,16 @@ std::unique_ptr<net::HttpNegotiateAuthSystem> CreateAuthSystem(
 }
 #endif
 
+// Called when NetworkService received a bad IPC message (but only when
+// NetworkService is running in a separate process - otherwise the existing bad
+// message handling inside the Browser process is sufficient).
+void HandleBadMessage(const std::string& error) {
+  static auto* bad_message_reason = base::debug::AllocateCrashKeyString(
+      "bad_message_reason", base::debug::CrashKeySize::Size256);
+  base::debug::SetCrashKeyString(bad_message_reason, error);
+  base::debug::DumpWithoutCrashing();
+}
+
 }  // namespace
 
 NetworkService::NetworkService(
@@ -219,6 +227,9 @@ NetworkService::NetworkService(
   DCHECK(!g_network_service);
   g_network_service = this;
 
+  metrics_trigger_timer_.Start(FROM_HERE, base::TimeDelta::FromMinutes(5), this,
+                               &NetworkService::ReportMetrics);
+
   // In testing environments, |service_request| may not be provided.
   if (service_request.is_pending())
     service_binding_.Bind(std::move(service_request));
@@ -228,6 +239,9 @@ NetworkService::NetworkService(
   // CreateNetworkContextWithBuilder to ease the transition to using the
   // network service.
   if (registry_) {
+    mojo::core::SetDefaultProcessErrorCallback(
+        base::BindRepeating(&HandleBadMessage));
+
     DCHECK(!request.is_pending());
     registry_->AddInterface<mojom::NetworkService>(
         base::BindRepeating(&NetworkService::Bind, base::Unretained(this)));
@@ -302,17 +316,13 @@ void NetworkService::Initialize(mojom::NetworkServiceParamsPtr params) {
   dns_config_change_manager_ = std::make_unique<DnsConfigChangeManager>();
 
   host_resolver_manager_ = std::make_unique<net::HostResolverManager>(
-      net::HostResolver::Options(), net_log_);
+      net::HostResolver::ManagerOptions(), net_log_);
   host_resolver_factory_ = std::make_unique<net::HostResolver::Factory>();
 
   network_usage_accumulator_ = std::make_unique<NetworkUsageAccumulator>();
 
   http_auth_cache_copier_ = std::make_unique<HttpAuthCacheCopier>();
 
-#if BUILDFLAG(IS_CT_SUPPORTED)
-  sth_distributor_ =
-      std::make_unique<certificate_transparency::STHDistributor>();
-#endif  // BUILDFLAG(IS_CT_SUPPORTED)
   crl_set_distributor_ = std::make_unique<CRLSetDistributor>();
 }
 
@@ -409,7 +419,7 @@ void NetworkService::SetClient(mojom::NetworkServiceClientPtr client,
 }
 
 void NetworkService::StartNetLog(base::File file,
-                                 mojom::NetLogCaptureMode capture_mode,
+                                 net::NetLogCaptureMode capture_mode,
                                  base::Value client_constants) {
   DCHECK(client_constants.is_dict());
   std::unique_ptr<base::DictionaryValue> constants = net::GetNetConstants();
@@ -417,8 +427,7 @@ void NetworkService::StartNetLog(base::File file,
 
   file_net_log_observer_ = net::FileNetLogObserver::CreateUnboundedPreExisting(
       std::move(file), std::move(constants));
-  file_net_log_observer_->StartObserving(
-      net_log_, mojo::ConvertTo<net::NetLogCaptureMode>(capture_mode));
+  file_net_log_observer_->StartObserving(net_log_, capture_mode);
 }
 
 void NetworkService::SetSSLKeyLogFile(const base::FilePath& file) {
@@ -458,27 +467,15 @@ void NetworkService::ConfigureStubHostResolver(
     return;
   }
 
-  for (auto* network_context : network_contexts_) {
-    if (!network_context->IsPrimaryNetworkContext())
-      continue;
-
-    host_resolver_manager_->SetRequestContext(
-        network_context->url_request_context());
-
-    net::DnsConfigOverrides overrides;
-    overrides.dns_over_https_servers.emplace();
-    for (const auto& doh_server : *dns_over_https_servers) {
-      overrides.dns_over_https_servers.value().emplace_back(
-          doh_server->server_template, doh_server->use_post);
-    }
-    host_resolver_manager_->SetDnsConfigOverrides(overrides);
-
-    return;
+  net::DnsConfigOverrides overrides;
+  overrides.dns_over_https_servers.emplace();
+  for (const auto& doh_server : *dns_over_https_servers) {
+    overrides.dns_over_https_servers.value().emplace_back(
+        doh_server->server_template, doh_server->use_post);
   }
-
-  // Execution should generally not reach this line, but could run into races
-  // with teardown, or restarting a crashed network process, that could
-  // theoretically result in reaching it.
+  // TODO(dalyk): Allow the secure dns mode to be set.
+  overrides.secure_dns_mode = net::DnsConfig::SecureDnsMode::AUTOMATIC;
+  host_resolver_manager_->SetDnsConfigOverrides(overrides);
 }
 
 void NetworkService::DisableQuic() {
@@ -495,10 +492,8 @@ void NetworkService::SetUpHttpAuth(
 
   http_auth_handler_factory_ = net::HttpAuthHandlerRegistryFactory::Create(
       &http_auth_preferences_, http_auth_static_params->supported_schemes
-#if defined(OS_CHROMEOS)
-      ,
-      http_auth_static_params->allow_gssapi_library_load
-#elif (defined(OS_POSIX) && !defined(OS_ANDROID)) || defined(OS_FUCHSIA)
+#if (defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)) || \
+    defined(OS_FUCHSIA)
       ,
       http_auth_static_params->gssapi_library_name
 #endif
@@ -530,6 +525,11 @@ void NetworkService::ConfigureHttpAuthPrefs(
 #if defined(OS_ANDROID)
   http_auth_preferences_.set_auth_android_negotiate_account_type(
       http_auth_dynamic_params->android_negotiate_account_type);
+#endif
+
+#if defined(OS_CHROMEOS)
+  http_auth_preferences_.set_allow_gssapi_library_load(
+      http_auth_dynamic_params->allow_gssapi_library_load);
 #endif
 }
 
@@ -593,12 +593,6 @@ void NetworkService::GetNetworkList(
                      std::move(callback)));
 }
 
-#if BUILDFLAG(IS_CT_SUPPORTED)
-void NetworkService::UpdateSignedTreeHead(const net::ct::SignedTreeHead& sth) {
-  sth_distributor_->NewSTHObserved(sth);
-}
-#endif  // BUILDFLAG(IS_CT_SUPPORTED)
-
 void NetworkService::UpdateCRLSet(base::span<const uint8_t> crl_set) {
   crl_set_distributor_->OnNewCRLSet(crl_set);
 }
@@ -639,6 +633,11 @@ void NetworkService::RemoveCorbExceptionForPlugin(uint32_t process_id) {
   CrossOriginReadBlocking::RemoveExceptionForPlugin(process_id);
 }
 
+void NetworkService::AddExtraMimeTypesForCorb(
+    const std::vector<std::string>& mime_types) {
+  CrossOriginReadBlocking::AddExtraMimeTypesForCorb(mime_types);
+}
+
 void NetworkService::OnMemoryPressure(
     base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
   base::MemoryPressureListener::NotifyMemoryPressure(memory_pressure_level);
@@ -677,12 +676,6 @@ void NetworkService::OnBeforeURLRequest() {
     MaybeStartUpdateLoadInfoTimer();
 }
 
-#if BUILDFLAG(IS_CT_SUPPORTED)
-certificate_transparency::STHReporter* NetworkService::sth_reporter() {
-  return sth_distributor_.get();
-}
-#endif  // BUILDFLAG(IS_CT_SUPPORTED)
-
 void NetworkService::OnBindInterface(
     const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
@@ -691,6 +684,16 @@ void NetworkService::OnBindInterface(
 }
 
 void NetworkService::DestroyNetworkContexts() {
+  // If DNS over HTTPS is enabled, the HostResolver is currently using
+  // NetworkContexts to do DNS lookups, so need to tell the HostResolver
+  // to stop using DNS over HTTPS before destroying any NetworkContexts.
+  // The SetDnsConfigOverrides() call will will fail any in-progress DNS
+  // lookups, but only if there are current config overrides (which there will
+  // be if DNS over HTTPS is currently enabled).
+  if (host_resolver_manager_) {
+    host_resolver_manager_->SetDnsConfigOverrides(net::DnsConfigOverrides());
+  }
+
   // Delete NetworkContexts. If there's a primary NetworkContext, it must be
   // deleted after all other NetworkContexts, to avoid use-after-frees.
   for (auto it = owned_network_contexts_.begin();
@@ -699,17 +702,6 @@ void NetworkService::DestroyNetworkContexts() {
     ++it;
     if (!(*last)->IsPrimaryNetworkContext())
       owned_network_contexts_.erase(last);
-  }
-
-  // If DNS over HTTPS is enabled, the HostResolver is currently using the
-  // primary NetworkContext to do DNS lookups, so need to tell the HostResolver
-  // to stop using DNS over HTTPS before destroying the primary NetworkContext.
-  // The SetDnsConfigOverrides() call will will fail any in-progress DNS
-  // lookups, but only if there are current config overrides (which there will
-  // be if DNS over HTTPS is currently enabled).
-  if (host_resolver_manager_) {
-    host_resolver_manager_->SetDnsConfigOverrides(net::DnsConfigOverrides());
-    host_resolver_manager_->SetRequestContext(nullptr);
   }
 
   DCHECK_LE(owned_network_contexts_.size(), 1u);
@@ -812,6 +804,23 @@ void NetworkService::AckUpdateLoadInfo() {
   DCHECK(waiting_on_load_state_ack_);
   waiting_on_load_state_ack_ = false;
   MaybeStartUpdateLoadInfoTimer();
+}
+
+void NetworkService::ReportMetrics() {
+  size_t cache_size = 0;
+  size_t memory_pressure_in_bytes = 0;
+  size_t loader_count = 0;
+  for (auto* context : network_contexts_) {
+    cors::PreflightCache::Metrics metrics =
+        context->ReportAndGatherCorsPreflightCacheSizeMetric();
+    cache_size += metrics.num_entries;
+    memory_pressure_in_bytes += metrics.memory_pressure_in_bytes;
+    loader_count += context->GatherActiveLoaderCount();
+  }
+  UMA_HISTOGRAM_COUNTS_10000("Net.Cors.PreflightCacheTotalEntries", cache_size);
+  UMA_HISTOGRAM_COUNTS_10M("Net.Cors.PreflightCacheTotalMemoryPressureInBytes",
+                           memory_pressure_in_bytes);
+  UMA_HISTOGRAM_COUNTS_1000("Net.Cors.ActiveLoaderCount", loader_count);
 }
 
 void NetworkService::Bind(mojom::NetworkServiceRequest request) {

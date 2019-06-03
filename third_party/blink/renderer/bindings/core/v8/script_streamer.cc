@@ -11,6 +11,7 @@
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_restrictions.h"
 #include "mojo/public/cpp/system/wait.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_code_cache.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -24,7 +25,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/response_body_loader.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
@@ -44,7 +44,8 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
   ~SourceStream() override = default;
 
   // Called by V8 on a background thread. Should block until we can return
-  // some data.
+  // some data. Ownership of the |src| data buffer is passed to the caller,
+  // unless |src| is null.
   size_t GetMoreData(const uint8_t** src) override {
     DCHECK(!IsMainThread());
     CHECK(ready_to_run_.IsSet());
@@ -61,7 +62,11 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
 
     if (initial_data_) {
       CHECK_GT(initial_data_len_, 0u);
-      *src = initial_data_.release();
+      if (src) {
+        *src = initial_data_.release();
+      } else {
+        initial_data_.reset();
+      }
       size_t len = initial_data_len_;
       initial_data_len_ = 0;
       return len;
@@ -83,8 +88,12 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
           // num_bytes could only be 0 if the handle was being read elsewhere.
           CHECK_GT(num_bytes, 0u);
 
-          auto copy_for_script_stream = std::make_unique<uint8_t[]>(num_bytes);
-          memcpy(copy_for_script_stream.get(), buffer, num_bytes);
+          if (src) {
+            auto copy_for_script_stream =
+                std::make_unique<uint8_t[]>(num_bytes);
+            memcpy(copy_for_script_stream.get(), buffer, num_bytes);
+            *src = copy_for_script_stream.release();
+          }
 
           // TODO(leszeks): It would be nice to get rid of this second copy, and
           // either share ownership of the chunks, or only give chunks back to
@@ -93,14 +102,13 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
           memcpy(copy_for_resource.get(), buffer, num_bytes);
           PostCrossThreadTask(
               *loading_task_runner_, FROM_HERE,
-              CrossThreadBind(
+              CrossThreadBindOnce(
                   NotifyClientDidReceiveData, response_body_loader_client_,
                   WTF::Passed(std::move(copy_for_resource)), num_bytes));
 
           result = data_pipe_->EndReadData(num_bytes);
           CHECK_EQ(result, MOJO_RESULT_OK);
 
-          *src = copy_for_script_stream.release();
           return num_bytes;
         }
 
@@ -152,8 +160,7 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
     if (!finished_) {
       // Keep reading data until we finish (returning 0). It won't be streaming
       // compiled any more, but it will continue being forwarded to the client.
-      const uint8_t* ignored_data;
-      while (GetMoreData(&ignored_data) != 0) {
+      while (GetMoreData(nullptr) != 0) {
       }
     }
     CHECK(finished_);
@@ -226,7 +233,7 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
     CHECK(!finished_);
     PostCrossThreadTask(
         *loading_task_runner_, FROM_HERE,
-        CrossThreadBind(callback, response_body_loader_client_));
+        CrossThreadBindOnce(callback, response_body_loader_client_));
     finished_ = true;
   }
 
@@ -290,8 +297,8 @@ void ScriptStreamer::StreamingCompleteOnBackgroundThread() {
   // notifyFinished might already be called, or it might be called in the
   // future (if the parsing finishes earlier because of a parse error).
   PostCrossThreadTask(*loading_task_runner_, FROM_HERE,
-                      CrossThreadBind(&ScriptStreamer::StreamingComplete,
-                                      WrapCrossThreadPersistent(this)));
+                      CrossThreadBindOnce(&ScriptStreamer::StreamingComplete,
+                                          WrapCrossThreadPersistent(this)));
 
   // The task might be the only remaining reference to the ScriptStreamer, and
   // there's no way to guarantee that this function has returned before the task
@@ -347,8 +354,12 @@ void RunScriptStreamingTask(
 }  // namespace
 
 bool ScriptStreamer::HasEnoughDataForStreaming(size_t resource_buffer_size) {
-  // Only stream larger scripts.
-  return resource_buffer_size >= small_script_threshold_;
+  if (base::FeatureList::IsEnabled(features::kSmallScriptStreaming)) {
+    return resource_buffer_size >= kMaximumLengthOfBOM;
+  } else {
+    // Only stream larger scripts.
+    return resource_buffer_size >= small_script_threshold_;
+  }
 }
 
 // Try to start streaming the script from the given datapipe, taking ownership
@@ -460,10 +471,10 @@ bool ScriptStreamer::TryStartStreaming(
   // TODO(leszeks): Decrease the priority of these tasks where possible.
   worker_pool::PostTaskWithTraits(
       FROM_HERE, {base::TaskPriority::USER_BLOCKING, base::MayBlock()},
-      CrossThreadBind(RunScriptStreamingTask,
-                      WTF::Passed(std::move(script_streaming_task)),
-                      WrapCrossThreadPersistent(this),
-                      WTF::CrossThreadUnretained(stream_)));
+      CrossThreadBindOnce(RunScriptStreamingTask,
+                          WTF::Passed(std::move(script_streaming_task)),
+                          WrapCrossThreadPersistent(this),
+                          WTF::CrossThreadUnretained(stream_)));
 
   return true;
 }

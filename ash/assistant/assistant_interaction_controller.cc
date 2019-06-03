@@ -22,7 +22,7 @@
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/interfaces/voice_interaction_controller.mojom.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/voice_interaction/voice_interaction_controller.h"
@@ -118,6 +118,39 @@ void AssistantInteractionController::OnDeepLinkReceived(
     return;
   }
 
+  if (type == DeepLinkType::kReminders) {
+    using ReminderAction = assistant::util::ReminderAction;
+    const base::Optional<ReminderAction>& action =
+        GetDeepLinkParamAsRemindersAction(params, DeepLinkParam::kAction);
+
+    // We treat reminders deeplinks without an action as web deep links.
+    if (!action)
+      return;
+
+    switch (action.value()) {
+      case ReminderAction::kCreate:
+        StartTextInteraction(
+            l10n_util::GetStringUTF8(IDS_ASSISTANT_CREATE_REMINDER_QUERY),
+            /*allow_tts=*/model_.response() && model_.response()->has_tts(),
+            /*query_source=*/AssistantQuerySource::kDeepLink);
+        break;
+
+      case ReminderAction::kEdit:
+        const base::Optional<std::string>& client_id =
+            GetDeepLinkParam(params, DeepLinkParam::kClientId);
+        if (client_id && !client_id.value().empty()) {
+          StopActiveInteraction(false);
+          model_.SetPendingQuery(std::make_unique<AssistantTextQuery>(
+              l10n_util::GetStringUTF8(IDS_ASSISTANT_EDIT_REMINDER_QUERY),
+              /*query_source=*/AssistantQuerySource::kDeepLink));
+          assistant_->StartEditReminderInteraction(client_id.value());
+        }
+        break;
+    }
+
+    return;
+  }
+
   if (type != DeepLinkType::kQuery)
     return;
 
@@ -152,7 +185,8 @@ void AssistantInteractionController::OnDeepLinkReceived(
                        /*query_source=*/AssistantQuerySource::kDeepLink);
 }
 
-void AssistantInteractionController::OnUiModeChanged(AssistantUiMode ui_mode) {
+void AssistantInteractionController::OnUiModeChanged(AssistantUiMode ui_mode,
+                                                     bool due_to_interaction) {
   if (ui_mode == AssistantUiMode::kMiniUi)
     return;
 
@@ -160,10 +194,16 @@ void AssistantInteractionController::OnUiModeChanged(AssistantUiMode ui_mode) {
     case InputModality::kStylus:
       // When the Assistant is not in mini state there should not be an active
       // metalayer session. If we were in mini state when the UI mode was
-      // changed, we need to clean up the metalayer session and reset default
-      // input modality.
+      // changed, we need to clean up the metalayer session.
       Shell::Get()->highlighter_controller()->AbortSession();
-      model_.SetInputModality(InputModality::kKeyboard);
+
+      // If the UI mode change was not due to interaction, we should reset the
+      // default input modality. We don't do this if the change occurred due to
+      // an Assistant interaction because we might inadvertently stop the active
+      // interaction by changing input modality. When this is the case, the
+      // modality will be correctly set in |OnInteractionStarted| if needed.
+      if (!due_to_interaction)
+        model_.SetInputModality(InputModality::kKeyboard);
       break;
     case InputModality::kVoice:
       // When transitioning to web UI we abort any in progress voice query. We
@@ -338,9 +378,8 @@ void AssistantInteractionController::OnInteractionStarted(
     // AssistantInteractionController when beginning an interaction. To address
     // this, we temporarily pend an empty text query to commit until we can do
     // development to expose something more meaningful.
-    if (model_.pending_query().type() == AssistantQueryType::kNull) {
+    if (model_.pending_query().type() == AssistantQueryType::kNull)
       model_.SetPendingQuery(std::make_unique<AssistantTextQuery>());
-    }
 
     model_.CommitPendingQuery();
     model_.SetMicState(MicState::kClosed);

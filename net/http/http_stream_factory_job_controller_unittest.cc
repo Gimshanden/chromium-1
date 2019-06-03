@@ -20,6 +20,8 @@
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "net/base/completion_once_callback.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/proxy_server.h"
 #include "net/base/test_proxy_delegate.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_basic_stream.h"
@@ -41,6 +43,7 @@
 #include "net/quic/quic_stream_factory_peer.h"
 #include "net/quic/quic_test_packet_maker.h"
 #include "net/socket/socket_test_util.h"
+#include "net/spdy/spdy_session_key.h"
 #include "net/spdy/spdy_test_util_common.h"
 #include "net/test/test_with_scoped_task_environment.h"
 #include "net/third_party/quiche/src/quic/core/quic_utils.h"
@@ -838,7 +841,7 @@ TEST_F(HttpStreamFactoryJobControllerTest,
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
   session_->http_server_properties()->SetQuicAlternativeService(
       server, alternative_service, expiration,
-      {quic::QUIC_VERSION_UNSUPPORTED});
+      {quic::UnsupportedQuicVersion()});
 
   request_ =
       job_controller_->Start(&request_delegate_, nullptr, net_log_.bound(),
@@ -2329,6 +2332,70 @@ TEST_F(HttpStreamFactoryJobControllerTest,
   EXPECT_TRUE(HttpStreamFactoryPeer::IsJobControllerDeleted(factory_));
 }
 
+// Check the case that while a preconnect is waiting in the H2 request queue,
+// and a SPDY session appears, the job completes successfully.
+TEST_F(HttpStreamFactoryJobControllerTest, SpdySessionInterruptsPreconnect) {
+  // Make sure there is only one socket connect.
+  MockWrite writes[] = {MockWrite(SYNCHRONOUS, ERR_IO_PENDING, 0)};
+  MockRead reads[] = {MockRead(SYNCHRONOUS, ERR_IO_PENDING, 1)};
+  tcp_data_ = std::make_unique<SequencedSocketData>(reads, writes);
+  // connect needs to be async, so the H2 session isn't created immediately.
+  tcp_data_->set_connect_data(MockConnect(ASYNC, OK));
+  SSLSocketDataProvider ssl_data(ASYNC, OK);
+  ssl_data.next_proto = kProtoHTTP2;
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_data);
+  HttpRequestInfo request_info;
+  request_info.method = "GET";
+  request_info.url = GURL("https://www.example.com");
+  Initialize(request_info);
+
+  // Sets server support HTTP/2.
+  url::SchemeHostPort server(request_info.url);
+  session_->http_server_properties()->SetSupportsSpdy(server, true);
+
+  // Start a non-preconnect request.
+  std::unique_ptr<HttpStreamRequest> stream_request = job_controller_->Start(
+      &request_delegate_, nullptr /* websocket_handshake_create_helper */,
+      NetLogWithSource(), HttpStreamRequest::HTTP_STREAM, DEFAULT_PRIORITY);
+  EXPECT_CALL(request_delegate_, OnStreamReadyImpl(_, _, _));
+
+  // Create and start a preconnect request, which should start watching the
+  // SpdySessionPool.
+  MockHttpStreamRequestDelegate preconnect_request_delegate;
+  HttpStreamFactory::JobController* job_controller =
+      new HttpStreamFactory::JobController(
+          factory_, &preconnect_request_delegate, session_.get(), &job_factory_,
+          request_info, true /* is_preconnect */, false /* is_websocket */,
+          enable_ip_based_pooling_, enable_alternative_services_, SSLConfig(),
+          SSLConfig());
+  HttpStreamFactoryPeer::AddJobController(factory_, job_controller);
+  job_controller->Preconnect(1);
+  EXPECT_TRUE(job_controller->main_job());
+  EXPECT_FALSE(job_controller->alternative_job());
+
+  // The non-preconnect request should create an H2 session, which the
+  // preconnect then sees, and the preconnect request should complete and be
+  // torn down without ever requesting a socket. If it did request a socket, the
+  // test would fail since the mock socket factory would see an unexpected
+  // socket request.
+  base::RunLoop().RunUntilIdle();
+
+  stream_request.reset();
+
+  EXPECT_TRUE(HttpStreamFactoryPeer::IsJobControllerDeleted(factory_));
+
+  // Sanity check - make sure the SpdySession was created.
+  base::WeakPtr<SpdySession> spdy_session =
+      session_->spdy_session_pool()->FindAvailableSession(
+          SpdySessionKey(HostPortPair::FromURL(request_info.url),
+                         ProxyServer::Direct(), request_info.privacy_mode,
+                         SpdySessionKey::IsProxySession::kFalse,
+                         request_info.socket_tag),
+          false /* enable_ip_based_pooling */, false /* is_websocket */,
+          NetLogWithSource());
+  EXPECT_TRUE(spdy_session);
+}
+
 class JobControllerLimitMultipleH2Requests
     : public HttpStreamFactoryJobControllerTest {
  protected:
@@ -2829,8 +2896,7 @@ TEST_F(HttpStreamFactoryJobControllerTest, GetAlternativeServiceInfoFor) {
 
   // Set alternative service with no advertised version.
   session_->http_server_properties()->SetQuicAlternativeService(
-      server, alternative_service, expiration,
-      quic::QuicTransportVersionVector());
+      server, alternative_service, expiration, quic::ParsedQuicVersionVector());
 
   AlternativeServiceInfo alt_svc_info =
       JobControllerPeer::GetAlternativeServiceInfoFor(
@@ -2841,7 +2907,7 @@ TEST_F(HttpStreamFactoryJobControllerTest, GetAlternativeServiceInfoFor) {
 
   // Set alternative service for the same server with the same list of versions
   // that is supported.
-  quic::QuicTransportVersionVector supported_versions =
+  quic::ParsedQuicVersionVector supported_versions =
       session_->params().quic_supported_versions;
   ASSERT_TRUE(session_->http_server_properties()->SetQuicAlternativeService(
       server, alternative_service, expiration, supported_versions));
@@ -2849,19 +2915,22 @@ TEST_F(HttpStreamFactoryJobControllerTest, GetAlternativeServiceInfoFor) {
   alt_svc_info = JobControllerPeer::GetAlternativeServiceInfoFor(
       job_controller_, request_info, &request_delegate_,
       HttpStreamRequest::HTTP_STREAM);
-  std::sort(supported_versions.begin(), supported_versions.end());
+  std::sort(
+      supported_versions.begin(), supported_versions.end(),
+      [](const quic::ParsedQuicVersion& a, const quic::ParsedQuicVersion& b) {
+        return a.transport_version < b.transport_version;
+      });
   EXPECT_EQ(supported_versions, alt_svc_info.advertised_versions());
 
-  quic::QuicTransportVersion unsupported_version_1(
-      quic::QUIC_VERSION_UNSUPPORTED);
-  quic::QuicTransportVersion unsupported_version_2(
-      quic::QUIC_VERSION_UNSUPPORTED);
-  for (const quic::QuicTransportVersion& version :
-       quic::AllSupportedTransportVersions()) {
+  quic::ParsedQuicVersion unsupported_version_1 =
+      quic::UnsupportedQuicVersion();
+  quic::ParsedQuicVersion unsupported_version_2 =
+      quic::UnsupportedQuicVersion();
+  for (const quic::ParsedQuicVersion& version : quic::AllSupportedVersions()) {
     if (std::find(supported_versions.begin(), supported_versions.end(),
                   version) != supported_versions.end())
       continue;
-    if (unsupported_version_1 == quic::QUIC_VERSION_UNSUPPORTED) {
+    if (unsupported_version_1 == quic::UnsupportedQuicVersion()) {
       unsupported_version_1 = version;
       continue;
     }
@@ -2872,7 +2941,7 @@ TEST_F(HttpStreamFactoryJobControllerTest, GetAlternativeServiceInfoFor) {
   // Set alternative service for the same server with two QUIC versions:
   // - one unsupported version: |unsupported_version_1|,
   // - one supported version: session_->params().quic_supported_versions[0].
-  quic::QuicTransportVersionVector mixed_quic_versions = {
+  quic::ParsedQuicVersionVector mixed_quic_versions = {
       unsupported_version_1, session_->params().quic_supported_versions[0]};
   ASSERT_TRUE(session_->http_server_properties()->SetQuicAlternativeService(
       server, alternative_service, expiration, mixed_quic_versions));
@@ -2882,7 +2951,11 @@ TEST_F(HttpStreamFactoryJobControllerTest, GetAlternativeServiceInfoFor) {
       HttpStreamRequest::HTTP_STREAM);
   EXPECT_EQ(2u, alt_svc_info.advertised_versions().size());
   // Verify that JobController returns the list of versions specified in set.
-  std::sort(mixed_quic_versions.begin(), mixed_quic_versions.end());
+  std::sort(
+      mixed_quic_versions.begin(), mixed_quic_versions.end(),
+      [](const quic::ParsedQuicVersion& a, const quic::ParsedQuicVersion& b) {
+        return a.transport_version < b.transport_version;
+      });
   EXPECT_EQ(mixed_quic_versions, alt_svc_info.advertised_versions());
 
   // Set alternative service for the same server with two unsupported QUIC
@@ -2917,7 +2990,7 @@ TEST_F(HttpStreamFactoryJobControllerTest, QuicHostWhitelist) {
   // Set alternative service for www.google.com to be www.example.com over QUIC.
   url::SchemeHostPort server(request_info.url);
   base::Time expiration = base::Time::Now() + base::TimeDelta::FromDays(1);
-  quic::QuicTransportVersionVector supported_versions =
+  quic::ParsedQuicVersionVector supported_versions =
       session_->params().quic_supported_versions;
   session_->http_server_properties()->SetQuicAlternativeService(
       server, AlternativeService(kProtoQUIC, "www.example.com", 443),
@@ -2928,7 +3001,11 @@ TEST_F(HttpStreamFactoryJobControllerTest, QuicHostWhitelist) {
           job_controller_, request_info, &request_delegate_,
           HttpStreamRequest::HTTP_STREAM);
 
-  std::sort(supported_versions.begin(), supported_versions.end());
+  std::sort(
+      supported_versions.begin(), supported_versions.end(),
+      [](const quic::ParsedQuicVersion& a, const quic::ParsedQuicVersion& b) {
+        return a.transport_version < b.transport_version;
+      });
   EXPECT_EQ(kProtoQUIC, alt_svc_info.alternative_service().protocol);
   EXPECT_EQ(supported_versions, alt_svc_info.advertised_versions());
 

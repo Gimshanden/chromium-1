@@ -19,6 +19,7 @@
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
+#include "chrome/browser/previews/previews_lite_page_decider.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 #include "chrome/browser/signin/signin_promo.h"
@@ -48,7 +49,8 @@
 #include "url/url_constants.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_client.h"
+#include "ash/public/cpp/multi_user_window_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
 #include "components/account_id/account_id.h"
 #endif
 
@@ -142,8 +144,7 @@ std::pair<Browser*, int> GetBrowserAndTabForDisposition(
   Profile* profile = params.initiating_profile;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  if (base::FeatureList::IsEnabled(features::kDesktopPWAWindowing) &&
-      params.open_pwa_window_if_possible) {
+  if (params.open_pwa_window_if_possible) {
     const extensions::Extension* app = extensions::util::GetInstalledPwaForUrl(
         profile, params.url, extensions::LAUNCH_CONTAINER_WINDOW);
     if (app) {
@@ -167,8 +168,7 @@ std::pair<Browser*, int> GetBrowserAndTabForDisposition(
            ++browser_it) {
         Browser* browser = *browser_it;
         // When tab switching, only look at same profile and anonymity level.
-        if (browser->profile()->IsSameProfile(profile) &&
-            browser->profile()->GetProfileType() == profile->GetProfileType()) {
+        if (browser->profile()->IsSameProfileAndType(profile)) {
           int index = GetIndexOfExistingTab(browser, params);
           if (index >= 0)
             return {browser, index};
@@ -338,7 +338,9 @@ void LoadURLInContents(WebContents* target_contents,
       content::RenderFrameHost::kNoFrameTreeNodeId) {
     load_url_params.navigation_ui_data =
         ChromeNavigationUIData::CreateForMainFrameNavigation(
-            target_contents, params->disposition);
+            target_contents, params->disposition,
+            PreviewsLitePageDecider::GeneratePageIdForProfile(
+                GetSourceProfile(params)));
   }
 
   if (params->uses_post) {
@@ -522,20 +524,20 @@ void Navigate(NavigateParams* params) {
     // When the newly created browser was spawned by a browser which visits
     // another user's desktop, it should be shown on the same desktop as the
     // originating one. (This is part of the desktop separation per profile).
-    MultiUserWindowManagerClient* client =
-        MultiUserWindowManagerClient::GetInstance();
+    auto* window_manager = MultiUserWindowManagerHelper::GetWindowManager();
     // Some unit tests have no client instantiated.
-    if (client) {
+    if (window_manager) {
       aura::Window* src_window = source_browser->window()->GetNativeWindow();
       aura::Window* new_window = params->browser->window()->GetNativeWindow();
       const AccountId& src_account_id =
-          client->GetUserPresentingWindow(src_window);
-      if (src_account_id != client->GetUserPresentingWindow(new_window)) {
+          window_manager->GetUserPresentingWindow(src_window);
+      if (src_account_id !=
+          window_manager->GetUserPresentingWindow(new_window)) {
         // Once the window gets presented, it should be shown on the same
         // desktop as the desktop of the creating browser. Note that this
         // command will not show the window if it wasn't shown yet by the
         // browser creation.
-        client->ShowWindowForUser(new_window, src_account_id);
+        window_manager->ShowWindowForUser(new_window, src_account_id);
       }
     }
   }
@@ -689,8 +691,7 @@ void Navigate(NavigateParams* params) {
       // make the index refer to a different tab.
       auto gesture_type = user_initiated ? TabStripModel::GestureType::kOther
                                          : TabStripModel::GestureType::kNone;
-      params->browser->tab_strip_model()->ActivateTabAt(singleton_index,
-                                                        {gesture_type});
+      bool should_close_this_tab = false;
       if (params->disposition == WindowOpenDisposition::SWITCH_TO_TAB) {
         // Close orphaned NTP (and the like) with no history when the user
         // switches away from them.
@@ -700,11 +701,18 @@ void Navigate(NavigateParams* params) {
              params->source_contents->GetLastCommittedURL().spec() !=
                  chrome::kChromeSearchLocalNtpUrl &&
              params->source_contents->GetLastCommittedURL().spec() !=
-                 url::kAboutBlankURL))
+                 url::kAboutBlankURL)) {
+          // Blur location bar before state save in ActivateTabAt() below.
           params->source_contents->Focus();
-        else
-          params->source_contents->Close();
+        } else {
+          should_close_this_tab = true;
+        }
       }
+      params->browser->tab_strip_model()->ActivateTabAt(singleton_index,
+                                                        {gesture_type});
+      // Close tab after switch so index remains correct.
+      if (should_close_this_tab)
+        params->source_contents->Close();
     }
   }
 
@@ -748,6 +756,7 @@ bool IsHostAllowedInIncognito(const GURL& url) {
   // chrome://extensions is on the list because it redirects to
   // chrome://settings.
   return host != chrome::kChromeUIAppLauncherPageHost &&
+         host != chrome::kChromeUIAppManagementHost &&
          host != chrome::kChromeUISettingsHost &&
          host != chrome::kChromeUIHelpHost &&
          host != chrome::kChromeUIHistoryHost &&

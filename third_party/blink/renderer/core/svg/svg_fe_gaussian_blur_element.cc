@@ -27,14 +27,14 @@
 
 namespace blink {
 
-inline SVGFEGaussianBlurElement::SVGFEGaussianBlurElement(Document& document)
+SVGFEGaussianBlurElement::SVGFEGaussianBlurElement(Document& document)
     : SVGFilterPrimitiveStandardAttributes(svg_names::kFEGaussianBlurTag,
                                            document),
-      std_deviation_(
-          SVGAnimatedNumberOptionalNumber::Create(this,
-                                                  svg_names::kStdDeviationAttr,
-                                                  0.0f)),
-      in1_(SVGAnimatedString::Create(this, svg_names::kInAttr)) {
+      std_deviation_(MakeGarbageCollected<SVGAnimatedNumberOptionalNumber>(
+          this,
+          svg_names::kStdDeviationAttr,
+          0.0f)),
+      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {
   AddToPropertyMap(std_deviation_);
   AddToPropertyMap(in1_);
 }
@@ -44,8 +44,6 @@ void SVGFEGaussianBlurElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(in1_);
   SVGFilterPrimitiveStandardAttributes::Trace(visitor);
 }
-
-DEFINE_NODE_FACTORY(SVGFEGaussianBlurElement)
 
 void SVGFEGaussianBlurElement::setStdDeviation(float x, float y) {
   stdDeviationX()->BaseValue()->SetValue(x);

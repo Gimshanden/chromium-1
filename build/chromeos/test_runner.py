@@ -5,6 +5,7 @@
 # found in the LICENSE file.
 
 import argparse
+import collections
 import json
 import logging
 import os
@@ -15,6 +16,10 @@ import socket
 import sys
 import tempfile
 
+# The following non-std imports are fetched via vpython. See the list at
+# //.vpython
+import dateutil.parser  # pylint: disable=import-error
+import jsonlines  # pylint: disable=import-error
 import psutil  # pylint: disable=import-error
 
 CHROMIUM_SRC_PATH = os.path.abspath(os.path.join(
@@ -187,7 +192,11 @@ class RemoteTest(object):
       if test_proc.returncode == 0:
         break
 
-    self.post_run(test_proc.returncode)
+    ret = self.post_run(test_proc.returncode)
+    # Allow post_run to override test proc return code. (Useful when the host
+    # side Tast bin returns 0 even for failed tests.)
+    if ret is not None:
+      return ret
     return test_proc.returncode
 
   def post_run(self, return_code):
@@ -214,6 +223,13 @@ class TastTest(RemoteTest):
     self._suite_name = args.suite_name
     self._tests = args.tests
     self._conditional = args.conditional
+
+    if not self._llvm_profile_var and not self._logs_dir:
+      # The host-side Tast bin returns 0 when tests fail, so we need to capture
+      # and parse its json results to reliably determine if tests fail.
+      raise TestFormatError(
+          'When using the host-side Tast bin, "--logs-dir" must be passed in '
+          'order to parse its results.')
 
   @property
   def suite_name(self):
@@ -255,7 +271,8 @@ class TastTest(RemoteTest):
     if self._llvm_profile_var:
       # Build the shell script that will be used on the device to invoke the
       # test.
-      device_test_script_contents = self.BASIC_SHELL_SCRIPT[:] + [
+      device_test_script_contents = self.BASIC_SHELL_SCRIPT[:]
+      device_test_script_contents += [
           'echo "LLVM_PROFILE_FILE=%s" >> /etc/chrome_dev.conf' % (
               self._llvm_profile_var)
       ]
@@ -286,6 +303,11 @@ class TastTest(RemoteTest):
           '--private-key',
           os.path.join(CHROMITE_PATH, 'ssh_keys', 'testing_rsa'),
       ]
+      # Capture tast's results in the logs dir as well.
+      if self._logs_dir:
+        self._test_cmd += [
+            '--results-dir', self._logs_dir,
+        ]
       if self._conditional:
         # Don't use pipes.quote() here. Something funky happens with the arg
         # as it gets passed down from cros_run_test to tast. (Tast picks up the
@@ -296,13 +318,77 @@ class TastTest(RemoteTest):
         self._test_cmd.append('--tast')
         self._test_cmd.extend(self._tests)
 
+  def post_run(self, return_code):
+    # If we don't need to parse the host-side Tast tool's results, fall back to
+    # the parent method's default behavior.
+    if self._llvm_profile_var:
+      return super(TastTest, self).post_run(return_code)
+
+    tast_results_path = os.path.join(self._logs_dir, 'streamed_results.jsonl')
+    if not os.path.exists(tast_results_path):
+      logging.error(
+         'Tast results not found at %s. Falling back to generic result '
+         'reporting.', tast_results_path)
+      return super(TastTest, self).post_run(return_code)
+
+    # See the link below for the format of the results:
+    # https://godoc.org/chromium.googlesource.com/chromiumos/platform/tast.git/src/chromiumos/cmd/tast/run#TestResult
+    with jsonlines.open(tast_results_path) as reader:
+      tast_results = collections.deque(reader)
+
+    suite_results = base_test_result.TestRunResults()
+    for test in tast_results:
+      errors = test['errors']
+      start, end = test['start'], test['end']
+      # Use dateutil to parse the timestamps since datetime can't handle
+      # nanosecond precision.
+      duration = dateutil.parser.parse(end) - dateutil.parser.parse(start)
+      duration_ms = duration.total_seconds() * 1000
+      if bool(test['skipReason']):
+        result = base_test_result.ResultType.SKIP
+      elif errors:
+        result = base_test_result.ResultType.FAIL
+      else:
+        result = base_test_result.ResultType.PASS
+      error_log = ''
+      if errors:
+        # See the link below for the format of these errors:
+        # https://godoc.org/chromium.googlesource.com/chromiumos/platform/tast.git/src/chromiumos/tast/testing#Error
+        for err in errors:
+          error_log += str(err['stack']) + '\n'
+      base_result = base_test_result.BaseTestResult(
+          test['name'], result, duration=duration_ms, log=error_log)
+      suite_results.AddResult(base_result)
+
+    if self._test_launcher_summary_output:
+      with open(self._test_launcher_summary_output, 'w') as f:
+        json.dump(json_results.GenerateResultsDict([suite_results]), f)
+
+    if not suite_results.DidRunPass():
+      return 1
+    elif return_code:
+      logging.warning(
+          'No failed tests found, but exit code of %d was returned from '
+          'cros_run_test.', return_code)
+      return return_code
+    return 0
+
+
 
 class GTestTest(RemoteTest):
 
+  # The following list corresponds to paths that should not be copied over to
+  # the device during tests. In other words, these files are only ever used on
+  # the host.
   _FILE_BLACKLIST = [
+      re.compile(r'.*build/android.*'),
       re.compile(r'.*build/chromeos.*'),
       re.compile(r'.*build/cros_cache.*'),
+      # The following matches anything under //testing/ that isn't under
+      # //testing/buildbot/filters/.
+      re.compile(r'.*testing/(?!buildbot/filters).*'),
       re.compile(r'.*third_party/chromite.*'),
+      re.compile(r'.*tools/swarming_client.*'),
   ]
 
   def __init__(self, args, unknown_args):
@@ -316,6 +402,7 @@ class GTestTest(RemoteTest):
     self._test_launcher_total_shards = args.test_launcher_total_shards
 
     self._on_device_script = None
+    self._stop_ui = args.stop_ui
 
   @property
   def suite_name(self):
@@ -383,9 +470,7 @@ class GTestTest(RemoteTest):
     if self._additional_args:
       test_invocation += ' %s' % ' '.join(self._additional_args)
 
-    if self._test_exe == 'interactive_ui_tests':
-      # interactive_ui_tests needs some special setup. See crbug.com/946685#c4
-      # TODO(bpastene): Put all this behind a flag if more suites need it.
+    if self._stop_ui:
       device_test_script_contents += [
           'stop ui',
       ]
@@ -603,45 +688,46 @@ def setup_env():
   return env
 
 
-def add_common_args(parser):
-  parser.add_argument(
-      '--cros-cache', type=str, default=DEFAULT_CROS_CACHE,
-      help='Path to cros cache.')
-  parser.add_argument(
-      '--path-to-outdir', type=str, required=True,
-      help='Path to output directory, all of whose contents will be '
-           'deployed to the device.')
-  parser.add_argument(
-      '--runtime-deps-path', type=str,
-      help='Runtime data dependency file from GN.')
-  parser.add_argument(
-      '--vpython-dir', type=str,
-      help='Location on host of a directory containing a vpython binary to '
-           'deploy to the device before the test starts. The location of this '
-           'dir will be added onto PATH in the device. WARNING: The arch of '
-           'the device might not match the arch of the host, so avoid using '
-           '"${platform}" when downloading vpython via CIPD.')
-  # TODO(bpastene): Switch all uses of "--vm-logs-dir" to "--logs-dir".
-  parser.add_argument(
-      '--vm-logs-dir', '--logs-dir', type=str, dest='logs_dir',
-      help='Will copy everything under /var/log/ from the device after the '
-           'test into the specified dir.')
+def add_common_args(*parsers):
+  for parser in parsers:
+    parser.add_argument('--verbose', '-v', action='store_true')
+    parser.add_argument(
+        '--board', type=str, required=True, help='Type of CrOS device.')
+    parser.add_argument(
+        '--cros-cache', type=str, default=DEFAULT_CROS_CACHE,
+        help='Path to cros cache.')
+    parser.add_argument(
+        '--path-to-outdir', type=str, required=True,
+        help='Path to output directory, all of whose contents will be '
+             'deployed to the device.')
+    parser.add_argument(
+        '--runtime-deps-path', type=str,
+        help='Runtime data dependency file from GN.')
+    parser.add_argument(
+        '--vpython-dir', type=str,
+        help='Location on host of a directory containing a vpython binary to '
+             'deploy to the device before the test starts. The location of '
+             'this dir will be added onto PATH in the device. WARNING: The '
+             'arch of the device might not match the arch of the host, so '
+             'avoid using "${platform}" when downloading vpython via CIPD.')
+    # TODO(bpastene): Switch all uses of "--vm-logs-dir" to "--logs-dir".
+    parser.add_argument(
+        '--vm-logs-dir', '--logs-dir', type=str, dest='logs_dir',
+        help='Will copy everything under /var/log/ from the device after the '
+             'test into the specified dir.')
+
+    vm_or_device_group = parser.add_mutually_exclusive_group()
+    vm_or_device_group.add_argument(
+        '--use-vm', action='store_true',
+        help='Will run the test in the VM instead of a device.')
+    vm_or_device_group.add_argument(
+        '--device', type=str,
+        help='Hostname (or IP) of device to run the test on. This arg is not '
+             'required if --use-vm is set.')
 
 
 def main():
   parser = argparse.ArgumentParser()
-  parser.add_argument('--verbose', '-v', action='store_true')
-  # Required args.
-  parser.add_argument(
-      '--board', type=str, required=True, help='Type of CrOS device.')
-  vm_or_device_group = parser.add_mutually_exclusive_group()
-  vm_or_device_group.add_argument(
-      '--use-vm', action='store_true',
-      help='Will run the test in the VM instead of a device.')
-  vm_or_device_group.add_argument(
-      '--device', type=str,
-      help='Hostname (or IP) of device to run the test on. This arg is not '
-           'required if --use-vm is set.')
   subparsers = parser.add_subparsers(dest='test_type')
   # Host-side test args.
   host_cmd_parser = subparsers.add_parser(
@@ -650,13 +736,6 @@ def main():
            '"--". If --use-vm is passed, hostname and port for the device '
            'will be 127.0.0.1:9222.')
   host_cmd_parser.set_defaults(func=host_cmd)
-  host_cmd_parser.add_argument(
-      '--cros-cache', type=str, default=DEFAULT_CROS_CACHE,
-      help='Path to cros cache.')
-  host_cmd_parser.add_argument(
-      '--path-to-outdir', type=os.path.realpath,
-      help='Path to output directory, all of whose contents will be deployed '
-           'to the device.')
   host_cmd_parser.add_argument(
       '--deploy-chrome', action='store_true',
       help='Will deploy a locally built Chrome binary to the device before '
@@ -692,6 +771,9 @@ def main():
       '--test-launcher-total-shards',
       type=int, default=os.environ.get('GTEST_TOTAL_SHARDS', 1),
       help='Total number of external shards.')
+  gtest_parser.add_argument(
+      '--stop-ui', action='store_true',
+      help='Will stop the UI service in the device before running the test.')
 
   # Tast test args.
   # pylint: disable=line-too-long
@@ -712,13 +794,12 @@ def main():
   tast_test_parser.add_argument(
       '--conditional', '--attr-expr', type=str, dest='conditional',
       help='A boolean expression whose matching tests will run '
-           '(eg: ("dep:chrome" || "dep:chrome_login")).')
+           '(eg: ("dep:chrome")).')
   tast_test_parser.add_argument(
       '--test', '-t', action='append', dest='tests',
       help='A Tast test to run in the device (eg: "ui.ChromeLogin").')
 
-  add_common_args(gtest_parser)
-  add_common_args(tast_test_parser)
+  add_common_args(gtest_parser, tast_test_parser, host_cmd_parser)
   args, unknown_args = parser.parse_known_args()
 
   logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARN)

@@ -50,9 +50,6 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   // signin but whitelist check fails.
   void ShowWhitelistCheckFailedError();
 
-  // Show unrecoverable cryptohome error dialog.
-  void ShowUnrecoverableCrypthomeErrorDialog();
-
   // Displays detailed error screen for error with ID |error_id|.
   void ShowErrorScreen(LoginDisplay::SigninError error_id);
 
@@ -72,7 +69,7 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   WebUILoginView* GetWebUILoginView() const override;
   void OnFinalize() override;
   void SetStatusAreaVisible(bool visible) override;
-  void StartWizard(OobeScreen first_screen) override;
+  void StartWizard(OobeScreenId first_screen) override;
   WizardController* GetWizardController() override;
   void OnStartUserAdding() override;
   void CancelUserAdding() override;
@@ -86,7 +83,7 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
       const base::Optional<AccountId>& prefilled_account) override;
   void HideOobeDialog() override;
   void UpdateOobeDialogSize(int width, int height) override;
-  void UpdateOobeDialogState(ash::mojom::OobeDialogState state) override;
+  void UpdateOobeDialogState(ash::OobeDialogState state) override;
   const user_manager::UserList GetUsers() override;
   void OnCancelPasswordChangedFlow() override;
   void ShowFeedback() override;
@@ -119,6 +116,9 @@ class LoginDisplayHostMojo : public LoginDisplayHostCommon,
   // AuthStatusConsumer:
   void OnAuthFailure(const AuthFailure& error) override;
   void OnAuthSuccess(const UserContext& user_context) override;
+  void OnPasswordChangeDetected() override;
+  void OnOldEncryptionDetected(const UserContext& user_context,
+                               bool has_incomplete_migration) override;
 
  private:
   void LoadOobeDialog();

@@ -13,9 +13,9 @@ let testName = "environmentBlendMode is correct for a VR device";
 
 let fakeDeviceInitParams = { supportsImmersive:true };
 
-let requestSessionOptions = [
-  { mode: 'inline' },
-  { mode: 'immersive-vr' },
+let requestSessionModes = [
+  'inline',
+  'immersive-vr',
 ];
 
 let testFunction = function(session, t) {
@@ -25,7 +25,7 @@ let testFunction = function(session, t) {
 };
 
 xr_session_promise_test(
-  testFunction, fakeDeviceInitParams, requestSessionOptions, testName);
+  testFunction, fakeDeviceInitParams, requestSessionModes, testName);
 
 // TODO(https://crbug.com/828321): Enable once session options for AR are in place.
 /*xr_session_promise_test( (session, t) => {

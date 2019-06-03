@@ -20,10 +20,9 @@ namespace viz {
 GLOutputSurfaceBufferQueue::GLOutputSurfaceBufferQueue(
     scoped_refptr<VizProcessContextProvider> context_provider,
     gpu::SurfaceHandle surface_handle,
-    SyntheticBeginFrameSource* synthetic_begin_frame_source,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     gfx::BufferFormat buffer_format)
-    : GLOutputSurface(context_provider, synthetic_begin_frame_source) {
+    : GLOutputSurface(context_provider) {
   capabilities_.uses_default_gl_framebuffer = false;
   capabilities_.flipped_output_surface = true;
   // Set |max_frames_pending| to 2 for buffer_queue, which aligns scheduling
@@ -118,6 +117,15 @@ void GLOutputSurfaceBufferQueue::DidReceiveSwapBuffersAck(
 
   if (force_swap)
     client()->SetNeedsRedrawRect(gfx::Rect(swap_size_));
+}
+
+void GLOutputSurfaceBufferQueue::SetDisplayTransformHint(
+    gfx::OverlayTransform transform) {
+  display_transform_ = transform;
+}
+
+gfx::OverlayTransform GLOutputSurfaceBufferQueue::GetDisplayTransform() {
+  return display_transform_;
 }
 
 }  // namespace viz

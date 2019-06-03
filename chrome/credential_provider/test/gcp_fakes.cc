@@ -143,6 +143,9 @@ HRESULT FakeOSUserManager::AddUser(const wchar_t* username,
   if (error)
     *error = 0;
 
+  if (should_fail_user_creation_)
+    return E_FAIL;
+
   bool user_found = username_to_info_.count(username) > 0;
 
   if (user_found) {
@@ -388,6 +391,16 @@ HRESULT FakeOSUserManager::CreateTestOSUser(const base::string16& username,
   return S_OK;
 }
 
+std::vector<std::pair<base::string16, base::string16>>
+FakeOSUserManager::GetUsers() const {
+  std::vector<std::pair<base::string16, base::string16>> users;
+
+  for (auto& kv : username_to_info_)
+    users.emplace_back(std::make_pair(kv.second.sid, kv.first));
+
+  return users;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 FakeScopedLsaPolicyFactory::FakeScopedLsaPolicyFactory()
@@ -597,11 +610,6 @@ FakeAssociatedUserValidator::FakeAssociatedUserValidator(
 
 FakeAssociatedUserValidator::~FakeAssociatedUserValidator() {
   *GetInstanceStorage() = original_validator_;
-}
-
-bool FakeAssociatedUserValidator::IsUserAccessBlocked(
-    const base::string16& sid) const {
-  return locked_user_sids_.find(sid) != locked_user_sids_.end();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

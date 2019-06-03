@@ -43,6 +43,8 @@ class ContentCaptureReceiverManager : public content::WebContentsObserver,
   // The methods called by ContentCaptureReceiver.
   void DidCaptureContent(ContentCaptureReceiver* content_capture_receiver,
                          const ContentCaptureData& data);
+  void DidUpdateContent(ContentCaptureReceiver* content_capture_receiver,
+                        const ContentCaptureData& data);
   void DidRemoveContent(ContentCaptureReceiver* content_capture_receiver,
                         const std::vector<int64_t>& data);
   void DidRemoveSession(ContentCaptureReceiver* content_capture_receiver);
@@ -50,6 +52,8 @@ class ContentCaptureReceiverManager : public content::WebContentsObserver,
   // content::WebContentsObserver:
   void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  void ReadyToCommitNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
   size_t GetFrameMapSizeForTesting() const { return frame_map_.size(); }
 
@@ -60,11 +64,17 @@ class ContentCaptureReceiverManager : public content::WebContentsObserver,
   // received.
   virtual void DidCaptureContent(const ContentCaptureSession& parent_session,
                                  const ContentCaptureData& data) = 0;
+  // Invoked when the updated content |data| from the |parent_session| was
+  // received.
+  virtual void DidUpdateContent(const ContentCaptureSession& parent_session,
+                                const ContentCaptureData& data) = 0;
   // Invoked when the list of content |ids| of the given |session| was removed.
   virtual void DidRemoveContent(const ContentCaptureSession& session,
                                 const std::vector<int64_t>& ids) = 0;
   // Invoked when the given |session| was removed.
   virtual void DidRemoveSession(const ContentCaptureSession& session) = 0;
+
+  virtual bool ShouldCapture(const GURL& url) = 0;
 
  private:
   friend class ContentCaptureReceiverManagerHelper;
@@ -72,7 +82,7 @@ class ContentCaptureReceiverManager : public content::WebContentsObserver,
   // Builds ContentCaptureSession and returns in |session|, |ancestor_only|
   // specifies if only ancestor should be returned in |session|.
   void BuildContentCaptureSession(
-      const ContentCaptureReceiver& content_capture_receiver,
+      ContentCaptureReceiver* content_capture_receiver,
       bool ancestor_only,
       ContentCaptureSession* session);
 

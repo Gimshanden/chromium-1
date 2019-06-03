@@ -508,7 +508,7 @@ std::string WebRtcTestBase::GetStreamSize(
 
 bool WebRtcTestBase::OnWin8OrHigher() const {
 #if defined(OS_WIN)
-  return base::win::GetVersion() >= base::win::VERSION_WIN8;
+  return base::win::GetVersion() >= base::win::Version::WIN8;
 #else
   return false;
 #endif
@@ -582,10 +582,10 @@ double WebRtcTestBase::MeasureGetStatsPerformance(
   return ms;
 }
 
-std::vector<std::string> WebRtcTestBase::GetWhitelistedStatsTypes(
+std::vector<std::string> WebRtcTestBase::GetMandatoryStatsTypes(
     content::WebContents* tab) const {
   return JsonArrayToVectorOfStrings(
-      ExecuteJavascript("getWhitelistedStatsTypes()", tab));
+      ExecuteJavascript("getMandatoryStatsTypes()", tab));
 }
 
 void WebRtcTestBase::SetDefaultAudioCodec(

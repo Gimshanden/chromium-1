@@ -35,13 +35,14 @@
 #include "third_party/blink/renderer/platform/graphics/test/fake_canvas_resource_host.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_web_graphics_context_3d_provider.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/third_party/skcms/skcms.h"
+#include "third_party/skia/include/third_party/skcms/skcms.h"
 
 using testing::_;
 using testing::InSequence;
@@ -231,8 +232,9 @@ void CanvasRenderingContext2DTest::SetUp() {
   StringOrCanvasGradientOrCanvasPattern wrapped_alpha_gradient;
   this->AlphaGradient().SetCanvasGradient(alpha_gradient);
 
-  global_memory_cache_ = ReplaceMemoryCacheForTesting(MemoryCache::Create(
-      blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
+  global_memory_cache_ =
+      ReplaceMemoryCacheForTesting(MakeGarbageCollected<MemoryCache>(
+          blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
 }
 
 void CanvasRenderingContext2DTest::TearDown() {
@@ -655,14 +657,8 @@ TEST_F(CanvasRenderingContext2DTest, ContextDisposedBeforeCanvas) {
   // Passes by not crashing later during teardown
 }
 
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_GetImageDataDisablesAcceleration \
-  DISABLED_GetImageDataDisablesAcceleration
-#else
-#define MAYBE_GetImageDataDisablesAcceleration GetImageDataDisablesAcceleration
-#endif
-
-TEST_F(CanvasRenderingContext2DTest, MAYBE_GetImageDataDisablesAcceleration) {
+TEST_F(CanvasRenderingContext2DTest,
+       DISABLED_GetImageDataDisablesAcceleration) {
   ScopedCanvas2dFixedRenderingModeForTest canvas_2d_fixed_rendering_mode(false);
 
   // This Page is not actually being shown by a compositor, but we act like it

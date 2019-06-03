@@ -35,6 +35,20 @@ cr_slider.SliderTick;
   }
 
   /**
+   * @param {!(cr_slider.SliderTick|number)} tick
+   * @return {number}
+   */
+  function getAriaValue(tick) {
+    if (Number.isFinite(/** @type {number} */ (tick))) {
+      return /** @type {number} */ (tick);
+    } else if (tick.ariaValue != undefined) {
+      return /** @type {number} */ (tick.ariaValue);
+    } else {
+      return tick.value;
+    }
+  }
+
+  /**
    * The following are the events emitted from cr-slider.
    *
    * cr-slider-value-changed: fired when updating slider via the UI.
@@ -70,6 +84,12 @@ cr_slider.SliderTick;
         value: false,
         notify: true,
         reflectToAttribute: true,
+      },
+
+      updatingFromKey: {
+        type: Boolean,
+        value: false,
+        notify: true,
       },
 
       markerCount: {
@@ -118,17 +138,16 @@ cr_slider.SliderTick;
       },
 
       /** @private */
-      holdDown_: {
-        type: Boolean,
-        value: false,
-        observer: 'onHoldDownChanged_',
-        reflectToAttribute: true,
-      },
-
-      /** @private */
       label_: {
         type: String,
         value: '',
+      },
+
+      /** @private */
+      showLabel_: {
+        type: Boolean,
+        value: false,
+        reflectToAttribute: true,
       },
 
       /** @private */
@@ -159,15 +178,15 @@ cr_slider.SliderTick;
 
     observers: [
       'onTicksChanged_(ticks.*)',
-      'updateLabelAndAria_(value, min, max)',
-      'updateKnobAndBar_(value, min, max)',
+      'updateUi_(ticks.*, value, min, max)',
       'updateValue_(value, min, max)',
     ],
 
     listeners: {
-      focus: 'onFocus_',
-      blur: 'onBlur_',
+      blur: 'hideRipple_',
+      focus: 'showRipple_',
       keydown: 'onKeyDown_',
+      keyup: 'onKeyUp_',
       pointerdown: 'onPointerDown_',
     },
 
@@ -240,38 +259,25 @@ cr_slider.SliderTick;
       this.draggingEventTracker_.removeAll();
       this.releasePointerCapture(pointerId);
       this.dragging = false;
-      // If there is a ripple animation in progress, setTimeout will hold off
-      // on updating |holdDown_|.
-      setTimeout(() => {
-        this.holdDown_ = false;
-      });
+      this.hideRipple_();
     },
 
     /** @private */
-    onBlur_: function() {
-      this.holdDown_ = false;
+    hideRipple_: function() {
+      this.getRipple().clear();
+      this.showLabel_ = false;
+    },
+
+    /** @private */
+    showRipple_: function() {
+      this.getRipple().showAndHoldDown();
+      this.showLabel_ = true;
     },
 
     /** @private */
     onDisabledChanged_: function() {
       this.setAttribute('tabindex', this.disabled_ ? -1 : 0);
-      this.$.knob.setAttribute('tabindex', this.disabled_ ? -1 : 0);
       this.blur();
-    },
-
-    /** @private */
-    onFocus_: function() {
-      this.holdDown_ = true;
-
-      if (this.shadowRoot.activeElement == this.$.knob) {
-        return;
-      }
-      this.$.knob.focus();
-    },
-
-    /** @private */
-    onHoldDownChanged_: function() {
-      this.getRipple().holdDown = this.holdDown_;
     },
 
     /**
@@ -301,35 +307,26 @@ cr_slider.SliderTick;
         return;
       }
 
+      this.updatingFromKey = true;
       if (this.updateValue_(newValue)) {
         this.fire('cr-slider-value-changed');
       }
       event.preventDefault();
       event.stopPropagation();
-      setTimeout(() => {
-        this.holdDown_ = true;
-      });
+      this.showRipple_();
     },
 
     /**
-     * This code is taken from cr-input. See https://crbug.com/832177#c31 for
-     * the CL that handles escaping focus from the shadow DOM.
-     * TODO(aee): see if a common behavior can be extracted from cr-slider and
-     *     cr-input with regards to focusing an element in the shadow DOM and
-     *     also being a focusable component. It may be useful for other
-     *     components.
-     * @param {!KeyboardEvent} e
+     * @param {!Event} event
      * @private
      */
-    onKnobKeydown_: function(e) {
-      if (e.shiftKey && e.key === 'Tab') {
-        this.focus();
+    onKeyUp_: function(event) {
+      if (event.key == 'Home' || event.key == 'End' ||
+          this.deltaKeyMap_.has(event.key)) {
+        setTimeout(() => {
+          this.updatingFromKey = false;
+        });
       }
-    },
-
-    /** @private */
-    onKnobTransitionEnd_: function() {
-      this.transiting_ = false;
     },
 
     /**
@@ -347,12 +344,7 @@ cr_slider.SliderTick;
       this.dragging = true;
       this.transiting_ = true;
       this.updateValueFromClientX_(event.clientX);
-      // If there is a ripple animation in progress, setTimeout will hold off on
-      // updating |holdDown_|.
-      setTimeout(() => {
-        this.$.knob.focus();
-        this.holdDown_ = true;
-      });
+      this.showRipple_();
 
       this.setPointerCapture(event.pointerId);
       const stopDragging = this.stopDragging_.bind(this, event.pointerId);
@@ -371,7 +363,8 @@ cr_slider.SliderTick;
       this.draggingEventTracker_.add(this, 'pointerdown', stopDragging);
       this.draggingEventTracker_.add(this, 'pointerup', stopDragging);
       this.draggingEventTracker_.add(this, 'keydown', e => {
-        if (e.key == 'Escape' || e.key == 'Tab') {
+        if (e.key == 'Escape' || e.key == 'Tab' || e.key == 'Home' ||
+            e.key == 'End' || this.deltaKeyMap_.has(e.key)) {
           stopDragging();
         }
       });
@@ -388,51 +381,33 @@ cr_slider.SliderTick;
     },
 
     /** @private */
-    updateKnobAndBar_: function() {
-      const percent = `${this.getRatio() * 100}%`;
-      this.$.bar.style.width = percent;
-      this.$.knob.style.marginInlineStart = percent;
+    onTransitionEnd_: function() {
+      this.transiting_ = false;
     },
 
     /** @private */
-    updateLabelAndAria_: function() {
+    updateUi_: function() {
+      const percent = `${this.getRatio() * 100}%`;
+      this.$.bar.style.width = percent;
+      this.$.knobAndLabel.style.marginInlineStart = percent;
+
       const ticks = this.ticks;
-      const index = this.value;
-      if (!ticks || ticks.length == 0 || index >= ticks.length ||
-          !Number.isInteger(index) || !this.snaps) {
-        this.setAttribute('aria-valuetext', index);
+      const value = this.value;
+      if (ticks && ticks.length > 0 && value >= 0 && value < ticks.length &&
+          Number.isInteger(value)) {
+        const tick = ticks[this.value];
+        this.label_ = Number.isFinite(tick) ? '' : tick.label;
+        const ariaValueNow = getAriaValue(tick);
+        this.setAttribute('aria-valuetext', this.label_ || ariaValueNow);
+        this.setAttribute('aria-valuenow', ariaValueNow);
+        this.setAttribute('aria-valuemin', getAriaValue(ticks[0]));
+        this.setAttribute('aria-valuemax', getAriaValue(ticks.slice(-1)[0]));
+      } else {
+        this.setAttribute('aria-valuetext', value);
+        this.setAttribute('aria-valuenow', value);
         this.setAttribute('aria-valuemin', this.min);
         this.setAttribute('aria-valuemax', this.max);
-        this.setAttribute('aria-valuenow', index);
-        return;
       }
-      const tick = ticks[index];
-      this.label_ = Number.isFinite(tick) ? '' : tick.label;
-
-      // Update label location after it has been rendered.
-      setTimeout(() => {
-        const label = this.$.label;
-        const parentWidth = label.parentElement.offsetWidth;
-        const labelWidth = label.offsetWidth;
-        // The left and right margin are 16px.
-        const margin = 16;
-        const knobLocation = parentWidth * this.getRatio() + margin;
-        const offsetStart = knobLocation - (labelWidth / 2);
-        label.style.marginInlineStart = `${Math.round(offsetStart)}px`;
-      });
-
-      const ariaValues = [tick, ticks[0], ticks[ticks.length - 1]].map(t => {
-        if (Number.isFinite(t)) {
-          return t;
-        }
-        return Number.isFinite(t.ariaValue) ? t.ariaValue : t.value;
-      });
-      this.setAttribute(
-          'aria-valuetext',
-          this.label_.length > 0 ? this.label_ : ariaValues[0]);
-      this.setAttribute('aria-valuenow', ariaValues[0]);
-      this.setAttribute('aria-valuemin', ariaValues[1]);
-      this.setAttribute('aria-valuemax', ariaValues[2]);
     },
 
     /**
@@ -462,7 +437,7 @@ cr_slider.SliderTick;
      * @private
      */
     updateValueFromClientX_: function(clientX) {
-      const rect = this.$.barContainer.getBoundingClientRect();
+      const rect = this.$.container.getBoundingClientRect();
       let ratio = (clientX - rect.left) / rect.width;
       if (this.isRtl_) {
         ratio = 1 - ratio;

@@ -16,12 +16,12 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/timer/elapsed_timer.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/crw_navigation_item_holder.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #include "ios/web/navigation/navigation_item_impl_list.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#include "ios/web/public/features.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/web_state/ui/crw_web_view_navigation_proxy.h"
@@ -298,8 +298,30 @@ void WKBasedNavigationManagerImpl::CommitPendingItem(
     empty_window_open_item_ = std::move(item);
   } else {
     empty_window_open_item_.reset();
-    SetNavigationItemInWKItem(proxy.backForwardList.currentItem,
-                              std::move(item));
+
+    const GURL item_url(item->GetURL());
+    WKBackForwardList* back_forward_list = proxy.backForwardList;
+    if (item_url == net::GURLWithNSURL(back_forward_list.currentItem.URL)) {
+      SetNavigationItemInWKItem(back_forward_list.currentItem, std::move(item));
+    } else {
+      // Sometimes |currentItem.URL| is not updated correctly while the webView
+      // URL is correctly updated. This is a bug in WKWebView. Check to see if
+      // the next or previous item matches, and update that item instead. If
+      // nothing matches, still update the the currentItem.
+      if (item_url == net::GURLWithNSURL(back_forward_list.backItem.URL)) {
+        SetNavigationItemInWKItem(back_forward_list.backItem, std::move(item));
+      } else if (item_url ==
+                 net::GURLWithNSURL(back_forward_list.forwardItem.URL)) {
+        SetNavigationItemInWKItem(back_forward_list.forwardItem,
+                                  std::move(item));
+      } else {
+        // Otherwise default here. This can happen when restoring an NTP, since
+        // |back_forward_list.currentItem.URL| doesn't get updated when going
+        // from a file:// scheme to about:// scheme.
+        SetNavigationItemInWKItem(back_forward_list.currentItem,
+                                  std::move(item));
+      }
+    }
   }
 
   pending_item_index_ = -1;
@@ -663,6 +685,7 @@ void WKBasedNavigationManagerImpl::AddRestoreCompletionCallback(
 void WKBasedNavigationManagerImpl::LoadIfNecessary() {
   if (!web_view_cache_.IsAttachedToWebView()) {
     // Loading from detached mode is equivalent to restoring cached history.
+    // This can happen after clearing browsing data by removing the web view.
     Restore(web_view_cache_.GetCurrentItemIndex(),
             web_view_cache_.ReleaseCachedItems());
     DCHECK(web_view_cache_.IsAttachedToWebView());
@@ -817,6 +840,13 @@ void WKBasedNavigationManagerImpl::WKWebViewCache::DetachFromWebView() {
     for (size_t index = 0; index < GetBackForwardListItemCount(); index++) {
       cached_items_[index].reset(new NavigationItemImpl(
           *GetNavigationItemImplAtIndex(index, true /* create_if_missing */)));
+      // Don't put restore URL's into |cached_items|, extract them first.
+      GURL url = cached_items_[index]->GetURL();
+      if (wk_navigation_util::IsRestoreSessionUrl(url)) {
+        GURL extracted_url;
+        if (wk_navigation_util::ExtractTargetURL(url, &extracted_url))
+          cached_items_[index]->SetURL(extracted_url);
+      }
     }
   }
   attached_to_web_view_ = false;

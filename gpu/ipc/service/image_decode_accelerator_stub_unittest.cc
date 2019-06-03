@@ -5,17 +5,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/atomicops.h"
 #include "base/bind.h"
 #include "base/containers/queue.h"
+#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/numerics/checked_math.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
 #include "cc/paint/image_transfer_cache_entry.h"
@@ -30,6 +31,7 @@
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/decoder_context.h"
+#include "gpu/command_buffer/service/image_factory.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/sequence_id.h"
@@ -46,14 +48,18 @@
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/gpu_channel_test_common.h"
+#include "gpu/ipc/service/image_decode_accelerator_stub.h"
 #include "gpu/ipc/service/image_decode_accelerator_worker.h"
 #include "ipc/ipc_message.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/skia/include/core/SkImage.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkSize.h"
+#include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_image_stub.h"
 #include "url/gurl.h"
 
 using testing::InSequence;
@@ -73,6 +79,34 @@ scoped_refptr<Buffer> MakeBufferForTesting() {
   return MakeMemoryBuffer(sizeof(base::subtle::Atomic32));
 }
 
+// This ImageFactory is defined so that we don't have to generate a real
+// GpuMemoryBuffer with decoded data in these tests.
+class TestImageFactory : public ImageFactory {
+ public:
+  TestImageFactory() = default;
+  ~TestImageFactory() override = default;
+
+  // ImageFactory implementation.
+  scoped_refptr<gl::GLImage> CreateImageForGpuMemoryBuffer(
+      gfx::GpuMemoryBufferHandle handle,
+      const gfx::Size& size,
+      gfx::BufferFormat format,
+      int client_id,
+      SurfaceHandle surface_handle) override {
+    return base::MakeRefCounted<gl::GLImageStub>();
+  }
+  bool SupportsCreateAnonymousImage() const override { return false; }
+  scoped_refptr<gl::GLImage> CreateAnonymousImage(const gfx::Size& size,
+                                                  gfx::BufferFormat format,
+                                                  gfx::BufferUsage usage,
+                                                  bool* is_cleared) override {
+    NOTREACHED();
+    return nullptr;
+  }
+  unsigned RequiredTextureType() override { return GL_TEXTURE_EXTERNAL_OES; }
+  bool SupportsFormatRGB() override { return false; }
+};
+
 }  // namespace
 
 // This mock allows individual tests to decide asynchronously when to finish a
@@ -83,7 +117,7 @@ class MockImageDecodeAcceleratorWorker : public ImageDecodeAcceleratorWorker {
 
   void Decode(std::vector<uint8_t> encoded_data,
               const gfx::Size& output_size,
-              CompletedDecodeCB decode_cb) {
+              CompletedDecodeCB decode_cb) override {
     pending_decodes_.push(PendingDecode{output_size, std::move(decode_cb)});
     DoDecode(output_size);
   }
@@ -94,19 +128,21 @@ class MockImageDecodeAcceleratorWorker : public ImageDecodeAcceleratorWorker {
     PendingDecode next_decode = std::move(pending_decodes_.front());
     pending_decodes_.pop();
     if (success) {
-      base::CheckedNumeric<size_t> row_bytes = 4u;
-      row_bytes *= next_decode.output_size.width();
-      base::CheckedNumeric<size_t> rgba_bytes = row_bytes;
-      rgba_bytes *= next_decode.output_size.height();
-      std::vector<uint8_t> rgba_output(rgba_bytes.ValueOrDie(), 0u);
-      std::move(next_decode.decode_cb)
-          .Run(std::move(rgba_output), row_bytes.ValueOrDie(),
-               SkImageInfo::Make(next_decode.output_size.width(),
-                                 next_decode.output_size.height(),
-                                 kRGBA_8888_SkColorType, kOpaque_SkAlphaType));
+      // We give out a dummy GpuMemoryBufferHandle as the result: since we mock
+      // the ImageFactory and the gl::GLImage in these tests, the only
+      // requirement is that the NativePixmapHandle has 3 planes.
+      auto decode_result = std::make_unique<DecodeResult>();
+      decode_result->handle.type = gfx::GpuMemoryBufferType::NATIVE_PIXMAP;
+      for (size_t plane = 0; plane < 3u; plane++) {
+        decode_result->handle.native_pixmap_handle.planes.emplace_back(
+            0 /* stride */, 0 /* offset */, 0 /* size */, base::ScopedFD());
+      }
+      decode_result->visible_size = next_decode.output_size;
+      decode_result->buffer_format = gfx::BufferFormat::YVU_420;
+      decode_result->buffer_byte_size = 0u;
+      std::move(next_decode.decode_cb).Run(std::move(decode_result));
     } else {
-      std::move(next_decode.decode_cb)
-          .Run(std::vector<uint8_t>(), 0u, SkImageInfo());
+      std::move(next_decode.decode_cb).Run(nullptr);
     }
   }
 
@@ -167,6 +203,7 @@ class ImageDecodeAcceleratorStubTest : public GpuChannelTestCommon {
 
   void SetUp() override {
     GpuChannelTestCommon::SetUp();
+
     // TODO(andrescj): get rid of the |feature_list_| when the feature is
     // enabled by default.
     feature_list_.InitAndEnableFeature(
@@ -185,6 +222,9 @@ class ImageDecodeAcceleratorStubTest : public GpuChannelTestCommon {
 
     GpuChannel* channel = CreateChannel(kChannelId, false /* is_gpu_host */);
     ASSERT_TRUE(channel);
+    ASSERT_TRUE(channel->GetImageDecodeAcceleratorStub());
+    channel->GetImageDecodeAcceleratorStub()->SetImageFactoryForTesting(
+        &image_factory_);
 
     // Create a raster command buffer so that the ImageDecodeAcceleratorStub can
     // have access to a TransferBufferManager. Note that we mock the
@@ -352,6 +392,11 @@ class ImageDecodeAcceleratorStubTest : public GpuChannelTestCommon {
           transfer_cache->GetEntry(ServiceTransferCache::EntryKey(
               raster_decoder_id, cc::TransferCacheEntryType::kImage, i + 1)));
       ASSERT_TRUE(decode_entry);
+      ASSERT_EQ(3u, decode_entry->plane_images().size());
+      for (size_t plane = 0; plane < 3u; plane++) {
+        ASSERT_TRUE(decode_entry->plane_images()[plane]);
+        EXPECT_TRUE(decode_entry->plane_images()[plane]->isTextureBacked());
+      }
       ASSERT_TRUE(decode_entry->image());
       EXPECT_EQ(expected_sizes[i].width(),
                 decode_entry->image()->dimensions().width());
@@ -364,6 +409,7 @@ class ImageDecodeAcceleratorStubTest : public GpuChannelTestCommon {
   StrictMock<MockImageDecodeAcceleratorWorker> image_decode_accelerator_worker_;
 
  private:
+  TestImageFactory image_factory_;
   base::test::ScopedFeatureList feature_list_;
   base::WeakPtrFactory<ImageDecodeAcceleratorStubTest> weak_ptr_factory_;
 
@@ -644,5 +690,7 @@ TEST_F(ImageDecodeAcceleratorStubTest, WaitForDiscardableHandleRegistration) {
   // Check that the decoded images are in the transfer cache.
   CheckTransferCacheEntries({SkISize::Make(100, 100)});
 }
+
+// TODO(andrescj): test the deletion of transfer cache entries.
 
 }  // namespace gpu

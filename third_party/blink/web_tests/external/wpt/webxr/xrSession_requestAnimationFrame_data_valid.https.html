@@ -28,7 +28,6 @@
     };
 
     const fakeDeviceInitOptions = { supportsImmersive:true };
-    const sessionOptions = { mode: 'immersive-vr' };
 
     let testSession;
 
@@ -44,7 +43,7 @@
 
     let testFunction = function(session, testDeviceController) {
       testSession = session;
-      return session.requestReferenceSpace({ type: 'stationary', subtype: 'eye-level' })
+      return session.requestReferenceSpace('local')
         .then((referenceSpace) => new Promise((resolve) => {
 
           function onFrame(time, xrFrame) {
@@ -77,6 +76,6 @@
     }
 
     xr_session_promise_test(
-      testName, testFunction, fakeDeviceInitOptions, sessionOptions);
+      testName, testFunction, fakeDeviceInitOptions, 'immersive-vr');
   </script>
 </body>

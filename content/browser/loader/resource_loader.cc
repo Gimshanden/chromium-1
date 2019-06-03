@@ -22,7 +22,6 @@
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
-#include "content/browser/service_worker/service_worker_response_info.h"
 #include "content/browser/ssl/ssl_client_auth_handler.h"
 #include "content/browser/ssl/ssl_manager.h"
 #include "content/public/browser/content_browser_client.h"
@@ -91,6 +90,9 @@ void PopulateResourceResponse(
   response->head.network_accessed = response_info.network_accessed;
   response->head.async_revalidation_requested =
       response_info.async_revalidation_requested;
+  response->head.was_in_prefetch_cache =
+      !(request->load_flags() & net::LOAD_PREFETCH) &&
+      response_info.unused_since_prefetch;
   if (info->ShouldReportRawHeaders()) {
     response->head.raw_request_response_info =
         network::BuildRawRequestResponseInfo(*request, raw_request_headers,
@@ -100,7 +102,7 @@ void PopulateResourceResponse(
   response->head.effective_connection_type =
       net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN;
 
-  if (info->GetResourceType() == RESOURCE_TYPE_MAIN_FRAME) {
+  if (info->GetResourceType() == ResourceType::kMainFrame) {
     DCHECK(info->IsMainFrame());
     net::NetworkQualityEstimator* estimator =
         request->context()->network_quality_estimator();
@@ -110,10 +112,6 @@ void PopulateResourceResponse(
     }
   }
 
-  const ServiceWorkerResponseInfo* service_worker_info =
-      ServiceWorkerResponseInfo::ForRequest(request);
-  if (service_worker_info)
-    service_worker_info->GetExtraResponseInfo(&response->head);
   response->head.appcache_id = blink::mojom::kAppCacheNoCacheId;
   AppCacheInterceptor::GetExtraResponseInfo(
       request, &response->head.appcache_id,
@@ -140,6 +138,7 @@ void PopulateResourceResponse(
     DCHECK_EQ(request->ssl_info().peer_signature_algorithm, 0);
     DCHECK_EQ(request->ssl_info().connection_status, 0);
   }
+  response->head.auth_challenge_info = request->auth_challenge_info();
 }
 
 }  // namespace
@@ -403,7 +402,7 @@ void ResourceLoader::OnReceivedRedirect(net::URLRequest* unused,
 }
 
 void ResourceLoader::OnAuthRequired(net::URLRequest* unused,
-                                    net::AuthChallengeInfo* auth_info) {
+                                    const net::AuthChallengeInfo& auth_info) {
   DCHECK_EQ(request_.get(), unused);
 
   ResourceRequestInfoImpl* info = GetRequestInfo();
@@ -447,13 +446,15 @@ void ResourceLoader::OnCertificateRequested(
 }
 
 void ResourceLoader::OnSSLCertificateError(net::URLRequest* request,
+                                           int net_error,
                                            const net::SSLInfo& ssl_info,
                                            bool fatal) {
   ResourceRequestInfoImpl* info = GetRequestInfo();
 
   SSLManager::OnSSLCertificateError(
-      weak_ptr_factory_.GetWeakPtr(), info->GetResourceType(), request_->url(),
-      info->GetWebContentsGetterForRequest(), ssl_info, fatal);
+      weak_ptr_factory_.GetWeakPtr(),
+      info->GetResourceType() == ResourceType::kMainFrame, request_->url(),
+      info->GetWebContentsGetterForRequest(), net_error, ssl_info, fatal);
 }
 
 void ResourceLoader::OnResponseStarted(net::URLRequest* unused, int net_error) {
@@ -642,7 +643,7 @@ void ResourceLoader::CancelRequestInternal(int error, bool from_renderer) {
   // WebKit will send us a cancel for downloads since it no longer handles
   // them.  In this case, ignore the cancel since we handle downloads in the
   // browser.
-  if (from_renderer && (info->IsDownload() || info->is_stream()))
+  if (from_renderer && info->IsDownload())
     return;
 
   if (from_renderer && info->detachable_handler()) {

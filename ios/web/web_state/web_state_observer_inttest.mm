@@ -16,14 +16,16 @@
 #import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "ios/testing/embedded_test_server_handlers.h"
+#include "ios/web/common/features.h"
+#include "ios/web/navigation/web_kit_constants.h"
 #include "ios/web/navigation/wk_navigation_util.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_storage.h"
-#include "ios/web/public/features.h"
+#import "ios/web/public/deprecated/crw_native_content_holder.h"
+#import "ios/web/public/deprecated/test_native_content.h"
+#import "ios/web/public/deprecated/test_native_content_provider.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/test/fakes/test_native_content.h"
-#import "ios/web/public/test/fakes/test_native_content_provider.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
 #include "ios/web/public/test/fakes/test_web_state_observer.h"
 #import "ios/web/public/test/navigation_test_util.h"
 #import "ios/web/public/test/web_view_content_test_util.h"
@@ -35,7 +37,6 @@
 #include "ios/web/test/test_url_constants.h"
 #import "ios/web/test/web_int_test.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
-#include "ios/web/web_state/ui/web_kit_constants.h"
 #import "ios/web/web_state/web_state_impl.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/http/http_response_headers.h"
@@ -866,7 +867,8 @@ class WebStateObserverTest
                                            virtualURL:GURL::EmptyGURL()];
 
     WebStateImpl* web_state_impl = reinterpret_cast<WebStateImpl*>(web_state());
-    web_state_impl->GetWebController().nativeProvider = provider_;
+    [web_state_impl->GetWebController() nativeContentHolder].nativeProvider =
+        provider_;
 
     test_server_ = std::make_unique<EmbeddedTestServer>();
     test_server_->RegisterRequestHandler(
@@ -1901,13 +1903,6 @@ TEST_P(WebStateObserverTest, ForwardPostNavigation) {
       .WillOnce(Return(true));
 
   EXPECT_CALL(observer_, DidStartNavigation(web_state(), _));
-  if (@available(iOS 12.2, *)) {
-    // ShouldAllowResponse is called on iOS 12.0 and iOS 12.1,
-    // but not on iOS 12.2 or iOS 11.
-  } else if (@available(iOS 12, *)) {
-    EXPECT_CALL(*decider_, ShouldAllowResponse(_, /*for_main_frame=*/true))
-        .WillOnce(Return(true));
-  }
   EXPECT_CALL(observer_, DidFinishNavigation(web_state(), _));
   EXPECT_CALL(observer_, TitleWasSet(web_state()))
       .WillOnce(VerifyTitle(url.GetContent()));
@@ -2041,13 +2036,13 @@ TEST_P(WebStateObserverTest, DownloadNavigation) {
 }
 
 // Tests failed load after the navigation is sucessfully finished.
-// TODO(crbug.com/845879): test is flaky (probably since crrev.com/1056203).
+// TODO(crbug.com/954232): this test is flaky on device.
 #if TARGET_IPHONE_SIMULATOR
 #define MAYBE_FailedLoad FailedLoad
 #else
 #define MAYBE_FailedLoad FLAKY_FailedLoad
 #endif
-TEST_P(WebStateObserverTest, FLAKY_FailedLoad) {
+TEST_P(WebStateObserverTest, MAYBE_FailedLoad) {
   GURL url = test_server_->GetURL("/exabyte_response");
 
   NavigationContext* context = nullptr;
@@ -2443,6 +2438,8 @@ TEST_P(WebStateObserverTest, RestoreSession) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
+
   StrictMock<WebStateObserverMock> observer;
   ScopedObserver<WebState, WebStateObserver> scoped_observer(&observer);
   scoped_observer.Add(web_state.get());
@@ -2484,13 +2481,7 @@ TEST_P(WebStateObserverTest, RestoreSession) {
 
 // Tests callbacks for restoring session and subsequently going back to
 // about:blank.
-// TODO(crbug.com/944803): Test is flaky on iPhone and iPad devices.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_RestoreSessionOnline RestoreSessionOnline
-#else
-#define MAYBE_RestoreSessionOnline FLAKY_RestoreSessionOnline
-#endif
-TEST_P(WebStateObserverTest, MAYBE_RestoreSessionOnline) {
+TEST_P(WebStateObserverTest, RestoreSessionOnline) {
   // LegacyNavigationManager doesn't trigger load in Restore.
   if (!GetWebClient()->IsSlimNavigationManagerEnabled()) {
     return;
@@ -2563,15 +2554,6 @@ TEST_P(WebStateObserverTest, MAYBE_RestoreSessionOnline) {
   EXPECT_CALL(observer_, DidChangeBackForwardState(web_state())).Times(1);
 
   // Load restore_session.html?targetUrl=url0.
-  EXPECT_CALL(*decider_,
-              ShouldAllowRequest(URLMatch(CreateRedirectUrl(url0)), _))
-      .WillOnce(Return(true));
-  EXPECT_CALL(*decider_, ShouldAllowResponse(URLMatch(CreateRedirectUrl(url0)),
-                                             /*for_main_frame=*/true))
-      .WillOnce(Return(true));
-
-  // decide policy for restore_session.html?targetUrl=url0 again due to reload
-  // in onpopstate().
   EXPECT_CALL(*decider_,
               ShouldAllowRequest(URLMatch(CreateRedirectUrl(url0)), _))
       .WillOnce(Return(true));

@@ -102,16 +102,21 @@ bool ChromeClient::CanOpenUIElementIfDuringPageDismissal(
 Page* ChromeClient::CreateWindow(
     LocalFrame* frame,
     const FrameLoadRequest& r,
+    const AtomicString& frame_name,
     const WebWindowFeatures& features,
-    SandboxFlags sandbox_flags,
+    WebSandboxFlags sandbox_flags,
     const FeaturePolicy::FeatureState& opener_feature_state,
     const SessionStorageNamespaceId& session_storage_namespace_id) {
+// This feature is being disabled on trunk but an easily-merged CL is needed for
+// merging back to stable. https://crbug.com/936080
+#if 0
   if (!CanOpenUIElementIfDuringPageDismissal(
           frame->Tree().Top(), UIElementType::kPopup, g_empty_string)) {
     return nullptr;
   }
+#endif
 
-  return CreateWindowDelegate(frame, r, features, sandbox_flags,
+  return CreateWindowDelegate(frame, r, frame_name, features, sandbox_flags,
                               opener_feature_state,
                               session_storage_namespace_id);
 }
@@ -256,7 +261,7 @@ bool ChromeClient::Print(LocalFrame* frame) {
     return false;
   }
 
-  if (frame->GetDocument()->IsSandboxed(kSandboxModals)) {
+  if (frame->GetDocument()->IsSandboxed(WebSandboxFlags::kModals)) {
     UseCounter::Count(frame->GetDocument(),
                       WebFeature::kDialogInSandboxedContext);
     frame->Console().AddMessage(ConsoleMessage::Create(

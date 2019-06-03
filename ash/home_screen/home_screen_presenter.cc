@@ -34,8 +34,7 @@ constexpr base::TimeDelta kOverviewAnimationDuration =
     base::TimeDelta::FromMilliseconds(250);
 
 void UpdateOverviewSettings(ui::AnimationMetricsReporter* reporter,
-                            ui::ScopedLayerAnimationSettings* settings,
-                            bool observe) {
+                            ui::ScopedLayerAnimationSettings* settings) {
   settings->SetTransitionDuration(kOverviewAnimationDuration);
   settings->SetTweenType(gfx::Tween::FAST_OUT_SLOW_IN);
   settings->SetPreemptionStrategy(
@@ -103,6 +102,9 @@ void HomeScreenPresenter::ScheduleOverviewModeAnimation(bool start,
                                                         bool animate) {
   // If animating, set the source parameters first.
   if (animate) {
+    controller_->delegate()->NotifyHomeLauncherAnimationTransition(
+        HomeScreenDelegate::AnimationTrigger::kOverviewMode,
+        /*launcher_will_show=*/!start);
     controller_->delegate()->UpdateYPositionAndOpacityForHomeLauncher(
         start ? 0 : kOverviewAnimationYOffset, start ? 1.f : 0.f,
         base::NullCallback());

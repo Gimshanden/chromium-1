@@ -17,6 +17,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -34,6 +35,7 @@
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/public/web/web_user_gesture_indicator.h"
 #include "third_party/blink/public/web/web_view.h"
+#include "ui/accessibility/accessibility_switches.h"
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_event.h"
 #include "ui/accessibility/ax_node.h"
@@ -70,6 +72,13 @@ void SetAccessibilityCrashKey(ui::AXMode mode) {
       "ax_mode", base::debug::CrashKeySize::Size64);
   if (ax_mode_crash_key)
     base::debug::SetCrashKeyString(ax_mode_crash_key, mode.ToString());
+}
+
+// Returns the first language in the accept languages list.
+std::string GetPreferredLanguage(const std::string& accept_languages) {
+  const std::vector<std::string> tokens = base::SplitString(
+      accept_languages, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  return tokens.empty() ? "" : tokens[0];
 }
 }
 
@@ -123,13 +132,13 @@ RenderAccessibilityImpl::RenderAccessibilityImpl(RenderFrameImpl* render_frame,
                                                  ui::AXMode mode)
     : RenderFrameObserver(render_frame),
       render_frame_(render_frame),
+      pref_watcher_binding_(this),
       tree_source_(render_frame, mode),
       serializer_(&tree_source_),
       plugin_tree_source_(nullptr),
       last_scroll_offset_(gfx::Size()),
       ack_pending_(false),
       reset_token_(0),
-      during_action_(false),
       weak_factory_(this) {
   ack_token_ = g_next_ack_token++;
   WebView* web_view = render_frame_->GetRenderView()->GetWebView();
@@ -159,6 +168,17 @@ RenderAccessibilityImpl::RenderAccessibilityImpl(RenderFrameImpl* render_frame,
     HandleAXEvent(WebAXObject::FromWebDocument(document),
                   ax::mojom::Event::kLayoutComplete);
   }
+
+  image_annotation_debugging_ =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          ::switches::kEnableExperimentalAccessibilityLabelsDebugging);
+
+  blink::mojom::RendererPreferenceWatcherPtr pref_watcher_ptr;
+  pref_watcher_binding_.Bind(mojo::MakeRequest(&pref_watcher_ptr));
+
+  if (render_frame->render_view())
+    render_frame_->render_view()->RegisterRendererPreferenceWatcher(
+        std::move(pref_watcher_ptr));
 }
 
 RenderAccessibilityImpl::~RenderAccessibilityImpl() = default;
@@ -172,6 +192,7 @@ void RenderAccessibilityImpl::DidCreateNewDocument() {
 void RenderAccessibilityImpl::DidCommitProvisionalLoad(
     bool is_same_document_navigation,
     ui::PageTransition transition) {
+  has_injected_stylesheet_ = false;
   // Remove the image annotator if the page is loading and it was added for
   // the one-shot image annotation (i.e. AXMode for image annotation is not
   // set).
@@ -231,7 +252,6 @@ void RenderAccessibilityImpl::AccessibilityModeChanged() {
 
 bool RenderAccessibilityImpl::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
-  during_action_ = true;
   IPC_BEGIN_MESSAGE_MAP(RenderAccessibilityImpl, message)
 
     IPC_MESSAGE_HANDLER(AccessibilityMsg_PerformAction, OnPerformAction)
@@ -241,21 +261,28 @@ bool RenderAccessibilityImpl::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(AccessibilityMsg_FatalError, OnFatalError)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
-  during_action_ = false;
   return handled;
+}
+
+void RenderAccessibilityImpl::NotifyUpdate(
+    blink::mojom::RendererPreferencesPtr new_prefs) {
+  if (ax_image_annotator_)
+    ax_image_annotator_->set_preferred_language(
+        GetPreferredLanguage(new_prefs->accept_languages));
 }
 
 void RenderAccessibilityImpl::HandleWebAccessibilityEvent(
     const WebAXObject& obj,
-    ax::mojom::Event event) {
-  HandleAXEvent(obj, event);
+    ax::mojom::Event event,
+    ax::mojom::EventFrom event_from) {
+  HandleAXEvent(obj, event, event_from);
 }
 
 void RenderAccessibilityImpl::MarkWebAXObjectDirty(const WebAXObject& obj,
                                                    bool subtree) {
   DirtyObject dirty_object;
   dirty_object.obj = obj;
-  dirty_object.event_from = GetEventFrom();
+  dirty_object.event_from = ax::mojom::EventFrom::kAction;
   dirty_objects_.push_back(dirty_object);
 
   if (subtree)
@@ -281,13 +308,13 @@ void RenderAccessibilityImpl::HandleAccessibilityFindInPageResult(
   Send(new AccessibilityHostMsg_FindInPageResult(routing_id(), params));
 }
 
-void RenderAccessibilityImpl::AccessibilityFocusedNodeChanged(
-    const WebNode& node) {
+void RenderAccessibilityImpl::AccessibilityFocusedElementChanged(
+    const WebElement& element) {
   const WebDocument& document = GetMainDocument();
   if (document.IsNull())
     return;
 
-  if (node.IsNull()) {
+  if (element.IsNull()) {
     // When focus is cleared, implicitly focus the document.
     // TODO(dmazzoni): Make Blink send this notification instead.
     HandleAXEvent(WebAXObject::FromWebDocument(document),
@@ -297,6 +324,7 @@ void RenderAccessibilityImpl::AccessibilityFocusedNodeChanged(
 
 void RenderAccessibilityImpl::HandleAXEvent(const WebAXObject& obj,
                                             ax::mojom::Event event,
+                                            ax::mojom::EventFrom event_from,
                                             int action_request_id) {
   const WebDocument& document = GetMainDocument();
   if (document.IsNull())
@@ -313,7 +341,8 @@ void RenderAccessibilityImpl::HandleAXEvent(const WebAXObject& obj,
       last_scroll_offset_ = scroll_offset;
       auto webax_object = WebAXObject::FromWebDocument(document);
       if (!obj.Equals(webax_object)) {
-        HandleAXEvent(webax_object, ax::mojom::Event::kLayoutComplete);
+        HandleAXEvent(webax_object, ax::mojom::Event::kLayoutComplete,
+                      event_from);
       }
     }
   }
@@ -351,7 +380,7 @@ void RenderAccessibilityImpl::HandleAXEvent(const WebAXObject& obj,
   ui::AXEvent acc_event;
   acc_event.id = obj.AxID();
   acc_event.event_type = event;
-  acc_event.event_from = GetEventFrom();
+  acc_event.event_from = event_from;
   acc_event.action_request_id = action_request_id;
 
   // Discard duplicate accessibility events.
@@ -385,18 +414,6 @@ void RenderAccessibilityImpl::ScheduleSendAccessibilityEventsIfNeeded() {
                        &RenderAccessibilityImpl::SendPendingAccessibilityEvents,
                        weak_factory_.GetWeakPtr()));
   }
-}
-
-ax::mojom::EventFrom RenderAccessibilityImpl::GetEventFrom() {
-  if (blink::WebUserGestureIndicator::IsProcessingUserGesture(
-          render_frame_->GetWebFrame())) {
-    return ax::mojom::EventFrom::kUser;
-  }
-
-  if (during_action_)
-    return ax::mojom::EventFrom::kAction;
-
-  return ax::mojom::EventFrom::kPage;
 }
 
 int RenderAccessibilityImpl::GenerateAXID() {
@@ -455,7 +472,7 @@ void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
   TRACE_EVENT0("accessibility",
                "RenderAccessibilityImpl::SendPendingAccessibilityEvents");
 
-  const WebDocument& document = GetMainDocument();
+  WebDocument document = GetMainDocument();
   if (document.IsNull())
     return;
 
@@ -533,6 +550,21 @@ void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
     dirty_objects.push_back(dirty_object);
   }
 
+  // Popups have a document lifecycle managed separately from the main document
+  // but we need to return a combined accessibility tree for both.
+  // We ensured layout validity for the main document in the loop above; if a
+  // popup is open, do the same for it.
+  WebDocument popup_document = GetPopupDocument();
+  if (!popup_document.IsNull()) {
+    WebAXObject popup_root_obj = WebAXObject::FromWebDocument(popup_document);
+    if (!popup_root_obj.UpdateLayoutAndCheckValidity()) {
+      // If a popup is open but we can't ensure its validity, return without
+      // sending an update bundle, the same as we would for a node in the main
+      // document.
+      return;
+    }
+  }
+
   // Keep track of if the host node for a plugin has been invalidated,
   // because if so, the plugin subtree will need to be re-serialized.
   bool invalidate_plugin_subtree = false;
@@ -593,6 +625,12 @@ void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
 
   if (had_layout_complete_messages)
     SendLocationChanges();
+
+  if (had_load_complete_messages)
+    has_injected_stylesheet_ = false;
+
+  if (image_annotation_debugging_)
+    AddImageAnnotationDebuggingAttributes(bundle.updates);
 }
 
 void RenderAccessibilityImpl::SendLocationChanges() {
@@ -714,13 +752,8 @@ void RenderAccessibilityImpl::OnPerformAction(
           WebPoint(data.target_point.x(), data.target_point.y()));
       break;
     case ax::mojom::Action::kSetSelection:
-      if (base::FeatureList::IsEnabled(features::kNewAccessibilitySelection)) {
         anchor.SetSelection(anchor, data.anchor_offset, focus,
                             data.focus_offset);
-      } else {
-        anchor.SetSelectionDeprecated(anchor, data.anchor_offset, focus,
-                                      data.focus_offset);
-      }
       HandleAXEvent(root, ax::mojom::Event::kLayoutComplete);
       break;
     case ax::mojom::Action::kSetSequentialFocusNavigationStartingPoint:
@@ -757,14 +790,15 @@ void RenderAccessibilityImpl::OnPerformAction(
         MarkAllAXObjectsDirty(ax::mojom::Role::kImage);
       }
       break;
-    case ax::mojom::Action::kShowTooltip:
-    case ax::mojom::Action::kHideTooltip:
-      break;
     case ax::mojom::Action::kSignalEndOfTest:
       // Wait for 100ms to allow pending events to come in
       base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
 
       HandleAXEvent(root, ax::mojom::Event::kEndOfTest);
+      break;
+    case ax::mojom::Action::kShowTooltip:
+    case ax::mojom::Action::kHideTooltip:
+    case ax::mojom::Action::kInternalInvalidateTree:
       break;
   }
 }
@@ -816,7 +850,8 @@ void RenderAccessibilityImpl::OnHitTest(const gfx::Point& point,
   }
 
   // Otherwise, send an event on the node that was hit.
-  HandleAXEvent(obj, event_to_fire, action_request_id);
+  HandleAXEvent(obj, event_to_fire, ax::mojom::EventFrom::kAction,
+                action_request_id);
 }
 
 void RenderAccessibilityImpl::OnLoadInlineTextBoxes(const WebAXObject& obj) {
@@ -918,8 +953,14 @@ void RenderAccessibilityImpl::CreateAXImageAnnotator() {
   image_annotation::mojom::AnnotatorPtr annotator_ptr;
   render_frame()->GetRemoteInterfaces()->GetInterface(
       mojo::MakeRequest(&annotator_ptr));
-  ax_image_annotator_ =
-      std::make_unique<AXImageAnnotator>(this, std::move(annotator_ptr));
+
+  const std::string preferred_language =
+      render_frame()->render_view()
+          ? GetPreferredLanguage(
+                render_frame()->render_view()->GetAcceptLanguages())
+          : std::string();
+  ax_image_annotator_ = std::make_unique<AXImageAnnotator>(
+      this, preferred_language, std::move(annotator_ptr));
   tree_source_.AddImageAnnotator(ax_image_annotator_.get());
 }
 
@@ -1087,6 +1128,86 @@ void RenderAccessibilityImpl::RecordImageMetrics(AXContentTreeUpdate* update) {
           "Accessibility.ScreenReader.Image.MinSize.Unlabeled", min_size);
     }
   }
+}
+
+void RenderAccessibilityImpl::AddImageAnnotationDebuggingAttributes(
+    const std::vector<AXContentTreeUpdate>& updates) {
+  DCHECK(image_annotation_debugging_);
+
+  for (auto& update : updates) {
+    for (auto& node : update.nodes) {
+      if (!node.HasIntAttribute(
+              ax::mojom::IntAttribute::kImageAnnotationStatus))
+        continue;
+
+      ax::mojom::ImageAnnotationStatus status = node.GetImageAnnotationStatus();
+      bool should_set_attributes = false;
+      switch (status) {
+        case ax::mojom::ImageAnnotationStatus::kNone:
+        case ax::mojom::ImageAnnotationStatus::kWillNotAnnotateDueToScheme:
+        case ax::mojom::ImageAnnotationStatus::kIneligibleForAnnotation:
+        case ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation:
+        case ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation:
+          break;
+        case ax::mojom::ImageAnnotationStatus::kAnnotationPending:
+        case ax::mojom::ImageAnnotationStatus::kAnnotationAdult:
+        case ax::mojom::ImageAnnotationStatus::kAnnotationEmpty:
+        case ax::mojom::ImageAnnotationStatus::kAnnotationProcessFailed:
+        case ax::mojom::ImageAnnotationStatus::kAnnotationSucceeded:
+          should_set_attributes = true;
+          break;
+      }
+
+      if (!should_set_attributes)
+        continue;
+
+      WebDocument document = GetMainDocument();
+      if (document.IsNull())
+        continue;
+      WebAXObject obj = WebAXObject::FromWebDocumentByID(document, node.id);
+      if (obj.IsDetached())
+        continue;
+
+      if (!has_injected_stylesheet_) {
+        document.InsertStyleSheet(
+            "[imageannotation=annotationPending] { outline: 3px solid #9ff; } "
+            "[imageannotation=annotationSucceeded] { outline: 3px solid #3c3; "
+            "} "
+            "[imageannotation=annotationEmpty] { outline: 3px solid #ee6; } "
+            "[imageannotation=annotationAdult] { outline: 3px solid #f90; } "
+            "[imageannotation=annotationProcessFailed] { outline: 3px solid "
+            "#c00; } ");
+        has_injected_stylesheet_ = true;
+      }
+
+      WebNode web_node = obj.GetNode();
+      if (web_node.IsNull() || !web_node.IsElementNode())
+        continue;
+
+      WebElement element = web_node.To<WebElement>();
+      std::string status_str = ui::ToString(status);
+      if (element.GetAttribute("imageannotation").Utf8() != status_str)
+        element.SetAttribute("imageannotation",
+                             blink::WebString::FromUTF8(status_str));
+
+      std::string title = "%" + status_str;
+      std::string annotation =
+          node.GetStringAttribute(ax::mojom::StringAttribute::kImageAnnotation);
+      if (!annotation.empty())
+        title = title + ": " + annotation;
+      if (element.GetAttribute("title").Utf8() != title) {
+        element.SetAttribute("title", blink::WebString::FromUTF8(title));
+      }
+    }
+  }
+}
+
+blink::WebDocument RenderAccessibilityImpl::GetPopupDocument() {
+  blink::WebPagePopup* popup =
+      render_frame_->GetRenderView()->GetWebView()->GetPagePopup();
+  if (popup)
+    return popup->GetDocument();
+  return WebDocument();
 }
 
 }  // namespace content

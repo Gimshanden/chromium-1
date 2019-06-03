@@ -55,6 +55,7 @@ extern const char kSyncThemes[];
 extern const char kSyncTypedUrls[];
 extern const char kSyncUserConsents[];
 extern const char kSyncUserEvents[];
+extern const char kSyncWifiConfigurations[];
 extern const char kSyncWifiCredentials[];
 
 extern const char kSyncManaged[];
@@ -66,10 +67,6 @@ extern const char kSyncKeystoreEncryptionBootstrapToken[];
 extern const char kSyncCacheGuid[];
 extern const char kSyncBirthday[];
 extern const char kSyncBagOfChips[];
-
-#if defined(OS_CHROMEOS)
-extern const char kSyncSpareBootstrapToken[];
-#endif  // defined(OS_CHROMEOS)
 
 extern const char kSyncPassphrasePrompted[];
 

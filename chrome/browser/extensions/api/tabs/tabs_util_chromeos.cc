@@ -7,8 +7,11 @@
 #include "ash/public/cpp/window_properties.h"
 #include "ash/public/interfaces/window_pin_type.mojom.h"
 #include "base/metrics/histogram_macros.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/voice_interaction/voice_interaction_controller_client.h"
+#include "chrome/browser/chromeos/assistant/assistant_util.h"
 #include "chrome/browser/ui/ash/chrome_screenshot_grabber.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
@@ -24,6 +27,14 @@ namespace tabs_util {
 
 void SetLockedFullscreenState(Browser* browser, bool locked) {
   UMA_HISTOGRAM_BOOLEAN("Extensions.LockedFullscreenStateRequest", locked);
+
+  // Disable ChromeVox before entering locked fullscreen.  Quickfix for
+  // crbug.com/957950.
+  auto* const accessibility_manager = chromeos::AccessibilityManager::Get();
+  if (locked && accessibility_manager &&
+      accessibility_manager->IsSpokenFeedbackEnabled()) {
+    accessibility_manager->EnableSpokenFeedback(false);
+  }
 
   aura::Window* window = browser->window()->GetNativeWindow();
   // TRUSTED_PINNED is used here because that one locks the window fullscreen
@@ -59,6 +70,12 @@ void SetLockedFullscreenState(Browser* browser, bool locked) {
       if (arc::IsArcPlayStoreEnabledForProfile(profile))
         arc_session_manager->RequestEnable();
     }
+  }
+
+  if (assistant::IsAssistantAllowedForProfile(profile) ==
+      ash::mojom::AssistantAllowedState::ALLOWED) {
+    arc::VoiceInteractionControllerClient::Get()
+        ->NotifyLockedFullScreenStateChanged(locked);
   }
 }
 

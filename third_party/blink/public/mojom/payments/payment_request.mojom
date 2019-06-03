@@ -94,24 +94,6 @@ enum AndroidPayEnvironment {
   TEST
 };
 
-enum AndroidPayCardNetwork {
-  AMEX,
-  DISCOVER,
-  MASTERCARD,
-  VISA
-};
-
-enum AndroidPayTokenization {
-  UNSPECIFIED,
-  GATEWAY_TOKEN,
-  NETWORK_TOKEN
-};
-
-struct AndroidPayTokenizationParameter {
-  string? key;
-  string? value;
-};
-
 enum BasicCardNetwork {
   AMEX,
   DINERS,
@@ -146,11 +128,6 @@ struct PaymentMethodData {
   // https://developers.google.com/web/fundamentals/getting-started/primers/payment-request/android-pay
   // TODO(rouslan): Stop parsing Android Pay data. http://crbug.com/620173
   AndroidPayEnvironment environment;
-  string? merchant_name;
-  string? merchant_id;
-  array<AndroidPayCardNetwork> allowed_card_networks;
-  AndroidPayTokenization tokenization_type;
-  array<AndroidPayTokenizationParameter> parameters;
   // Value of 0 means the merchant did not specify or it was an invalid value.
   int32 min_google_play_services_version;
   // Value of 0 means the merchant did not specify or it was an invalid value.
@@ -169,10 +146,14 @@ struct PaymentDetailsModifier {
 
 struct PaymentDetails {
   PaymentItem? total;
-  array<PaymentItem> display_items;
-  // Shipping options can be null if updateWith() is called w/o shippingOptions
+
+  // If any of these lists is null, then PaymentRequest.UpdateWith() ignores
+  // them. If any of these lists are empty, then PaymentRequest.UpdateWith()
+  // clears the corresponding lists in the browser.
+  array<PaymentItem>? display_items;
   array<PaymentShippingOption>? shipping_options;
-  array<PaymentDetailsModifier> modifiers;
+  array<PaymentDetailsModifier>? modifiers;
+
   string error = "";
   AddressErrors? shipping_address_errors;
   // Identifier identifying the payment request, to be exposed
@@ -180,6 +161,8 @@ struct PaymentDetails {
   // by PaymentDetailsUpdate (next to PaymentDetailsInit) but
   // PaymentDetailsUpdate has no id.
   string? id;
+
+  string? stringified_payment_method_errors;
 };
 
 enum PaymentShippingType {
@@ -217,7 +200,7 @@ interface PaymentRequest {
        PaymentOptions options);
 
   // Shows the user interface with the payment details.
-  Show(bool is_user_gesture);
+  Show(bool is_user_gesture, bool wait_for_updated_details);
 
   // Updates the payment details in response to new shipping address or shipping
   // option.

@@ -22,7 +22,6 @@ const string kNavigation_ServiceWorkerSpec = "navigation:service_worker";
 // WebServiceWorkerNetworkProvider used for starting a web worker (dedicated
 // worker or shared worker).
 struct ServiceWorkerProviderInfoForWorker {
-  int32 provider_id;
   associated ServiceWorkerContainerHost host_ptr_info;
   associated ServiceWorkerContainer& client_request;
 };
@@ -30,14 +29,12 @@ struct ServiceWorkerProviderInfoForWorker {
 // Sent from the browser process to the renderer. Contains parameters for the
 // WebServiceWorkerNetworkProvider used for starting a service worker.
 struct ServiceWorkerProviderInfoForStartWorker {
-  int32 provider_id;
-
   associated ServiceWorkerContainerHost host_ptr_info;
   associated ServiceWorkerContainer& client_request;
 
   // The loader to use for loading the worker's main script and
   // importScripts().
-  associated network.mojom.URLLoaderFactory? script_loader_factory_ptr_info;
+  network.mojom.URLLoaderFactory? script_loader_factory_ptr_info;
 
   // |cache_storage| is an optional optimization so the service worker can use
   // the Cache Storage API immediately without using InterfaceProvider. May be
@@ -55,7 +52,6 @@ struct ServiceWorkerProviderInfoForStartWorker {
 // ServiceWorkerProviderInfoForWorker, we can unify them as a new struct
 // ServiceWorkerProviderInfoForClient.
 struct ServiceWorkerProviderInfoForWindow {
-  int32 provider_id;
   associated ServiceWorkerContainerHost host_ptr_info;
   associated ServiceWorkerContainer& client_request;
 };

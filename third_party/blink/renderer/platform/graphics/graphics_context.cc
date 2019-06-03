@@ -59,25 +59,22 @@
 
 namespace blink {
 
+// Helper class that copies |flags| only when dark mode is enabled.
+//
+// TODO(gilmanmh): Investigate removing const from |flags| in the calling
+// methods and modifying the variable directly instead of copying it.
 class GraphicsContext::DarkModeFlags final {
   STACK_ALLOCATED();
 
  public:
   // This helper's lifetime should never exceed |flags|'.
-  DarkModeFlags(const GraphicsContext* gc, const PaintFlags& flags) {
-    if (!gc->dark_mode_filter_) {
-      flags_ = &flags;
-    } else {
-      dark_mode_flags_ = flags;
-      if (flags.HasShader()) {
-        dark_mode_flags_->setColorFilter(gc->dark_mode_filter_);
-      } else {
-        dark_mode_flags_->setColor(
-            gc->dark_mode_filter_->filterColor(flags.getColor()));
-      }
-
+  DarkModeFlags(GraphicsContext* gc, const PaintFlags& flags) {
+    dark_mode_flags_ = gc->dark_mode_filter_.ApplyToFlagsIfNeeded(flags);
+    if (dark_mode_flags_) {
       flags_ = &dark_mode_flags_.value();
+      return;
     }
+    flags_ = &flags;
   }
 
   operator const PaintFlags&() const { return *flags_; }
@@ -171,35 +168,7 @@ unsigned GraphicsContext::SaveCount() const {
 #endif
 
 void GraphicsContext::SetDarkMode(const DarkModeSettings& settings) {
-  dark_mode_settings_ = settings;
-
-  SkHighContrastConfig config;
-  switch (dark_mode_settings_.mode) {
-    case DarkMode::kOff:
-      dark_mode_filter_.reset(nullptr);
-      return;
-    case DarkMode::kSimpleInvertForTesting: {
-      uint8_t identity[256], invert[256];
-      for (int i = 0; i < 256; ++i) {
-        identity[i] = i;
-        invert[i] = 255 - i;
-      }
-      dark_mode_filter_ =
-          SkTableColorFilter::MakeARGB(identity, invert, invert, invert);
-      return;
-    }
-    case DarkMode::kInvertBrightness:
-      config.fInvertStyle =
-          SkHighContrastConfig::InvertStyle::kInvertBrightness;
-      break;
-    case DarkMode::kInvertLightness:
-      config.fInvertStyle = SkHighContrastConfig::InvertStyle::kInvertLightness;
-      break;
-  }
-
-  config.fGrayscale = dark_mode_settings_.grayscale;
-  config.fContrast = dark_mode_settings_.contrast;
-  dark_mode_filter_ = SkHighContrastFilter::Make(config);
+  dark_mode_filter_.UpdateSettings(settings);
 }
 
 void GraphicsContext::SaveLayer(const SkRect* bounds, const PaintFlags* flags) {
@@ -415,13 +384,15 @@ int GraphicsContext::FocusRingOutsetExtent(int offset,
 void GraphicsContext::DrawFocusRingPath(const SkPath& path,
                                         const Color& color,
                                         float width) {
-  DrawPlatformFocusRing(path, canvas_, ApplyDarkModeFilter(color).Rgb(), width);
+  DrawPlatformFocusRing(path, canvas_,
+                        dark_mode_filter_.ApplyIfNeeded(color).Rgb(), width);
 }
 
 void GraphicsContext::DrawFocusRingRect(const SkRect& rect,
                                         const Color& color,
                                         float width) {
-  DrawPlatformFocusRing(rect, canvas_, ApplyDarkModeFilter(color).Rgb(), width);
+  DrawPlatformFocusRing(rect, canvas_,
+                        dark_mode_filter_.ApplyIfNeeded(color).Rgb(), width);
 }
 
 void GraphicsContext::DrawFocusRing(const Path& focus_ring_path,
@@ -435,11 +406,11 @@ void GraphicsContext::DrawFocusRing(const Path& focus_ring_path,
   DrawFocusRingPath(focus_ring_path.GetSkPath(), color, width);
 }
 
-void GraphicsContext::DrawFocusRing(const Vector<IntRect>& rects,
-                                    float width,
-                                    int offset,
-                                    const Color& color,
-                                    bool is_outset) {
+void GraphicsContext::DrawFocusRingInternal(const Vector<IntRect>& rects,
+                                            float width,
+                                            int offset,
+                                            const Color& color,
+                                            bool is_outset) {
   if (ContextDisabled())
     return;
 
@@ -470,6 +441,45 @@ void GraphicsContext::DrawFocusRing(const Vector<IntRect>& rects,
   }
 }
 
+namespace {
+
+static const double kFocusRingLuminanceThreshold = 0.45;
+
+bool ShouldDrawInnerFocusRingForContrast(bool is_outset,
+                                         float width,
+                                         Color color) {
+  if (!is_outset || width < 3) {
+    return false;
+  }
+  double h = 0.0, s = 0.0, l = 0.0;
+  color.GetHSL(h, s, l);
+  return l < kFocusRingLuminanceThreshold;
+}
+
+}  // namespace
+
+void GraphicsContext::DrawFocusRing(const Vector<IntRect>& rects,
+                                    float width,
+                                    int offset,
+                                    const Color& color,
+                                    bool is_outset) {
+  // If a focus ring is outset and the color is dark, it may be hard to see on
+  // dark backgrounds. In this case, we'll actually draw two focus rings, the
+  // outset focus ring with a white inner ring for contrast.
+  if (ShouldDrawInnerFocusRingForContrast(is_outset, width, color)) {
+    int contrast_offset = static_cast<int>(std::floor(width * 0.5));
+    // We create a 1px gap for the contrast ring. The contrast ring is drawn
+    // first, and we overdraw by a pixel to ensure no gaps or AA artifacts.
+    DrawFocusRingInternal(rects, contrast_offset, offset, SK_ColorWHITE,
+                          is_outset);
+    DrawFocusRingInternal(rects, width - contrast_offset,
+                          offset + contrast_offset, color, is_outset);
+
+  } else {
+    DrawFocusRingInternal(rects, width, offset, color, is_outset);
+  }
+}
+
 static inline FloatRect AreaCastingShadowInHole(
     const FloatRect& hole_rect,
     float shadow_blur,
@@ -496,7 +506,7 @@ void GraphicsContext::DrawInnerShadow(const FloatRoundedRect& rect,
   if (ContextDisabled())
     return;
 
-  Color shadow_color = ApplyDarkModeFilter(orig_shadow_color);
+  Color shadow_color = dark_mode_filter_.ApplyIfNeeded(orig_shadow_color);
 
   FloatRect hole_rect(rect.Rect());
   hole_rect.Inflate(-shadow_spread);
@@ -741,7 +751,6 @@ void GraphicsContext::DrawRect(const IntRect& rect) {
   if (ContextDisabled())
     return;
 
-  DCHECK(!rect.IsEmpty());
   if (rect.IsEmpty())
     return;
 
@@ -762,33 +771,16 @@ void GraphicsContext::DrawRect(const IntRect& rect) {
   }
 }
 
-template <typename TextPaintInfo>
-void GraphicsContext::DrawTextInternal(const Font& font,
-                                       const TextPaintInfo& text_info,
-                                       const FloatPoint& point,
-                                       const PaintFlags& flags,
-                                       const cc::NodeHolder& node_holder) {
-  if (ContextDisabled())
-    return;
-
-  font.DrawText(canvas_, text_info, point, device_scale_factor_, node_holder,
-                DarkModeFlags(this, flags));
-}
-
 void GraphicsContext::DrawText(const Font& font,
                                const TextRunPaintInfo& text_info,
                                const FloatPoint& point,
                                const PaintFlags& flags,
                                const cc::NodeHolder& node_holder) {
-  DrawTextInternal(font, text_info, point, flags, node_holder);
-}
+  if (ContextDisabled())
+    return;
 
-void GraphicsContext::DrawText(const Font& font,
-                               const NGTextFragmentPaintInfo& text_info,
-                               const FloatPoint& point,
-                               const PaintFlags& flags,
-                               const cc::NodeHolder& node_holder) {
-  DrawTextInternal(font, text_info, point, flags, node_holder);
+  font.DrawText(canvas_, text_info, point, device_scale_factor_, node_holder,
+                DarkModeFlags(this, flags));
 }
 
 template <typename DrawTextFunc>
@@ -818,11 +810,15 @@ void GraphicsContext::DrawTextInternal(const Font& font,
   if (ContextDisabled())
     return;
 
-  DrawTextPasses(
-      [&font, &text_info, &point, this, node_holder](const PaintFlags& flags) {
-        font.DrawText(canvas_, text_info, point, device_scale_factor_,
-                      node_holder, DarkModeFlags(this, flags));
-      });
+  DrawTextPasses([&](const PaintFlags& flags) {
+    if (dark_mode_filter_.ShouldInvertTextColor(flags.getColor())) {
+      font.DrawText(canvas_, text_info, point, device_scale_factor_,
+                    node_holder, DarkModeFlags(this, flags));
+    } else {
+      font.DrawText(canvas_, text_info, point, device_scale_factor_,
+                    node_holder, flags);
+    }
+  });
 }
 
 void GraphicsContext::DrawText(const Font& font,
@@ -916,8 +912,9 @@ void GraphicsContext::DrawImage(
   image_flags.setBlendMode(op);
   image_flags.setColor(SK_ColorBLACK);
   image_flags.setFilterQuality(ComputeFilterQuality(image, dest, src));
-  if (ShouldApplyDarkModeFilterToImage(*image, src))
-    image_flags.setColorFilter(dark_mode_filter_);
+
+  dark_mode_filter_.ApplyToImageFlagsIfNeeded(src, image, &image_flags);
+
   image->Draw(canvas_, image_flags, dest, src, should_respect_image_orientation,
               Image::kClampImageToSourceRect, decode_mode);
   paint_controller_.SetImagePainted();
@@ -951,6 +948,8 @@ void GraphicsContext::DrawImageRRect(
   image_flags.setColor(SK_ColorBLACK);
   image_flags.setFilterQuality(
       ComputeFilterQuality(image, dest.Rect(), src_rect));
+
+  dark_mode_filter_.ApplyToImageFlagsIfNeeded(src_rect, image, &image_flags);
 
   bool use_shader = (visible_src == src_rect) &&
                     (respect_orientation == kDoNotRespectImageOrientation);
@@ -1160,7 +1159,7 @@ void GraphicsContext::FillDRRect(const FloatRoundedRect& outer,
       canvas_->drawDRRect(outer, inner, ImmutableState()->FillFlags());
     } else {
       PaintFlags flags(ImmutableState()->FillFlags());
-      flags.setColor(ApplyDarkModeFilter(color).Rgb());
+      flags.setColor(dark_mode_filter_.ApplyIfNeeded(color).Rgb());
       canvas_->drawDRRect(outer, inner, flags);
     }
 
@@ -1173,7 +1172,7 @@ void GraphicsContext::FillDRRect(const FloatRoundedRect& outer,
   stroke_r_rect.inset(stroke_width / 2, stroke_width / 2);
 
   PaintFlags stroke_flags(ImmutableState()->FillFlags());
-  stroke_flags.setColor(ApplyDarkModeFilter(color).Rgb());
+  stroke_flags.setColor(dark_mode_filter_.ApplyIfNeeded(color).Rgb());
   stroke_flags.setStyle(PaintFlags::kStroke_Style);
   stroke_flags.setStrokeWidth(stroke_width);
 
@@ -1368,7 +1367,7 @@ void GraphicsContext::FillRectWithRoundedHole(
     return;
 
   PaintFlags flags(ImmutableState()->FillFlags());
-  flags.setColor(ApplyDarkModeFilter(color).Rgb());
+  flags.setColor(dark_mode_filter_.ApplyIfNeeded(color).Rgb());
   canvas_->drawDRRect(SkRRect::MakeRect(rect), rounded_hole_rect, flags);
 }
 
@@ -1412,29 +1411,6 @@ sk_sp<SkColorFilter> GraphicsContext::WebCoreColorFilterToSkiaColorFilter(
   }
 
   return nullptr;
-}
-
-bool GraphicsContext::ShouldApplyDarkModeFilterToImage(
-    Image& image,
-    const FloatRect& src_rect) {
-  if (!dark_mode_filter_)
-    return false;
-
-  switch (dark_mode_settings_.image_policy) {
-    case DarkModeImagePolicy::kFilterSmart:
-      return dark_mode_image_classifier_.ShouldApplyDarkModeFilterToImage(
-          image, src_rect);
-    case DarkModeImagePolicy::kFilterAll:
-      return true;
-    default:
-      return false;
-  }
-}
-
-Color GraphicsContext::ApplyDarkModeFilter(const Color& input) const {
-  if (!dark_mode_filter_)
-    return input;
-  return Color(dark_mode_filter_->filterColor(input.Rgb()));
 }
 
 }  // namespace blink

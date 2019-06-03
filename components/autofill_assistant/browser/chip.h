@@ -16,11 +16,14 @@ namespace autofill_assistant {
 // A structure to represent a Chip shown in the carousel.
 struct Chip {
   Chip();
+  Chip(const ChipProto& chip_proto);
   ~Chip();
   Chip(Chip&&);
   Chip& operator=(Chip&&);
 
   ChipType type = UNKNOWN_CHIP_TYPE;
+
+  ChipIcon icon = NO_ICON;
 
   // Localized string to display.
   std::string text;
@@ -30,6 +33,10 @@ struct Chip {
 
   // Whether this chip is disabled.
   bool disabled = false;
+
+  // Whether this chip is sticky. A sticky chip will be a candidate to be
+  // displayed in the header if the peek mode of the sheet is HANDLE_HEADER.
+  bool sticky = false;
 };
 
 // Guarantees that the Chip.type of all chips is set to a sensible value.

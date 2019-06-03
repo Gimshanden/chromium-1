@@ -25,12 +25,14 @@
 #import <Cocoa/Cocoa.h>
 #import <math.h>
 
+#import "base/mac/mac_util.h"
 #import "third_party/blink/public/platform/mac/web_sandbox_support.h"
 #import "third_party/blink/public/platform/platform.h"
 #import "third_party/blink/renderer/core/css_value_keywords.h"
 #import "third_party/blink/renderer/core/fileapi/file_list.h"
 #import "third_party/blink/renderer/core/html_names.h"
 #import "third_party/blink/renderer/core/layout/layout_progress.h"
+#import "third_party/blink/renderer/core/layout/layout_theme_default.h"
 #import "third_party/blink/renderer/core/layout/layout_view.h"
 #import "third_party/blink/renderer/core/style/shadow_list.h"
 #import "third_party/blink/renderer/platform/data_resource_helper.h"
@@ -38,7 +40,6 @@
 #import "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #import "third_party/blink/renderer/platform/mac/block_exceptions.h"
 #import "third_party/blink/renderer/platform/mac/color_mac.h"
-#import "third_party/blink/renderer/platform/mac/version_util_mac.h"
 #import "third_party/blink/renderer/platform/mac/web_core_ns_cell_extras.h"
 #import "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #import "third_party/blink/renderer/platform/text/platform_locale.h"
@@ -137,6 +138,13 @@
 namespace blink {
 
 namespace {
+
+class LayoutThemeMacRefresh final : public LayoutThemeDefault {
+ public:
+  static scoped_refptr<LayoutTheme> Create() {
+    return base::AdoptRef(new LayoutThemeMacRefresh());
+  }
+};
 
 // Inflate an IntRect to account for specific padding around margins.
 enum { kTopMargin = 0, kRightMargin = 1, kBottomMargin = 2, kLeftMargin = 3 };
@@ -942,7 +950,7 @@ NSSearchFieldCell* LayoutThemeMac::Search() const {
     // this is achieved by calling |setCenteredLook| with NO. In OS10.11 and
     // later, instead call |setPlaceholderString| with an empty string.
     // See https://crbug.com/752362.
-    if (IsOS10_10()) {
+    if (base::mac::IsAtMostOS10_10()) {
       SEL sel = @selector(setCenteredLook:);
       if ([search_ respondsToSelector:sel]) {
         BOOL bool_value = NO;
@@ -1011,8 +1019,14 @@ NSView* FlippedView() {
 }
 
 LayoutTheme& LayoutTheme::NativeTheme() {
-  DEFINE_STATIC_REF(LayoutTheme, layout_theme, (LayoutThemeMac::Create()));
-  return *layout_theme;
+  if (RuntimeEnabledFeatures::FormControlsRefreshEnabled()) {
+    DEFINE_STATIC_REF(LayoutTheme, layout_theme,
+                      (LayoutThemeMacRefresh::Create()));
+    return *layout_theme;
+  } else {
+    DEFINE_STATIC_REF(LayoutTheme, layout_theme, (LayoutThemeMac::Create()));
+    return *layout_theme;
+  }
 }
 
 scoped_refptr<LayoutTheme> LayoutThemeMac::Create() {
@@ -1231,11 +1245,12 @@ LengthSize LayoutThemeMac::GetControlSize(
 LengthSize LayoutThemeMac::MinimumControlSize(
     ControlPart part,
     const FontDescription& font_description,
-    float zoom_factor) const {
+    float zoom_factor,
+    const ComputedStyle& style) const {
   switch (part) {
     case kSquareButtonPart:
     case kButtonPart:
-      return LengthSize(Length::Fixed(0),
+      return LengthSize(style.MinWidth().Zoom(zoom_factor),
                         Length::Fixed(static_cast<int>(15 * zoom_factor)));
     case kInnerSpinButtonPart: {
       IntSize base = StepperSizes()[NSMiniControlSize];
@@ -1245,7 +1260,7 @@ LengthSize LayoutThemeMac::MinimumControlSize(
     }
     default:
       return LayoutTheme::MinimumControlSize(part, font_description,
-                                             zoom_factor);
+                                             zoom_factor, style);
   }
 }
 
@@ -1414,14 +1429,13 @@ void LayoutThemeMac::AdjustControlPartStyle(ComputedStyle& style) {
 
       // Width / Height
       // The width and height here are affected by the zoom.
-      // FIXME: Check is flawed, since it doesn't take min-width/max-width
-      // into account.
       LengthSize control_size = GetControlSize(
           part, style.GetFont().GetFontDescription(),
           LengthSize(style.Width(), style.Height()), style.EffectiveZoom());
 
-      LengthSize min_control_size = MinimumControlSize(
-          part, style.GetFont().GetFontDescription(), style.EffectiveZoom());
+      LengthSize min_control_size =
+          MinimumControlSize(part, style.GetFont().GetFontDescription(),
+                             style.EffectiveZoom(), style);
 
       // Only potentially set min-size to |control_size| for these parts.
       if (part == kCheckboxPart || part == kRadioPart)

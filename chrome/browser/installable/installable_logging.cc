@@ -51,10 +51,12 @@ static const char kUrlNotSupportedForWebApkMessage[] =
     "A URL in the manifest contains a username, password, or port";
 static const char kInIncognitoMessage[] =
     "Page is loaded in an incognito window";
-static const char kNotOfflineCapable[] = "the page does not work offline";
+static const char kNotOfflineCapable[] = "Page does not work offline";
 static const char kNoUrlForServiceWorker[] =
     "Could not check service worker without a 'start_url' field in the "
     "manifest";
+static const char kPreferRelatedApplications[] =
+    "Manifest specifies prefer_related_applications: true";
 
 const std::string& GetMessagePrefix() {
   static base::NoDestructor<std::string> message_prefix(
@@ -149,6 +151,9 @@ std::string GetErrorMessage(InstallableStatusCode code) {
       break;
     case NO_URL_FOR_SERVICE_WORKER:
       message = kNoUrlForServiceWorker;
+      break;
+    case PREFER_RELATED_APPLICATIONS:
+      message = kPreferRelatedApplications;
       break;
   }
 

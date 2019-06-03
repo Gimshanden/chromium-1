@@ -38,6 +38,7 @@ class WebAppAudioFocusIdMap;
 class WebAppTabHelperBase;
 class SystemWebAppManager;
 class AppRegistrar;
+class WebAppUiDelegate;
 
 // Forward declarations for new extension-independent subsystems.
 class WebAppDatabase;
@@ -69,9 +70,17 @@ class WebAppProvider : public WebAppProviderBase,
   InstallManager& install_manager() override;
   PendingAppManager& pending_app_manager() override;
   WebAppPolicyManager* policy_manager() override;
+  WebAppUiDelegate& ui_delegate() override;
 
-  const SystemWebAppManager& system_web_app_manager() {
+  // KeyedService:
+  void Shutdown() override;
+
+  SystemWebAppManager& system_web_app_manager() {
     return *system_web_app_manager_;
+  }
+
+  void set_ui_delegate(WebAppUiDelegate* ui_delegate) {
+    ui_delegate_ = ui_delegate;
   }
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
@@ -100,15 +109,18 @@ class WebAppProvider : public WebAppProviderBase,
 
   void OnRegistryReady();
 
-  void Reset();
-
   void OnScanForExternalWebApps(std::vector<InstallOptions>);
+
+  // Called just before profile destruction. All WebContents must be destroyed
+  // by the end of this method.
+  void ProfileDestroyed();
 
   // New extension-independent subsystems:
   std::unique_ptr<WebAppAudioFocusIdMap> audio_focus_id_map_;
   std::unique_ptr<WebAppDatabaseFactory> database_factory_;
   std::unique_ptr<WebAppDatabase> database_;
   std::unique_ptr<WebAppIconManager> icon_manager_;
+  WebAppUiDelegate* ui_delegate_ = nullptr;
 
   // New generalized subsystems:
   std::unique_ptr<AppRegistrar> registrar_;

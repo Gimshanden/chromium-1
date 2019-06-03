@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -93,7 +94,7 @@ void InsertLineBreakCommand::DoApply(EditingState* editing_state) {
 
   Node* node_to_insert = nullptr;
   if (ShouldUseBreakElement(pos))
-    node_to_insert = HTMLBRElement::Create(GetDocument());
+    node_to_insert = MakeGarbageCollected<HTMLBRElement>(GetDocument());
   else
     node_to_insert = GetDocument().createTextNode("\n");
 
@@ -162,9 +163,8 @@ void InsertLineBreakCommand::DoApply(EditingState* editing_state) {
         SelectionInDOMTree::Builder()
             .Collapse(Position::InParentAfterNode(*node_to_insert))
             .Build()));
-  } else if (pos.AnchorNode()->IsTextNode()) {
+  } else if (auto* text_node = DynamicTo<Text>(pos.AnchorNode())) {
     // Split a text node
-    Text* text_node = ToText(pos.AnchorNode());
     SplitTextNode(text_node, pos.ComputeOffsetInContainerNode());
     InsertNodeBefore(node_to_insert, text_node, editing_state);
     if (editing_state->IsAborted())

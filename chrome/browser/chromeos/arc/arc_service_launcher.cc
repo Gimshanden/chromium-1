@@ -35,6 +35,7 @@
 #include "chrome/browser/chromeos/arc/pip/arc_pip_bridge.h"
 #include "chrome/browser/chromeos/arc/policy/arc_policy_bridge.h"
 #include "chrome/browser/chromeos/arc/print/arc_print_service.h"
+#include "chrome/browser/chromeos/arc/print_spooler/arc_print_spooler_bridge.h"
 #include "chrome/browser/chromeos/arc/process/arc_process_service.h"
 #include "chrome/browser/chromeos/arc/screen_capture/arc_screen_capture_bridge.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_bridge.h"
@@ -45,10 +46,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_usb_host_permission_manager.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/common/channel_info.h"
 #include "components/arc/app_permissions/arc_app_permissions_bridge.h"
 #include "components/arc/appfuse/arc_appfuse_bridge.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/audio/arc_audio_bridge.h"
+#include "components/arc/camera/arc_camera_bridge.h"
 #include "components/arc/clipboard/arc_clipboard_bridge.h"
 #include "components/arc/crash_collector/arc_crash_collector_bridge.h"
 #include "components/arc/disk_quota/arc_disk_quota_bridge.h"
@@ -88,7 +91,8 @@ ArcServiceLauncher::ArcServiceLauncher()
           std::make_unique<ArcSessionRunner>(
               base::BindRepeating(ArcSession::Create,
                                   arc_service_manager_->arc_bridge_service(),
-                                  &default_scale_factor_retriever_)))) {
+                                  &default_scale_factor_retriever_,
+                                  chrome::GetChannel())))) {
   DCHECK(g_arc_service_launcher == nullptr);
   g_arc_service_launcher = this;
 
@@ -153,6 +157,7 @@ void ArcServiceLauncher::OnPrimaryUserProfilePrepared(Profile* profile) {
   ArcBluetoothBridge::GetForBrowserContext(profile);
   ArcBootErrorNotification::GetForBrowserContext(profile);
   ArcBootPhaseMonitorBridge::GetForBrowserContext(profile);
+  ArcCameraBridge::GetForBrowserContext(profile);
   ArcCastReceiverService::GetForBrowserContext(profile);
   ArcCertStoreBridge::GetForBrowserContext(profile);
   ArcClipboardBridge::GetForBrowserContext(profile);
@@ -179,6 +184,7 @@ void ArcServiceLauncher::OnPrimaryUserProfilePrepared(Profile* profile) {
   ArcPolicyBridge::GetForBrowserContext(profile);
   ArcPowerBridge::GetForBrowserContext(profile);
   ArcPrintService::GetForBrowserContext(profile);
+  ArcPrintSpoolerBridge::GetForBrowserContext(profile);
   ArcProcessService::GetForBrowserContext(profile);
   ArcPropertyBridge::GetForBrowserContext(profile);
   ArcProvisionNotificationService::GetForBrowserContext(profile);
@@ -224,7 +230,7 @@ void ArcServiceLauncher::ResetForTesting() {
   arc_session_manager_ = std::make_unique<ArcSessionManager>(
       std::make_unique<ArcSessionRunner>(base::BindRepeating(
           ArcSession::Create, arc_service_manager_->arc_bridge_service(),
-          &default_scale_factor_retriever_)));
+          &default_scale_factor_retriever_, chrome::GetChannel())));
 }
 
 }  // namespace arc

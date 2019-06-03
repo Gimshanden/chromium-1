@@ -56,6 +56,11 @@ suite('ExtensionsActivityLogHistoryTest', function() {
     ]
   };
 
+  // The first two activities of |testActivities|,
+  const testExportActivities = {
+    activities: testActivities.activities.slice(0, 2),
+  };
+
   // Sample activities representing content script invocations. Activities with
   // missing args will not be processed.
   const testContentScriptActivities = {
@@ -318,6 +323,32 @@ suite('ExtensionsActivityLogHistoryTest', function() {
     });
   });
 
+  test('export activities', async function() {
+    // |testExportActivities| stringified and sorted by timestamp.
+    const expectedRawActivityData =
+        '[{"activityId":"309","activityType":"dom_access","apiCall":"Storage.' +
+        'getItem","args":"null","count":35,"extensionId":"aaaaaaaaaaaaaaaaaaa' +
+        'aaaaaaaaaaaaa","other":{"domVerb":"method"},"pageTitle":"Test Extens' +
+        'ion","pageUrl":"chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' +
+        'index.html","time":1541203131994.837},{"activityId":"299","activityT' +
+        'ype":"api_call","apiCall":"i18n.getUILanguage","args":"null","count"' +
+        ':10,"extensionId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","time":15412031' +
+        '32002.664}]';
+
+    proxyDelegate.testActivities = testExportActivities;
+    await setupActivityLogHistory();
+    Polymer.dom.flush();
+
+    activityLogHistory.$$('#more-actions').click();
+    activityLogHistory.$$('#export-button').click();
+
+    const [actualRawActivityData, actualFileName] =
+        await proxyDelegate.whenCalled('downloadActivities');
+
+    expectEquals(expectedRawActivityData, actualRawActivityData);
+    expectEquals(`exported_activity_log_${EXTENSION_ID}.json`, actualFileName);
+  });
+
   test(
       'clicking on the delete button for an activity row deletes that row',
       function() {
@@ -329,7 +360,7 @@ suite('ExtensionsActivityLogHistoryTest', function() {
 
           expectEquals(activityLogItems.length, 3);
           proxyDelegate.resetResolver('getExtensionActivityLog');
-          activityLogItems[0].$$('#activity-delete-button').click();
+          activityLogItems[0].$$('#activity-delete').click();
 
           // We delete the first item so we should only have one item left. This
           // chaining reflects the API calls made from activity_log.js.

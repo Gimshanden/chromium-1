@@ -83,14 +83,14 @@ class WebRequestProxyingURLLoaderFactory
     void OnUploadProgress(int64_t current_position,
                           int64_t total_size,
                           OnUploadProgressCallback callback) override;
-    void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+    void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
     void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
     void OnStartLoadingResponseBody(
         mojo::ScopedDataPipeConsumerHandle body) override;
     void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
     void HandleAuthRequest(
-        net::AuthChallengeInfo* auth_info,
+        const net::AuthChallengeInfo& auth_info,
         scoped_refptr<net::HttpResponseHeaders> response_headers,
         WebRequestAPI::AuthRequestCallback callback);
 
@@ -114,7 +114,7 @@ class WebRequestProxyingURLLoaderFactory
     void ContinueToStartRequest(int error_code);
     void ContinueToHandleOverrideHeaders(int error_code);
     void ContinueToResponseStarted(int error_code);
-    void ContinueAuthRequest(net::AuthChallengeInfo* auth_info,
+    void ContinueAuthRequest(const net::AuthChallengeInfo& auth_info,
                              WebRequestAPI::AuthRequestCallback callback,
                              int error_code);
     void OnAuthRequestHandled(
@@ -240,7 +240,7 @@ class WebRequestProxyingURLLoaderFactory
 
   // WebRequestAPI::Proxy:
   void HandleAuthRequest(
-      net::AuthChallengeInfo* auth_info,
+      const net::AuthChallengeInfo& auth_info,
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       int32_t request_id,
       WebRequestAPI::AuthRequestCallback callback) override;

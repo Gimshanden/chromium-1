@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "components/sync/base/cancelation_signal.h"
@@ -22,18 +24,20 @@ SyncBridgedConnection::SyncBridgedConnection(
     CancelationSignal* cancelation_signal)
     : Connection(scm),
       factory_(factory),
-      cancelation_signal_(cancelation_signal) {
-  post_provider_ = factory_->Create();
+      cancelation_signal_(cancelation_signal),
+      post_provider_(factory_->Create()) {
+  DCHECK(scm);
+  DCHECK(factory);
+  DCHECK(cancelation_signal);
+  DCHECK(post_provider_);
 }
 
 SyncBridgedConnection::~SyncBridgedConnection() {
-  DCHECK(post_provider_);
   factory_->Destroy(post_provider_);
-  post_provider_ = nullptr;
 }
 
 bool SyncBridgedConnection::Init(const char* path,
-                                 const std::string& auth_token,
+                                 const std::string& access_token,
                                  const std::string& payload,
                                  HttpResponse* response) {
   std::string sync_server;
@@ -45,9 +49,9 @@ bool SyncBridgedConnection::Init(const char* path,
   HttpPostProviderInterface* http = post_provider_;
   http->SetURL(connection_url.c_str(), sync_server_port);
 
-  if (!auth_token.empty()) {
+  if (!access_token.empty()) {
     std::string headers;
-    headers = "Authorization: Bearer " + auth_token;
+    headers = "Authorization: Bearer " + access_token;
     http->SetExtraRequestHeaders(headers.c_str());
   }
 
@@ -60,6 +64,7 @@ bool SyncBridgedConnection::Init(const char* path,
   int http_status_code = 0;
   if (!cancelation_signal_->TryRegisterHandler(this)) {
     // Return early because cancelation signal was signaled.
+    // TODO(crbug.com/951350): Introduce an extra status code for canceled?
     response->server_status = HttpResponse::CONNECTION_UNAVAILABLE;
     return false;
   }
@@ -102,12 +107,13 @@ SyncServerConnectionManager::SyncServerConnectionManager(
     const std::string& server,
     int port,
     bool use_ssl,
-    HttpPostProviderFactory* factory,
+    std::unique_ptr<HttpPostProviderFactory> factory,
     CancelationSignal* cancelation_signal)
     : ServerConnectionManager(server, port, use_ssl, cancelation_signal),
-      post_provider_factory_(factory),
+      post_provider_factory_(std::move(factory)),
       cancelation_signal_(cancelation_signal) {
   DCHECK(post_provider_factory_);
+  DCHECK(cancelation_signal_);
 }
 
 SyncServerConnectionManager::~SyncServerConnectionManager() = default;

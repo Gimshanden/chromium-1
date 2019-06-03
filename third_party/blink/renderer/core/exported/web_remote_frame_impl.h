@@ -47,19 +47,17 @@ class CORE_EXPORT WebRemoteFrameImpl final
   // WebRemoteFrame methods:
   WebLocalFrame* CreateLocalChild(WebTreeScopeType,
                                   const WebString& name,
-                                  WebSandboxFlags,
+                                  const FramePolicy&,
                                   WebLocalFrameClient*,
                                   blink::InterfaceRegistry*,
                                   mojo::ScopedMessagePipeHandle,
                                   WebFrame* previous_sibling,
-                                  const ParsedFeaturePolicy&,
                                   const WebFrameOwnerProperties&,
                                   FrameOwnerElementType,
                                   WebFrame* opener) override;
   WebRemoteFrame* CreateRemoteChild(WebTreeScopeType,
                                     const WebString& name,
-                                    WebSandboxFlags,
-                                    const ParsedFeaturePolicy&,
+                                    const FramePolicy&,
                                     FrameOwnerElementType,
                                     WebRemoteFrameClient*,
                                     WebFrame* opener) override;
@@ -90,10 +88,11 @@ class CORE_EXPORT WebRemoteFrameImpl final
   bool IsIgnoredForHitTest() const override;
   void WillEnterFullscreen() override;
   void UpdateUserActivationState(UserActivationUpdateType) override;
+  void TransferUserActivationFrom(blink::WebRemoteFrame* source_frame) override;
   void ScrollRectToVisible(const WebRect&,
                            const WebScrollIntoViewParams&) override;
   void BubbleLogicalScroll(WebScrollDirection direction,
-                           WebScrollGranularity granularity) override;
+                           ScrollGranularity granularity) override;
   void IntrinsicSizingInfoChanged(const WebIntrinsicSizingInfo&) override;
   void SetHasReceivedUserGestureBeforeNavigation(bool value) override;
   v8::Local<v8::Object> GlobalProxy() const override;

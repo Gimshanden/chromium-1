@@ -46,7 +46,6 @@ class WebContents;
 namespace resource_coordinator {
 
 class BackgroundTabNavigationThrottle;
-class PageSignalReceiver;
 
 #if defined(OS_CHROMEOS)
 class TabManagerDelegate;
@@ -80,9 +79,7 @@ class TabManager : public LifecycleUnitObserver,
 
   using TabDiscardDoneCB = base::ScopedClosureRunner;
 
-  // |page_signal_receiver| might be null.
-  TabManager(PageSignalReceiver* page_signal_receiver,
-             TabLoadTracker* tab_load_tracker);
+  explicit TabManager(TabLoadTracker* tab_load_tracker);
   ~TabManager() override;
 
   // Start the Tab Manager.
@@ -479,11 +476,6 @@ class TabManager : public LifecycleUnitObserver,
   // The number of loading slots that TabManager can use to load background tabs
   // in parallel.
   size_t loading_slots_;
-
-  // |resource_coordinator_signal_observer_| is owned by TabManager and is used
-  // to receive various signals from ResourceCoordinator.
-  std::unique_ptr<ResourceCoordinatorSignalObserver>
-      resource_coordinator_signal_observer_;
 
   // Records UMAs for tab and system-related events and properties during
   // session restore.

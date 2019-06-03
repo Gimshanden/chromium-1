@@ -44,13 +44,14 @@ void IntersectionObservation::Compute(unsigned flags) {
   DOMHighResTimeStamp timestamp = observer_->GetTimeStamp();
   if (timestamp == -1)
     return;
-  if (timestamp - last_run_time_ < observer_->GetEffectiveDelay()) {
+  if (!(flags & kIgnoreDelay) &&
+      timestamp - last_run_time_ < observer_->GetEffectiveDelay()) {
     // TODO(crbug.com/915495): Need to eventually notify the observer of the
     // updated intersection because there's currently nothing to guarantee this
     // Compute() method will be called again after the delay period has passed.
     return;
   }
-  if (Observer()->trackVisibility()) {
+  if (target_->isConnected() && Observer()->trackVisibility()) {
     FrameOcclusionState occlusion_state =
         target_->GetDocument().GetFrame()->GetOcclusionState();
     // If we're tracking visibility, and we don't have occlusion information
@@ -103,7 +104,8 @@ void IntersectionObservation::Disconnect() {
   DCHECK(Observer());
   if (target_) {
     Target()->EnsureIntersectionObserverData().RemoveObservation(*Observer());
-    if (target_->isConnected()) {
+    if (target_->isConnected() &&
+        !Target()->EnsureIntersectionObserverData().HasObservations()) {
       target_->GetDocument()
           .EnsureIntersectionObserverController()
           .RemoveTrackedTarget(*target_);

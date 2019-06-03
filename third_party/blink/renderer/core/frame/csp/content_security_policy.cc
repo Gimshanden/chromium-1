@@ -65,9 +65,9 @@
 #include "third_party/blink/renderer/platform/weborigin/known_ports.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
-#include "third_party/blink/renderer/platform/wtf/string_hasher.h"
 #include "third_party/blink/renderer/platform/wtf/text/parsing_utilities.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hasher.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 #include "v8/include/v8.h"
@@ -136,7 +136,8 @@ bool ContentSecurityPolicy::IsNonceableElement(const Element* element) {
   return nonceable;
 }
 
-static WebFeature GetUseCounterType(ContentSecurityPolicyHeaderType type) {
+static WebFeature GetUseCounterHelperType(
+    ContentSecurityPolicyHeaderType type) {
   switch (type) {
     case kContentSecurityPolicyHeaderTypeEnforce:
       return WebFeature::kContentSecurityPolicy;
@@ -152,7 +153,7 @@ ContentSecurityPolicy::ContentSecurityPolicy()
       override_inline_style_allowed_(false),
       script_hash_algorithms_used_(kContentSecurityPolicyHashAlgorithmNone),
       style_hash_algorithms_used_(kContentSecurityPolicyHashAlgorithmNone),
-      sandbox_mask_(0),
+      sandbox_mask_(WebSandboxFlags::kNone),
       treat_as_public_address_(false),
       require_trusted_types_(false),
       insecure_request_policy_(kLeaveInsecureRequestsAlone) {}
@@ -191,7 +192,7 @@ void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
 
   // Set mixed content checking and sandbox flags, then dump all the parsing
   // error messages, then poke at histograms.
-  if (sandbox_mask_ != kSandboxNone) {
+  if (sandbox_mask_ != WebSandboxFlags::kNone) {
     Count(WebFeature::kSandboxViaCSP);
     delegate_->SetSandboxFlags(sandbox_mask_);
   }
@@ -208,7 +209,7 @@ void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
   console_messages_.clear();
 
   for (const auto& policy : policies_) {
-    Count(GetUseCounterType(policy->HeaderType()));
+    Count(GetUseCounterHelperType(policy->HeaderType()));
     if (policy->AllowDynamic(
             ContentSecurityPolicy::DirectiveType::kScriptSrcAttr) ||
         policy->AllowDynamic(

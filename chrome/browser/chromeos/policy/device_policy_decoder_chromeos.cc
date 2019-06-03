@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/json/json_reader.h"
@@ -723,6 +724,14 @@ void DecodeAutoUpdatePolicies(const em::ChromeDeviceSettingsProto& policy,
       SetJsonDevicePolicy(key::kDeviceUpdateStagingSchedule,
                           container.staging_schedule(), policies);
     }
+
+    if (container.has_device_quick_fix_build_token()) {
+      policies->Set(key::kDeviceQuickFixBuildToken, POLICY_LEVEL_MANDATORY,
+                    POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                    std::make_unique<base::Value>(
+                        container.device_quick_fix_build_token()),
+                    nullptr);
+    }
   }
 
   if (policy.has_allow_kiosk_app_control_chrome_version()) {
@@ -735,6 +744,16 @@ void DecodeAutoUpdatePolicies(const em::ChromeDeviceSettingsProto& policy,
                     std::make_unique<base::Value>(
                         container.allow_kiosk_app_control_chrome_version()),
                     nullptr);
+    }
+  }
+
+  if (policy.has_device_scheduled_update_check()) {
+    const em::DeviceScheduledUpdateCheckProto& container(
+        policy.device_scheduled_update_check());
+    if (container.has_device_scheduled_update_check_settings()) {
+      SetJsonDevicePolicy(key::kDeviceScheduledUpdateCheck,
+                          container.device_scheduled_update_check_settings(),
+                          policies);
     }
   }
 }
@@ -1248,6 +1267,78 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
     if (container.has_day_configs()) {
       SetJsonDevicePolicy(key::kDevicePowerPeakShiftDayConfig,
                           container.day_configs(), policies);
+    }
+  }
+
+  if (policy.has_device_boot_on_ac()) {
+    const em::DeviceBootOnAcProto& container(policy.device_boot_on_ac());
+    if (container.has_enabled()) {
+      policies->Set(key::kDeviceBootOnAcEnabled, POLICY_LEVEL_MANDATORY,
+                    POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                    std::make_unique<base::Value>(container.enabled()),
+                    nullptr);
+    }
+  }
+
+  if (policy.has_device_dock_mac_address_source()) {
+    const em::DeviceDockMacAddressSourceProto& container(
+        policy.device_dock_mac_address_source());
+    if (container.has_source()) {
+      policies->Set(key::kDeviceDockMacAddressSource, POLICY_LEVEL_MANDATORY,
+                    POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                    std::make_unique<base::Value>(container.source()), nullptr);
+    }
+  }
+
+  if (policy.has_device_advanced_battery_charge_mode()) {
+    const em::DeviceAdvancedBatteryChargeModeProto& container(
+        policy.device_advanced_battery_charge_mode());
+    if (container.has_enabled()) {
+      policies->Set(
+          key::kDeviceAdvancedBatteryChargeModeEnabled, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.enabled()), nullptr);
+    }
+    if (container.has_day_configs()) {
+      SetJsonDevicePolicy(key::kDeviceAdvancedBatteryChargeModeDayConfig,
+                          container.day_configs(), policies);
+    }
+  }
+
+  if (policy.has_device_battery_charge_mode()) {
+    const em::DeviceBatteryChargeModeProto& container(
+        policy.device_battery_charge_mode());
+    if (container.has_battery_charge_mode()) {
+      policies->Set(
+          key::kDeviceBatteryChargeMode, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.battery_charge_mode()),
+          nullptr);
+    }
+    if (container.has_custom_charge_start()) {
+      policies->Set(
+          key::kDeviceBatteryChargeCustomStartCharging, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.custom_charge_start()),
+          nullptr);
+    }
+    if (container.has_custom_charge_stop()) {
+      policies->Set(
+          key::kDeviceBatteryChargeCustomStopCharging, POLICY_LEVEL_MANDATORY,
+          POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+          std::make_unique<base::Value>(container.custom_charge_stop()),
+          nullptr);
+    }
+  }
+
+  if (policy.has_device_usb_power_share()) {
+    const em::DeviceUsbPowerShareProto& container(
+        policy.device_usb_power_share());
+    if (container.has_enabled()) {
+      policies->Set(key::kDeviceUsbPowerShareEnabled, POLICY_LEVEL_MANDATORY,
+                    POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+                    std::make_unique<base::Value>(container.enabled()),
+                    nullptr);
     }
   }
 }

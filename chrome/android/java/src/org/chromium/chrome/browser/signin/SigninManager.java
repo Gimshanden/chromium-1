@@ -27,9 +27,6 @@ import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.task.PostTask;
-import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
-import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
-import org.chromium.chrome.browser.sync.SyncUserDataWiper;
 import org.chromium.components.signin.AccountIdProvider;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountTrackerService;
@@ -183,6 +180,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
 
     private final long mNativeSigninManagerAndroid;
     private final Context mContext;
+    private final SigninManagerDelegate mDelegate;
     private final AccountTrackerService mAccountTrackerService;
     private final AndroidSyncSettings mAndroidSyncSettings;
     private final ObserverList<SignInStateObserver> mSignInStateObservers = new ObserverList<>();
@@ -222,23 +220,26 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
     public static SigninManager get() {
         ThreadUtils.assertOnUiThread();
         if (sSigninManager == null) {
-            sSigninManager = new SigninManager();
+            SigninManagerDelegate delegate = new ChromeSigninManagerDelegate();
+            sSigninManager = new SigninManager(delegate);
         }
         return sSigninManager;
     }
 
-    private SigninManager() {
-        this(ContextUtils.getApplicationContext(),
+    private SigninManager(SigninManagerDelegate delegate) {
+        this(ContextUtils.getApplicationContext(), delegate,
                 IdentityServicesProvider.getAccountTrackerService(), AndroidSyncSettings.get());
     }
 
     @VisibleForTesting
-    SigninManager(Context context, AccountTrackerService accountTrackerService,
-            AndroidSyncSettings androidSyncSettings) {
+    SigninManager(Context context, SigninManagerDelegate delegate,
+            AccountTrackerService accountTrackerService, AndroidSyncSettings androidSyncSettings) {
         ThreadUtils.assertOnUiThread();
         assert context != null;
+        assert delegate != null;
         assert accountTrackerService != null;
         assert androidSyncSettings != null;
+        mDelegate = delegate;
         mContext = context;
         mAccountTrackerService = accountTrackerService;
         mAndroidSyncSettings = androidSyncSettings;
@@ -300,7 +301,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
      */
     public boolean isSigninSupported() {
         return !ApiCompatibilityUtils.isDemoUser(mContext)
-                && !ExternalAuthUtils.getInstance().isGooglePlayServicesMissing(mContext);
+                && mDelegate.isGooglePlayServicesPresent(mContext);
     }
 
     /**
@@ -422,10 +423,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
             mSignInState.mBlockedOnAccountSeeding = true;
         } else {
             Activity activity = mSignInState.mActivity;
-            UserRecoverableErrorHandler errorHandler = activity != null
-                    ? new UserRecoverableErrorHandler.ModalDialog(activity, !isForceSigninEnabled())
-                    : new UserRecoverableErrorHandler.SystemNotification();
-            ExternalAuthUtils.getInstance().canUseGooglePlayServices(errorHandler);
+            mDelegate.handleGooglePlayServicesUnavailability(activity, !isForceSigninEnabled());
             Log.w(TAG, "Cancelling the sign-in process as Google Play services is unavailable");
             abortSignIn();
         }
@@ -453,34 +451,14 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         }
 
         Log.d(TAG, "Checking if account has policy management enabled");
-        // This will call back to onPolicyCheckedBeforeSignIn.
-        SigninManagerJni.get().checkPolicyBeforeSignIn(
+        // This will call back to onPolicyFetchedBeforeSignIn.
+        SigninManagerJni.get().registerAndFetchPolicyBeforeSignIn(
                 this, mNativeSigninManagerAndroid, mSignInState.mAccount.name);
     }
 
     @CalledByNative
     @VisibleForTesting
-    void onPolicyCheckedBeforeSignIn(String managementDomain) {
-        assert mSignInState != null;
-
-        if (managementDomain == null) {
-            Log.d(TAG, "Account doesn't have policy");
-            finishSignIn();
-            return;
-        }
-
-        if (mSignInState.isActivityInvisible()) {
-            abortSignIn();
-            return;
-        }
-
-        // The user has already been notified that they are signing into a managed account.
-        // This will call back to onPolicyFetchedBeforeSignIn.
-        SigninManagerJni.get().fetchPolicyBeforeSignIn(this, mNativeSigninManagerAndroid);
-    }
-
-    @CalledByNative
-    private void onPolicyFetchedBeforeSignIn() {
+    void onPolicyFetchedBeforeSignIn() {
         // Policy has been fetched for the user and is being enforced; features like sync may now
         // be disabled by policy, and the rest of the sign-in flow can be resumed.
         finishSignIn();
@@ -705,18 +683,6 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         SigninManagerJni.get().wipeGoogleServiceWorkerCaches(this, mNativeSigninManagerAndroid);
     }
 
-    /**
-     * Convenience method to return a Promise to be fulfilled when the user's sync data has been
-     * wiped if the parameter is true, or an already fulfilled Promise if the parameter is false.
-     */
-    public static Promise<Void> wipeSyncUserDataIfRequired(boolean required) {
-        if (required) {
-            return SyncUserDataWiper.wipeSyncUserData();
-        } else {
-            return Promise.fulfilled(null);
-        }
-    }
-
     @CalledByNative
     @VisibleForTesting
     protected void onProfileDataWiped() {
@@ -783,10 +749,8 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
 
         boolean isForceSigninEnabled(@JCaller SigninManager self, long nativeSigninManagerAndroid);
 
-        void checkPolicyBeforeSignIn(
+        void registerAndFetchPolicyBeforeSignIn(
                 @JCaller SigninManager self, long nativeSigninManagerAndroid, String username);
-
-        void fetchPolicyBeforeSignIn(@JCaller SigninManager self, long nativeSigninManagerAndroid);
 
         void abortSignIn(@JCaller SigninManager self, long nativeSigninManagerAndroid);
 

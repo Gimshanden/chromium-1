@@ -193,8 +193,13 @@ MainWindowComponent.prototype.onFileListFocus_ = function() {
   // is selected.
   if (this.pressingTab_) {
     const selection = this.selectionHandler_.selection;
-    if (selection && selection.totalCount == 0) {
-      this.directoryModel_.selectIndex(0);
+    if (selection && selection.totalCount === 0) {
+      const selectionModel = this.directoryModel_.getFileListSelection();
+      const targetIndex =
+          selectionModel.anchorIndex && selectionModel.anchorIndex !== -1 ?
+          selectionModel.anchorIndex :
+          0;
+      this.directoryModel_.selectIndex(targetIndex);
     }
   }
 };
@@ -287,6 +292,10 @@ MainWindowComponent.prototype.onToggleViewButtonClick_ = function(event) {
       ListContainer.ListType.THUMBNAIL :
       ListContainer.ListType.DETAIL;
   this.ui_.setCurrentListType(listType);
+  const msgId = listType === ListContainer.ListType.DETAIL ?
+      'FILE_LIST_CHANGED_TO_LIST_VIEW' :
+      'FILE_LIST_CHANGED_TO_LIST_THUMBNAIL_VIEW';
+  this.ui_.speakA11yMessage(str(msgId));
   this.appStateController_.saveViewOptions();
 
   this.ui_.listContainer.focus();

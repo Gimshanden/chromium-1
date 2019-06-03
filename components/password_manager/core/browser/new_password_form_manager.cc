@@ -4,6 +4,10 @@
 
 #include "components/password_manager/core/browser/new_password_form_manager.h"
 
+#include <algorithm>
+#include <memory>
+#include <set>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -20,6 +24,7 @@
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
 #include "components/password_manager/core/browser/form_saver.h"
 #include "components/password_manager/core/browser/password_form_filling.h"
+#include "components/password_manager/core/browser/password_generation_state.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
@@ -141,17 +146,15 @@ NewPasswordFormManager::NewPasswordFormManager(
 
 NewPasswordFormManager::NewPasswordFormManager(
     PasswordManagerClient* client,
-    const PasswordForm& http_auth_observed_form,
+    PasswordStore::FormDigest observed_http_auth_digest,
     FormFetcher* form_fetcher,
     std::unique_ptr<FormSaver> form_saver)
-    : NewPasswordFormManager(
-          client,
-          form_fetcher,
-          std::move(form_saver),
-          nullptr /* metrics_recorder */,
-          PasswordStore::FormDigest(http_auth_observed_form)) {
-  observed_http_auth_digest_ =
-      PasswordStore::FormDigest(http_auth_observed_form);
+    : NewPasswordFormManager(client,
+                             form_fetcher,
+                             std::move(form_saver),
+                             nullptr /* metrics_recorder */,
+                             observed_http_auth_digest) {
+  observed_http_auth_digest_ = std::move(observed_http_auth_digest);
   form_fetcher_->AddConsumer(this);
 }
 
@@ -208,7 +211,9 @@ FormFetcher* NewPasswordFormManager::GetFormFetcher() {
 }
 
 const GURL& NewPasswordFormManager::GetOrigin() const {
-  return observed_form_.origin;
+  if (IsHttpAuth())
+    return observed_http_auth_digest_->origin;
+  return observed_form_.url;
 }
 
 const std::map<base::string16, const PasswordForm*>&
@@ -246,13 +251,19 @@ void NewPasswordFormManager::Save() {
   DCHECK_EQ(FormFetcher::State::NOT_WAITING, form_fetcher_->GetState());
   DCHECK(!client_->IsIncognito());
 
+  for (auto blacklisted_iterator = blacklisted_matches_.begin();
+       blacklisted_iterator != blacklisted_matches_.end();) {
+    form_saver_->Remove(**blacklisted_iterator);
+    blacklisted_iterator = blacklisted_matches_.erase(blacklisted_iterator);
+  }
+
   // TODO(https://crbug.com/831123): Implement indicator event metrics.
   if (password_overridden_ &&
-      pending_credentials_.type == PasswordForm::TYPE_GENERATED &&
+      pending_credentials_.type == PasswordForm::Type::kGenerated &&
       !HasGeneratedPassword()) {
     metrics_util::LogPasswordGenerationSubmissionEvent(
         metrics_util::PASSWORD_OVERRIDDEN);
-    pending_credentials_.type = PasswordForm::TYPE_MANUAL;
+    pending_credentials_.type = PasswordForm::Type::kManual;
   }
 
   if (is_new_login_) {
@@ -260,17 +271,14 @@ void NewPasswordFormManager::Save() {
     pending_credentials_.date_created = base::Time::Now();
     votes_uploader_.SendVotesOnSave(observed_form_, *parsed_submitted_form_,
                                     best_matches_, &pending_credentials_);
-    form_saver_->Save(pending_credentials_, best_matches_);
+    SavePendingToStore(false /*update*/);
   } else {
     ProcessUpdate();
-    std::vector<PasswordForm> credentials_to_update =
-        FindOtherCredentialsToUpdate();
-    form_saver_->Update(pending_credentials_, best_matches_,
-                        &credentials_to_update, nullptr);
+    SavePendingToStore(true /*update*/);
   }
 
   if (pending_credentials_.times_used == 1 &&
-      pending_credentials_.type == PasswordForm::TYPE_GENERATED) {
+      pending_credentials_.type == PasswordForm::Type::kGenerated) {
     // This also includes PSL matched credentials.
     metrics_util::LogPasswordGenerationSubmissionEvent(
         metrics_util::PASSWORD_USED);
@@ -296,10 +304,7 @@ void NewPasswordFormManager::Update(const PasswordForm& credentials_to_update) {
   pending_credentials_.preferred = true;
   is_new_login_ = false;
   ProcessUpdate();
-  std::vector<PasswordForm> more_credentials_to_update =
-      FindOtherCredentialsToUpdate();
-  form_saver_->Update(pending_credentials_, best_matches_,
-                      &more_credentials_to_update, nullptr);
+  SavePendingToStore(true /*update*/);
 
   client_->UpdateFormManagers();
 }
@@ -382,11 +387,20 @@ void NewPasswordFormManager::PermanentlyBlacklist() {
 
   if (!new_blacklisted_) {
     new_blacklisted_ = std::make_unique<PasswordForm>();
-    new_blacklisted_->origin = observed_form_.origin;
-    new_blacklisted_->signon_realm = GetSignonRealm(observed_form_.origin);
+    if (IsHttpAuth()) {
+      new_blacklisted_->origin = observed_http_auth_digest_->origin;
+      // GetSignonRealm is not suitable for http auth credentials.
+      new_blacklisted_->signon_realm = observed_http_auth_digest_->signon_realm;
+      new_blacklisted_->scheme = observed_http_auth_digest_->scheme;
+    } else {
+      new_blacklisted_->origin = observed_form_.url;
+      new_blacklisted_->signon_realm = GetSignonRealm(observed_form_.url);
+      new_blacklisted_->scheme = PasswordForm::Scheme::kHtml;
+    }
     blacklisted_matches_.push_back(new_blacklisted_.get());
   }
-  form_saver_->PermanentlyBlacklist(new_blacklisted_.get());
+  *new_blacklisted_ = form_saver_->PermanentlyBlacklist(
+      PasswordStore::FormDigest(*new_blacklisted_));
 }
 
 void NewPasswordFormManager::OnPasswordsRevealed() {
@@ -403,16 +417,18 @@ bool NewPasswordFormManager::IsPendingCredentialsPublicSuffixMatch() const {
 
 void NewPasswordFormManager::PresaveGeneratedPassword(
     const PasswordForm& form) {
-  // TODO(https://crbug.com/831123). Propagate generated password independently
+  // TODO(https://crbug.com/831123): Propagate generated password independently
   // of PasswordForm when PasswordForm goes away from the renderer process.
   PresaveGeneratedPasswordInternal(form.form_data,
                                    form.password_value /*generated_password*/);
 }
 
 void NewPasswordFormManager::PasswordNoLongerGenerated() {
-  DCHECK(HasGeneratedPassword());
-  form_saver_->RemovePresavedPassword();
-  generated_password_.clear();
+  if (!HasGeneratedPassword())
+    return;
+
+  generation_state_->PasswordNoLongerGenerated();
+  generation_state_.reset();
   votes_uploader_.set_has_generated_password(false);
   votes_uploader_.set_generated_password_changed(false);
   metrics_recorder_->SetGeneratedPasswordStatus(
@@ -420,7 +436,7 @@ void NewPasswordFormManager::PasswordNoLongerGenerated() {
 }
 
 bool NewPasswordFormManager::HasGeneratedPassword() const {
-  return !generated_password_.empty();
+  return generation_state_ && generation_state_->HasGeneratedPassword();
 }
 
 void NewPasswordFormManager::SetGenerationPopupWasShown(
@@ -443,14 +459,8 @@ bool NewPasswordFormManager::IsPossibleChangePasswordFormWithoutUsername()
          parsed_submitted_form_->IsPossibleChangePasswordFormWithoutUsername();
 }
 
-bool NewPasswordFormManager::RetryPasswordFormPasswordUpdate() const {
-  return retry_password_form_password_update_;
-}
-
 bool NewPasswordFormManager::IsPasswordUpdate() const {
-  return (!GetBestMatches().empty() &&
-          IsPossibleChangePasswordFormWithoutUsername()) ||
-         IsPasswordOverridden() || RetryPasswordFormPasswordUpdate();
+  return IsPasswordOverridden();
 }
 
 std::vector<base::WeakPtr<PasswordManagerDriver>>
@@ -471,25 +481,28 @@ void NewPasswordFormManager::PresaveGeneratedPassword(
   observed_form_ = form;
   PresaveGeneratedPasswordInternal(form, generated_password);
   votes_uploader_.set_generation_element(generation_element);
-  generation_element_ = generation_element;
 }
 
 bool NewPasswordFormManager::UpdateGeneratedPasswordOnUserInput(
     const base::string16& form_identifier,
     const base::string16& field_identifier,
     const base::string16& field_value) {
-  if (observed_form_.name != form_identifier)
+  if (observed_form_.name != form_identifier || !HasGeneratedPassword()) {
+    // *this might not have generated password, because
+    // 1.This function is called before PresaveGeneratedPassword, or
+    // 2.There are multiple forms with the same |form_identifier|
     return false;
+  }
   bool form_data_changed = false;
   for (FormFieldData& field : observed_form_.fields) {
-    if (field.name == field_identifier) {
+    if (field.unique_id == field_identifier) {
       field.value = field_value;
       form_data_changed = true;
       break;
     }
   }
-  base::string16 generated_password = generated_password_;
-  if (generation_element_ == field_identifier) {
+  base::string16 generated_password = generation_state_->generated_password();
+  if (votes_uploader_.get_generation_element() == field_identifier) {
     generated_password = field_value;
     form_data_changed = true;
   }
@@ -516,6 +529,11 @@ std::unique_ptr<NewPasswordFormManager> NewPasswordFormManager::Clone() {
   // owning one needs to happen explicitly.
   result->owned_form_fetcher_ = std::move(fetcher);
 
+  if (generation_state_) {
+    result->generation_state_ =
+        generation_state_->Clone(result->form_saver_.get());
+  }
+
   // These data members all satisfy:
   //   (1) They could have been changed by |*this| between its construction and
   //       calling Clone().
@@ -524,7 +542,6 @@ std::unique_ptr<NewPasswordFormManager> NewPasswordFormManager::Clone() {
   //   (3) They are not changed during OnFetchCompleted, triggered at some point
   //   by the
   //       cloned FormFetcher.
-  result->generated_password_ = generated_password_;
   result->votes_uploader_ = votes_uploader_;
   if (parser_.predictions())
     result->parser_.set_predictions(*parser_.predictions());
@@ -536,8 +553,6 @@ std::unique_ptr<NewPasswordFormManager> NewPasswordFormManager::Clone() {
   }
   result->is_new_login_ = is_new_login_;
   result->password_overridden_ = password_overridden_;
-  result->retry_password_form_password_update_ =
-      retry_password_form_password_update_;
   result->is_submitted_ = is_submitted_;
 
   return result;
@@ -548,7 +563,7 @@ void NewPasswordFormManager::OnFetchCompleted() {
   std::vector<const PasswordForm*> matches;
   PasswordForm::Scheme observed_form_scheme =
       observed_http_auth_digest_ ? observed_http_auth_digest_->scheme
-                                 : PasswordForm::SCHEME_HTML;
+                                 : PasswordForm::Scheme::kHtml;
   for (const auto* match : form_fetcher_->GetNonFederatedMatches()) {
     if (match->scheme == observed_form_scheme)
       matches.push_back(match);
@@ -581,8 +596,9 @@ void NewPasswordFormManager::OnFetchCompleted() {
 }
 
 bool NewPasswordFormManager::ProvisionallySave(
-    const autofill::FormData& submitted_form,
-    const PasswordManagerDriver* driver) {
+    const FormData& submitted_form,
+    const PasswordManagerDriver* driver,
+    bool is_gaia_with_skip_save_password_form) {
   DCHECK(DoesManage(submitted_form, driver));
 
   std::unique_ptr<PasswordForm> parsed_submitted_form =
@@ -597,6 +613,8 @@ bool NewPasswordFormManager::ProvisionallySave(
     return is_submitted_;
 
   parsed_submitted_form_ = std::move(parsed_submitted_form);
+  parsed_submitted_form_->is_gaia_with_skip_save_password_form =
+      is_gaia_with_skip_save_password_form;
   submitted_form_ = submitted_form;
   is_submitted_ = true;
   CalculateFillingAssistanceMetric(submitted_form);
@@ -605,7 +623,7 @@ bool NewPasswordFormManager::ProvisionallySave(
   return true;
 }
 
-bool NewPasswordFormManager::ProvisionallySaveHttpAuthFormIfIsManaged(
+bool NewPasswordFormManager::ProvisionallySaveHttpAuthForm(
     const PasswordForm& submitted_form) {
   if (!IsHttpAuth())
     return false;
@@ -615,7 +633,6 @@ bool NewPasswordFormManager::ProvisionallySaveHttpAuthFormIfIsManaged(
 
   parsed_submitted_form_.reset(new PasswordForm(submitted_form));
   is_submitted_ = true;
-
   CreatePendingCredentials();
   return true;
 }
@@ -670,21 +687,20 @@ void NewPasswordFormManager::Fill() {
   if (observed_password_form->is_new_password_reliable && !IsBlacklisted()) {
 #if defined(OS_IOS)
     driver_->FormEligibleForGenerationFound(
-        {.form_name = observed_password_form->form_data.name,
-         .new_password_element = observed_password_form->new_password_element,
-         .confirmation_password_element =
-             observed_password_form->confirmation_password_element});
+        {/*form_name*/ observed_password_form->form_data.name,
+         /*new_password_element*/ observed_password_form->new_password_element,
+         /*confirmation_password_element*/
+         observed_password_form->confirmation_password_element});
 #else
     driver_->FormEligibleForGenerationFound(
-        {.new_password_renderer_id =
-             observed_password_form->new_password_element_renderer_id,
-         .confirmation_password_renderer_id =
-             observed_password_form
-                 ->confirmation_password_element_renderer_id});
+        {/*new_password_renderer_id*/
+         observed_password_form->new_password_element_renderer_id,
+         /*confirmation_password_renderer_id*/
+         observed_password_form->confirmation_password_element_renderer_id});
 #endif
   }
 
-  // TODO(https://crbug.com/831123). Implement correct treating of federated
+  // TODO(https://crbug.com/831123): Implement correct treating of federated
   // matches.
   std::vector<const PasswordForm*> federated_matches;
   SendFillInformationToRenderer(*client_, driver_.get(), IsBlacklisted(),
@@ -710,13 +726,13 @@ NewPasswordFormManager::NewPasswordFormManager(
     FormFetcher* form_fetcher,
     std::unique_ptr<FormSaver> form_saver,
     scoped_refptr<PasswordFormMetricsRecorder> metrics_recorder,
-    const PasswordStore::FormDigest& form_digest)
+    PasswordStore::FormDigest form_digest)
     : client_(client),
       metrics_recorder_(metrics_recorder),
       owned_form_fetcher_(form_fetcher
                               ? nullptr
                               : std::make_unique<FormFetcherImpl>(
-                                    form_digest,
+                                    std::move(form_digest),
                                     client_,
                                     true /* should_migrate_http_passwords */)),
       form_fetcher_(form_fetcher ? form_fetcher : owned_form_fetcher_.get()),
@@ -814,26 +830,23 @@ void NewPasswordFormManager::CreatePendingCredentials() {
   // changed in this function to initial states.
   is_new_login_ = true;
   SetPasswordOverridden(false);
-  retry_password_form_password_update_ = false;
 
   ValueElementPair password_to_save(PasswordToSave(*parsed_submitted_form_));
-
   // Look for the actually submitted credentials in the list of previously saved
   // credentials that were available to autofilling.
-  const PasswordForm* saved_form =
-      FindBestSavedMatch(parsed_submitted_form_.get());
+  const PasswordForm* saved_form = password_manager_util::GetMatchForUpdating(
+      *parsed_submitted_form_, best_matches_);
   if (saved_form) {
-    // The user signed in with a login we autofilled.
+    // A similar credential exists in the store already.
     pending_credentials_ = *saved_form;
     SetPasswordOverridden(pending_credentials_.password_value !=
                           password_to_save.first);
+    // If the autofilled credentials were a PSL match, store a copy with the
+    // current origin and signon realm. This ensures that on the next visit, a
+    // precise match is found.
+    is_new_login_ = pending_credentials_.is_public_suffix_match;
 
-    if (pending_credentials_.is_public_suffix_match) {
-      // If the autofilled credentials were a PSL match or credentials stored
-      // from Android apps, store a copy with the current origin and signon
-      // realm. This ensures that on the next visit, a precise match is found.
-      is_new_login_ = true;
-
+    if (is_new_login_) {
       // Update credential to reflect that it has been used for submission.
       // If this isn't updated, then password generation uploads are off for
       // sites where PSL matching is required to fill the login form, as two
@@ -841,73 +854,9 @@ void NewPasswordFormManager::CreatePendingCredentials() {
       password_manager_util::UpdateMetadataForUsage(&pending_credentials_);
 
       // Update |pending_credentials_| in order to be able correctly save it.
-      pending_credentials_.origin = submitted_form_.origin;
+      pending_credentials_.origin = parsed_submitted_form_->origin;
       pending_credentials_.signon_realm = parsed_submitted_form_->signon_realm;
-
-      // Normally, the copy of the PSL matched credentials, adapted for the
-      // current domain, is saved automatically without asking the user, because
-      // the copy likely represents the same account, i.e., the one for which
-      // the user already agreed to store a password.
-      //
-      // However, if the user changes the suggested password, it might indicate
-      // that the autofilled credentials and |submitted_password_form|
-      // actually correspond to two different accounts (see
-      // http://crbug.com/385619). In that case the user should be asked again
-      // before saving the password. This is ensured by setting
-      // |password_overriden_| on |pending_credentials_| to false.
-      //
-      // There is still the edge case when the autofilled credentials represent
-      // the same account as |submitted_password_form| but the stored password
-      // was out of date. In that case, the user just had to manually enter the
-      // new password, which is now in |submitted_password_form|. The best
-      // thing would be to save automatically, and also update the original
-      // credentials. However, we have no way to tell if this is the case.
-      // This will likely happen infrequently, and the inconvenience put on the
-      // user by asking them is not significant, so we are fine with asking
-      // here again.
-      if (password_overridden_) {
-        pending_credentials_.is_public_suffix_match = false;
-        SetPasswordOverridden(false);
-      }
-    } else {  // Not a PSL match but a match of an already stored credential.
-      is_new_login_ = false;
-    }
-  } else if (!best_matches_.empty() &&
-             parsed_submitted_form_->type != PasswordForm::TYPE_API &&
-             parsed_submitted_form_->username_value.empty()) {
-    // This branch deals with the case that the submitted form has no username
-    // element and needs to decide whether to offer to update any credentials.
-    // In that case, the user can select any previously stored credential as
-    // the one to update, but we still try to find the best candidate.
-
-    // Find the best candidate to select by default in the password update
-    // bubble. If no best candidate is found, any one can be offered.
-    const PasswordForm* best_update_match =
-        FindBestMatchForUpdatePassword(parsed_submitted_form_->password_value);
-
-    // A retry password form is one that consists of only an "old password"
-    // field, i.e. one that is not a "new password".
-    retry_password_form_password_update_ =
-        parsed_submitted_form_->username_value.empty() &&
-        parsed_submitted_form_->new_password_value.empty();
-
-    is_new_login_ = false;
-    if (best_update_match) {
-      // Chose |best_update_match| to be updated.
-      pending_credentials_ = *best_update_match;
-    } else if (HasGeneratedPassword()) {
-      // If a password was generated and we didn't find a match, we have to save
-      // it in a separate entry since we have to store it but we don't know
-      // where.
-      CreatePendingCredentialsForNewCredentials(*parsed_submitted_form_,
-                                                password_to_save.second);
-      is_new_login_ = true;
-    } else {
-      // We don't have a good candidate to choose as the default credential for
-      // the update bubble and the user has to pick one.
-      // We set |pending_credentials_| to the bare minimum, which is the correct
-      // origin.
-      pending_credentials_.origin = submitted_form_.origin;
+      pending_credentials_.action = parsed_submitted_form_->action;
     }
   } else {
     is_new_login_ = true;
@@ -929,13 +878,9 @@ void NewPasswordFormManager::CreatePendingCredentials() {
               kCorrectedUsernameInForm);
     }
   }
-
-  if (!IsValidAndroidFacetURI(pending_credentials_.signon_realm))
-    pending_credentials_.action = submitted_form_.action;
-
-  pending_credentials_.password_value = generated_password_.empty()
-                                            ? password_to_save.first
-                                            : generated_password_;
+  pending_credentials_.password_value =
+      HasGeneratedPassword() ? generation_state_->generated_password()
+                             : password_to_save.first;
   pending_credentials_.preferred = true;
   pending_credentials_.form_has_autofilled_value =
       parsed_submitted_form_->form_has_autofilled_value;
@@ -946,7 +891,7 @@ void NewPasswordFormManager::CreatePendingCredentials() {
   // If we're dealing with an API-driven provisionally saved form, then take
   // the server provided values. We don't do this for non-API forms, as
   // those will never have those members set.
-  if (parsed_submitted_form_->type == PasswordForm::TYPE_API) {
+  if (parsed_submitted_form_->type == PasswordForm::Type::kApi) {
     pending_credentials_.skip_zero_click =
         parsed_submitted_form_->skip_zero_click;
     pending_credentials_.display_name = parsed_submitted_form_->display_name;
@@ -960,62 +905,7 @@ void NewPasswordFormManager::CreatePendingCredentials() {
   }
 
   if (HasGeneratedPassword())
-    pending_credentials_.type = PasswordForm::TYPE_GENERATED;
-}
-
-const PasswordForm* NewPasswordFormManager::FindBestMatchForUpdatePassword(
-    const base::string16& password) const {
-  // This function is called for forms that do not contain a username field.
-  // This means that we cannot update credentials based on a matching username
-  // and that we may need to show an update prompt.
-  if (best_matches_.size() == 1 && !HasGeneratedPassword()) {
-    // In case the submitted form contained no username but a password, and if
-    // the user has only one credential stored, return it as the one that should
-    // be updated.
-    return best_matches_.begin()->second;
-  }
-  if (password.empty())
-    return nullptr;
-
-  // Return any existing credential that has the same |password| saved already.
-  for (const auto& key_value : best_matches_) {
-    if (key_value.second->password_value == password)
-      return key_value.second;
-  }
-  return nullptr;
-}
-
-const PasswordForm* NewPasswordFormManager::FindBestSavedMatch(
-    const PasswordForm* submitted_form) const {
-  if (!submitted_form->federation_origin.opaque())
-    return nullptr;
-
-  // Return form with matching |username_value|.
-  auto it = best_matches_.find(submitted_form->username_value);
-  if (it != best_matches_.end())
-    return it->second;
-
-  // Match Credential API forms only by username. Stop here if nothing was found
-  // above.
-  if (submitted_form->type == PasswordForm::TYPE_API)
-    return nullptr;
-
-  // Verify that the submitted form has no username and no "new password"
-  // and bail out with a nullptr otherwise.
-  bool submitted_form_has_username = !submitted_form->username_value.empty();
-  bool submitted_form_has_new_password_element =
-      !submitted_form->new_password_value.empty();
-  if (submitted_form_has_username || submitted_form_has_new_password_element)
-    return nullptr;
-
-  // At this line we are certain that the submitted form contains only a
-  // password field that is not a "new password". Now we can check whether we
-  // have a match by password of an already saved credential.
-  for (const auto& stored_match : best_matches_) {
-    if (stored_match.second->password_value == submitted_form->password_value)
-      return stored_match.second;
-  }
-  return nullptr;
+    pending_credentials_.type = PasswordForm::Type::kGenerated;
 }
 
 void NewPasswordFormManager::CreatePendingCredentialsForNewCredentials(
@@ -1056,7 +946,7 @@ void NewPasswordFormManager::ProcessUpdate() {
   // update the stats, or the user typed in a new password for autofilled
   // username, or the user selected one of the non-preferred matches,
   // thus requiring a swap of preferred bits.
-  DCHECK(!is_new_login_ && pending_credentials_.preferred);
+  DCHECK(pending_credentials_.preferred);
   DCHECK(!client_->IsIncognito());
   DCHECK(parsed_submitted_form_);
 
@@ -1090,31 +980,7 @@ void NewPasswordFormManager::FillHttpAuth() {
   DCHECK(IsHttpAuth());
   if (!preferred_match_)
     return;
-
-  client_->AutofillHttpAuth(best_matches_, *preferred_match_);
-}
-
-std::vector<PasswordForm>
-NewPasswordFormManager::FindOtherCredentialsToUpdate() {
-  std::vector<autofill::PasswordForm> credentials_to_update;
-  if (!pending_credentials_.federation_origin.opaque())
-    return credentials_to_update;
-
-  auto updated_password_it =
-      best_matches_.find(pending_credentials_.username_value);
-  DCHECK(best_matches_.end() != updated_password_it);
-  const base::string16& old_password =
-      updated_password_it->second->password_value;
-  for (auto* not_best_match : not_best_matches_) {
-    if (not_best_match->username_value == pending_credentials_.username_value &&
-        not_best_match->password_value == old_password) {
-      credentials_to_update.push_back(*not_best_match);
-      credentials_to_update.back().password_value =
-          pending_credentials_.password_value;
-    }
-  }
-
-  return credentials_to_update;
+  client_->AutofillHttpAuth(*preferred_match_, this);
 }
 
 std::unique_ptr<PasswordForm> NewPasswordFormManager::ParseFormAndMakeLogging(
@@ -1141,11 +1007,13 @@ void NewPasswordFormManager::PresaveGeneratedPasswordInternal(
   if (!parsed_form) {
     // Create a password form with a minimum data.
     parsed_form.reset(new PasswordForm());
-    parsed_form->origin = form.origin;
-    parsed_form->signon_realm = GetSignonRealm(form.origin);
+    parsed_form->origin = form.url;
+    parsed_form->signon_realm = GetSignonRealm(form.url);
   }
 
   if (!HasGeneratedPassword()) {
+    generation_state_ =
+        std::make_unique<PasswordGenerationState>(form_saver_.get());
     votes_uploader_.set_generated_password_changed(false);
     metrics_recorder_->SetGeneratedPasswordStatus(
         PasswordFormMetricsRecorder::GeneratedPasswordStatus::
@@ -1155,7 +1023,7 @@ void NewPasswordFormManager::PresaveGeneratedPasswordInternal(
     // from the presaved one, then mark that the generated password was changed.
     // If a user recovers the original generated password, it will be recorded
     // as a password change.
-    if (generated_password_ != generated_password) {
+    if (generation_state_->generated_password() != generated_password) {
       votes_uploader_.set_generated_password_changed(true);
       metrics_recorder_->SetGeneratedPasswordStatus(
           PasswordFormMetricsRecorder::GeneratedPasswordStatus::
@@ -1163,18 +1031,17 @@ void NewPasswordFormManager::PresaveGeneratedPasswordInternal(
     }
   }
   votes_uploader_.set_has_generated_password(true);
-  generated_password_ = generated_password;
 
   // Set |password_value| to the generated password in order to ensure that the
   // generated password is saved.
-  parsed_form->password_value = generated_password_;
+  parsed_form->password_value = generated_password;
 
   // Clear the username value if there are already saved credentials with
   // the same username in order to prevent overwriting.
   if (base::ContainsKey(best_matches_, parsed_form->username_value))
     parsed_form->username_value.clear();
 
-  form_saver_->PresaveGeneratedPassword(*parsed_form);
+  generation_state_->PresaveGeneratedPassword(std::move(*parsed_form));
 }
 
 void NewPasswordFormManager::CalculateFillingAssistanceMetric(
@@ -1198,6 +1065,35 @@ void NewPasswordFormManager::CalculateFillingAssistanceMetric(
       submitted_form, saved_usernames, saved_passwords, IsBlacklisted(),
       form_fetcher_->GetInteractionsStats());
 #endif
+}
+
+std::vector<const PasswordForm*> NewPasswordFormManager::GetAllMatches() const {
+  std::vector<const autofill::PasswordForm*> result =
+      form_fetcher_->GetNonFederatedMatches();
+  PasswordForm::Scheme observed_form_scheme =
+      observed_http_auth_digest_ ? observed_http_auth_digest_->scheme
+                                 : PasswordForm::Scheme::kHtml;
+  base::EraseIf(result, [observed_form_scheme](const auto* form) {
+    return form->scheme != observed_form_scheme;
+  });
+  return result;
+}
+
+void NewPasswordFormManager::SavePendingToStore(bool update) {
+  const PasswordForm* saved_form = password_manager_util::GetMatchForUpdating(
+      *parsed_submitted_form_, best_matches_);
+  if (update || password_overridden_)
+    DCHECK(saved_form);
+  base::string16 old_password =
+      saved_form ? saved_form->password_value : base::string16();
+  if (HasGeneratedPassword()) {
+    generation_state_->CommitGeneratedPassword(pending_credentials_,
+                                               GetAllMatches(), old_password);
+  } else if (update) {
+    form_saver_->Update(pending_credentials_, GetAllMatches(), old_password);
+  } else {
+    form_saver_->Save(pending_credentials_, GetAllMatches(), old_password);
+  }
 }
 
 }  // namespace password_manager

@@ -14,19 +14,19 @@
 #endif
 
 namespace {
-
 // Autolayout constants.
 const CGFloat kVerticalPadding = 13;
 const CGFloat kImageTrailingPadding = 14;
 const CGFloat kImageWidth = 30;
 const CGFloat kImageHeight = 30;
 
+// Tint color for cell's imageView when highlighted/selected.
+const int kSelectedImageViewTintColor = 0x4285F4;
+// Tint color for cell's imageView when unhighlighted/unselected.
+const int kUnselectedImageViewTintColor = 0x9AA0A6;
 }  // namespace
 
 @implementation TableViewClearBrowsingDataItem
-@synthesize checked = _checked;
-@synthesize dataTypeMask = _dataTypeMask;
-@synthesize text = _text;
 
 - (instancetype)initWithType:(NSInteger)type {
   self = [super initWithType:type];
@@ -49,8 +49,25 @@ const CGFloat kImageHeight = 30;
   cell.textLabel.text = self.text;
   cell.detailTextLabel.text = self.detailText;
   cell.optionalTextLabel.text = self.optionalText;
-  cell.accessoryType = self.checked ? UITableViewCellAccessoryCheckmark
-                                    : UITableViewCellAccessoryNone;
+  cell.highlightedBackgroundColor = self.checkedBackgroundColor;
+  cell.checked = self.checked;
+  if (self.checked) {
+    [self setSelectedStyle:cell];
+  } else {
+    [self setUnselectedStyle:cell];
+  }
+}
+
+- (void)setSelectedStyle:(TableViewClearBrowsingDataCell*)cell {
+  cell.backgroundView.backgroundColor = self.checkedBackgroundColor;
+  cell.imageView.tintColor = UIColorFromRGB(kSelectedImageViewTintColor);
+  cell.accessoryType = UITableViewCellAccessoryCheckmark;
+}
+
+- (void)setUnselectedStyle:(TableViewClearBrowsingDataCell*)cell {
+  cell.backgroundView.backgroundColor = nil;
+  cell.imageView.tintColor = UIColorFromRGB(kUnselectedImageViewTintColor);
+  cell.accessoryType = UITableViewCellAccessoryNone;
 }
 
 @end
@@ -81,6 +98,7 @@ const CGFloat kImageHeight = 30;
               reuseIdentifier:(NSString*)reuseIdentifier {
   self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
   if (self) {
+    self.backgroundView = [[UIView alloc] init];
     self.isAccessibilityElement = YES;
 
     _imageView = [[UIImageView alloc] init];
@@ -98,7 +116,7 @@ const CGFloat kImageHeight = 30;
     _detailTextLabel.numberOfLines = 0;
     _detailTextLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _detailTextLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
     _detailTextLabel.adjustsFontForContentSizeCategory = YES;
     [self.contentView addSubview:_detailTextLabel];
 
@@ -108,7 +126,7 @@ const CGFloat kImageHeight = 30;
         UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
     _optionalTextLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _optionalTextLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
     _optionalTextLabel.adjustsFontForContentSizeCategory = YES;
     [self.contentView addSubview:_optionalTextLabel];
 
@@ -143,15 +161,18 @@ const CGFloat kImageHeight = 30;
       [_textLabel.leadingAnchor
           constraintEqualToAnchor:_labelContainerGuide.leadingAnchor],
       [_textLabel.trailingAnchor
-          constraintEqualToAnchor:_labelContainerGuide.trailingAnchor],
+          constraintLessThanOrEqualToAnchor:_labelContainerGuide
+                                                .trailingAnchor],
       [_detailTextLabel.leadingAnchor
           constraintEqualToAnchor:_labelContainerGuide.leadingAnchor],
       [_detailTextLabel.trailingAnchor
-          constraintEqualToAnchor:_labelContainerGuide.trailingAnchor],
+          constraintLessThanOrEqualToAnchor:_labelContainerGuide
+                                                .trailingAnchor],
       [_optionalTextLabel.leadingAnchor
           constraintEqualToAnchor:_labelContainerGuide.leadingAnchor],
       [_optionalTextLabel.trailingAnchor
-          constraintEqualToAnchor:_labelContainerGuide.trailingAnchor],
+          constraintLessThanOrEqualToAnchor:_labelContainerGuide
+                                                .trailingAnchor],
       [_labelContainerGuide.trailingAnchor
           constraintEqualToAnchor:self.contentView.trailingAnchor
                          constant:-kTableViewHorizontalSpacing],
@@ -180,9 +201,52 @@ const CGFloat kImageHeight = 30;
   return self;
 }
 
+- (void)layoutSubviews {
+  // So that the text labels' width never shrink when the accessory view is set.
+  CGFloat leadingSpace = kTableViewHorizontalSpacing;
+  if (self.imageView.image != nil) {
+    leadingSpace += (kImageWidth + kImageTrailingPadding);
+  }
+  CGFloat width =
+      self.bounds.size.width -
+      (kTableViewAccessoryWidth + kTableViewHorizontalSpacing + leadingSpace);
+  self.textLabel.preferredMaxLayoutWidth = width;
+  self.detailTextLabel.preferredMaxLayoutWidth = width;
+  self.optionalTextLabel.preferredMaxLayoutWidth = width;
+  [super layoutSubviews];
+}
+
+- (void)prepareForReuse {
+  [super prepareForReuse];
+  self.highlightedBackgroundColor = nil;
+  self.backgroundView.backgroundColor = nil;
+  self.imageView.tintColor = nil;
+  self.accessoryType = UITableViewCellAccessoryNone;
+}
+
+- (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
+  [super setHighlighted:highlighted animated:animated];
+  if (self.checked)
+    return;
+  if (highlighted) {
+    [self setHighlightedStyle];
+  } else {
+    [self setUnhighlightedStyle];
+  }
+}
+
+- (void)setHighlightedStyle {
+  self.imageView.tintColor = UIColorFromRGB(kSelectedImageViewTintColor);
+  self.backgroundView.backgroundColor = self.highlightedBackgroundColor;
+}
+
+- (void)setUnhighlightedStyle {
+  self.imageView.tintColor = UIColorFromRGB(kUnselectedImageViewTintColor);
+  self.backgroundView.backgroundColor = nil;
+}
+
 - (void)setImage:(UIImage*)image {
-  self.imageView.image = image;
-  self.imageView.highlightedImage =
+  self.imageView.image =
       [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
   if (self.imageView.image == nil) {
     self.imageVisibleConstraint.active = NO;

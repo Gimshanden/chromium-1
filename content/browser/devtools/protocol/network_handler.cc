@@ -50,7 +50,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/origin_util.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
@@ -137,7 +137,13 @@ std::unique_ptr<Network::Cookie> BuildCookie(
     case net::CookieSameSite::LAX_MODE:
       devtools_cookie->SetSameSite(Network::CookieSameSiteEnum::Lax);
       break;
+    case net::CookieSameSite::EXTENDED_MODE:
+      devtools_cookie->SetSameSite(Network::CookieSameSiteEnum::Extended);
+      break;
     case net::CookieSameSite::NO_RESTRICTION:
+      devtools_cookie->SetSameSite(Network::CookieSameSiteEnum::None);
+      break;
+    case net::CookieSameSite::UNSPECIFIED:
       break;
   }
   return devtools_cookie;
@@ -440,11 +446,15 @@ std::unique_ptr<net::CanonicalCookie> MakeCookieFromProtocolValues(
         expires ? base::Time::FromDoubleT(expires) : base::Time::UnixEpoch();
   }
 
-  net::CookieSameSite css = net::CookieSameSite::NO_RESTRICTION;
+  net::CookieSameSite css = net::CookieSameSite::UNSPECIFIED;
   if (same_site == Network::CookieSameSiteEnum::Lax)
     css = net::CookieSameSite::LAX_MODE;
   if (same_site == Network::CookieSameSiteEnum::Strict)
     css = net::CookieSameSite::STRICT_MODE;
+  if (same_site == Network::CookieSameSiteEnum::Extended)
+    css = net::CookieSameSite::EXTENDED_MODE;
+  if (same_site == Network::CookieSameSiteEnum::None)
+    css = net::CookieSameSite::NO_RESTRICTION;
 
   return net::CanonicalCookie::CreateSanitizedCookie(
       url, name, value, normalized_domain, path, base::Time(), expiration_date,
@@ -544,8 +554,7 @@ String referrerPolicy(network::mojom::ReferrerPolicy referrer_policy) {
     case network::mojom::ReferrerPolicy::kAlways:
       return Network::Request::ReferrerPolicyEnum::UnsafeUrl;
     case network::mojom::ReferrerPolicy::kDefault:
-      if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-              switches::kReducedReferrerGranularity)) {
+      if (base::FeatureList::IsEnabled(features::kReducedReferrerGranularity)) {
         return Network::Request::ReferrerPolicyEnum::
             StrictOriginWhenCrossOrigin;
       } else {
@@ -809,18 +818,21 @@ class BackgroundSyncRestorer {
  public:
   BackgroundSyncRestorer(const std::string& host_id,
                          StoragePartition* storage_partition)
-      : host_id_(host_id), storage_partition_(storage_partition) {
-    SetServiceWorkerOffline(true);
+      : host_id_(host_id),
+        storage_partition_(storage_partition),
+        offline_sw_registration_id_(
+            new int64_t(blink::mojom::kInvalidServiceWorkerRegistrationId)) {
+    SetServiceWorkerOfflineStatus(true);
   }
 
-  ~BackgroundSyncRestorer() { SetServiceWorkerOffline(false); }
+  ~BackgroundSyncRestorer() { SetServiceWorkerOfflineStatus(false); }
 
   void SetStoragePartition(StoragePartition* storage_partition) {
     storage_partition_ = storage_partition;
   }
 
  private:
-  void SetServiceWorkerOffline(bool offline) {
+  void SetServiceWorkerOfflineStatus(bool offline) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     scoped_refptr<DevToolsAgentHost> host =
         DevToolsAgentHost::GetForId(host_id_);
@@ -833,30 +845,56 @@ class BackgroundSyncRestorer {
     scoped_refptr<BackgroundSyncContextImpl> sync_context =
         static_cast<StoragePartitionImpl*>(storage_partition_)
             ->GetBackgroundSyncContext();
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(
-            &SetServiceWorkerOfflineOnIO, sync_context,
-            base::RetainedRef(static_cast<ServiceWorkerContextWrapper*>(
-                storage_partition_->GetServiceWorkerContext())),
-            service_worker_host->version_id(), offline));
+    if (offline) {
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
+          base::BindOnce(
+              &SetServiceWorkerOfflineOnIO, sync_context,
+              base::RetainedRef(static_cast<ServiceWorkerContextWrapper*>(
+                  storage_partition_->GetServiceWorkerContext())),
+              service_worker_host->version_id(),
+              offline_sw_registration_id_.get()));
+    } else {
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
+          base::BindOnce(&SetServiceWorkerOnlineOnIO, sync_context,
+                         offline_sw_registration_id_.get()));
+    }
   }
 
   static void SetServiceWorkerOfflineOnIO(
       scoped_refptr<BackgroundSyncContextImpl> sync_context,
       scoped_refptr<ServiceWorkerContextWrapper> swcontext,
       int64_t version_id,
-      bool offline) {
+      int64_t* offline_sw_registration_id) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     ServiceWorkerVersion* version = swcontext.get()->GetLiveVersion(version_id);
     if (!version)
       return;
+    int64_t registration_id = version->registration_id();
+    *offline_sw_registration_id = registration_id;
+    if (registration_id == blink::mojom::kInvalidServiceWorkerRegistrationId)
+      return;
     sync_context->background_sync_manager()->EmulateServiceWorkerOffline(
-        version->registration_id(), offline);
+        registration_id, true);
+  }
+
+  static void SetServiceWorkerOnlineOnIO(
+      scoped_refptr<BackgroundSyncContextImpl> sync_context,
+      int64_t* offline_sw_registration_id) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    if (*offline_sw_registration_id ==
+        blink::mojom::kInvalidServiceWorkerRegistrationId) {
+      return;
+    }
+    sync_context->background_sync_manager()->EmulateServiceWorkerOffline(
+        *offline_sw_registration_id, false);
   }
 
   std::string host_id_;
   StoragePartition* storage_partition_;
+  std::unique_ptr<int64_t, content::BrowserThread::DeleteOnIOThread>
+      offline_sw_registration_id_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundSyncRestorer);
 };
@@ -964,55 +1002,55 @@ bool NetworkHandler::AddInterceptedResourceType(
     const std::string& resource_type,
     base::flat_set<ResourceType>* intercepted_resource_types) {
   if (resource_type == protocol::Network::ResourceTypeEnum::Document) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_MAIN_FRAME);
-    intercepted_resource_types->insert(RESOURCE_TYPE_SUB_FRAME);
+    intercepted_resource_types->insert(ResourceType::kMainFrame);
+    intercepted_resource_types->insert(ResourceType::kSubFrame);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Stylesheet) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_STYLESHEET);
+    intercepted_resource_types->insert(ResourceType::kStylesheet);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Image) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_IMAGE);
+    intercepted_resource_types->insert(ResourceType::kImage);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Media) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_MEDIA);
+    intercepted_resource_types->insert(ResourceType::kMedia);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Font) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_FONT_RESOURCE);
+    intercepted_resource_types->insert(ResourceType::kFontResource);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Script) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_SCRIPT);
+    intercepted_resource_types->insert(ResourceType::kScript);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::XHR) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_XHR);
+    intercepted_resource_types->insert(ResourceType::kXhr);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Fetch) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_PREFETCH);
+    intercepted_resource_types->insert(ResourceType::kPrefetch);
     return true;
   }
   if (resource_type ==
       protocol::Network::ResourceTypeEnum::CSPViolationReport) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_CSP_REPORT);
+    intercepted_resource_types->insert(ResourceType::kCspReport);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Ping) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_PING);
+    intercepted_resource_types->insert(ResourceType::kPing);
     return true;
   }
   if (resource_type == protocol::Network::ResourceTypeEnum::Other) {
-    intercepted_resource_types->insert(RESOURCE_TYPE_SUB_RESOURCE);
-    intercepted_resource_types->insert(RESOURCE_TYPE_OBJECT);
-    intercepted_resource_types->insert(RESOURCE_TYPE_WORKER);
-    intercepted_resource_types->insert(RESOURCE_TYPE_SHARED_WORKER);
-    intercepted_resource_types->insert(RESOURCE_TYPE_FAVICON);
-    intercepted_resource_types->insert(RESOURCE_TYPE_SERVICE_WORKER);
-    intercepted_resource_types->insert(RESOURCE_TYPE_PLUGIN_RESOURCE);
+    intercepted_resource_types->insert(ResourceType::kSubResource);
+    intercepted_resource_types->insert(ResourceType::kObject);
+    intercepted_resource_types->insert(ResourceType::kWorker);
+    intercepted_resource_types->insert(ResourceType::kSharedWorker);
+    intercepted_resource_types->insert(ResourceType::kFavicon);
+    intercepted_resource_types->insert(ResourceType::kServiceWorker);
+    intercepted_resource_types->insert(ResourceType::kPluginResource);
     return true;
   }
   return false;
@@ -1021,41 +1059,41 @@ bool NetworkHandler::AddInterceptedResourceType(
 // static
 const char* NetworkHandler::ResourceTypeToString(ResourceType resource_type) {
   switch (resource_type) {
-    case RESOURCE_TYPE_MAIN_FRAME:
+    case ResourceType::kMainFrame:
       return protocol::Network::ResourceTypeEnum::Document;
-    case RESOURCE_TYPE_SUB_FRAME:
+    case ResourceType::kSubFrame:
       return protocol::Network::ResourceTypeEnum::Document;
-    case RESOURCE_TYPE_STYLESHEET:
+    case ResourceType::kStylesheet:
       return protocol::Network::ResourceTypeEnum::Stylesheet;
-    case RESOURCE_TYPE_SCRIPT:
+    case ResourceType::kScript:
       return protocol::Network::ResourceTypeEnum::Script;
-    case RESOURCE_TYPE_IMAGE:
+    case ResourceType::kImage:
       return protocol::Network::ResourceTypeEnum::Image;
-    case RESOURCE_TYPE_FONT_RESOURCE:
+    case ResourceType::kFontResource:
       return protocol::Network::ResourceTypeEnum::Font;
-    case RESOURCE_TYPE_SUB_RESOURCE:
+    case ResourceType::kSubResource:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_OBJECT:
+    case ResourceType::kObject:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_MEDIA:
+    case ResourceType::kMedia:
       return protocol::Network::ResourceTypeEnum::Media;
-    case RESOURCE_TYPE_WORKER:
+    case ResourceType::kWorker:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_SHARED_WORKER:
+    case ResourceType::kSharedWorker:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_PREFETCH:
+    case ResourceType::kPrefetch:
       return protocol::Network::ResourceTypeEnum::Fetch;
-    case RESOURCE_TYPE_FAVICON:
+    case ResourceType::kFavicon:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_XHR:
+    case ResourceType::kXhr:
       return protocol::Network::ResourceTypeEnum::XHR;
-    case RESOURCE_TYPE_PING:
+    case ResourceType::kPing:
       return protocol::Network::ResourceTypeEnum::Ping;
-    case RESOURCE_TYPE_SERVICE_WORKER:
+    case ResourceType::kServiceWorker:
       return protocol::Network::ResourceTypeEnum::Other;
-    case RESOURCE_TYPE_CSP_REPORT:
+    case ResourceType::kCspReport:
       return protocol::Network::ResourceTypeEnum::CSPViolationReport;
-    case RESOURCE_TYPE_PLUGIN_RESOURCE:
+    case ResourceType::kPluginResource:
       return protocol::Network::ResourceTypeEnum::Other;
     default:
       return protocol::Network::ResourceTypeEnum::Other;
@@ -1085,7 +1123,7 @@ void NetworkHandler::SetRenderer(int render_process_host_id,
     browser_context_ = nullptr;
   }
   host_ = frame_host;
-  if (background_sync_restorer_)
+  if (background_sync_restorer_ && storage_partition_)
     background_sync_restorer_->SetStoragePartition(storage_partition_);
 }
 
@@ -1573,6 +1611,7 @@ std::unique_ptr<Network::Response> BuildResponse(
                                 info.load_timing.request_start_time)
           .Build();
   response->SetFromServiceWorker(info.was_fetched_via_service_worker);
+  response->SetFromPrefetchCache(info.was_in_prefetch_cache);
   network::HttpRawRequestResponseInfo* raw_info =
       info.raw_request_response_info.get();
   if (raw_info) {
@@ -1946,8 +1985,8 @@ void NetworkHandler::ContinueInterceptedRequest(
       LOG(WARNING) << "Can't find headers in raw response";
       header_size = 0;
     } else {
-      raw_headers = net::HttpUtil::AssembleRawHeaders(
-          reinterpret_cast<const char*>(raw.data()), header_size);
+      raw_headers = net::HttpUtil::AssembleRawHeaders(base::StringPiece(
+          reinterpret_cast<const char*>(raw.data()), header_size));
     }
     CHECK_LE(header_size, raw.size());
     response_headers =
@@ -2232,7 +2271,7 @@ void NetworkHandler::RequestIntercepted(
       info->is_navigation, std::move(info->is_download),
       std::move(info->redirect_url), std::move(auth_challenge),
       std::move(error_reason), std::move(status_code),
-      std::move(response_headers));
+      std::move(response_headers), std::move(info->renderer_request_id));
 }
 
 void NetworkHandler::SetNetworkConditions(

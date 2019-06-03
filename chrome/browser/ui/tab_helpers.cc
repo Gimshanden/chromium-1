@@ -59,7 +59,6 @@
 #include "chrome/browser/tracing/navigation_tracing.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
-#include "chrome/browser/ui/bloated_renderer/bloated_renderer_tab_helper.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/browser/ui/blocked_content/popup_opener_tab_helper.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
@@ -106,14 +105,15 @@
 #include "chrome/browser/ui/android/view_android_helper.h"
 #else
 #include "chrome/browser/banners/app_banner_manager_desktop.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/plugins/plugin_observer.h"
 #include "chrome/browser/safe_browsing/safe_browsing_tab_observer.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/hung_plugin_tab_helper.h"
+#include "chrome/browser/ui/intent_picker_tab_helper.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/sync/browser_synced_tab_delegate.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "components/pdf/browser/pdf_web_contents_helper.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/zoom/zoom_controller.h"
@@ -195,7 +195,6 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
       autofill::ChromeAutofillClient::FromWebContents(web_contents),
       g_browser_process->GetApplicationLocale(),
       autofill::AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER);
-  BloatedRendererTabHelper::CreateForWebContents(web_contents);
   chrome_browser_net::NetErrorTabHelper::CreateForWebContents(web_contents);
   ChromePasswordManagerClient::CreateForWebContentsWithAutofillClient(
       web_contents,
@@ -219,7 +218,7 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   download::DownloadNavigationObserver::CreateForWebContents(
       web_contents,
-      download::NavigationMonitorFactory::GetForBrowserContext(profile));
+      download::NavigationMonitorFactory::GetForKey(profile->GetProfileKey()));
   history::WebContentsTopSitesObserver::CreateForWebContents(
       web_contents, TopSitesFactory::GetForProfile(profile).get());
   HistoryTabHelper::CreateForWebContents(web_contents);
@@ -284,6 +283,7 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   SingleTabModeTabHelper::CreateForWebContents(web_contents);
   ViewAndroidHelper::CreateForWebContents(web_contents);
 #else
+  banners::AppBannerManagerDesktop::CreateForWebContents(web_contents);
   BookmarkTabHelper::CreateForWebContents(web_contents);
   BrowserSyncedTabDelegate::CreateForWebContents(web_contents);
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
@@ -291,6 +291,7 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   extensions::WebNavigationTabObserver::CreateForWebContents(web_contents);
   FramebustBlockTabHelper::CreateForWebContents(web_contents);
   HungPluginTabHelper::CreateForWebContents(web_contents);
+  IntentPickerTabHelper::CreateForWebContents(web_contents);
   JavaScriptDialogTabHelper::CreateForWebContents(web_contents);
   ManagePasswordsUIController::CreateForWebContents(web_contents);
   pdf::PDFWebContentsHelper::CreateForWebContentsWithClient(
@@ -303,9 +304,6 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   if (base::FeatureList::IsEnabled(features::kTabHoverCardImages))
     ThumbnailTabHelper::CreateForWebContents(web_contents);
   web_modal::WebContentsModalDialogManager::CreateForWebContents(web_contents);
-
-  if (banners::AppBannerManagerDesktop::IsEnabled())
-    banners::AppBannerManagerDesktop::CreateForWebContents(web_contents);
 #endif
 
 #if defined(OS_WIN) || defined(OS_MACOSX) || \
@@ -320,12 +318,12 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   }
 #endif
 
-// --- Feature tab helpers behind flags ---
+  // --- Feature tab helpers behind flags ---
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
-offline_pages::OfflinePageTabHelper::CreateForWebContents(web_contents);
-offline_pages::RecentTabHelper::CreateForWebContents(web_contents);
-offline_pages::AutoFetchPageLoadWatcher::CreateForWebContents(web_contents);
+  offline_pages::OfflinePageTabHelper::CreateForWebContents(web_contents);
+  offline_pages::RecentTabHelper::CreateForWebContents(web_contents);
+  offline_pages::AutoFetchPageLoadWatcher::CreateForWebContents(web_contents);
 #endif
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)

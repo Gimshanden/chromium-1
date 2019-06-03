@@ -36,6 +36,8 @@ class PLATFORM_EXPORT FrameOrWorkerScheduler {
   };
 
   class PLATFORM_EXPORT LifecycleObserverHandle {
+    USING_FAST_MALLOC(LifecycleObserverHandle);
+
    public:
     LifecycleObserverHandle(FrameOrWorkerScheduler* scheduler,
                             Observer* observer);
@@ -51,6 +53,8 @@ class PLATFORM_EXPORT FrameOrWorkerScheduler {
   // RAII handle which should be kept alive as long as the feature is active
   // and the policy should be applied.
   class PLATFORM_EXPORT SchedulingAffectingFeatureHandle {
+    DISALLOW_NEW();
+
    public:
     SchedulingAffectingFeatureHandle() = default;
     SchedulingAffectingFeatureHandle(SchedulingAffectingFeatureHandle&&);
@@ -72,7 +76,7 @@ class PLATFORM_EXPORT FrameOrWorkerScheduler {
                                      SchedulingPolicy policy,
                                      base::WeakPtr<FrameOrWorkerScheduler>);
 
-    SchedulingPolicy::Feature feature_ = SchedulingPolicy::Feature::kCount;
+    SchedulingPolicy::Feature feature_ = SchedulingPolicy::Feature::kMaxValue;
     SchedulingPolicy policy_;
     base::WeakPtr<FrameOrWorkerScheduler> scheduler_;
 
@@ -124,6 +128,8 @@ class PLATFORM_EXPORT FrameOrWorkerScheduler {
                                      const SchedulingPolicy& policy) = 0;
   virtual void OnStoppedUsingFeature(SchedulingPolicy::Feature feature,
                                      const SchedulingPolicy& policy) = 0;
+
+  virtual base::WeakPtr<FrameOrWorkerScheduler> GetDocumentBoundWeakPtr();
 
   base::WeakPtr<FrameOrWorkerScheduler> GetWeakPtr();
 

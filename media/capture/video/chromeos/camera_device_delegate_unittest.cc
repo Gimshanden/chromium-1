@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "media/base/bind_to_current_loop.h"
@@ -121,7 +122,7 @@ class CameraDeviceDelegateTest : public ::testing::Test {
     hal_delegate_thread_.Start();
     camera_hal_delegate_ =
         new CameraHalDelegate(hal_delegate_thread_.task_runner());
-    reprocess_manager_ = std::make_unique<ReprocessManager>();
+    reprocess_manager_ = std::make_unique<ReprocessManager>(base::DoNothing());
     camera_hal_delegate_->SetCameraModule(
         mock_camera_module_.GetInterfacePtrInfo());
   }
@@ -386,9 +387,9 @@ class CameraDeviceDelegateTest : public ::testing::Test {
     EXPECT_EQ(CameraDeviceContext::State::kStopped, GetState());
   }
 
-  unittest_internal::MockVideoCaptureClient* ResetDeviceContext() {
+  unittest_internal::NiceMockVideoCaptureClient* ResetDeviceContext() {
     auto mock_client =
-        std::make_unique<unittest_internal::MockVideoCaptureClient>();
+        std::make_unique<unittest_internal::NiceMockVideoCaptureClient>();
     auto* client_ptr = mock_client.get();
     device_context_ =
         std::make_unique<CameraDeviceContext>(std::move(mock_client));
@@ -426,6 +427,7 @@ class CameraDeviceDelegateTest : public ::testing::Test {
   }
 
  protected:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<CameraHalDelegate> camera_hal_delegate_;
   std::unique_ptr<CameraDeviceDelegate> camera_device_delegate_;
 
@@ -445,7 +447,6 @@ class CameraDeviceDelegateTest : public ::testing::Test {
   size_t num_streams_;
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::Thread hal_delegate_thread_;
   std::unique_ptr<base::RunLoop> run_loop_;
   DISALLOW_COPY_AND_ASSIGN(CameraDeviceDelegateTest);

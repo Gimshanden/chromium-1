@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -121,8 +120,10 @@ int WebSocketHttp2HandshakeStream::SendRequest(
 
   callback_ = std::move(callback);
   spdy_stream_request_ = std::make_unique<SpdyStreamRequest>();
+  // The initial request for the WebSocket is a CONNECT, so there is no need to
+  // call ConfirmHandshake().
   int rv = spdy_stream_request_->StartRequest(
-      SPDY_BIDIRECTIONAL_STREAM, session_, request_info_->url, priority_,
+      SPDY_BIDIRECTIONAL_STREAM, session_, request_info_->url, true, priority_,
       request_info_->socket_tag, net_log_,
       base::BindOnce(&WebSocketHttp2HandshakeStream::StartRequestCallback,
                      base::Unretained(this)),
@@ -259,7 +260,7 @@ WebSocketHttp2HandshakeStream::GetWeakPtr() {
 }
 
 void WebSocketHttp2HandshakeStream::OnHeadersSent() {
-  base::ResetAndReturn(&callback_).Run(OK);
+  std::move(callback_).Run(OK);
 }
 
 void WebSocketHttp2HandshakeStream::OnHeadersReceived(
@@ -287,7 +288,7 @@ void WebSocketHttp2HandshakeStream::OnHeadersReceived(
                                       *http_response_info_->headers.get());
 
   if (callback_)
-    base::ResetAndReturn(&callback_).Run(ValidateResponse());
+    std::move(callback_).Run(ValidateResponse());
 }
 
 void WebSocketHttp2HandshakeStream::OnClose(int status) {
@@ -308,14 +309,14 @@ void WebSocketHttp2HandshakeStream::OnClose(int status) {
   OnFailure(std::string("Stream closed with error: ") + ErrorToString(status));
 
   if (callback_)
-    base::ResetAndReturn(&callback_).Run(status);
+    std::move(callback_).Run(status);
 }
 
 void WebSocketHttp2HandshakeStream::StartRequestCallback(int rv) {
   DCHECK(callback_);
   if (rv != OK) {
     spdy_stream_request_.reset();
-    base::ResetAndReturn(&callback_).Run(rv);
+    std::move(callback_).Run(rv);
     return;
   }
   stream_ = spdy_stream_request_->ReleaseStream();

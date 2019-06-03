@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
+#include "third_party/blink/renderer/modules/clipboard/clipboard_item.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard_writer.h"
 
 namespace blink {
@@ -25,40 +26,28 @@ class ClipboardPromise final
   USING_GARBAGE_COLLECTED_MIXIN(ClipboardPromise);
 
  public:
-  ClipboardPromise(ScriptState*);
-  virtual ~ClipboardPromise();
-
   // Creates promise to execute Clipboard API functions off the main thread.
   static ScriptPromise CreateForRead(ScriptState*);
   static ScriptPromise CreateForReadText(ScriptState*);
-  static ScriptPromise CreateForWrite(
-      ScriptState*,
-      HeapVector<std::pair<String, Member<Blob>>>);
+  static ScriptPromise CreateForWrite(ScriptState*,
+                                      const HeapVector<Member<ClipboardItem>>&);
   static ScriptPromise CreateForWriteText(ScriptState*, const String&);
 
+  explicit ClipboardPromise(ScriptState*);
+  virtual ~ClipboardPromise();
+
+  // Called to begin writing a type, or after writing each type.
+  void WriteNextRepresentation();
   // For rejections originating from ClipboardWriter.
   void RejectFromReadOrDecodeFailure();
-
-  void WriteNextRepresentation();
 
   void Trace(blink::Visitor*) override;
 
  private:
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
-
-  bool IsFocusedDocument(ExecutionContext*);
-
-  // Checks for permissions (interacting with PermissionService).
-  mojom::blink::PermissionService* GetPermissionService();
-  void RequestReadPermission(
-      mojom::blink::PermissionService::RequestPermissionCallback);
-  void CheckWritePermission(
-      mojom::blink::PermissionService::HasPermissionCallback);
-
   // Checks Read/Write permission (interacting with PermissionService).
   void HandleRead();
   void HandleReadText();
-  void HandleWrite(HeapVector<std::pair<String, Member<Blob>>>*);
+  void HandleWrite(HeapVector<Member<ClipboardItem>>*);
   void HandleWriteText(const String&);
 
   // Reads/Writes after permission check.
@@ -67,9 +56,15 @@ class ClipboardPromise final
   void HandleWriteWithPermission(mojom::blink::PermissionStatus);
   void HandleWriteTextWithPermission(mojom::blink::PermissionStatus);
 
-  // Detects whether an image or text is on the clipboard, and
-  // returns all valid clipboard types on the clipboard.
-  Vector<String> TypesToRead();
+  // Checks for permissions (interacting with PermissionService).
+  mojom::blink::PermissionService* GetPermissionService();
+  void RequestReadPermission(
+      mojom::blink::PermissionService::RequestPermissionCallback);
+  void CheckWritePermission(
+      mojom::blink::PermissionService::HasPermissionCallback);
+
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
+  bool IsFocusedDocument(ExecutionContext*);
 
   Member<ScriptState> script_state_;
   Member<ScriptPromiseResolver> script_promise_resolver_;
@@ -80,7 +75,7 @@ class ClipboardPromise final
 
   // Only for use in writeText().
   String plain_text_;
-  HeapVector<std::pair<String, Member<Blob>>> clipboard_item_;
+  HeapVector<std::pair<String, Member<Blob>>> clipboard_item_data_;
   // Index of clipboard representation currently being processed.
   wtf_size_t clipboard_representation_index_;
 

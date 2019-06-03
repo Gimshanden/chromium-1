@@ -40,8 +40,6 @@ class HiddenInputType final : public InputType, private InputTypeView {
   USING_GARBAGE_COLLECTED_MIXIN(HiddenInputType);
 
  public:
-  static InputType* Create(HTMLInputElement&);
-
   HiddenInputType(HTMLInputElement& element)
       : InputType(element), InputTypeView(element) {}
 
@@ -49,6 +47,7 @@ class HiddenInputType final : public InputType, private InputTypeView {
   using InputType::GetElement;
 
  private:
+  void CountUsage() override;
   InputTypeView* CreateView() override;
   const AtomicString& FormControlType() const override;
   bool ShouldSaveAndRestoreFormControlState() const override;

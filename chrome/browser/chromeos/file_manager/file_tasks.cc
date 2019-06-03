@@ -7,26 +7,32 @@
 #include <stddef.h>
 
 #include <map>
+#include <string>
 #include <utility>
 
 #include "apps/launcher.h"
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/arc_file_tasks.h"
 #include "chrome/browser/chromeos/file_manager/crostini_file_tasks.h"
 #include "chrome/browser/chromeos/file_manager/file_browser_handlers.h"
+#include "chrome/browser/chromeos/file_manager/file_tasks_notifier.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/open_util.h"
 #include "chrome/browser/chromeos/file_manager/open_with_browser.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/extensions/api/file_browser_handlers/file_browser_handler.h"
@@ -40,13 +46,16 @@
 #include "extensions/browser/api/file_handlers/mime_util.h"
 #include "extensions/browser/entry_info.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_set.h"
 #include "storage/browser/fileapi/file_system_url.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
+#include "ui/base/window_open_disposition.h"
 
 using extensions::Extension;
 using extensions::api::file_manager_private::Verb;
@@ -203,12 +212,14 @@ bool ShouldBeOpenedWithBrowser(const std::string& extension_id,
 // Opens the files specified by |file_urls| with the browser for |profile|.
 // Returns true on success. It's a failure if no files are opened.
 bool OpenFilesWithBrowser(Profile* profile,
-                          const std::vector<FileSystemURL>& file_urls) {
+                          const std::vector<FileSystemURL>& file_urls,
+                          const std::string& action_id) {
   int num_opened = 0;
   for (size_t i = 0; i < file_urls.size(); ++i) {
     const FileSystemURL& file_url = file_urls[i];
     if (chromeos::FileSystemBackend::CanHandleURL(file_url)) {
-      num_opened += util::OpenFileWithBrowser(profile, file_url) ? 1 : 0;
+      num_opened +=
+          util::OpenFileWithBrowser(profile, file_url, action_id) ? 1 : 0;
     }
   }
   return num_opened > 0;
@@ -356,6 +367,10 @@ bool ExecuteFileTask(Profile* profile,
                               task.task_type, NUM_TASK_TYPE);
   }
 
+  if (auto* notifier = FileTasksNotifier::GetForProfile(profile)) {
+    notifier->NotifyFileTasks(file_urls);
+  }
+
   // ARC apps needs mime types for launching. Retrieve them first.
   if (task.task_type == TASK_TYPE_ARC_APP) {
     extensions::app_file_handler_util::MimeTypeCollector* mime_collector =
@@ -376,7 +391,8 @@ bool ExecuteFileTask(Profile* profile,
   // Some action IDs of the file manager's file browser handlers require the
   // files to be directly opened with the browser.
   if (ShouldBeOpenedWithBrowser(task.app_id, task.action_id)) {
-    const bool result = OpenFilesWithBrowser(profile, file_urls);
+    const bool result =
+        OpenFilesWithBrowser(profile, file_urls, task.action_id);
     if (result && done) {
       std::move(done).Run(
           extensions::api::file_manager_private::TASK_RESULT_OPENED);
@@ -402,8 +418,22 @@ bool ExecuteFileTask(Profile* profile,
     std::vector<base::FilePath> paths;
     for (size_t i = 0; i != file_urls.size(); ++i)
       paths.push_back(file_urls[i].path());
-    apps::LaunchPlatformAppWithFileHandler(extension_task_profile, extension,
-                                           task.action_id, paths);
+
+    if (!extension->from_bookmark()) {
+      apps::LaunchPlatformAppWithFileHandler(extension_task_profile, extension,
+                                             task.action_id, paths);
+    } else {
+      extensions::LaunchContainer launch_container =
+          extensions::GetLaunchContainer(
+              extensions::ExtensionPrefs::Get(extension_task_profile),
+              extension);
+      AppLaunchParams params(extension_task_profile, extension,
+                             launch_container,
+                             WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                             extensions::AppLaunchSource::SOURCE_FILE_HANDLER);
+      params.override_url = GURL(task.action_id);
+      OpenApplication(params);
+    }
     if (!done.is_null())
       std::move(done).Run(
           extensions::api::file_manager_private::TASK_RESULT_MESSAGE_SENT);
@@ -453,10 +483,18 @@ void FindFileHandlerTasks(Profile* profile,
        ++iter) {
     const Extension* extension = iter->get();
 
-    // Check that the extension can be launched via an event. This includes all
-    // platform apps plus whitelisted extensions.
-    if (!CanLaunchViaEvent(extension))
+    bool is_bookmark_app =
+        extension->from_bookmark() &&
+        extension->GetType() == extensions::Manifest::TYPE_HOSTED_APP;
+    // Check that the extension can be launched with files. This includes all
+    // platform apps plus whitelisted extensions, and bookmark apps, if
+    // file handling is enabled.
+    if (!CanLaunchViaEvent(extension) &&
+        (!is_bookmark_app ||
+         !base::FeatureList::IsEnabled(blink::features::kNativeFileSystemAPI) ||
+         !base::FeatureList::IsEnabled(blink::features::kFileHandlingAPI))) {
       continue;
+    }
 
     if (profile->IsOffTheRecord() &&
         !extensions::util::IsIncognitoEnabled(extension->id(), profile))

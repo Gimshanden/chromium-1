@@ -42,8 +42,8 @@ WorkerScriptLoader::WorkerScriptLoader(
       weak_factory_(this) {
   if (service_worker_provider_host_) {
     std::unique_ptr<NavigationLoaderInterceptor> service_worker_interceptor =
-        ServiceWorkerRequestHandler::InitializeForWorker(
-            resource_request_, service_worker_provider_host_);
+        ServiceWorkerRequestHandler::CreateForWorker(
+            resource_request_, service_worker_provider_host_.get());
     if (service_worker_interceptor)
       interceptors_.push_back(std::move(service_worker_interceptor));
   }
@@ -233,9 +233,8 @@ void WorkerScriptLoader::OnUploadProgress(
                             std::move(ack_callback));
 }
 
-void WorkerScriptLoader::OnReceiveCachedMetadata(
-    const std::vector<uint8_t>& data) {
-  client_->OnReceiveCachedMetadata(data);
+void WorkerScriptLoader::OnReceiveCachedMetadata(mojo_base::BigBuffer data) {
+  client_->OnReceiveCachedMetadata(std::move(data));
 }
 
 void WorkerScriptLoader::OnTransferSizeUpdated(int32_t transfer_size_diff) {

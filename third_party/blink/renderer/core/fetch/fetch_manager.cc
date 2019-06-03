@@ -4,7 +4,8 @@
 
 #include "third_party/blink/renderer/core/fetch/fetch_manager.h"
 
-#include <memory>
+#include <utility>
+
 #include "base/single_thread_task_runner.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url_request.h"
@@ -22,6 +23,7 @@
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
+#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/subresource_integrity_helper.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader.h"
@@ -34,6 +36,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/buffering_bytes_consumer.h"
@@ -586,7 +589,7 @@ void FetchManager::Loader::Start(ExceptionState& exception_state) {
       PerformNetworkError("Fetch API cannot load " +
                           fetch_request_data_->Url().GetString() +
                           ". Request mode is \"no-cors\" but the redirect mode "
-                          " is not \"follow\".");
+                          "is not \"follow\".");
       return;
     }
 
@@ -634,7 +637,8 @@ void FetchManager::Loader::Dispose() {
 
 void FetchManager::Loader::Abort() {
   if (resolver_) {
-    resolver_->Reject(DOMException::Create(DOMExceptionCode::kAbortError));
+    resolver_->Reject(
+        MakeGarbageCollected<DOMException>(DOMExceptionCode::kAbortError));
     resolver_.Clear();
   }
   if (threadable_loader_) {
@@ -681,7 +685,7 @@ void FetchManager::Loader::PerformHTTPFetch(ExceptionState& exception_state) {
   ResourceRequest request(fetch_request_data_->Url());
   request.SetRequestorOrigin(fetch_request_data_->Origin());
   request.SetRequestContext(fetch_request_data_->Context());
-  request.SetHTTPMethod(fetch_request_data_->Method());
+  request.SetHttpMethod(fetch_request_data_->Method());
   request.SetFetchWindowId(fetch_request_data_->WindowId());
 
   switch (fetch_request_data_->Mode()) {
@@ -692,8 +696,10 @@ void FetchManager::Loader::PerformHTTPFetch(ExceptionState& exception_state) {
       request.SetFetchRequestMode(fetch_request_data_->Mode());
       break;
     case FetchRequestMode::kNavigate:
-      // Using kSameOrigin here to reduce the security risk.
-      // "navigate" request is only available in ServiceWorker.
+      // NetworkService (i.e. CorsURLLoaderFactory::IsSane) rejects kNavigate
+      // requests coming from renderers, so using kSameOrigin here.
+      // TODO(lukasza): Tweak CorsURLLoaderFactory::IsSane to accept kNavigate
+      // if request_initiator and the target are same-origin.
       request.SetFetchRequestMode(FetchRequestMode::kSameOrigin);
       break;
   }
@@ -741,6 +747,7 @@ void FetchManager::Loader::PerformHTTPFetch(ExceptionState& exception_state) {
       return;
     }
     request.SetKeepalive(true);
+    UseCounter::Count(execution_context_, mojom::WebFeature::kFetchKeepalive);
   }
 
   // "3. Append `Host`, ..."
@@ -784,7 +791,7 @@ void FetchManager::Loader::PerformDataFetch() {
   request.SetRequestorOrigin(fetch_request_data_->Origin());
   request.SetRequestContext(fetch_request_data_->Context());
   request.SetUseStreamOnResponse(true);
-  request.SetHTTPMethod(fetch_request_data_->Method());
+  request.SetHttpMethod(fetch_request_data_->Method());
   request.SetFetchCredentialsMode(network::mojom::FetchCredentialsMode::kOmit);
   request.SetFetchRedirectMode(FetchRedirectMode::kError);
   request.SetFetchImportanceMode(fetch_request_data_->Importance());
@@ -841,7 +848,8 @@ ScriptPromise FetchManager::Fetch(ScriptState* script_state,
 
   DCHECK(signal);
   if (signal->aborted()) {
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kAbortError));
+    resolver->Reject(
+        MakeGarbageCollected<DOMException>(DOMExceptionCode::kAbortError));
     return promise;
   }
 

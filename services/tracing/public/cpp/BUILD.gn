@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chromecast_build.gni")
+
 source_set("traced_process") {
   sources = [
     "traced_process.cc",
@@ -24,11 +26,21 @@ if (!is_nacl && !is_ios) {
     sources = [
       "base_agent.cc",
       "base_agent.h",
+      "perfetto/dummy_producer.cc",
+      "perfetto/dummy_producer.h",
       "perfetto/interning_index.h",
+      "perfetto/perfetto_config.cc",
+      "perfetto/perfetto_config.h",
+      "perfetto/perfetto_producer.cc",
+      "perfetto/perfetto_producer.h",
+      "perfetto/perfetto_traced_process.cc",
+      "perfetto/perfetto_traced_process.h",
       "perfetto/producer_client.cc",
       "perfetto/producer_client.h",
       "perfetto/shared_memory.cc",
       "perfetto/shared_memory.h",
+      "perfetto/system_producer.cc",
+      "perfetto/system_producer.h",
       "perfetto/task_runner.cc",
       "perfetto/task_runner.h",
       "perfetto/thread_local_event_sink.cc",
@@ -68,5 +80,9 @@ if (!is_nacl && !is_ios) {
       "//third_party/perfetto/include/perfetto/protozero:protozero",
       "//third_party/perfetto/protos/perfetto/trace/chrome:minimal_complete_lite",
     ]
+
+    if (is_chromecast) {
+      defines += [ "IS_CHROMECAST" ]
+    }
   }
 }  # !is_nacl && !is_ios

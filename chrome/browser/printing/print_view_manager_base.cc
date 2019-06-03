@@ -151,7 +151,7 @@ void PrintViewManagerBase::PrintForPrintPreview(
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
 void PrintViewManagerBase::PrintDocument(
-    const scoped_refptr<base::RefCountedMemory>& print_data,
+    scoped_refptr<base::RefCountedMemory> print_data,
     const gfx::Size& page_size,
     const gfx::Rect& content_area,
     const gfx::Point& offsets) {
@@ -171,7 +171,7 @@ void PrintViewManagerBase::PrintDocument(
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 void PrintViewManagerBase::OnPrintSettingsDone(
-    const scoped_refptr<base::RefCountedMemory>& print_data,
+    scoped_refptr<base::RefCountedMemory> print_data,
     int page_count,
     PrinterHandler::PrintCallback callback,
     scoped_refptr<printing::PrinterQuery> printer_query) {
@@ -211,7 +211,7 @@ void PrintViewManagerBase::OnPrintSettingsDone(
 }
 
 void PrintViewManagerBase::StartLocalPrintJob(
-    const scoped_refptr<base::RefCountedMemory>& print_data,
+    scoped_refptr<base::RefCountedMemory> print_data,
     int page_count,
     scoped_refptr<printing::PrinterQuery> printer_query,
     PrinterHandler::PrintCallback callback) {
@@ -624,17 +624,13 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   static constexpr base::TimeDelta kPrinterSettingsTimeout =
       base::TimeDelta::FromSeconds(60);
   base::OneShotTimer quit_timer;
-  base::RunLoop run_loop;
+  base::RunLoop run_loop{base::RunLoop::Type::kNestableTasksAllowed};
   quit_timer.Start(FROM_HERE, kPrinterSettingsTimeout,
                    run_loop.QuitWhenIdleClosure());
 
   quit_inner_loop_ = run_loop.QuitClosure();
 
-  // Need to enable recursive task.
-  {
-    base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
-    run_loop.Run();
-  }
+  run_loop.Run();
 
   // If the inner-loop quit closure is still set then we timed out.
   bool success = !quit_inner_loop_;

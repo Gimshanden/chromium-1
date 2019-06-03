@@ -22,7 +22,7 @@
 <translation id="1173894706177603556">שנה שם</translation>
 <translation id="117624967391683467">מעתיק את <ph name="FILE_NAME" />...</translation>
 <translation id="1178581264944972037">השהה</translation>
-<translation id="1190144681599273207">הבאת קובץ זה תשתמש בערך ב-<ph name="FILE_SIZE" /> של נתונים לנייד.</translation>
+<translation id="1190144681599273207">הבאת קובץ זה תשתמש בערך ב-<ph name="FILE_SIZE" /> מחבילת הגלישה.</translation>
 <translation id="1201402288615127009">הבא</translation>
 <translation id="1208421848177517699">‏תעתוק (namaste → નમસ્તે)</translation>
 <translation id="1243314992276662751">העלה</translation>
@@ -190,6 +190,7 @@
 <translation id="3245321423178950146">אמן לא ידוע</translation>
 <translation id="3252266817569339921">צרפתית</translation>
 <translation id="3254434849914415189">בחר את יישום ברירת המחדל עבור קובצי <ph name="FILE_TYPE" />:</translation>
+<translation id="3264582393905923483">הקשר</translation>
 <translation id="3280431534455935878">מכין</translation>
 <translation id="3280987981688031357">תקליט</translation>
 <translation id="3296763833017966289">גרוזינית</translation>
@@ -261,6 +262,7 @@
 <translation id="421017592316736757">עליך להיות במצב מקוון כדי לגשת לקובץ זה.</translation>
 <translation id="4212740939091998969">כבר קיימת תיקייה בשם "<ph name="FOLDER_NAME" />". יש לבחור שם אחר.</translation>
 <translation id="4215448920900139318">מגבה <ph name="FILE_COUNT" /></translation>
+<translation id="4242533952199664413">פתח את 'הגדרות'</translation>
 <translation id="426015154560005552">מקלדת ערבית</translation>
 <translation id="4261901459838235729">‏מצגת Google</translation>
 <translation id="4290535918735525311">‏תיקייה אחת שותפה עם Linux</translation>
@@ -310,6 +312,7 @@
 <translation id="4839847978919684242"><ph name="SELCTED_FILES_COUNT" /> פריטים נבחרו</translation>
 <translation id="4850886885716139402">הצגה</translation>
 <translation id="485316830061041779">גרמנית</translation>
+<translation id="4867079195717347957">יש ללחוץ כדי למיין את העמודה בסדר יורד.</translation>
 <translation id="4873265419374180291"><ph name="NUMBER_OF_BYTES" /> בייטים</translation>
 <translation id="4880214202172289027">מחוון עוצמת קול</translation>
 <translation id="4880520557730313061">תיקון אוטומטי</translation>
@@ -350,6 +353,7 @@
 <translation id="5167131699331641907">מקלדת להולנד</translation>
 <translation id="5170477580121653719">‏שטח אחסון שנותר ב-Google Drive‏: <ph name="SPACE_AVAILABLE" />.</translation>
 <translation id="5177526793333269655">תצוגת תמונה ממוזערת</translation>
+<translation id="5194713942430106590">יש ללחוץ כדי למיין את העמודה בסדר עולה.</translation>
 <translation id="5218183485292899140">צרפתית שוויצרית</translation>
 <translation id="5234764350956374838">סגור</translation>
 <translation id="5241298539944515331">‏מקלדת וייטנאמית (VIQR)</translation>
@@ -410,6 +414,7 @@
 <translation id="5818003990515275822">קוריאנית</translation>
 <translation id="5819442873484330149">Hangul 3 Set (Final)‎</translation>
 <translation id="5833610766403489739">הקובץ הזה עבר למקום אחר. בדוק את הגדרות מיקום ההורדה ונסה שוב.</translation>
+<translation id="5838051104334203064">‏לאפליקציות של חנות Play אין גישה למכשיר הזה</translation>
 <translation id="5838825566232597749">‏US Workman בינלאומית</translation>
 <translation id="5850516540536751549">‏סוג קובץ זה אינו נתמך. בקר ב<ph name="BEGIN_LINK" />חנות האינטרנט של Chrome‏<ph name="END_LINK" /> כדי למצוא יישום שבאמצעותו ניתן לפתוח קובץ מסוג זה.
 	      <ph name="BEGIN_LINK_HELP" />למידע נוסף<ph name="END_LINK_HELP" /></translation>
@@ -498,13 +503,14 @@
 <translation id="6935521024859866267">פרפר הפוך</translation>
 <translation id="6937152069980083337">‏קלט יפני של Google (למקלדת אמריקאית)</translation>
 <translation id="6939777852457331078">‏מקלדת US Workman</translation>
-<translation id="696203921837389374">הפעל סנכרון של נתונים לנייד</translation>
+<translation id="696203921837389374">הפעל סנכרון של חבילת הגלישה</translation>
 <translation id="6965382102122355670">אישור</translation>
 <translation id="6970230597523682626">בולגרית</translation>
 <translation id="6978611942794658017">‏קובץ זה מיועד עבור מחשב אישי המשתמש בתוכנת Windows. הוא אינו מתאים למכשירך שעובד עם מערכת הפעלה של Chrome. חפש יישום חלופי מתאים בחנות האינטרנט של Chrome.</translation>
 <translation id="6979158407327259162">Google Drive</translation>
 <translation id="6990081529015358884">לא נשאר לך מקום פנוי</translation>
 <translation id="6998711733709403587"><ph name="SELCTED_FOLDERS_COUNT" /> תיקיות נבחרו</translation>
+<translation id="7012943028104619157"><ph name="ROOT_TITLE" /> (<ph name="ROOT_SUMMARY" />)</translation>
 <translation id="7014174261166285193">ההתקנה נכשלה.</translation>
 <translation id="7040138676081995583">פתח באמצעות...</translation>
 <translation id="7100897339030255923">נבחרו <ph name="COUNT" /> פריטים</translation>
@@ -569,7 +575,7 @@
     אפשר לנסות לבחור פחות תמונות.</translation>
 <translation id="7825423931463735974">‏מקלדת טמילית (Tamil99)</translation>
 <translation id="7827012282502221009">TB <ph name="NUMBER_OF_TB" /></translation>
-<translation id="7839804798877833423">הבאת קבצים אלה תשתמש בערך ב-<ph name="FILE_SIZE" /> של נתונים לנייד.</translation>
+<translation id="7839804798877833423">הבאת קבצים אלה תשתמש בערך ב-<ph name="FILE_SIZE" /> מחבילת הגלישה.</translation>
 <translation id="7846076177841592234">בטל את הבחירה</translation>
 <translation id="7850851215703745691">‏קובצי Drive אלו עדיין לא משותפים</translation>
 <translation id="7853966320808728790">‏BÉPO - צרפתית</translation>

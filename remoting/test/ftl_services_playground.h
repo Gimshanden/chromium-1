@@ -11,10 +11,10 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "remoting/base/grpc_support/grpc_authenticated_executor.h"
 #include "remoting/base/oauth_token_getter.h"
 #include "remoting/signaling/ftl_messaging_client.h"
 #include "remoting/signaling/ftl_registration_manager.h"
-#include "remoting/signaling/grpc_support/grpc_authenticated_executor.h"
 
 namespace remoting {
 
@@ -64,11 +64,11 @@ class FtlServicesPlayground {
                              const grpc::Status& status);
   void StartReceivingMessages(base::OnceClosure on_done);
   void StopReceivingMessages(base::OnceClosure on_done);
-  void OnMessageReceived(const std::string& sender_id,
+  void OnMessageReceived(const ftl::Id& sender_id,
                          const std::string& sender_registration_id,
-                         const std::string& message);
-  void OnStartReceivingMessagesDone(base::OnceClosure on_done,
-                                    const grpc::Status& status);
+                         const ftl::ChromotingMessage& message);
+  void OnReceiveMessagesStreamReady();
+  void OnReceiveMessagesStreamClosed(const grpc::Status& status);
 
   void HandleGrpcStatusError(base::OnceClosure on_done,
                              const grpc::Status& status);
@@ -85,6 +85,8 @@ class FtlServicesPlayground {
       message_subscription_;
 
   std::unique_ptr<PeerToPeer::Stub> peer_to_peer_stub_;
+
+  base::OnceClosure receive_messages_done_callback_;
 
   base::WeakPtrFactory<FtlServicesPlayground> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(FtlServicesPlayground);

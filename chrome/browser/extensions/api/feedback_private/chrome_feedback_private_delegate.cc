@@ -25,12 +25,20 @@
 #include "ui/base/webui/web_ui_util.h"
 
 #if defined(OS_CHROMEOS)
+#include "base/strings/string_split.h"
+#include "base/system/sys_info.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/system_logs/iwlwifi_dump_log_source.h"
 #include "chrome/browser/chromeos/system_logs/single_debug_daemon_log_source.h"
 #include "chrome/browser/chromeos/system_logs/single_log_file_log_source.h"
+#include "chrome/browser/extensions/component_loader.h"
+#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/ash/kiosk_next_shell_client.h"
+#include "components/feedback/feedback_util.h"
 #include "components/feedback/system_logs/system_logs_source.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/constants.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace extensions {
@@ -173,24 +181,60 @@ ChromeFeedbackPrivateDelegate::CreateSingleLogSource(
   }
 }
 
-void ChromeFeedbackPrivateDelegate::FetchAndMergeIwlwifiDumpLogsIfPresent(
-    std::unique_ptr<FeedbackCommon::SystemLogsMap> original_sys_logs,
-    content::BrowserContext* context,
-    system_logs::SysLogsFetcherCallback callback) const {
-  if (!original_sys_logs ||
-      !system_logs::ContainsIwlwifiLogs(original_sys_logs.get())) {
-    VLOG(1) << "WiFi dump logs are not present.";
-    std::move(callback).Run(std::move(original_sys_logs));
-    return;
+void OnFetchedExtraLogs(
+    scoped_refptr<feedback::FeedbackData> feedback_data,
+    FetchExtraLogsCallback callback,
+    std::unique_ptr<system_logs::SystemLogsResponse> response) {
+  using system_logs::kIwlwifiDumpKey;
+  if (response && response->count(kIwlwifiDumpKey)) {
+    feedback_data->AddLog(kIwlwifiDumpKey,
+                          std::move(response->at(kIwlwifiDumpKey)));
+  }
+  std::move(callback).Run(feedback_data);
+}
+
+void ChromeFeedbackPrivateDelegate::FetchExtraLogs(
+    scoped_refptr<feedback::FeedbackData> feedback_data,
+    FetchExtraLogsCallback callback) const {
+  // Anonymize data.
+  constexpr bool scrub = true;
+
+  if (system_logs::ContainsIwlwifiLogs(feedback_data->sys_info())) {
+    system_logs::SystemLogsFetcher* fetcher =
+        new system_logs::SystemLogsFetcher(scrub);
+    fetcher->AddSource(std::make_unique<system_logs::IwlwifiDumpLogSource>());
+    fetcher->Fetch(base::BindOnce(&OnFetchedExtraLogs, feedback_data,
+                                  std::move(callback)));
+  } else {
+    std::move(callback).Run(feedback_data);
+  }
+}
+
+void ChromeFeedbackPrivateDelegate::UnloadFeedbackExtension(
+    content::BrowserContext* context) const {
+  extensions::ExtensionSystem::Get(context)
+      ->extension_service()
+      ->component_loader()
+      ->Remove(extension_misc::kFeedbackExtensionId);
+}
+
+api::feedback_private::LandingPageType
+ChromeFeedbackPrivateDelegate::GetLandingPageType(
+    const feedback::FeedbackData& feedback_data) const {
+  if (KioskNextShellClient::Get() &&
+      KioskNextShellClient::Get()->has_launched()) {
+    return api::feedback_private::LANDING_PAGE_TYPE_NOLANDINGPAGE;
   }
 
-  VLOG(1) << "Fetching WiFi dump logs.";
-  system_logs::SystemLogsFetcher* fetcher =
-      new system_logs::SystemLogsFetcher(true /* scrub_data */);
-  fetcher->AddSource(std::make_unique<system_logs::IwlwifiDumpLogSource>());
-  fetcher->Fetch(base::BindOnce(&system_logs::MergeIwlwifiLogs,
-                                std::move(original_sys_logs),
-                                std::move(callback)));
+  // Googlers using eve get a custom landing page.
+  if (!feedback_util::IsGoogleEmail(feedback_data.user_email()))
+    return api::feedback_private::LANDING_PAGE_TYPE_NORMAL;
+
+  const std::vector<std::string> board =
+      base::SplitString(base::SysInfo::GetLsbReleaseBoard(), "-",
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  return board[0] == "eve" ? api::feedback_private::LANDING_PAGE_TYPE_TECHSTOP
+                           : api::feedback_private::LANDING_PAGE_TYPE_NORMAL;
 }
 #endif  // defined(OS_CHROMEOS)
 

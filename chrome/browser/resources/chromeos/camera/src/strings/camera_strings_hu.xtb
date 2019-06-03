@@ -3,10 +3,12 @@
 <translationbundle lang="hu">
 <translation id="1276998909102132017">Galériaképek</translation>
 <translation id="1430915738399379752">Nyomtatás</translation>
+<translation id="1462966117743110941">A kamera már új módokat is támogat, a fotók és a videók pedig a Letöltések mappában lesznek hozzáférhetők.</translation>
 <translation id="1620510694547887537">Kamera</translation>
 <translation id="1627744224761163218">4 × 4</translation>
 <translation id="1664224225747386870">A kamera semmit sem rögzített</translation>
 <translation id="1862930711583847113">Nem lehet exportálni: <ph name="FILE" /></translation>
+<translation id="2008689030244369546">Teljesen új külső</translation>
 <translation id="2036868001356139588">Időzítés hossza</translation>
 <translation id="2050339315714019657">Álló</translation>
 <translation id="2064538373111010176"><ph name="CAMERA" /> aktív</translation>
@@ -21,9 +23,11 @@
 <translation id="3081586908890909590">Váltás videófelvételre</translation>
 <translation id="3183731565330012717">Rács típusa</translation>
 <translation id="3227137524299004712">Mikrofon</translation>
+<translation id="3517926952904427380">Nem sikerült álló fényképet készíteni</translation>
 <translation id="3569311554794739032">Biztosan eltávolítja a következő fájlt: <ph name="FILE" />?</translation>
 <translation id="3810838688059735925">Videó</translation>
 <translation id="4279490309300973883">Tükrözés</translation>
+<translation id="4329152592498422850">Váltás négyzet alakú fotó készítésére</translation>
 <translation id="4445542136948522167">Fotókészítés leállítása</translation>
 <translation id="4628948037717959914">Fénykép</translation>
 <translation id="4649291346448517080">Nem sikerült menteni a fájlt</translation>
@@ -50,6 +54,8 @@
 <translation id="8145038249676204903">Váltás fotókészítésre</translation>
 <translation id="8261506727792406068">Törlés</translation>
 <translation id="8428213095426709021">Beállítások</translation>
+<translation id="8712637175834984815">Sikerült</translation>
+<translation id="8815966864175525708">Váltás álló fotó készítésére</translation>
 <translation id="8870695351537079478">Nem sikerült elindítani a felvételt.</translation>
 <translation id="9045155556724273246">10 másodperc</translation>
 <translation id="945522503751344254">Visszajelzés küldése</translation>

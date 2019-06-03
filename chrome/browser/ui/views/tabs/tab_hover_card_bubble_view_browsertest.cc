@@ -5,17 +5,18 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "ui/gfx/animation/animation_test_api.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
@@ -75,7 +76,9 @@ class HoverCardVisibleWaiter : public views::WidgetObserver {
 
 class TabHoverCardBubbleViewBrowserTest : public DialogBrowserTest {
  public:
-  TabHoverCardBubbleViewBrowserTest() {
+  TabHoverCardBubbleViewBrowserTest()
+      : animation_mode_reset_(gfx::AnimationTestApi::SetRichAnimationRenderMode(
+            gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED)) {
     TabHoverCardBubbleView::disable_animations_for_testing_ = true;
   }
   ~TabHoverCardBubbleViewBrowserTest() override = default;
@@ -145,9 +148,12 @@ class TabHoverCardBubbleViewBrowserTest : public DialogBrowserTest {
   }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(TabHoverCardBubbleViewBrowserTest);
+  std::unique_ptr<base::AutoReset<gfx::Animation::RichAnimationRenderMode>>
+      animation_mode_reset_;
 
   base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(TabHoverCardBubbleViewBrowserTest);
 };
 
 // Fails on win7 (dbg): http://crbug.com/932402.
@@ -197,10 +203,11 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardBubbleViewBrowserTest,
 IN_PROC_BROWSER_TEST_F(TabHoverCardBubbleViewBrowserTest, WidgetDataUpdate) {
   TabStrip* tab_strip =
       BrowserView::GetBrowserViewForBrowser(browser())->tabstrip();
-  TabRendererData newTabData = TabRendererData();
-  newTabData.title = base::UTF8ToUTF16("Test Tab 2");
-  newTabData.url = GURL("http://example.com/this/should/not/be/seen");
-  tab_strip->AddTabAt(1, newTabData, false);
+  TabRendererData new_tab_data = TabRendererData();
+  new_tab_data.title = base::UTF8ToUTF16("Test Tab 2");
+  new_tab_data.last_committed_url =
+      GURL("http://example.com/this/should/not/be/seen");
+  tab_strip->AddTabAt(1, new_tab_data, false);
 
   ShowUi("default");
   TabHoverCardBubbleView* hover_card = GetHoverCard(tab_strip);

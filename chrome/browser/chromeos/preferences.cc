@@ -9,6 +9,7 @@
 
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/ash_pref_names.h"
+#include "ash/public/cpp/ash_prefs.h"
 #include "ash/public/interfaces/constants.mojom.h"
 #include "ash/public/interfaces/cros_display_config.mojom.h"
 #include "base/bind.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
 #include "chrome/browser/chromeos/base/locale_util.h"
+#include "chrome/browser/chromeos/child_accounts/parent_access_code/parent_access_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/input_method/input_method_syncer.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
@@ -33,7 +35,6 @@
 #include "chrome/browser/chromeos/system/timezone_util.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
-#include "chrome/browser/ui/ash/ash_shell_init.h"
 #include "chrome/browser/ui/ash/system_tray_client.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
@@ -179,7 +180,7 @@ void Preferences::RegisterPrefs(PrefRegistrySimple* registry) {
   // Carrier deal notification shown count defaults to 0.
   registry->RegisterIntegerPref(prefs::kCarrierDealPromoShown, 0);
 
-  AshShellInit::RegisterDisplayPrefs(registry);
+  ash::RegisterLocalStatePrefs(registry);
 }
 
 // static
@@ -198,6 +199,12 @@ void Preferences::RegisterProfilePrefs(
   } else {
     hardware_keyboard_id = "xkb:us::eng";  // only for testing.
   }
+
+  registry->RegisterBooleanPref(ash::prefs::kKioskNextShellEligible,
+                                /*default_value=*/false);
+
+  registry->RegisterBooleanPref(ash::prefs::kKioskNextShellEnabled,
+                                /*default_value=*/false, PrefRegistry::PUBLIC);
 
   registry->RegisterBooleanPref(prefs::kPerformanceTracingEnabled, false);
 
@@ -232,6 +239,8 @@ void Preferences::RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
   registry->RegisterBooleanPref(prefs::kLabsMediaplayerEnabled, false);
   registry->RegisterBooleanPref(prefs::kLabsAdvancedFilesystemEnabled, false);
+  registry->RegisterBooleanPref(prefs::kAppReinstallRecommendationEnabled,
+                                false);
 
   // TODO(jamescook): Move ownership and registration into ash. This will need
   // changes to policy::RecommendationRestorer which requires that prefs are
@@ -291,6 +300,9 @@ void Preferences::RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF | PrefRegistry::PUBLIC);
   registry->RegisterBooleanPref(
       ash::prefs::kAccessibilityAutoclickRevertToLeftClick, true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF | PrefRegistry::PUBLIC);
+  registry->RegisterBooleanPref(
+      ash::prefs::kAccessibilityAutoclickStabilizePosition, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF | PrefRegistry::PUBLIC);
   registry->RegisterIntegerPref(
       ash::prefs::kAccessibilityAutoclickMovementThreshold,
@@ -536,6 +548,9 @@ void Preferences::RegisterProfilePrefs(
 
   registry->RegisterBooleanPref(prefs::kTPMFirmwareUpdateCleanupDismissed,
                                 false);
+
+  registry->RegisterBooleanPref(prefs::kStartupBrowserWindowLaunchSuppressed,
+                                false);
 }
 
 void Preferences::InitUserPrefs(sync_preferences::PrefServiceSyncable* prefs) {
@@ -591,6 +606,7 @@ void Preferences::InitUserPrefs(sync_preferences::PrefServiceSyncable* prefs) {
   pref_change_registrar_.Add(prefs::kResolveTimezoneByGeolocationMethod,
                              callback);
   pref_change_registrar_.Add(prefs::kUse24HourClock, callback);
+  pref_change_registrar_.Add(prefs::kParentAccessCodeConfig, callback);
   for (auto* remap_pref : kLanguageRemapPrefs)
     pref_change_registrar_.Add(remap_pref, callback);
 }
@@ -944,6 +960,22 @@ void Preferences::ApplyPreferences(ApplyReason reason,
     const bool value = prefs_->GetBoolean(prefs::kUse24HourClock);
     user_manager::known_user::SetBooleanPref(user_->GetAccountId(),
                                              prefs::kUse24HourClock, value);
+  }
+
+  if (pref_name == prefs::kParentAccessCodeConfig ||
+      reason != REASON_PREF_CHANGED) {
+    const base::Value* value =
+        prefs_->GetDictionary(prefs::kParentAccessCodeConfig);
+    if (value && prefs_->IsManagedPreference(prefs::kParentAccessCodeConfig) &&
+        user_->IsChild()) {
+      user_manager::known_user::SetPref(user_->GetAccountId(),
+                                        prefs::kKnownUserParentAccessCodeConfig,
+                                        value->Clone());
+      parent_access::ParentAccessService::Get().LoadConfigForUser(user_);
+    } else {
+      user_manager::known_user::RemovePref(
+          user_->GetAccountId(), prefs::kKnownUserParentAccessCodeConfig);
+    }
   }
 
   for (auto* remap_pref : kLanguageRemapPrefs) {

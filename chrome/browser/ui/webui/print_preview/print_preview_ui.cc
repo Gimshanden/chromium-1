@@ -51,13 +51,13 @@
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "content/public/common/content_features.h"
 #include "extensions/common/constants.h"
 #include "printing/page_size_margins.h"
 #include "printing/print_job_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/resources/grit/webui_resources.h"
 #include "ui/web_dialogs/web_dialog_delegate.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
@@ -80,7 +80,7 @@ const char kBasicPrintShortcut[] = "\x28\xE2\x8c\xA5\xE2\x8C\x98\x50\x29";
 const char kBasicPrintShortcut[] = "(Ctrl+Shift+P)";
 #endif
 
-PrintPreviewUI::TestingDelegate* g_testing_delegate = nullptr;
+PrintPreviewUI::TestDelegate* g_test_delegate = nullptr;
 
 // Thread-safe wrapper around a std::map to keep track of mappings from
 // PrintPreviewUI IDs to most recent print preview request IDs.
@@ -131,28 +131,32 @@ base::LazyInstance<PrintPreviewRequestIdMapWithLock>::DestructorAtExit
 base::LazyInstance<base::IDMap<PrintPreviewUI*>>::DestructorAtExit
     g_print_preview_ui_id_map = LAZY_INSTANCE_INITIALIZER;
 
+bool ShouldHandleRequestCallback(const std::string& path) {
+  // ChromeWebUIDataSource handles most requests except for the print preview
+  // data.
+  return PrintPreviewUI::ParseDataPath(path, nullptr, nullptr);
+}
+
 // Get markup or other resources for the print preview page.
-bool HandleRequestCallback(
+void HandleRequestCallback(
     const std::string& path,
     const content::WebUIDataSource::GotDataCallback& callback) {
   // ChromeWebUIDataSource handles most requests except for the print preview
   // data.
   int preview_ui_id;
   int page_index;
-  if (!PrintPreviewUI::ParseDataPath(path, &preview_ui_id, &page_index))
-    return false;
+  CHECK(PrintPreviewUI::ParseDataPath(path, &preview_ui_id, &page_index));
 
   scoped_refptr<base::RefCountedMemory> data;
   PrintPreviewDataService::GetInstance()->GetDataEntry(preview_ui_id,
                                                        page_index, &data);
   if (data.get()) {
     callback.Run(data.get());
-    return true;
+    return;
   }
   // Invalid request.
   auto empty_bytes = base::MakeRefCounted<base::RefCountedBytes>();
   callback.Run(empty_bytes.get());
-  return true;
 }
 
 void AddPrintPreviewStrings(content::WebUIDataSource* source) {
@@ -184,7 +188,7 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
      IDS_PRINT_PREVIEW_EXTENSION_DESTINATION_ICON_TOOLTIP},
     {"goBackButton", IDS_PRINT_PREVIEW_BUTTON_GO_BACK},
     {"groupPrinterSharingInviteText", IDS_PRINT_PREVIEW_GROUP_INVITE_TEXT},
-    {"invalidPrinterSettings", IDS_PRINT_INVALID_PRINTER_SETTINGS},
+    {"invalidPrinterSettings", IDS_PRINT_PREVIEW_INVALID_PRINTER_SETTINGS},
     {"layoutLabel", IDS_PRINT_PREVIEW_LAYOUT_LABEL},
     {"learnMore", IDS_LEARN_MORE},
     {"left", IDS_PRINT_PREVIEW_LEFT_MARGIN_LABEL},
@@ -277,6 +281,9 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
 #if defined(OS_CHROMEOS)
     {"configuringFailedText", IDS_PRINT_CONFIGURING_FAILED_TEXT},
     {"configuringInProgressText", IDS_PRINT_CONFIGURING_IN_PROGRESS_TEXT},
+    {"optionPin", IDS_PRINT_PREVIEW_OPTION_PIN},
+    {"pinErrorMessage", IDS_PRINT_PREVIEW_PIN_ERROR_MESSAGE},
+    {"pinPlaceholder", IDS_PRINT_PREVIEW_PIN_PLACEHOLDER},
 #endif
 #if defined(OS_MACOSX)
     {"openPdfInPreviewOption", IDS_PRINT_PREVIEW_OPEN_PDF_IN_PREVIEW_APP},
@@ -327,10 +334,14 @@ void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
       base::FeatureList::IsEnabled(features::kNewPrintPreviewLayout);
   source->AddBoolean("newPrintPreviewLayoutEnabled",
                      new_print_preview_layout_enabled);
+  // The key for the string below needs to be all lowercase, since it is used
+  // as an attribute and attributes are lowercased when the page is bundled.
+  source->AddString("newprintpreviewlayout", new_print_preview_layout_enabled
+                                                 ? "new-print-preview-layout"
+                                                 : "");
 }
 
-std::vector<std::string> SetupPrintPreviewPlugin(
-    content::WebUIDataSource* source) {
+void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
   static constexpr struct {
     const char* path;
     int id;
@@ -410,18 +421,15 @@ std::vector<std::string> SetupPrintPreviewPlugin(
     {"pdf/viewport_scroller.js", IDR_PDF_VIEWPORT_SCROLLER_JS},
     {"pdf/zoom_manager.js", IDR_PDF_ZOOM_MANAGER_JS},
   };
-  std::vector<std::string> excluded_paths;
   for (const auto& resource : kPdfResources) {
-    excluded_paths.emplace_back(resource.path);
     source->AddResourcePath(resource.path, resource.id);
   }
 
-  source->SetRequestFilter(base::BindRepeating(&HandleRequestCallback));
+  source->SetRequestFilter(base::BindRepeating(&ShouldHandleRequestCallback),
+                           base::BindRepeating(&HandleRequestCallback));
   source->OverrideContentSecurityPolicyChildSrc("child-src 'self';");
   source->DisableDenyXFrameOptions();
   source->OverrideContentSecurityPolicyObjectSrc("object-src 'self';");
-
-  return excluded_paths;
 }
 
 content::WebUIDataSource* CreatePrintPreviewUISource(Profile* profile) {
@@ -432,26 +440,17 @@ content::WebUIDataSource* CreatePrintPreviewUISource(Profile* profile) {
 #if BUILDFLAG(OPTIMIZE_WEBUI)
   source->AddResourcePath("crisper.js", IDR_PRINT_PREVIEW_CRISPER_JS);
   source->SetDefaultResource(IDR_PRINT_PREVIEW_VULCANIZED_HTML);
-  source->SetDefaultResource(
-      base::FeatureList::IsEnabled(features::kWebUIPolymer2) ?
-          IDR_PRINT_PREVIEW_VULCANIZED_P2_HTML :
-          IDR_PRINT_PREVIEW_VULCANIZED_HTML);
-  std::vector<std::string> exclude_from_gzip = SetupPrintPreviewPlugin(source);
-  source->UseGzip(base::BindRepeating(
-      [](const std::vector<std::string>& excluded_paths,
-         const std::string& path) {
-        return !base::ContainsValue(excluded_paths, path) &&
-               !PrintPreviewUI::ParseDataPath(path, nullptr, nullptr);
-      },
-      std::move(exclude_from_gzip)));
 #else
   for (size_t i = 0; i < kPrintPreviewResourcesSize; ++i) {
     source->AddResourcePath(kPrintPreviewResources[i].name,
                             kPrintPreviewResources[i].value);
   }
-  source->SetDefaultResource(IDR_PRINT_PREVIEW_NEW_HTML);
-  SetupPrintPreviewPlugin(source);
+  // Add the subpage loader, to load subpages in non-optimized builds.
+  source->AddResourcePath("subpage_loader.html", IDR_WEBUI_HTML_SUBPAGE_LOADER);
+  source->AddResourcePath("subpage_loader.js", IDR_WEBUI_JS_SUBPAGE_LOADER);
+  source->SetDefaultResource(IDR_PRINT_PREVIEW_HTML);
 #endif
+  SetupPrintPreviewPlugin(source);
   AddPrintPreviewFlags(source, profile);
   return source;
 }
@@ -652,8 +651,8 @@ void PrintPreviewUI::OnDidStartPreview(
   page_size_ = params.page_size;
   ClearAllPreviewData();
 
-  if (g_testing_delegate)
-    g_testing_delegate->DidGetPreviewPageCount(params.page_count);
+  if (g_test_delegate)
+    g_test_delegate->DidGetPreviewPageCount(params.page_count);
   handler_->SendPageCountReady(params.page_count, params.fit_to_page_scaling,
                                request_id);
 }
@@ -704,8 +703,8 @@ void PrintPreviewUI::OnDidPreviewPage(
 
   SetPrintPreviewDataForIndex(page_number, std::move(data));
 
-  if (g_testing_delegate)
-    g_testing_delegate->DidRenderPreviewPage(web_ui()->GetWebContents());
+  if (g_test_delegate)
+    g_test_delegate->DidRenderPreviewPage(web_ui()->GetWebContents());
   handler_->SendPagePreviewReady(page_number, *id_, preview_request_id);
 }
 
@@ -781,8 +780,8 @@ void PrintPreviewUI::OnSetOptionsFromDocument(
 }
 
 // static
-void PrintPreviewUI::SetDelegateForTesting(TestingDelegate* delegate) {
-  g_testing_delegate = delegate;
+void PrintPreviewUI::SetDelegateForTesting(TestDelegate* delegate) {
+  g_test_delegate = delegate;
 }
 
 void PrintPreviewUI::SetSelectedFileForTesting(const base::FilePath& path) {

@@ -296,7 +296,7 @@ class PLATFORM_EXPORT ResourceResponse final {
   bool WasFetchedViaSPDY() const { return was_fetched_via_spdy_; }
   void SetWasFetchedViaSPDY(bool value) { was_fetched_via_spdy_ = value; }
 
-  // See ServiceWorkerResponseInfo::was_fetched_via_service_worker.
+  // See network::ResourceResponseInfo::was_fetched_via_service_worker.
   bool WasFetchedViaServiceWorker() const {
     return was_fetched_via_service_worker_;
   }
@@ -304,7 +304,7 @@ class PLATFORM_EXPORT ResourceResponse final {
     was_fetched_via_service_worker_ = value;
   }
 
-  // See ServiceWorkerResponseInfo::was_fallback_required.
+  // See network::ResourceResponseInfo::was_fallback_required_by_service_worker.
   bool WasFallbackRequiredByServiceWorker() const {
     return was_fallback_required_by_service_worker_;
   }
@@ -325,7 +325,7 @@ class PLATFORM_EXPORT ResourceResponse final {
     return network::cors::IsCorsCrossOriginResponseType(response_type_);
   }
 
-  // See ServiceWorkerResponseInfo::url_list_via_service_worker.
+  // See network::ResourceResponseInfo::url_list_via_service_worker.
   const Vector<KURL>& UrlListViaServiceWorker() const {
     return url_list_via_service_worker_;
   }
@@ -418,6 +418,12 @@ class PLATFORM_EXPORT ResourceResponse final {
     is_signed_exchange_inner_response_ = is_signed_exchange_inner_response;
   }
 
+  bool WasInPrefetchCache() const { return was_in_prefetch_cache_; }
+
+  void SetWasInPrefetchCache(bool was_in_prefetch_cache) {
+    was_in_prefetch_cache_ = was_in_prefetch_cache;
+  }
+
  private:
   void UpdateHeaderParsedState(const AtomicString& name);
 
@@ -481,6 +487,9 @@ class PLATFORM_EXPORT ResourceResponse final {
   // True if this resource is from an inner response of a signed exchange.
   // https://wicg.github.io/webpackage/draft-yasskin-http-origin-signed-responses.html
   bool is_signed_exchange_inner_response_ = false;
+
+  // True if this resource is served from the prefetch cache.
+  bool was_in_prefetch_cache_ = false;
 
   // True if this resource was loaded from the network.
   bool network_accessed_ = false;

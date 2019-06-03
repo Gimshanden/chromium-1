@@ -56,8 +56,8 @@
 #include "services/viz/public/interfaces/compositing/compositing_mode_watcher.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
-#include "third_party/blink/public/mojom/dom_storage/storage_partition_service.mojom.h"
 #include "third_party/blink/public/platform/scheduler/web_rail_mode_observer.h"
+#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_connection_type.h"
 #include "third_party/blink/public/web/web_memory_statistics.h"
 #include "ui/gfx/native_widget_types.h"
@@ -79,7 +79,6 @@ class Thread;
 
 namespace cc {
 class BeginFrameSource;
-class LayerTreeFrameSink;
 class SyntheticBeginFrameSource;
 class TaskGraphRunner;
 }
@@ -116,13 +115,10 @@ class Gpu;
 }  // namespace ws
 
 namespace content {
-
 class AecDumpMessageFilter;
 class AudioRendererMixerManager;
 class BrowserPluginManager;
 class CategorizedWorkerPool;
-class DomStorageDispatcher;
-class FrameSwapMessageQueue;
 class GpuVideoAcceleratorFactoriesImpl;
 class LowMemoryModeController;
 class P2PSocketDispatcher;
@@ -143,7 +139,7 @@ class StreamTextureFactory;
 #pragma warning(disable: 4250)
 #endif
 
-// The RenderThreadImpl class represents a background thread where RenderView
+// The RenderThreadImpl class represents the main thread, where RenderView
 // instances live.  The RenderThread supports an API that is used by its
 // consumer to talk indirectly to the RenderViews and supporting objects.
 // Likewise, it provides an API for the RenderViews to talk back to the main
@@ -203,7 +199,7 @@ class CONTENT_EXPORT RenderThreadImpl
   std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
       size_t buffer_size) override;
   void RegisterExtension(std::unique_ptr<v8::Extension> extension) override;
-  int PostTaskToAllWebWorkers(const base::Closure& closure) override;
+  int PostTaskToAllWebWorkers(const base::RepeatingClosure& closure) override;
   bool ResolveProxy(const GURL& url, std::string* proxy_list) override;
   base::WaitableEvent* GetShutdownEvent() override;
   int32_t GetClientId() override;
@@ -238,6 +234,15 @@ class CONTENT_EXPORT RenderThreadImpl
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
   bool IsScrollAnimatorEnabled() override;
   std::unique_ptr<cc::UkmRecorderFactory> CreateUkmRecorderFactory() override;
+  void RequestNewLayerTreeFrameSink(
+      int widget_routing_id,
+      scoped_refptr<FrameSwapMessageQueue> frame_swap_message_queue,
+      const GURL& url,
+      LayerTreeFrameSinkCallback callback,
+      mojom::RenderFrameMetadataObserverClientRequest
+          render_frame_metadata_observer_client_request,
+      mojom::RenderFrameMetadataObserverPtr render_frame_metadata_observer_ptr,
+      const char* client_name) override;
 #ifdef OS_ANDROID
   bool UsingSynchronousCompositing() override;
 #endif
@@ -259,18 +264,6 @@ class CONTENT_EXPORT RenderThreadImpl
   scoped_refptr<gpu::GpuChannelHost> EstablishGpuChannelSync();
 
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager();
-
-  using LayerTreeFrameSinkCallback =
-      base::OnceCallback<void(std::unique_ptr<cc::LayerTreeFrameSink>)>;
-  void RequestNewLayerTreeFrameSink(
-      int widget_routing_id,
-      scoped_refptr<FrameSwapMessageQueue> frame_swap_message_queue,
-      const GURL& url,
-      LayerTreeFrameSinkCallback callback,
-      mojom::RenderFrameMetadataObserverClientRequest
-          render_frame_metadata_observer_client_request,
-      mojom::RenderFrameMetadataObserverPtr render_frame_metadata_observer_ptr,
-      const char* client_name);
 
   blink::AssociatedInterfaceRegistry* GetAssociatedInterfaceRegistry();
 
@@ -295,10 +288,6 @@ class CONTENT_EXPORT RenderThreadImpl
   // Will be null if threaded compositing has not been enabled.
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner() const {
     return compositor_task_runner_;
-  }
-
-  DomStorageDispatcher* dom_storage_dispatcher() const {
-    return dom_storage_dispatcher_.get();
   }
 
   ResourceDispatcher* resource_dispatcher() const {
@@ -444,7 +433,6 @@ class CONTENT_EXPORT RenderThreadImpl
       int routing_id,
       mojom::FrameRequest frame);
 
-  blink::mojom::StoragePartitionService* GetStoragePartitionService();
   mojom::RendererHost* GetRendererHost();
 
   struct RendererMemoryMetrics {
@@ -567,7 +555,6 @@ class CONTENT_EXPORT RenderThreadImpl
       discardable_shared_memory_manager_;
 
   // These objects live solely on the render thread.
-  std::unique_ptr<DomStorageDispatcher> dom_storage_dispatcher_;
   std::unique_ptr<blink::scheduler::WebThreadScheduler> main_thread_scheduler_;
   std::unique_ptr<RendererBlinkPlatformImpl> blink_platform_impl_;
   std::unique_ptr<ResourceDispatcher> resource_dispatcher_;
@@ -707,7 +694,6 @@ class CONTENT_EXPORT RenderThreadImpl
       std::map<int, scoped_refptr<PendingFrameCreate>>;
   PendingFrameCreateMap pending_frame_creates_;
 
-  blink::mojom::StoragePartitionServicePtr storage_partition_service_;
   mojom::RendererHostAssociatedPtr renderer_host_;
 
   blink::AssociatedInterfaceRegistry associated_interfaces_;
@@ -733,6 +719,9 @@ class CONTENT_EXPORT RenderThreadImpl
   // this member.
   mojo::Binding<viz::mojom::CompositingModeWatcher>
       compositing_mode_watcher_binding_;
+
+  base::TimeTicks init_start_;
+  base::TimeTicks init_end_;
 
   base::WeakPtrFactory<RenderThreadImpl> weak_factory_;
 

@@ -14,7 +14,6 @@
 #import "ios/chrome/browser/ui/favicon/favicon_attributes_provider.h"
 #import "ios/chrome/browser/ui/omnibox/popup/shortcuts/shortcuts_consumer.h"
 #import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
-#import "ios/chrome/browser/ui/url_loader.h"
 #import "ios/chrome/browser/url_loading/url_loading_params.h"
 #import "ios/chrome/browser/url_loading/url_loading_service.h"
 #import "ios/web/public/navigation_item.h"
@@ -108,10 +107,10 @@ const CGFloat kFaviconMinimalSize = 32;
 #pragma mark - ShortcutsViewControllerDelegate
 
 - (void)openMostVisitedItem:(ShortcutsMostVisitedItem*)item {
-  web::NavigationManager::WebLoadParams params(item.URL);
-  params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
   [self.dispatcher cancelOmniboxEdit];
-  _loadingService->Load(UrlLoadParams::InCurrentTab(params));
+  UrlLoadParams params = UrlLoadParams::InCurrentTab(item.URL);
+  params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+  _loadingService->Load(params);
 }
 
 - (void)openBookmarks {

@@ -19,7 +19,6 @@ import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.webkit.MimeTypeMap;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContentUriUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
@@ -155,15 +154,10 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
                         new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION));
 
         List<String> missingPermissions = new ArrayList<>();
-        if (shouldUsePhotoPicker()) {
-            if (BuildInfo.isAtLeastQ()) {
-                String newImagePermission = "android.permission.READ_MEDIA_IMAGES";
-                if (!window.hasPermission(newImagePermission)) {
-                    missingPermissions.add(newImagePermission);
-                }
-            } else if (!window.hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-                missingPermissions.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-            }
+        String storagePermission = Manifest.permission.READ_EXTERNAL_STORAGE;
+        boolean shouldUsePhotoPicker = shouldUsePhotoPicker();
+        if (shouldUsePhotoPicker) {
+            if (!window.hasPermission(storagePermission)) missingPermissions.add(storagePermission);
         } else {
             if (((mSupportsImageCapture && shouldShowImageTypes())
                         || (mSupportsVideoCapture && shouldShowVideoTypes()))
@@ -183,9 +177,17 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
                     missingPermissions.toArray(new String[missingPermissions.size()]);
             window.requestPermissions(requestPermissions, (permissions, grantResults) -> {
                 for (int i = 0; i < grantResults.length; i++) {
-                    if (grantResults[i] == PackageManager.PERMISSION_DENIED && mCapture) {
-                        onFileNotSelected();
-                        return;
+                    if (grantResults[i] == PackageManager.PERMISSION_DENIED) {
+                        if (mCapture) {
+                            onFileNotSelected();
+                            return;
+                        }
+
+                        if (shouldUsePhotoPicker
+                                && requestPermissions[i].equals(storagePermission)) {
+                            onFileNotSelected();
+                            return;
+                        }
                     }
                 }
                 launchSelectFileIntent();
@@ -244,7 +246,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         Activity activity = mWindowAndroid.getActivity().get();
 
         // Use the new photo picker, if available.
-        List<String> imageMimeTypes = convertToImageMimeTypes(mFileTypes);
+        List<String> imageMimeTypes = convertToSupportedPhotoPickerTypes(mFileTypes);
         if (shouldUsePhotoPicker()
                 && UiUtils.showPhotoPicker(activity, this, mAllowMultiple, imageMimeTypes)) {
             return;
@@ -306,26 +308,28 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
      *   4.) There is a valid Android Activity associated with the file request.
      */
     private boolean shouldUsePhotoPicker() {
-        List<String> imageMimeTypes = convertToImageMimeTypes(mFileTypes);
-        return !captureImage() && imageMimeTypes != null && UiUtils.shouldShowPhotoPicker()
+        List<String> mediaMimeTypes = convertToSupportedPhotoPickerTypes(mFileTypes);
+        return !captureImage() && mediaMimeTypes != null && UiUtils.shouldShowPhotoPicker()
                 && mWindowAndroid.getActivity().get() != null;
     }
 
     /**
-     * Converts a list of extensions and Mime types to a list of de-duped Mime types containing
-     * image types only. If the input list contains a non-image type, then null is returned.
+     * Converts a list of extensions and Mime types to a list of de-duped Mime types supported by
+     * the photo picker only. If the input list contains a unsupported type, then null is returned.
      * @param fileTypes the list of filetypes (extensions and Mime types) to convert.
-     * @return A de-duped list of Image Mime types only, or null if one or more non-image types were
-     *         given as input.
+     * @return A de-duped list of supported types only, or null if one or more unsupported types
+     *         were given as input.
      */
     @VisibleForTesting
-    public static List<String> convertToImageMimeTypes(List<String> fileTypes) {
+    public static List<String> convertToSupportedPhotoPickerTypes(List<String> fileTypes) {
         if (fileTypes.size() == 0) return null;
         List<String> mimeTypes = new ArrayList<>();
         for (String type : fileTypes) {
             String mimeType = ensureMimeType(type);
             if (!mimeType.startsWith("image/")) {
-                return null;
+                if (!UiUtils.photoPickerSupportsVideo() || !mimeType.startsWith("video/")) {
+                    return null;
+                }
             }
             if (!mimeTypes.contains(mimeType)) mimeTypes.add(mimeType);
         }
@@ -734,7 +738,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     }
 
     private boolean eligibleForPhotoPicker() {
-        return convertToImageMimeTypes(mFileTypes) != null;
+        return convertToSupportedPhotoPickerTypes(mFileTypes) != null;
     }
 
     private void onFileSelected(

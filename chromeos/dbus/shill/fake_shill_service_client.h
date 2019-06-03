@@ -20,7 +20,7 @@ namespace chromeos {
 
 // A fake implementation of ShillServiceClient. This works in close coordination
 // with FakeShillManagerClient and is not intended to be used independently.
-class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillServiceClient
+class COMPONENT_EXPORT(SHILL_CLIENT) FakeShillServiceClient
     : public ShillServiceClient,
       public ShillServiceClient::TestInterface {
  public:
@@ -28,7 +28,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillServiceClient
   ~FakeShillServiceClient() override;
 
   // ShillServiceClient overrides
-  void Init(dbus::Bus* bus) override;
   void AddPropertyChangedObserver(
       const dbus::ObjectPath& service_path,
       ShillPropertyChangedObserver* observer) override;

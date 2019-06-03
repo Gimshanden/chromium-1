@@ -27,10 +27,10 @@
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_helper_util.h"
 #import "ios/chrome/browser/tabs/tab_private.h"
-#include "ios/chrome/browser/ui/prerender_final_status.h"
+#import "ios/web/public/deprecated/crw_native_content.h"
+#import "ios/web/public/deprecated/crw_native_content_holder.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/ui/crw_native_content.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer_bridge.h"
 #import "ios/web/public/web_state/web_state_policy_decider_bridge.h"
@@ -46,6 +46,16 @@
 using web::WebStatePolicyDecider;
 
 namespace {
+
+// PrerenderFinalStatus values are used in the "Prerender.FinalStatus" histogram
+// and new values needs to be kept in sync with histogram.xml.
+enum PrerenderFinalStatus {
+  PRERENDER_FINAL_STATUS_USED = 0,
+  PRERENDER_FINAL_STATUS_MEMORY_LIMIT_EXCEEDED = 12,
+  PRERENDER_FINAL_STATUS_CANCELLED = 32,
+  PRERENDER_FINAL_STATUS_MAX = 52,
+};
+
 // Delay before starting to prerender a URL.
 const NSTimeInterval kPrerenderDelay = 0.5;
 
@@ -268,7 +278,7 @@ bool IsPrerenderTabEvictionExperimentalGroup() {
   DCHECK(![self isWebStatePrerendered:webState.get()]);
 
   Tab* tab = LegacyTabHelper::GetTabForWebState(webState.get());
-  [[tab webController] setNativeProvider:nil];
+  [tab.webController nativeContentHolder].nativeProvider = nil;
 
   webState->RemoveObserver(webStateObserver_.get());
   breakpad::StopMonitoringURLsForWebState(webState.get());
@@ -394,7 +404,7 @@ bool IsPrerenderTabEvictionExperimentalGroup() {
   Tab* tab = LegacyTabHelper::GetTabForWebState(webState_.get());
   DCHECK(tab);
 
-  [[tab webController] setNativeProvider:self];
+  [tab.webController nativeContentHolder].nativeProvider = nil;
 
   webState_->SetDelegate(webStateDelegate_.get());
   webState_->AddObserver(webStateObserver_.get());
@@ -439,7 +449,7 @@ bool IsPrerenderTabEvictionExperimentalGroup() {
                             PRERENDER_FINAL_STATUS_MAX);
 
   Tab* tab = LegacyTabHelper::GetTabForWebState(webState_.get());
-  [[tab webController] setNativeProvider:nil];
+  [tab.webController nativeContentHolder].nativeProvider = nil;
   webState_->RemoveObserver(webStateObserver_.get());
   breakpad::StopMonitoringURLsForWebState(webState_.get());
   webState_->SetDelegate(nullptr);

@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/platform/graphics/compositing/content_layer_client_impl.h"
 
 #include <memory>
+#include "base/bind.h"
 #include "base/optional.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/paint/paint_flags.h"
@@ -24,9 +25,9 @@ namespace blink {
 
 ContentLayerClientImpl::ContentLayerClientImpl()
     : cc_picture_layer_(cc::PictureLayer::Create(this)),
-      raster_invalidator_([this](const IntRect& rect) {
-        cc_picture_layer_->SetNeedsDisplayRect(rect);
-      }),
+      raster_invalidator_(
+          base::BindRepeating(&ContentLayerClientImpl::InvalidateRect,
+                              base::Unretained(this))),
       layer_state_(PropertyTreeState::Uninitialized()),
       weak_ptr_factory_(this) {
   cc_picture_layer_->SetLayerClient(weak_ptr_factory_.GetWeakPtr());
@@ -146,7 +147,7 @@ std::unique_ptr<JSONObject> ContentLayerClientImpl::LayerAsJSON(
 }
 
 std::unique_ptr<base::trace_event::TracedValue>
-ContentLayerClientImpl::TakeDebugInfo(cc::Layer* layer) {
+ContentLayerClientImpl::TakeDebugInfo(const cc::Layer* layer) {
   DCHECK_EQ(layer, cc_picture_layer_.get());
   auto traced_value = std::make_unique<base::trace_event::TracedValue>();
   traced_value->SetString("layer_name",
@@ -182,7 +183,7 @@ scoped_refptr<cc::PictureLayer> ContentLayerClientImpl::UpdateCcPictureLayer(
     json->SetArray("displayItems",
                    paint_artifact->GetDisplayItemList().SubsequenceAsJSON(
                        chunk.begin_index, chunk.end_index,
-                       DisplayItemList::kShownOnlyDisplayItemTypes));
+                       DisplayItemList::kShowOnlyDisplayItemTypes));
     paint_chunk_debug_data_->PushObject(std::move(json));
   }
 #endif
@@ -200,6 +201,7 @@ scoped_refptr<cc::PictureLayer> ContentLayerClientImpl::UpdateCcPictureLayer(
       layer_bounds.OffsetFromOrigin());
   cc_picture_layer_->SetBounds(layer_bounds.size());
   cc_picture_layer_->SetIsDrawable(true);
+  cc_picture_layer_->SetHitTestable(true);
 
   base::Optional<RasterUnderInvalidationCheckingParams> params;
   if (RuntimeEnabledFeatures::PaintUnderInvalidationCheckingEnabled()) {

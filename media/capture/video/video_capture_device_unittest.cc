@@ -47,8 +47,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power/fake_power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
 #include "media/capture/video/chromeos/local_gpu_memory_buffer_manager.h"
@@ -259,15 +258,15 @@ class VideoCaptureDeviceTest
 #if defined(OS_CHROMEOS)
     local_gpu_memory_buffer_manager_ =
         std::make_unique<LocalGpuMemoryBufferManager>();
-    dbus_setter_ = chromeos::DBusThreadManager::GetSetterForTesting();
     VideoCaptureDeviceFactoryChromeOS::SetGpuBufferManager(
         local_gpu_memory_buffer_manager_.get());
-    if (!CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
+    if (media::ShouldUseCrosCameraService() &&
+        !CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
       CameraHalDispatcherImpl::GetInstance()->Start(
           base::DoNothing::Repeatedly<
-              media::mojom::MjpegDecodeAcceleratorRequest>(),
+              chromeos_camera::mojom::MjpegDecodeAcceleratorRequest>(),
           base::DoNothing::Repeatedly<
-              media::mojom::JpegEncodeAcceleratorRequest>());
+              chromeos_camera::mojom::JpegEncodeAcceleratorRequest>());
     }
 #endif
     video_capture_device_factory_ =
@@ -302,17 +301,18 @@ class VideoCaptureDeviceTest
 #endif
 
   std::unique_ptr<MockVideoCaptureDeviceClient> CreateDeviceClient() {
-    auto result = std::make_unique<MockVideoCaptureDeviceClient>();
+    auto result = std::make_unique<NiceMockVideoCaptureDeviceClient>();
     ON_CALL(*result, OnError(_, _, _)).WillByDefault(Invoke(DumpError));
     EXPECT_CALL(*result, ReserveOutputBuffer(_, _, _, _)).Times(0);
     EXPECT_CALL(*result, DoOnIncomingCapturedBuffer(_, _, _, _)).Times(0);
     EXPECT_CALL(*result, DoOnIncomingCapturedBufferExt(_, _, _, _, _, _, _))
         .Times(0);
-    ON_CALL(*result, OnIncomingCapturedData(_, _, _, _, _, _, _))
+    ON_CALL(*result, OnIncomingCapturedData(_, _, _, _, _, _, _, _))
         .WillByDefault(
             Invoke([this](const uint8_t* data, int length,
-                          const media::VideoCaptureFormat& frame_format, int,
-                          base::TimeTicks, base::TimeDelta, int) {
+                          const media::VideoCaptureFormat& frame_format,
+                          const gfx::ColorSpace&, int, base::TimeTicks,
+                          base::TimeDelta, int) {
               ASSERT_GT(length, 0);
               ASSERT_TRUE(data);
               main_thread_task_runner_->PostTask(
@@ -469,7 +469,6 @@ class VideoCaptureDeviceTest
   VideoCaptureFormat last_format_;
 #if defined(OS_CHROMEOS)
   std::unique_ptr<LocalGpuMemoryBufferManager> local_gpu_memory_buffer_manager_;
-  std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter_;
 #endif
   std::unique_ptr<VideoCaptureDeviceFactory> video_capture_device_factory_;
 };
@@ -677,7 +676,7 @@ void VideoCaptureDeviceTest::RunCaptureMjpegTestCase() {
 
 #if defined(OS_WIN)
   base::win::Version version = base::win::GetVersion();
-  if (version >= base::win::VERSION_WIN10) {
+  if (version >= base::win::Version::WIN10) {
     VLOG(1) << "Skipped on Win10: http://crbug.com/570604, current: "
             << static_cast<int>(version);
     return;

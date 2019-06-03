@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -68,15 +67,15 @@ bool HeadersContainMultipleCopiesOfField(const HttpResponseHeaders& headers,
   return false;
 }
 
-std::unique_ptr<base::Value> NetLogSendRequestBodyCallback(
+base::Value NetLogSendRequestBodyCallback(
     uint64_t length,
     bool is_chunked,
     bool did_merge,
     NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("length", static_cast<int>(length));
-  dict->SetBoolean("is_chunked", is_chunked);
-  dict->SetBoolean("did_merge", did_merge);
+  base::DictionaryValue dict;
+  dict.SetInteger("length", static_cast<int>(length));
+  dict.SetBoolean("is_chunked", is_chunked);
+  dict.SetBoolean("did_merge", did_merge);
   return std::move(dict);
 }
 
@@ -320,6 +319,15 @@ int HttpStreamParser::SendRequest(
   return result > 0 ? OK : result;
 }
 
+int HttpStreamParser::ConfirmHandshake(CompletionOnceCallback callback) {
+  int ret = stream_socket_->ConfirmHandshake(
+      base::BindOnce(&HttpStreamParser::RunConfirmHandshakeCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
+  if (ret == ERR_IO_PENDING)
+    confirm_handshake_callback_ = std::move(callback);
+  return ret;
+}
+
 int HttpStreamParser::ReadResponseHeaders(CompletionOnceCallback callback) {
   DCHECK(io_state_ == STATE_NONE || io_state_ == STATE_DONE);
   DCHECK(callback_.is_null());
@@ -387,7 +395,7 @@ void HttpStreamParser::OnIOComplete(int result) {
   // The client callback can do anything, including destroying this class,
   // so any pending callback must be issued after everything else is done.
   if (result != ERR_IO_PENDING && !callback_.is_null()) {
-    base::ResetAndReturn(&callback_).Run(result);
+    std::move(callback_).Run(result);
   }
 }
 
@@ -930,6 +938,10 @@ int HttpStreamParser::HandleReadHeaderResult(int result) {
     // Now waiting for the body to be read.
   }
   return OK;
+}
+
+void HttpStreamParser::RunConfirmHandshakeCallback(int rv) {
+  std::move(confirm_handshake_callback_).Run(rv);
 }
 
 int HttpStreamParser::FindAndParseResponseHeaders(int new_bytes) {

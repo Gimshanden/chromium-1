@@ -99,8 +99,8 @@ namespace feedbackPrivate {
   enum Status {success, delayed};
 
   // The type of the landing page shown to the user when the feedback report is
-  // successfully sent.
-  enum LandingPageType {normal, techstop};
+  // successfully sent, if one should be shown.
+  enum LandingPageType {normal, techstop, noLandingPage};
 
   // Allowed log sources on Chrome OS.
   enum LogSource {
@@ -229,6 +229,11 @@ namespace feedbackPrivate {
     // </ul>
     static void readLogSource(ReadLogSourceParams params,
                               ReadLogSourceCallback callback);
+
+    // Invoked when the extension is complete during sending feedback from the
+    // login page. This is then used to know we can unload the feedback
+    // extension from the login profile.
+    static void loginFeedbackComplete();
   };
 
   interface Events {

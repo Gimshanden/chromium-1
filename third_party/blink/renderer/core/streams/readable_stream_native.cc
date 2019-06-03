@@ -11,11 +11,11 @@
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/streams/miscellaneous_operations.h"
+#include "third_party/blink/renderer/core/streams/promise_handler.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_controller.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_reader.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_reader.h"
 #include "third_party/blink/renderer/core/streams/stream_algorithms.h"
 #include "third_party/blink/renderer/core/streams/stream_promise_resolver.h"
-#include "third_party/blink/renderer/core/streams/stream_script_function.h"
 #include "third_party/blink/renderer/core/streams/underlying_source_base.h"
 #include "third_party/blink/renderer/core/streams/writable_stream_default_controller.h"
 #include "third_party/blink/renderer/core/streams/writable_stream_default_writer.h"
@@ -165,25 +165,17 @@ class ReadableStreamNative::PipeToEngine
   using PromiseReaction =
       v8::Local<v8::Value> (PipeToEngine::*)(v8::Local<v8::Value>);
 
-  class WrappedPromiseReaction : public ScriptFunction {
+  class WrappedPromiseReaction final : public PromiseHandlerWithValue {
    public:
-    static v8::Local<v8::Function> Create(ScriptState* script_state,
-                                          PipeToEngine* instance,
-                                          PromiseReaction method) {
-      auto* reaction = MakeGarbageCollected<WrappedPromiseReaction>(
-          script_state, instance, method);
-      return reaction->BindToV8Function();
-    }
-
     WrappedPromiseReaction(ScriptState* script_state,
                            PipeToEngine* instance,
                            PromiseReaction method)
-        : ScriptFunction(script_state), instance_(instance), method_(method) {}
+        : PromiseHandlerWithValue(script_state),
+          instance_(instance),
+          method_(method) {}
 
-    void CallRaw(const v8::FunctionCallbackInfo<v8::Value>& args) override {
-      DCHECK_EQ(args.Length(), 1);
-      auto result = (instance_->*method_)(args[0]);
-      args.GetReturnValue().Set(result);
+    v8::Local<v8::Value> CallWithLocal(v8::Local<v8::Value> value) override {
+      return (instance_->*method_)(value);
     }
 
     void Trace(Visitor* visitor) override {
@@ -269,7 +261,7 @@ class ReadableStreamNative::PipeToEngine
     }
 
     is_reading_ = true;
-    ThenPromise(ReadableStreamDefaultReader::Read(script_state_, reader_)
+    ThenPromise(ReadableStreamReader::Read(script_state_, reader_)
                     ->V8Promise(script_state_->GetIsolate()),
                 &PipeToEngine::ReadFulfilled, &PipeToEngine::ReadRejected);
     return Undefined();
@@ -500,7 +492,7 @@ class ReadableStreamNative::PipeToEngine
     WritableStreamDefaultWriter::Release(script_state_, writer_);
 
     // b. Perform ! ReadableStreamReaderGenericRelease(reader).
-    ReadableStreamNative::ReaderGenericRelease(script_state_, reader_);
+    ReadableStreamReader::GenericRelease(script_state_, reader_);
 
     // TODO(ricea): Implement signal.
     // c. If signal is not undefined, remove abortAlgorithm from signal.
@@ -583,47 +575,24 @@ class ReadableStreamNative::PipeToEngine
 
   ReadableStreamNative* Readable() { return reader_->owner_readable_stream_; }
 
-  // Performs promise.then(on_fulfilled, on_rejected). The logic in this method
-  // is identical to StreamPromiseThen(), but the types are different. It's not
-  // possible to share the logic without using complex templates, which would
-  // duplicate the object code anyway.
+  // Performs promise.then(on_fulfilled, on_rejected). It behaves like
+  // StreamPromiseThen(). Only the types are different.
   v8::Local<v8::Promise> ThenPromise(v8::Local<v8::Promise> promise,
                                      PromiseReaction on_fulfilled,
                                      PromiseReaction on_rejected = nullptr) {
-    auto context = script_state_->GetContext();
-    v8::MaybeLocal<v8::Promise> result_maybe;
-    if (!on_fulfilled) {
-      DCHECK(on_rejected);
-      result_maybe = promise->Catch(
-          context,
-          WrappedPromiseReaction::Create(script_state_, this, on_rejected));
-    } else if (on_rejected) {
-      result_maybe = promise->Then(
-          context,
-          WrappedPromiseReaction::Create(script_state_, this, on_fulfilled),
-          WrappedPromiseReaction::Create(script_state_, this, on_rejected));
-    } else {
-      result_maybe = promise->Then(
-          context,
-          WrappedPromiseReaction::Create(script_state_, this, on_fulfilled));
-    }
-
-    v8::Local<v8::Promise> result;
-    if (!result_maybe.ToLocal(&result)) {
-      DVLOG(3) << "assuming that failure of promise->Then() is caused by "
-                  "shutdown and ignoring it";
-      // Try to create a dummy promise so that the calling code can continue. If
-      // we can't create one, then we can't return to the calling context so we
-      // have to crash. This shouldn't happen except on OOM.
-      result =
-          v8::Promise::Resolver::New(context).ToLocalChecked()->GetPromise();
-    }
-    return result;
+    return StreamThenPromise(
+        script_state_->GetContext(), promise,
+        on_fulfilled ? MakeGarbageCollected<WrappedPromiseReaction>(
+                           script_state_, this, on_fulfilled)
+                     : nullptr,
+        on_rejected ? MakeGarbageCollected<WrappedPromiseReaction>(
+                          script_state_, this, on_rejected)
+                    : nullptr);
   }
 
   Member<ScriptState> script_state_;
   PipeOptions pipe_options_;
-  Member<ReadableStreamDefaultReader> reader_;
+  Member<ReadableStreamReader> reader_;
   Member<WritableStreamDefaultWriter> writer_;
   Member<StreamPromiseResolver> promise_;
   TraceWrapperV8Reference<v8::Promise> last_write_;
@@ -664,7 +633,7 @@ class ReadableStreamNative::TeeEngine final
   class CancelAlgorithm;
 
   Member<ReadableStreamNative> stream_;
-  Member<ReadableStreamDefaultReader> reader_;
+  Member<ReadableStreamReader> reader_;
   Member<StreamPromiseResolver> cancel_promise_;
   bool closed_ = false;
 
@@ -695,7 +664,7 @@ class ReadableStreamNative::TeeEngine::PullAlgorithm final
     //      and performs the following steps:
     return StreamThenPromise(
         script_state->GetContext(),
-        ReadableStreamDefaultReader::Read(script_state, engine_->reader_)
+        ReadableStreamReader::Read(script_state, engine_->reader_)
             ->V8Promise(script_state->GetIsolate()),
         MakeGarbageCollected<ResolveFunction>(script_state, engine_));
   }
@@ -706,10 +675,10 @@ class ReadableStreamNative::TeeEngine::PullAlgorithm final
   }
 
  private:
-  class ResolveFunction final : public StreamScriptFunction {
+  class ResolveFunction final : public PromiseHandler {
    public:
     ResolveFunction(ScriptState* script_state, TeeEngine* engine)
-        : StreamScriptFunction(script_state), engine_(engine) {}
+        : PromiseHandler(script_state), engine_(engine) {}
 
     void CallWithLocal(v8::Local<v8::Value> result) override {
       //    i. If closed is true, return.
@@ -791,7 +760,7 @@ class ReadableStreamNative::TeeEngine::PullAlgorithm final
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(engine_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
@@ -940,10 +909,10 @@ void ReadableStreamNative::TeeEngine::Start(ScriptState* script_state,
     controller_[branch] = branch_[branch]->readable_stream_controller_;
   }
 
-  class RejectFunction final : public StreamScriptFunction {
+  class RejectFunction final : public PromiseHandler {
    public:
     RejectFunction(ScriptState* script_state, TeeEngine* engine)
-        : StreamScriptFunction(script_state), engine_(engine) {}
+        : PromiseHandler(script_state), engine_(engine) {}
 
     void CallWithLocal(v8::Local<v8::Value> r) override {
       // 18. Upon rejection of reader.[[closedPromise]] with reason r,
@@ -960,7 +929,7 @@ void ReadableStreamNative::TeeEngine::Start(ScriptState* script_state,
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(engine_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
@@ -980,12 +949,11 @@ void ReadableStreamNative::TeeEngine::Start(ScriptState* script_state,
 class ReadableStreamNative::ReadHandleImpl final
     : public ReadableStream::ReadHandle {
  public:
-  explicit ReadHandleImpl(ReadableStreamDefaultReader* reader)
-      : reader_(reader) {}
+  explicit ReadHandleImpl(ReadableStreamReader* reader) : reader_(reader) {}
   ~ReadHandleImpl() override = default;
 
   ScriptPromise Read(ScriptState* script_state) override {
-    return ReadableStreamDefaultReader::Read(script_state, reader_)
+    return ReadableStreamReader::Read(script_state, reader_)
         ->GetScriptPromise(script_state);
   }
 
@@ -995,7 +963,7 @@ class ReadableStreamNative::ReadHandleImpl final
   }
 
  private:
-  const Member<ReadableStreamDefaultReader> reader_;
+  const Member<ReadableStreamReader> reader_;
 };
 
 ReadableStreamNative* ReadableStreamNative::Create(
@@ -1342,7 +1310,7 @@ ScriptValue ReadableStreamNative::tee(ScriptState* script_state,
 //
 // Readable stream abstract operations
 //
-ReadableStreamDefaultReader* ReadableStreamNative::AcquireDefaultReader(
+ReadableStreamReader* ReadableStreamNative::AcquireDefaultReader(
     ScriptState* script_state,
     ReadableStreamNative* stream,
     bool for_author_code,
@@ -1352,7 +1320,7 @@ ReadableStreamDefaultReader* ReadableStreamNative::AcquireDefaultReader(
   // 1. If forAuthorCode was not passed, set it to false.
 
   // 2. Let reader be ? Construct(ReadableStreamDefaultReader, « stream »).
-  auto* reader = MakeGarbageCollected<ReadableStreamDefaultReader>(
+  auto* reader = MakeGarbageCollected<ReadableStreamReader>(
       script_state, stream, exception_state);
   if (exception_state.HadException()) {
     return nullptr;
@@ -1414,7 +1382,7 @@ void ReadableStreamNative::LockAndDisturb(ScriptState* script_state,
     return;
   }
 
-  ReadableStreamDefaultReader* reader =
+  ReadableStreamReader* reader =
       AcquireDefaultReader(script_state, this, false, exception_state);
   if (!reader) {
     return;
@@ -1507,10 +1475,10 @@ v8::Local<v8::Promise> ReadableStreamNative::Cancel(
   v8::Local<v8::Promise> source_cancel_promise =
       stream->readable_stream_controller_->CancelSteps(script_state, reason);
 
-  class ReturnUndefinedFunction : public StreamScriptFunction {
+  class ReturnUndefinedFunction final : public PromiseHandler {
    public:
     explicit ReturnUndefinedFunction(ScriptState* script_state)
-        : StreamScriptFunction(script_state) {}
+        : PromiseHandler(script_state) {}
 
     // The method does nothing; the default value of undefined is returned to
     // JavaScript.
@@ -1534,7 +1502,7 @@ void ReadableStreamNative::Close(ScriptState* script_state,
   stream->state_ = kClosed;
 
   // 3. Let reader be stream.[[reader]].
-  ReadableStreamDefaultReader* reader = stream->reader_;
+  ReadableStreamReader* reader = stream->reader_;
 
   // 4. If reader is undefined, return.
   if (!reader) {
@@ -1623,7 +1591,7 @@ void ReadableStreamNative::Error(ScriptState* script_state,
   stream->stored_error_.Set(isolate, e);
 
   // 5. Let reader be stream.[[reader]].
-  ReadableStreamDefaultReader* reader = stream->reader_;
+  ReadableStreamReader* reader = stream->reader_;
 
   // 6. If reader is undefined, return.
   if (!reader) {
@@ -1655,7 +1623,7 @@ void ReadableStreamNative::FulfillReadRequest(ScriptState* script_state,
                                               bool done) {
   // https://streams.spec.whatwg.org/#readable-stream-fulfill-read-request
   // 1. Let reader be stream.[[reader]].
-  ReadableStreamDefaultReader* reader = stream->reader_;
+  ReadableStreamReader* reader = stream->reader_;
 
   // 2. Let readRequest be the first element of reader.[[readRequests]].
   StreamPromiseResolver* read_request = reader->read_requests_.front();
@@ -1677,134 +1645,6 @@ int ReadableStreamNative::GetNumReadRequests(
   // https://streams.spec.whatwg.org/#readable-stream-get-num-read-requests
   // 1. Return the number of elements in stream.[[reader]].[[readRequests]].
   return stream->reader_->read_requests_.size();
-}
-
-//
-//  Readable Stream Reader Generic Abstract Operations
-//
-
-v8::Local<v8::Promise> ReadableStreamNative::ReaderGenericCancel(
-    ScriptState* script_state,
-    ReadableStreamDefaultReader* reader,
-    v8::Local<v8::Value> reason) {
-  // https://streams.spec.whatwg.org/#readable-stream-reader-generic-cancel
-  // 1. Let stream be reader.[[ownerReadableStream]].
-  ReadableStreamNative* stream = reader->owner_readable_stream_;
-
-  // 2. Assert: stream is not undefined.
-  DCHECK(stream);
-
-  // 3. Return ! ReadableStreamCancel(stream, reason).
-  return ReadableStreamNative::Cancel(script_state, stream, reason);
-}
-
-void ReadableStreamNative::ReaderGenericInitialize(
-    ScriptState* script_state,
-    ReadableStreamDefaultReader* reader,
-    ReadableStreamNative* stream) {
-  auto* isolate = script_state->GetIsolate();
-  // TODO(yhirano): Remove this when we don't need hasPendingActivity in
-  // blink::UnderlyingSourceBase.
-  ReadableStreamDefaultController* controller =
-      stream->readable_stream_controller_;
-  if (controller->enable_blink_lock_notifications_) {
-    // The stream is created with an external controller (i.e. made in
-    // Blink).
-    v8::Local<v8::Object> lock_notify_target =
-        controller->lock_notify_target_.NewLocal(isolate);
-    CallNullaryMethod(script_state, lock_notify_target, "notifyLockAcquired");
-  }
-
-  // https://streams.spec.whatwg.org/#readable-stream-reader-generic-initialize
-  // 1. Set reader.[[forAuthorCode]] to true.
-  DCHECK(reader->for_author_code_);
-
-  // 2. Set reader.[[ownerReadableStream]] to stream.
-  reader->owner_readable_stream_ = stream;
-
-  // 3. Set stream.[[reader]] to reader.
-  stream->reader_ = reader;
-
-  switch (stream->state_) {
-    // 4. If stream.[[state]] is "readable",
-    case kReadable:
-      // a. Set reader.[[closedPromise]] to a new promise.
-      reader->closed_promise_ =
-          MakeGarbageCollected<StreamPromiseResolver>(script_state);
-      break;
-
-    // 5. Otherwise, if stream.[[state]] is "closed",
-    case kClosed:
-      // a. Set reader.[[closedPromise]] to a promise resolved with undefined.
-      reader->closed_promise_ =
-          StreamPromiseResolver::CreateResolvedWithUndefined(script_state);
-      break;
-
-    // 6. Otherwise,
-    case kErrored:
-      // a. Assert: stream.[[state]] is "errored".
-      DCHECK_EQ(stream->state_, kErrored);
-
-      // b. Set reader.[[closedPromise]] to a promise rejected with stream.
-      //    [[storedError]].
-      reader->closed_promise_ = StreamPromiseResolver::CreateRejected(
-          script_state, stream->GetStoredError(isolate));
-
-      // c. Set reader.[[closedPromise]].[[PromiseIsHandled]] to true.
-      reader->closed_promise_->MarkAsHandled(isolate);
-      break;
-  }
-}
-
-void ReadableStreamNative::ReaderGenericRelease(
-    ScriptState* script_state,
-    ReadableStreamDefaultReader* reader) {
-  // https://streams.spec.whatwg.org/#readable-stream-reader-generic-release
-  // 1. Assert: reader.[[ownerReadableStream]] is not undefined.
-  DCHECK(reader->owner_readable_stream_);
-
-  // 2. Assert: reader.[[ownerReadableStream]].[[reader]] is reader.
-  DCHECK_EQ(reader->owner_readable_stream_->reader_, reader);
-
-  auto* isolate = script_state->GetIsolate();
-  // TODO(yhirano): Remove this when we don"t need hasPendingActivity in
-  // blink::UnderlyingSourceBase.
-  ReadableStreamDefaultController* controller =
-      reader->owner_readable_stream_->readable_stream_controller_;
-  if (controller->enable_blink_lock_notifications_) {
-    // The stream is created with an external controller (i.e. made in
-    // Blink).
-    auto lock_notify_target = controller->lock_notify_target_.NewLocal(isolate);
-    CallNullaryMethod(script_state, lock_notify_target, "notifyLockReleased");
-  }
-
-  // 3. If reader.[[ownerReadableStream]].[[state]] is "readable", reject
-  //    reader.[[closedPromise]] with a TypeError exception.
-  if (reader->owner_readable_stream_->state_ == kReadable) {
-    reader->closed_promise_->Reject(
-        script_state,
-        v8::Exception::TypeError(V8String(
-            isolate,
-            "This readable stream reader has been released and cannot be used "
-            "to monitor the stream's state")));
-  } else {
-    // 4. Otherwise, set reader.[[closedPromise]] to a promise rejected with a
-    //    TypeError exception.
-    reader->closed_promise_ = StreamPromiseResolver::CreateRejected(
-        script_state, v8::Exception::TypeError(V8String(
-                          isolate,
-                          "This readable stream reader has been released and "
-                          "cannot be used to monitor the stream's state")));
-  }
-
-  // 5. Set reader.[[closedPromise]].[[PromiseIsHandled]] to true.
-  reader->closed_promise_->MarkAsHandled(isolate);
-
-  // 6. Set reader.[[ownerReadableStream]].[[reader]] to undefined.
-  reader->owner_readable_stream_->reader_ = nullptr;
-
-  // 7. Set reader.[[ownerReadableStream]] to undefined.
-  reader->owner_readable_stream_ = nullptr;
 }
 
 //
@@ -1864,34 +1704,6 @@ bool ReadableStreamNative::GetBoolean(ScriptState* script_state,
     return false;
   }
   return property_value->ToBoolean(isolate)->Value();
-}
-
-void ReadableStreamNative::CallNullaryMethod(ScriptState* script_state,
-                                             v8::Local<v8::Object> object,
-                                             const char* method_name) {
-  auto* isolate = script_state->GetIsolate();
-  auto context = script_state->GetContext();
-  v8::TryCatch try_catch(isolate);
-  v8::Local<v8::Value> method;
-  if (!object->Get(context, V8AtomicString(isolate, method_name))
-           .ToLocal(&method)) {
-    DLOG(WARNING) << "Ignored failed lookup of '" << method_name
-                  << "' in CallNullaryMethod";
-    return;
-  }
-
-  if (!method->IsFunction()) {
-    DLOG(WARNING) << "Didn't call '" << method_name
-                  << "' in CallNullaryMethod because it was the wrong type";
-    return;
-  }
-
-  v8::MaybeLocal<v8::Value> result =
-      method.As<v8::Function>()->Call(context, object, 0, nullptr);
-  if (result.IsEmpty()) {
-    DLOG(WARNING) << "Ignored failure of '" << method_name
-                  << "' in CallNullaryMethod";
-  }
 }
 
 }  // namespace blink

@@ -24,13 +24,14 @@
 <link rel="import" href="../controls/settings_toggle_button.html">
 <link rel="import" href="../prefs/prefs.html">
 <link rel="import" href="../route.html">
+<link rel="import" href="internet_page_browser_proxy.html">
 <link rel="import" href="internet_shared_css.html">
 <link rel="import" href="network_proxy_section.html">
 <link rel="import" href="tether_connection_dialog.html">
 
 <dom-module id="settings-internet-detail-page">
   <template>
-    <style include="internet-shared iron-flex">
+    <style include="internet-shared settings-shared iron-flex">
       :host {
         padding-bottom: 40px;
       }
@@ -63,6 +64,10 @@
 
       paper-spinner-lite {
         @apply --cr-icon-height-width;
+      }
+      .warning {
+          color: var(--cr-secondary-text-color);
+          margin-inline-start: var(--settings-controlled-by-spacing);
       }
     </style>
     <!-- Title section: Icon + name + connection state. -->
@@ -178,9 +183,19 @@
           if="[[showAutoConnect_(networkProperties_, globalPolicy,
               managedNetworkAvailable)]]">
         <settings-toggle-button
+            id="autoConnectToggle"
             pref="{{autoConnect_}}"
             label="[[getAutoConnectToggleLabel_(networkProperties_)]]">
         </settings-toggle-button>
+        <!-- Hidden Network Warning -->
+        <template is="dom-if"
+            if="[[showHiddenNetworkWarning_(autoConnect_, networkProperties_)]]"
+            restamp>
+          <div class="warning">
+            <iron-icon icon="cr:warning"></iron-icon>
+            [[i18n('hiddenNetworkWarning')]]
+          </div>
+        </template>
       </template>
       <!-- Always-on VPN. -->
       <template is="dom-if"

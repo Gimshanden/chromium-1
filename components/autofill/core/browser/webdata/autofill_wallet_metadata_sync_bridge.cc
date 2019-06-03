@@ -14,9 +14,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
 #include "base/pickle.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_bridge_util.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
@@ -414,18 +414,19 @@ void AutofillWalletMetadataSyncBridge::ApplyStopSyncChanges(
   // disabled, so we want to delete the data as well (i.e. the wallet metadata
   // entities).
   if (delete_metadata_change_list) {
-    bool is_any_local_modified = false;
     for (const std::pair<std::string, AutofillMetadata>& pair : cache_) {
       TypeAndMetadataId parsed_storage_key =
           ParseWalletMetadataStorageKey(pair.first);
-      is_any_local_modified |=
-          RemoveServerMetadata(GetAutofillTable(), parsed_storage_key.type,
-                               parsed_storage_key.metadata_id);
+      RemoveServerMetadata(GetAutofillTable(), parsed_storage_key.type,
+                           parsed_storage_key.metadata_id);
     }
     cache_.clear();
-    if (is_any_local_modified) {
-      web_data_backend_->NotifyOfMultipleAutofillChanges();
-    }
+
+    // We do not notify the change to the UI because the data bridge will notify
+    // anyway and notifying on metadata deletion potentially before the data
+    // deletion is risky. This can cause another conversion of server addresses
+    // to local addresses as we lack the metadata (that it has been converted
+    // already).
 
     // Commit the transaction to make sure the sync data (deleted here) and the
     // sync metadata and the progress marker (deleted by the processor via
@@ -438,10 +439,8 @@ void AutofillWalletMetadataSyncBridge::ApplyStopSyncChanges(
 
 void AutofillWalletMetadataSyncBridge::AutofillProfileChanged(
     const AutofillProfileChange& change) {
-  // Skip local profiles (if possible, i.e. if it is not a deletion where
-  // data_model() is not set).
-  if (change.data_model() &&
-      change.data_model()->record_type() != AutofillProfile::SERVER_PROFILE) {
+  // Skip local profiles.
+  if (change.data_model()->record_type() != AutofillProfile::SERVER_PROFILE) {
     return;
   }
   LocalMetadataChanged(WalletMetadataSpecifics::ADDRESS, change);
@@ -550,6 +549,7 @@ void AutofillWalletMetadataSyncBridge::DeleteOldOrphanMetadata() {
     return;
   }
 
+  int deleted_count = 0;
   std::unique_ptr<MetadataChangeList> metadata_change_list =
       CreateMetadataChangeList();
   for (const std::string storage_key : old_orphan_keys) {
@@ -559,12 +559,20 @@ void AutofillWalletMetadataSyncBridge::DeleteOldOrphanMetadata() {
                              parsed_storage_key.metadata_id)) {
       cache_.erase(storage_key);
       change_processor()->Delete(storage_key, metadata_change_list.get());
+      ++deleted_count;
     }
   }
+  UMA_HISTOGRAM_COUNTS_100("Sync.WalletMetadata.DeletedOldOrphans",
+                           deleted_count);
+
   // Commit the transaction to make sure the data and the metadata is written
   // down (especially on Android where we cannot rely on committing transactions
   // on shutdown).
   web_data_backend_->CommitChanges();
+
+  // We do not need to NotifyOfMultipleAutofillChanges() because this change is
+  // invisible for PersonalDataManager - it does not change metadata for any
+  // existing data.
 }
 
 void AutofillWalletMetadataSyncBridge::GetDataImpl(
@@ -598,10 +606,10 @@ void AutofillWalletMetadataSyncBridge::UploadInitialLocalData(
     local_keys_to_upload.insert(it.first);
   }
   // Strip |local_keys_to_upload| of the keys of data provided by the server.
-  for (const EntityChange& change : entity_data) {
-    DCHECK_EQ(change.type(), EntityChange::ACTION_ADD)
+  for (const std::unique_ptr<EntityChange>& change : entity_data) {
+    DCHECK_EQ(change->type(), EntityChange::ACTION_ADD)
         << "Illegal change; can only be called during initial MergeSyncData()";
-    local_keys_to_upload.erase(change.storage_key());
+    local_keys_to_upload.erase(change->storage_key());
   }
   // Upload the remaining storage keys
   for (const std::string& storage_key : local_keys_to_upload) {
@@ -622,24 +630,24 @@ AutofillWalletMetadataSyncBridge::MergeRemoteChanges(
 
   AutofillTable* table = GetAutofillTable();
 
-  for (const EntityChange& change : entity_data) {
+  for (const std::unique_ptr<EntityChange>& change : entity_data) {
     TypeAndMetadataId parsed_storage_key =
-        ParseWalletMetadataStorageKey(change.storage_key());
-    switch (change.type()) {
+        ParseWalletMetadataStorageKey(change->storage_key());
+    switch (change->type()) {
       case EntityChange::ACTION_ADD:
       case EntityChange::ACTION_UPDATE: {
         const WalletMetadataSpecifics& specifics =
-            change.data().specifics.wallet_metadata();
+            change->data().specifics.wallet_metadata();
         AutofillMetadata remote =
             CreateAutofillMetadataFromWalletMetadataSpecifics(specifics);
-        auto it = cache_.find(change.storage_key());
+        auto it = cache_.find(change->storage_key());
         base::Optional<AutofillMetadata> local = base::nullopt;
         if (it != cache_.end()) {
           local = it->second;
         }
 
         if (!local) {
-          cache_[change.storage_key()] = remote;
+          cache_[change->storage_key()] = remote;
           is_any_local_modified |= AddServerMetadata(
               GetAutofillTable(), parsed_storage_key.type, remote);
           continue;
@@ -649,12 +657,12 @@ AutofillWalletMetadataSyncBridge::MergeRemoteChanges(
         AutofillMetadata merged =
             MergeMetadata(parsed_storage_key.type, *local, remote);
         if (merged != *local) {
-          cache_[change.storage_key()] = merged;
+          cache_[change->storage_key()] = merged;
           is_any_local_modified |=
               UpdateServerMetadata(table, parsed_storage_key.type, merged);
         }
         if (merged != remote) {
-          change_processor()->Put(change.storage_key(),
+          change_processor()->Put(change->storage_key(),
                                   CreateEntityDataFromAutofillMetadata(
                                       parsed_storage_key.type, merged),
                                   metadata_change_list.get());
@@ -662,9 +670,15 @@ AutofillWalletMetadataSyncBridge::MergeRemoteChanges(
         break;
       }
       case EntityChange::ACTION_DELETE: {
-        cache_.erase(change.storage_key());
-        is_any_local_modified |= RemoveServerMetadata(
-            table, parsed_storage_key.type, parsed_storage_key.metadata_id);
+        // We intentionally ignore remote deletions in order to avoid
+        // delete-create ping pongs (if we delete metadata for address data
+        // entity that still locally exists, PDM will think the server address
+        // has not been converted to a local address yet and will trigger
+        // conversion that in turn triggers creating and committing the metadata
+        // entity again).
+        // This is safe because this client will delete the wallet_metadata
+        // entity locally as soon as the wallet_data entity gets deleted.
+        // Corner cases are handled by DeleteOldOrphanMetadata().
         break;
       }
     }
@@ -703,9 +717,7 @@ void AutofillWalletMetadataSyncBridge::LocalMetadataChanged(
       if (RemoveServerMetadata(GetAutofillTable(), type, metadata_id)) {
         cache_.erase(storage_key);
         // Send up deletion only if we had this entry in the DB. It is not there
-        // if (i) it was previously deleted by a remote deletion or (ii) this is
-        // notification for a LOCAL_PROFILE (which have non-overlapping
-        // storage_keys).
+        // if it was previously deleted by a remote deletion.
         change_processor()->Delete(storage_key, metadata_change_list.get());
       }
       return;

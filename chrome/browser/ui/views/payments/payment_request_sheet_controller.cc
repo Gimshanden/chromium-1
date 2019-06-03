@@ -215,7 +215,7 @@ std::unique_ptr<views::View> PaymentRequestSheetController::CreateView() {
 
   DialogViewID sheet_id;
   if (GetSheetId(&sheet_id))
-    view->set_id(static_cast<int>(sheet_id));
+    view->SetID(static_cast<int>(sheet_id));
 
   view->SetBackground(views::CreateThemedSolidBackground(
       view.get(), ui::NativeTheme::kColorId_DialogBackground));
@@ -266,7 +266,7 @@ std::unique_ptr<views::View> PaymentRequestSheetController::CreateView() {
   content_view_->layer()->SetFillsBoundsOpaquely(true);
   content_view_->SetBackground(views::CreateThemedSolidBackground(
       content_view_, ui::NativeTheme::kColorId_DialogBackground));
-  content_view_->set_id(static_cast<int>(DialogViewID::CONTENT_VIEW));
+  content_view_->SetID(static_cast<int>(DialogViewID::CONTENT_VIEW));
   pane_layout->AddView(content_view_);
   pane->SizeToPreferredSize();
 
@@ -358,6 +358,14 @@ base::string16 PaymentRequestSheetController::GetSecondaryButtonLabel() {
   return l10n_util::GetStringUTF16(IDS_PAYMENTS_CANCEL_PAYMENT);
 }
 
+int PaymentRequestSheetController::GetSecondaryButtonTag() {
+  return static_cast<int>(PaymentRequestCommonTags::CLOSE_BUTTON_TAG);
+}
+
+int PaymentRequestSheetController::GetSecondaryButtonId() {
+  return static_cast<int>(DialogViewID::CANCEL_BUTTON);
+}
+
 bool PaymentRequestSheetController::ShouldShowSecondaryButton() {
   return true;
 }
@@ -376,7 +384,7 @@ PaymentRequestSheetController::CreateHeaderContentView() {
   std::unique_ptr<views::Label> title_label = std::make_unique<views::Label>(
       GetSheetTitle(), views::style::CONTEXT_DIALOG_TITLE);
   title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  title_label->set_id(static_cast<int>(DialogViewID::SHEET_TITLE));
+  title_label->SetID(static_cast<int>(DialogViewID::SHEET_TITLE));
   title_label->SetFocusBehavior(views::View::FocusBehavior::ACCESSIBLE_ONLY);
 
   return title_label;
@@ -456,8 +464,8 @@ std::unique_ptr<views::View> PaymentRequestSheetController::CreateFooterView() {
   AddSecondaryButton(trailing_buttons_container.get());
 #endif  // defined(OS_MACOSX)
 
-  if (container->child_count() == 0 &&
-      trailing_buttons_container->child_count() == 0) {
+  if (container->children().empty() &&
+      trailing_buttons_container->children().empty()) {
     // If there's no extra view and no button, return null to signal that no
     // footer should be rendered.
     return nullptr;
@@ -469,7 +477,7 @@ std::unique_ptr<views::View> PaymentRequestSheetController::CreateFooterView() {
 }
 
 views::View* PaymentRequestSheetController::GetFirstFocusedView() {
-  if (primary_button_ && primary_button_->enabled())
+  if (primary_button_ && primary_button_->GetEnabled())
     return primary_button_.get();
 
   if (secondary_button_)
@@ -492,7 +500,7 @@ bool PaymentRequestSheetController::PerformPrimaryButtonAction() {
   if (!dialog()->IsInteractive())
     return true;
 
-  if (primary_button_ && primary_button_->enabled())
+  if (primary_button_ && primary_button_->GetEnabled())
     ButtonPressed(primary_button_.get(), DummyEvent());
   return true;
 }
@@ -508,13 +516,11 @@ void PaymentRequestSheetController::AddPrimaryButton(views::View* container) {
 
 void PaymentRequestSheetController::AddSecondaryButton(views::View* container) {
   if (ShouldShowSecondaryButton()) {
-    secondary_button_ = std::unique_ptr<views::Button>(
-        views::MdTextButton::CreateSecondaryUiButton(
-            this, GetSecondaryButtonLabel()));
+    secondary_button_ = views::MdTextButton::CreateSecondaryUiButton(
+        this, GetSecondaryButtonLabel());
     secondary_button_->set_owned_by_client();
-    secondary_button_->set_tag(
-        static_cast<int>(PaymentRequestCommonTags::CLOSE_BUTTON_TAG));
-    secondary_button_->set_id(static_cast<int>(DialogViewID::CANCEL_BUTTON));
+    secondary_button_->set_tag(GetSecondaryButtonTag());
+    secondary_button_->SetID(GetSecondaryButtonId());
     secondary_button_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
     container->AddChildView(secondary_button_.get());
   }

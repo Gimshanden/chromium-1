@@ -21,7 +21,9 @@ import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ChromeActivity;
@@ -38,6 +40,7 @@ import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 import org.chromium.components.download.NetworkStatusListenerAndroid;
@@ -51,6 +54,7 @@ import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.net.NetworkChangeNotifierAutoDetect;
 import org.chromium.net.test.util.WebServer;
+import org.chromium.ui.test.util.UiDisableIf;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -66,6 +70,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Instrumentation tests for Prefetch, using the Feed as the suggestion provider.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
+@Restriction({ChromeRestriction.RESTRICTION_TYPE_REQUIRES_TOUCH})
 @RetryOnFailure
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PrefetchFeedFlowTest implements WebServer.RequestHandler {
@@ -381,6 +386,7 @@ public class PrefetchFeedFlowTest implements WebServer.RequestHandler {
     @Test
     @MediumTest
     @Feature({"OfflinePrefetchFeed"})
+    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/950749
     public void testPrefetchForbiddenByServer() throws Throwable {
         mOPS.setForbidGeneratePageBundle(true);
 
@@ -399,6 +405,7 @@ public class PrefetchFeedFlowTest implements WebServer.RequestHandler {
     @Test
     @MediumTest
     @Feature({"OfflinePrefetchFeed"})
+    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/950749
     public void testPrefetchBecomesEnabledByServer() throws Throwable {
         OfflineTestUtil.setPrefetchingEnabledByServer(false);
 

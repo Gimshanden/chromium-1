@@ -15,7 +15,7 @@ import android.support.v7.widget.RecyclerView.ViewHolder;
 import android.view.View;
 
 import org.chromium.base.Callback;
-import org.chromium.chrome.R;
+import org.chromium.chrome.tab_ui.R;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -41,7 +41,7 @@ class TabGridViewBinder {
             String title = item.get(TabProperties.TITLE);
             holder.title.setText(title);
             holder.closeButton.setContentDescription(holder.itemView.getResources().getString(
-                    R.string.accessibility_tabstrip_btn_close_tab, title));
+                    org.chromium.chrome.R.string.accessibility_tabstrip_btn_close_tab, title));
         } else if (TabProperties.IS_SELECTED == propertyKey) {
             Resources res = holder.itemView.getResources();
             Resources.Theme theme = holder.itemView.getContext().getTheme();
@@ -51,7 +51,6 @@ class TabGridViewBinder {
                         (int) res.getDimension(R.dimen.tab_list_selected_inset_kitkat));
                 Drawable elevationDrawable =
                         ResourcesCompat.getDrawable(res, R.drawable.popup_bg, theme);
-                holder.backgroundView.setVisibility(View.VISIBLE);
                 holder.backgroundView.setBackground(
                         item.get(TabProperties.IS_SELECTED) ? selectedDrawable : elevationDrawable);
             } else {
@@ -76,8 +75,7 @@ class TabGridViewBinder {
             if (fetcher == null) return;
             Callback<Bitmap> callback = result -> {
                 if (result == null) {
-                    holder.thumbnail.setImageResource(0);
-                    holder.thumbnail.setMinimumHeight(holder.thumbnail.getWidth());
+                    holder.resetThumbnail();
                 } else {
                     holder.thumbnail.setImageBitmap(result);
                 }

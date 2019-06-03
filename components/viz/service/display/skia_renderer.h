@@ -90,87 +90,75 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
 
  private:
   struct DrawQuadParams;
-  struct DrawRenderPassDrawQuadParams;
+  struct DrawRPDQParams;
   class ScopedSkImageBuilder;
   class ScopedYUVSkImageBuilder;
 
   void ClearCanvas(SkColor color);
   void ClearFramebuffer();
 
-  // TODO(michaelludwig):
-  // The majority of quad types need to be updated to call the new experimental
-  // SkCanvas APIs, which changes what is needed for canvas prep. This is the
-  // old implementation of DoDrawQuad and types will be migrated individually
-  // to the new system and handled directly in the new DoDrawQuad definition,
-  // after which this function can be removed.
-  void DoSingleDrawQuad(const DrawQuad* quad,
-                        const gfx::QuadF* draw_region,
-                        const DrawQuadParams& params);
-
-  void PrepareCanvasForDrawQuads(
-      gfx::Transform quad_to_target_transform,
-      const gfx::QuadF* draw_region,
-      const gfx::Rect* scissor_rect,
-      const gfx::RRectF* rounded_corner_bounds,
-      base::Optional<SkAutoCanvasRestore>* auto_canvas_restore);
   // Callers should init an SkAutoCanvasRestore before calling this function.
-  void PrepareCanvas(const gfx::Rect* scissor_rect,
-                     const gfx::RRectF* rounded_corner_bounds,
+  // |scissor_rect| and |rounded_corner_bounds| should be in device space,
+  // i.e. same space that |cdt| will transform subsequent draws into.
+  void PrepareCanvas(const base::Optional<gfx::Rect>& scissor_rect,
+                     const base::Optional<gfx::RRectF>& rounded_corner_bounds,
                      const gfx::Transform* cdt);
 
+  // The returned DrawQuadParams can be modified by the DrawX calls that accept
+  // params so that they can apply explicit data transforms before sending to
+  // Skia in a consistent manner.
   DrawQuadParams CalculateDrawQuadParams(const DrawQuad* quad,
                                          const gfx::QuadF* draw_region);
-  SkCanvas::ImageSetEntry MakeEntry(const DrawQuadParams& params,
-                                    const SkImage* image,
-                                    const gfx::RectF& src,
+  DrawRPDQParams CalculateRPDQParams(const SkImage* src_image,
+                                     const RenderPassDrawQuad* quad,
+                                     DrawQuadParams* params);
+
+  SkCanvas::ImageSetEntry MakeEntry(const SkImage* image,
                                     int matrix_index,
-                                    bool use_opacity = true);
+                                    const DrawQuadParams& params);
+  // Returns overall constraint to pass to Skia, and modifies |params| to
+  // emulate content area clamping different from the provided texture coords.
+  SkCanvas::SrcRectConstraint ResolveTextureConstraints(
+      const SkImage* image,
+      const gfx::RectF& valid_texel_bounds,
+      DrawQuadParams* params);
 
   bool MustFlushBatchedQuads(const DrawQuad* new_quad,
                              const DrawQuadParams& params);
-  void AddQuadToBatch(const DrawQuadParams& params,
-                      const SkImage* image,
-                      const gfx::RectF& tex_coords);
+  void AddQuadToBatch(const SkImage* image,
+                      const gfx::RectF& valid_texel_bounds,
+                      DrawQuadParams* params);
   void FlushBatchedQuads();
 
   // Utility to draw a single quad as a filled color
-  void DrawColoredQuad(const DrawQuadParams& params, SkColor color);
+  void DrawColoredQuad(SkColor color, DrawQuadParams* params);
   // Utility to make a single ImageSetEntry and draw it with the complex paint.
-  // Assumes the paint applies the param's opacity.
-  void DrawSingleImage(const DrawQuadParams& params,
-                       const SkImage* image,
-                       const gfx::RectF& src,
-                       const SkPaint* paint);
+  void DrawSingleImage(const SkImage* image,
+                       const gfx::RectF& valid_texel_bounds,
+                       const SkPaint& paint,
+                       DrawQuadParams* params);
 
   // DebugBorder, Picture, RPDQ, and SolidColor quads cannot be batched. They
   // either are not textures (debug, picture, solid color), or it's very likely
   // the texture will have advanced paint effects (rpdq)
   void DrawDebugBorderQuad(const DebugBorderDrawQuad* quad,
-                           const DrawQuadParams& params);
-  void DrawPictureQuad(const PictureDrawQuad* quad,
-                       const DrawQuadParams& params);
-  void DrawRenderPassQuad(const RenderPassDrawQuad* quad, SkPaint* paint);
+                           DrawQuadParams* params);
+  void DrawPictureQuad(const PictureDrawQuad* quad, DrawQuadParams* params);
+  void DrawRenderPassQuad(const RenderPassDrawQuad* quad,
+                          DrawQuadParams* params);
   void DrawRenderPassQuadInternal(const RenderPassDrawQuad* quad,
-                                  sk_sp<SkImage> content_image,
-                                  SkPaint* paint);
-
+                                  const SkImage* content_image,
+                                  DrawQuadParams* params);
   void DrawSolidColorQuad(const SolidColorDrawQuad* quad,
-                          const DrawQuadParams& state);
+                          DrawQuadParams* params);
 
   void DrawStreamVideoQuad(const StreamVideoDrawQuad* quad,
-                           const DrawQuadParams& params);
-  void DrawTextureQuad(const TextureDrawQuad* quad,
-                       const DrawQuadParams& params);
-  void DrawTileDrawQuad(const TileDrawQuad* quad, const DrawQuadParams& params);
-  void DrawYUVVideoQuad(const YUVVideoDrawQuad* quad,
-                        const DrawQuadParams& params);
-  void DrawUnsupportedQuad(const DrawQuad* quad, const DrawQuadParams& params);
+                           DrawQuadParams* params);
+  void DrawTextureQuad(const TextureDrawQuad* quad, DrawQuadParams* params);
+  void DrawTileDrawQuad(const TileDrawQuad* quad, DrawQuadParams* params);
+  void DrawYUVVideoQuad(const YUVVideoDrawQuad* quad, DrawQuadParams* params);
+  void DrawUnsupportedQuad(const DrawQuad* quad, DrawQuadParams* params);
 
-  bool CalculateRPDQParams(sk_sp<SkImage> src_image,
-                           const RenderPassDrawQuad* quad,
-                           DrawRenderPassDrawQuadParams* params);
-  bool ShouldApplyBackdropFilters(
-      const cc::FilterOperations* backdrop_filters) const;
   const TileDrawQuad* CanPassBeDrawnDirectly(const RenderPass* pass) override;
 
   // Get corresponding GrContext. Returns nullptr when there is no GrContext.
@@ -213,10 +201,10 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
 
   // Interface used for drawing. Common among different draw modes.
   sk_sp<SkSurface> root_surface_;
-  sk_sp<SkSurface> non_root_surface_;
   SkCanvas* root_canvas_ = nullptr;
   SkCanvas* current_canvas_ = nullptr;
   SkSurface* current_surface_ = nullptr;
+  scoped_refptr<ResourceFence> current_frame_resource_fence_;
 
   bool disable_picture_quad_image_filtering_ = false;
   bool is_scissor_enabled_ = false;
@@ -235,11 +223,13 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   // State common to all quads in a batch. Draws that require an SkPaint not
   // captured by this state cannot be batched.
   struct BatchedQuadState {
-    gfx::Rect scissor_rect;
+    base::Optional<gfx::Rect> scissor_rect;
+    base::Optional<gfx::RRectF> rounded_corner_bounds;
     SkBlendMode blend_mode;
     SkFilterQuality filter_quality;
-    bool has_scissor_rect;
-    const gfx::RRectF* rounded_corner_bounds;
+    SkCanvas::SrcRectConstraint constraint;
+
+    BatchedQuadState();
   };
   BatchedQuadState batched_quad_state_;
   std::vector<SkCanvas::ImageSetEntry> batched_quads_;

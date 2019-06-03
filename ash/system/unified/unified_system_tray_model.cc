@@ -8,7 +8,6 @@
 #include "ash/shell.h"
 #include "ash/system/brightness_control_delegate.h"
 #include "base/bind.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 
 namespace ash {
@@ -74,7 +73,8 @@ void UnifiedSystemTrayModel::DBusObserver::KeyboardBrightnessChanged(
 }
 
 UnifiedSystemTrayModel::UnifiedSystemTrayModel()
-    : dbus_observer_(std::make_unique<DBusObserver>(this)) {}
+    : dbus_observer_(std::make_unique<DBusObserver>(this)),
+      pagination_model_(std::make_unique<PaginationModel>()) {}
 
 UnifiedSystemTrayModel::~UnifiedSystemTrayModel() = default;
 

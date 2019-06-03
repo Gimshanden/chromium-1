@@ -7,28 +7,27 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "components/omnibox/common/omnibox_features.h"
+#import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
+#import "ios/chrome/browser/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/ui/omnibox/popup/autocomplete_suggestion.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_icon_view.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_truncating_label.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
+#import "ios/chrome/browser/ui/util/named_guide.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
 namespace {
-const CGFloat kLeadingMargin = 12;
-const CGFloat kLeadingMarginIpad = 183;
 const CGFloat kTextTopMargin = 6;
-const CGFloat kTextLeadingMargin = 10;
-const CGFloat kTextTrailingMargin = -12;
-const CGFloat kImageViewSize = 28;
-const CGFloat kImageViewCornerRadius = 7;
-const CGFloat kTrailingButtonSize = 48;
-const CGFloat kTrailingButtonTrailingMargin = 4;
+const CGFloat kTrailingButtonSize = 24;
+const CGFloat kTrailingButtonTrailingMargin = 14;
 
 NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
     @"OmniboxPopupRowSwitchTabAccessibilityIdentifier";
@@ -51,10 +50,11 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
 // Answers have slightly different display requirements, like possibility of
 // multiple lines and truncating with ellipses instead of a fade gradient.
 @property(nonatomic, strong) UILabel* detailAnswerLabel;
-// Image view for the leading image (only appears on iPad).
-@property(nonatomic, strong) UIImageView* leadingImageView;
-// Trailing button for appending suggestion into omnibox.
-@property(nonatomic, strong) UIButton* trailingButton;
+// Trailing button for appending suggestion into omnibox or switching to open
+// tab.
+@property(nonatomic, strong) ExtendedTouchTargetButton* trailingButton;
+// Separator line for adjacent cells.
+@property(nonatomic, strong) UIView* separator;
 
 @end
 
@@ -67,11 +67,15 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
     _textTruncatingLabel =
         [[OmniboxPopupTruncatingLabel alloc] initWithFrame:CGRectZero];
     _textTruncatingLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [_textTruncatingLabel
+        setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh + 1
+                                        forAxis:UILayoutConstraintAxisVertical];
 
     _textStackView = [[UIStackView alloc]
         initWithArrangedSubviews:@[ _textTruncatingLabel ]];
     _textStackView.translatesAutoresizingMaskIntoConstraints = NO;
     _textStackView.axis = UILayoutConstraintAxisVertical;
+    _textStackView.alignment = UIStackViewAlignmentLeading;
 
     _detailTruncatingLabel =
         [[OmniboxPopupTruncatingLabel alloc] initWithFrame:CGRectZero];
@@ -83,20 +87,20 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
     _detailAnswerLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _detailAnswerLabel.lineBreakMode = NSLineBreakByTruncatingTail;
 
-    _leadingImageView = [[UIImageView alloc] initWithImage:nil];
-    _leadingImageView.translatesAutoresizingMaskIntoConstraints = NO;
-    _leadingImageView.contentMode = UIViewContentModeCenter;
-    _leadingImageView.layer.cornerRadius = kImageViewCornerRadius;
+    _leadingIconView = [[OmniboxIconView alloc] init];
+    _leadingIconView.translatesAutoresizingMaskIntoConstraints = NO;
 
-    _trailingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _trailingButton =
+        [ExtendedTouchTargetButton buttonWithType:UIButtonTypeCustom];
     _trailingButton.translatesAutoresizingMaskIntoConstraints = NO;
+    _trailingButton.isAccessibilityElement = NO;
     [_trailingButton addTarget:self
                         action:@selector(trailingButtonTapped)
               forControlEvents:UIControlEventTouchUpInside];
-    [_trailingButton setContentMode:UIViewContentModeRight];
-    // The trailing button also shows answer images. In that case, the
-    // button will be disabled, but the image shouldn't be dimmed.
-    _trailingButton.adjustsImageWhenDisabled = NO;
+
+    _separator = [[UIView alloc] initWithFrame:CGRectZero];
+    _separator.translatesAutoresizingMaskIntoConstraints = NO;
+    _separator.hidden = YES;
 
     _incognito = NO;
 
@@ -105,39 +109,66 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
   return self;
 }
 
+- (void)didMoveToWindow {
+  [super didMoveToWindow];
+
+  if (self.window) {
+    [self attachToLayoutGuides];
+  }
+}
+
+#pragma mark - Property setter/getters
+
+- (void)setImageRetriever:(id<ImageRetriever>)imageRetriever {
+  _imageRetriever = imageRetriever;
+  self.leadingIconView.imageRetriever = imageRetriever;
+}
+
+- (void)setFaviconRetriever:(id<FaviconRetriever>)faviconRetriever {
+  _faviconRetriever = faviconRetriever;
+  self.leadingIconView.faviconRetriever = faviconRetriever;
+}
+
+- (void)setOmniboxSemanticContentAttribute:
+    (UISemanticContentAttribute)omniboxSemanticContentAttribute {
+  _omniboxSemanticContentAttribute = omniboxSemanticContentAttribute;
+  self.contentView.semanticContentAttribute = omniboxSemanticContentAttribute;
+  self.textStackView.semanticContentAttribute = omniboxSemanticContentAttribute;
+}
+
+- (BOOL)showsSeparator {
+  return self.separator.hidden;
+}
+
+- (void)setShowsSeparator:(BOOL)showsSeparator {
+  self.separator.hidden = !showsSeparator;
+}
+
 #pragma mark - Layout
 
 // Setup the layout of the cell initially. This only adds the elements that are
 // always in the cell.
 - (void)setupLayout {
-  [self.contentView addSubview:self.leadingImageView];
+  [self.contentView addSubview:self.leadingIconView];
   [self.contentView addSubview:self.textStackView];
+  [self.contentView addSubview:self.separator];
 
   [NSLayoutConstraint activateConstraints:@[
     // Row has a minimum height.
-    [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:48],
+    [self.contentView.heightAnchor
+        constraintGreaterThanOrEqualToConstant:kOmniboxPopupCellMinimumHeight],
 
-    // Position leadingImageView at the leading edge of the view
-    [self.leadingImageView.heightAnchor
-        constraintEqualToConstant:kImageViewSize],
-    [self.leadingImageView.widthAnchor
-        constraintEqualToConstant:kImageViewSize],
-    [self.leadingImageView.leadingAnchor
-        constraintEqualToAnchor:self.contentView.leadingAnchor
-                       constant:IsRegularXRegularSizeClass()
-                                    ? kLeadingMarginIpad
-                                    : kLeadingMargin],
-    [self.leadingImageView.centerYAnchor
+    // Position leadingIconView at the leading edge of the view.
+    // Leave the horizontal position unconstrained as that will be added via a
+    // layout guide once the cell has been added to the view hierarchy.
+    [self.leadingIconView.heightAnchor
+        constraintEqualToAnchor:self.leadingIconView.widthAnchor],
+    [self.leadingIconView.centerYAnchor
         constraintEqualToAnchor:self.contentView.centerYAnchor],
 
-    // Position textStackView after leadingImageView.
-    [self.textStackView.leadingAnchor
-        constraintEqualToAnchor:self.leadingImageView.trailingAnchor
-                       constant:kTextLeadingMargin],
-    // Use greater than or equal constraints because there may be a trailing
-    // button here.
-    [self.contentView.trailingAnchor
-        constraintGreaterThanOrEqualToAnchor:self.textStackView.trailingAnchor],
+    // Position textStackView "after" leadingIconView. The horizontal position
+    // is actually left off because it will be added via a
+    // layout guide once the cell has been added to the view hierarchy.
     // Top space should be at least the given top margin, but can be more if
     // the row is short enough to use the minimum height constraint above.
     [self.textStackView.topAnchor
@@ -145,6 +176,24 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
                                     constant:kTextTopMargin],
     [self.textStackView.centerYAnchor
         constraintEqualToAnchor:self.contentView.centerYAnchor],
+
+    [self.separator.bottomAnchor
+        constraintEqualToAnchor:self.contentView.bottomAnchor],
+    [self.separator.trailingAnchor
+        constraintEqualToAnchor:self.contentView.trailingAnchor],
+    [self.separator.heightAnchor
+        constraintEqualToConstant:1.0f / UIScreen.mainScreen.scale],
+    [self.separator.leadingAnchor
+        constraintEqualToAnchor:self.textStackView.leadingAnchor],
+  ]];
+
+  // If optional views have internal constraints (height is constant, etc.),
+  // set those up here.
+  [NSLayoutConstraint activateConstraints:@[
+    [self.trailingButton.heightAnchor
+        constraintEqualToConstant:kTrailingButtonSize],
+    [self.trailingButton.widthAnchor
+        constraintEqualToAnchor:self.trailingButton.heightAnchor],
   ]];
 }
 
@@ -152,18 +201,64 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
 - (void)setupTrailingButtonLayout {
   [self.contentView addSubview:self.trailingButton];
   [NSLayoutConstraint activateConstraints:@[
-    [self.trailingButton.heightAnchor
-        constraintEqualToConstant:kTrailingButtonSize],
-    [self.trailingButton.widthAnchor
-        constraintEqualToConstant:kTrailingButtonSize],
     [self.trailingButton.centerYAnchor
         constraintEqualToAnchor:self.contentView.centerYAnchor],
     [self.contentView.trailingAnchor
         constraintEqualToAnchor:self.trailingButton.trailingAnchor
                        constant:kTrailingButtonTrailingMargin],
     [self.trailingButton.leadingAnchor
-        constraintEqualToAnchor:self.textStackView.trailingAnchor
-                       constant:kTextTrailingMargin],
+        constraintEqualToAnchor:self.textStackView.trailingAnchor],
+  ]];
+}
+
+- (void)attachToLayoutGuides {
+  NamedGuide* imageLayoutGuide =
+      [NamedGuide guideWithName:kOmniboxLeadingImageGuide view:self];
+  NamedGuide* textLayoutGuide = [NamedGuide guideWithName:kOmniboxTextFieldGuide
+                                                     view:self];
+
+  // Layout guides should both be setup
+  DCHECK(imageLayoutGuide.isConstrained);
+  DCHECK(textLayoutGuide.isConstrained);
+
+  // The text stack view is attached to both ends of the layout gude. This is
+  // because it needs to switch directions if the device is in LTR mode and the
+  // user types in RTL. Furthermore, because the layout guide is added to the
+  // main view, its direction will not change if the |semanticContentAttribute|
+  // of this cell or the omnibox changes.
+  // However, the text should still extend all the way to cell's trailing edge.
+  // To do this, constrain the text to the layout guide using a low priority
+  // constraint, so it will be there if possible, but add medium priority
+  // constraint to the cell's trailing edge. This will pull the text past the
+  // layout guide if necessary.
+
+  NSLayoutConstraint* stackViewToLayoutGuideLeading =
+      [self.textStackView.leadingAnchor
+          constraintEqualToAnchor:textLayoutGuide.leadingAnchor];
+  NSLayoutConstraint* stackViewToLayoutGuideTrailing =
+      [self.textStackView.trailingAnchor
+          constraintEqualToAnchor:textLayoutGuide.trailingAnchor];
+  NSLayoutConstraint* stackViewToCellTrailing =
+      [self.textStackView.trailingAnchor
+          constraintEqualToAnchor:self.contentView.trailingAnchor];
+
+  UILayoutPriority highest = UILayoutPriorityRequired - 1;
+  UILayoutPriority higher = UILayoutPriorityRequired - 2;
+
+  stackViewToLayoutGuideLeading.priority = higher;
+  stackViewToLayoutGuideTrailing.priority = higher;
+  stackViewToCellTrailing.priority = highest;
+
+  [NSLayoutConstraint activateConstraints:@[
+    [self.leadingIconView.centerXAnchor
+        constraintEqualToAnchor:imageLayoutGuide.centerXAnchor],
+    [self.leadingIconView.widthAnchor
+        constraintEqualToAnchor:imageLayoutGuide.widthAnchor],
+    [self.textStackView.leadingAnchor
+        constraintEqualToAnchor:textLayoutGuide.leadingAnchor],
+    stackViewToLayoutGuideLeading,
+    stackViewToLayoutGuideTrailing,
+    stackViewToCellTrailing,
   ]];
 }
 
@@ -173,10 +268,14 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
   self.suggestion = nil;
   self.incognito = NO;
 
+  self.omniboxSemanticContentAttribute = UISemanticContentAttributeUnspecified;
+
   // Clear text.
   self.textTruncatingLabel.attributedText = nil;
   self.detailTruncatingLabel.attributedText = nil;
   self.detailAnswerLabel.attributedText = nil;
+
+  [self.leadingIconView prepareForReuse];
 
   // Remove optional views.
   [self.trailingButton setImage:nil forState:UIControlStateNormal];
@@ -202,6 +301,10 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
   self.suggestion = suggestion;
   self.incognito = incognito;
 
+  self.separator.backgroundColor =
+      self.incognito ? [UIColor.whiteColor colorWithAlphaComponent:0.12]
+                     : [UIColor.blackColor colorWithAlphaComponent:0.12];
+
   self.textTruncatingLabel.attributedText = self.suggestion.text;
 
   // URLs have have special layout requirements.
@@ -216,29 +319,17 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
     }
   }
 
-  if (self.suggestion.hasImage || self.suggestion.isAppendable ||
-      self.suggestion.isTabMatch) {
+  [self.leadingIconView setOmniboxIcon:self.suggestion.icon];
+
+  if (self.suggestion.isAppendable || self.suggestion.isTabMatch) {
     [self setupTrailingButton];
   }
-
-  self.leadingImageView.image = self.suggestion.suggestionTypeIcon;
-  self.leadingImageView.backgroundColor =
-      self.incognito ? [UIColor colorWithWhite:1 alpha:0.05]
-                     : [UIColor colorWithWhite:0 alpha:0.03];
-  self.leadingImageView.tintColor = self.incognito
-                                        ? [UIColor colorWithWhite:1 alpha:0.4]
-                                        : [UIColor colorWithWhite:0 alpha:0.33];
 }
 
+// Setup the trailing button. This includes both setting up the button's layout
+// and popuplating it with the correct image and color.
 - (void)setupTrailingButton {
   [self setupTrailingButtonLayout];
-
-  // If there's an image, put it in the button, but disable interaction.
-  if (self.suggestion.hasImage) {
-    self.trailingButton.enabled = NO;
-    [self.trailingButton setImage:nil forState:UIControlStateNormal];
-    return;
-  }
 
   // Show append button for search history/search suggestions or
   // switch-to-open-tab as the right control element (aka an accessory element
@@ -264,30 +355,17 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
         kOmniboxPopupRowSwitchTabAccessibilityIdentifier;
   } else {
     int trailingButtonResourceID = 0;
-    if (base::FeatureList::IsEnabled(omnibox::kOmniboxTabSwitchSuggestions)) {
-      trailingButtonResourceID = IDR_IOS_OMNIBOX_KEYBOARD_VIEW_APPEND;
-    } else {
-      trailingButtonResourceID =
-          self.incognito ? IDR_IOS_OMNIBOX_KEYBOARD_VIEW_APPEND_INCOGNITO
-                         : IDR_IOS_OMNIBOX_KEYBOARD_VIEW_APPEND;
-    }
+    trailingButtonResourceID = IDR_IOS_OMNIBOX_KEYBOARD_VIEW_APPEND;
     trailingButtonImage = NativeReversableImage(trailingButtonResourceID, YES);
   }
   trailingButtonImage = [trailingButtonImage
       imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 
-  self.trailingButton.enabled = YES;
   [self.trailingButton setImage:trailingButtonImage
                        forState:UIControlStateNormal];
-  if (base::FeatureList::IsEnabled(omnibox::kOmniboxTabSwitchSuggestions)) {
-    self.trailingButton.tintColor = self.incognito
-                                        ? [UIColor whiteColor]
-                                        : UIColorFromRGB(kLocationBarTintBlue);
-  } else {
-    self.trailingButton.tintColor = self.incognito
-                                        ? [UIColor colorWithWhite:1 alpha:0.5]
-                                        : [UIColor colorWithWhite:0 alpha:0.3];
-  }
+  self.trailingButton.tintColor = self.incognito
+                                      ? [UIColor whiteColor]
+                                      : UIColorFromRGB(kLocationBarTintBlue);
 }
 
 - (NSString*)accessibilityLabel {
@@ -298,6 +376,10 @@ NSString* const kOmniboxPopupRowSwitchTabAccessibilityIdentifier =
   return self.detailTruncatingLabel.hidden
              ? self.detailAnswerLabel.attributedText.string
              : self.detailTruncatingLabel.attributedText.string;
+}
+
+- (NSString*)accessibilityIdentifier {
+  return self.textTruncatingLabel.attributedText.string;
 }
 
 - (void)trailingButtonTapped {

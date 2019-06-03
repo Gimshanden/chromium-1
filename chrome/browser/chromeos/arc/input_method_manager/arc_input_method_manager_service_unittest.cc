@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "ash/public/cpp/ash_pref_names.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
@@ -34,7 +35,6 @@
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/mock_ime_input_context_handler.h"
 #include "ui/base/ime/mock_input_method.h"
-#include "ui/keyboard/public/keyboard_switches.h"
 
 namespace arc {
 namespace {
@@ -189,7 +189,6 @@ class ArcInputMethodManagerServiceTest : public ChromeAshTestBase {
 
   void SetUp() override {
     ChromeAshTestBase::SetUp();
-    SetRunningOutsideAsh();
     ui::IMEBridge::Initialize();
     input_method_manager_ = new TestInputMethodManager();
     chromeos::input_method::InputMethodManager::Initialize(

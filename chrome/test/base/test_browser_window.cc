@@ -108,6 +108,8 @@ gfx::Size TestBrowserWindow::GetContentsSize() const {
   return gfx::Size();
 }
 
+void TestBrowserWindow::SetContentsSize(const gfx::Size& size) {}
+
 bool TestBrowserWindow::IsMaximized() const {
   return false;
 }
@@ -136,8 +138,9 @@ LocationBar* TestBrowserWindow::GetLocationBar() const {
   return const_cast<TestLocationBar*>(&location_bar_);
 }
 
-PageActionIconContainer* TestBrowserWindow::GetPageActionIconContainer() {
-  return &page_action_icon_container_;
+PageActionIconContainer*
+TestBrowserWindow::GetOmniboxPageActionIconContainer() {
+  return &omnibox_page_action_icon_container_;
 }
 
 PageActionIconContainer*
@@ -202,6 +205,14 @@ TestBrowserWindow::ShowLocalCardMigrationBubble(
     content::WebContents* contents,
     autofill::LocalCardMigrationBubbleController* controller,
     bool user_gesture) {
+  return nullptr;
+}
+
+send_tab_to_self::SendTabToSelfBubbleView*
+TestBrowserWindow::ShowSendTabToSelfBubble(
+    content::WebContents* contents,
+    send_tab_to_self::SendTabToSelfBubbleController* controller,
+    bool is_user_gesture) {
   return nullptr;
 }
 

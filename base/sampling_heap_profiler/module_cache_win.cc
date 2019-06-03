@@ -15,6 +15,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/pe_image.h"
 #include "base/win/scoped_handle.h"
+#include "base/win/win_util.h"
 
 namespace base {
 
@@ -52,12 +53,7 @@ void GetDebugInfoForModule(HMODULE module_handle,
     return;
   *pdb_name = FilePath(std::move(pdb_filename)).BaseName();
 
-  const int kGUIDSize = 39;
-  string16 buffer;
-  int result = ::StringFromGUID2(
-      guid, as_writable_wcstr(WriteInto(&buffer, kGUIDSize)), kGUIDSize);
-  if (result != kGUIDSize)
-    return;
+  auto buffer = win::String16FromGUID(guid);
   RemoveChars(buffer, STRING16_LITERAL("{}-"), &buffer);
   buffer.append(NumberToString16(age));
   *build_id = UTF16ToUTF8(buffer);
@@ -103,6 +99,7 @@ class WindowsModule : public ModuleCache::Module {
   std::string GetId() const override { return id_; }
   FilePath GetDebugBasename() const override { return debug_basename_; }
   size_t GetSize() const override { return module_info_.SizeOfImage; }
+  bool IsNative() const override { return true; }
 
  private:
   ScopedModuleHandle module_handle_;

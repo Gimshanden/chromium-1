@@ -19,6 +19,7 @@
 #include "ipc/ipc_sender.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/frame/sandbox_flags.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/loader/pause_subresource_loading_handle.mojom-forward.h"
@@ -159,6 +160,9 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // of its size.
   virtual const base::Optional<gfx::Size>& GetFrameSize() = 0;
 
+  // Returns the distance from this frame to the root frame.
+  virtual size_t GetFrameDepth() = 0;
+
   // Returns true if the frame is out of process.
   virtual bool IsCrossProcessSubframe() = 0;
 
@@ -182,7 +186,7 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   using JavaScriptResultCallback = base::OnceCallback<void(base::Value)>;
 
   // This is the default API to run JavaScript in this frame. This API can only
-  // be called on chrome:// or chrome-devtools:// URLs.
+  // be called on chrome:// or devtools:// URLs.
   virtual void ExecuteJavaScript(const base::string16& javascript,
                                  JavaScriptResultCallback callback) = 0;
 
@@ -249,6 +253,11 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // of a frame are defined in Blink.
   virtual PageVisibilityState GetVisibilityState() = 0;
 
+  // Returns true if WebContentsObserver::RenderFrameCreate notification has
+  // been dispatched for this frame, and so a RenderFrameDeleted notification
+  // will later be dispatched for this frame.
+  virtual bool IsRenderFrameCreated() = 0;
+
   // Returns whether the RenderFrame in the renderer process has been created
   // and still has a connection.  This is valid for all frames.
   virtual bool IsRenderFrameLive() = 0;
@@ -284,7 +293,7 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
 
   // Returns a bitwise OR of bindings types that have been enabled for this
   // RenderFrame. See BindingsPolicy for details.
-  virtual int GetEnabledBindings() const = 0;
+  virtual int GetEnabledBindings() = 0;
 
 #if defined(OS_ANDROID)
   // Returns an InterfaceProvider for Java-implemented interfaces that are
@@ -351,7 +360,7 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // The effective flags include those which have been set by a
   // Content-Security-Policy header, in addition to those which are set by the
   // embedding frame.
-  virtual bool IsSandboxed(blink::WebSandboxFlags flags) const = 0;
+  virtual bool IsSandboxed(blink::WebSandboxFlags flags) = 0;
 
   // Calls |FlushForTesting()| on Network Service and FrameNavigationControl
   // related interfaces to make sure all in-flight mojo messages have been
@@ -389,6 +398,12 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // Used in case we need to add or remove intercepting proxies to the
   // running renderer, or in case of Network Service connection errors.
   virtual void UpdateSubresourceLoaderFactories() = 0;
+
+  // Returns the type of frame owner element for the FrameTreeNode associated
+  // with this RenderFrameHost (e.g., <iframe>, <object>, etc). Note that it
+  // returns blink::FrameOwnerElementType::kNone if the RenderFrameHost is a
+  // main frame.
+  virtual blink::FrameOwnerElementType GetFrameOwnerElementType() = 0;
 
  private:
   // This interface should only be implemented inside content.

@@ -5,8 +5,8 @@
 cr.exportPath('management');
 /**
  * @typedef {{
- *    name: string,
- *    permissions: !Array<string>
+ *   name: string,
+ *   permissions: !Array<string>
  * }}
  */
 management.Extension;
@@ -22,11 +22,34 @@ management.ReportingType = {
 
 /**
  * @typedef {{
- *    messageId: string,
- *    reportingType: !management.ReportingType,
+ *   messageId: string,
+ *   reportingType: !management.ReportingType,
  * }}
  */
 management.BrowserReportingResponse;
+
+/**
+ * @typedef {{
+ *   overview: string,
+ *   setup: string,
+ *   data: string,
+ * }}
+ */
+management.ManagedInfo;
+
+/**
+ * @typedef {{
+ *   accountManagedInfo: ?management.ManagedInfo,
+ *   browserManagementNotice: string,
+ *   deviceManagedInfo: ?management.ManagedInfo,
+ *   extensionReportingTitle: string,
+ *   pageSubtitle: string,
+ *   managed: boolean,
+ *   overview: string,
+ *   customerLogo: string,
+ * }}
+ */
+management.ManagedDataResponse;
 
 // <if expr="chromeos">
 /**
@@ -45,8 +68,8 @@ management.DeviceReportingType = {
 
 /**
  * @typedef {{
- *    messageId: string,
- *    reportingType: !management.DeviceReportingType,
+ *   messageId: string,
+ *   reportingType: !management.DeviceReportingType,
  * }}
  */
 management.DeviceReportingResponse;
@@ -55,9 +78,6 @@ management.DeviceReportingResponse;
 cr.define('management', function() {
   /** @interface */
   class ManagementBrowserProxy {
-    /** @return {string} */
-    getExtensionReportingTitle() {}
-
     /** @return {!Promise<!Array<!management.Extension>>} */
     getExtensions() {}
 
@@ -75,13 +95,8 @@ cr.define('management', function() {
     getDeviceReportingInfo() {}
     // </if>
 
-    // <if expr="not chromeos">
-    /** @return {string} */
-    getManagementNotice() {}
-    // </if>
-
-    /** @return {string} */
-    getPageTitle() {}
+    /** @return {!Promise<!management.ManagedDataResponse>} */
+    getContextualManagedData() {}
 
     /**
      * @return {!Promise<!Array<!management.BrowserReportingResponse>>} The list
@@ -92,11 +107,6 @@ cr.define('management', function() {
 
   /** @implements {management.ManagementBrowserProxy} */
   class ManagementBrowserProxyImpl {
-    /** @override */
-    getExtensionReportingTitle() {
-      return loadTimeData.getString('extensionsInstalled');
-    }
-
     /** @override */
     getExtensions() {
       return cr.sendWithPromise('getExtensions');
@@ -114,16 +124,9 @@ cr.define('management', function() {
     }
     // </if>
 
-    // <if expr="not chromeos">
     /** @override */
-    getManagementNotice() {
-      return loadTimeData.getString('managementNotice');
-    }
-    // </if>
-
-    /** @override */
-    getPageTitle() {
-      return loadTimeData.getString('title');
+    getContextualManagedData() {
+      return cr.sendWithPromise('getContextualManagedData');
     }
 
     /** @override */

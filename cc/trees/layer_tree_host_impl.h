@@ -7,17 +7,16 @@
 
 #include <stddef.h>
 
-#include <bitset>
 #include <memory>
 #include <set>
-#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/circular_deque.h"
 #include "base/containers/flat_map.h"
 #include "base/memory/memory_pressure_listener.h"
+#include "base/memory/shared_memory_mapping.h"
 #include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "cc/base/synced_property.h"
@@ -26,6 +25,7 @@
 #include "cc/input/browser_controls_offset_manager_client.h"
 #include "cc/input/input_handler.h"
 #include "cc/input/scrollbar_animation_controller.h"
+#include "cc/input/scrollbar_controller.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/resources/ui_resource_client.h"
 #include "cc/scheduler/begin_frame_tracker.h"
@@ -41,6 +41,7 @@
 #include "cc/trees/layer_tree_settings.h"
 #include "cc/trees/managed_memory_policy.h"
 #include "cc/trees/mutator_host_client.h"
+#include "cc/trees/presentation_time_callback_buffer.h"
 #include "cc/trees/render_frame_metadata.h"
 #include "cc/trees/task_runner_provider.h"
 #include "cc/trees/ukm_manager.h"
@@ -65,7 +66,9 @@ class CompositorFrameMetadata;
 }
 
 namespace cc {
+
 class BrowserControlsOffsetManager;
+class CompositorFrameReportingController;
 class DebugRectHistory;
 class EvictionTilePriorityQueue;
 class FrameRateCounter;
@@ -153,9 +156,6 @@ class LayerTreeHostImplClient {
       std::vector<LayerTreeHost::PresentationTimeCallback> callbacks,
       const gfx::PresentationFeedback& feedback) = 0;
 
-  virtual void DidGenerateLocalSurfaceIdAllocationOnImplThread(
-      const viz::LocalSurfaceIdAllocation& allocation) = 0;
-
   virtual void NotifyAnimationWorkletStateChange(
       AnimationWorkletMutationState state,
       ElementListType tree_type) = 0;
@@ -216,7 +216,7 @@ class CC_EXPORT LayerTreeHostImpl
 
     // Backing for software compositing.
     viz::SharedBitmapId shared_bitmap_id;
-    std::unique_ptr<base::SharedMemory> shared_memory;
+    base::WritableSharedMemoryMapping shared_mapping;
     // Backing for gpu compositing.
     gpu::Mailbox mailbox;
 
@@ -259,9 +259,11 @@ class CC_EXPORT LayerTreeHostImpl
       const gfx::ScrollOffset& root_offset) override;
   void ScrollEnd(ScrollState* scroll_state, bool should_snap = false) override;
 
-  void MouseDown() override;
-  void MouseUp() override;
-  void MouseMoveAt(const gfx::Point& viewport_point) override;
+  InputHandlerPointerResult MouseDown(
+      const gfx::PointF& viewport_point) override;
+  InputHandlerPointerResult MouseUp(const gfx::PointF& viewport_point) override;
+  InputHandlerPointerResult MouseMoveAt(
+      const gfx::Point& viewport_point) override;
   void MouseLeave() override;
 
   void PinchGestureBegin() override;
@@ -334,6 +336,10 @@ class CC_EXPORT LayerTreeHostImpl
   void SetFullViewportDamage();
   void SetViewportDamage(const gfx::Rect& damage_rect);
 
+  // Updates registered ElementIds present in |changed_list|. Call this after
+  // changing the property trees for the |changed_list| trees.
+  void UpdateElements(ElementListType changed_list);
+
   // Analogous to a commit, this function is used to create a sync tree and
   // add impl-side invalidations to it.
   // virtual for testing.
@@ -349,13 +355,17 @@ class CC_EXPORT LayerTreeHostImpl
   }
 
   // MutatorHostClient implementation.
-  bool IsElementInList(ElementId element_id,
-                       ElementListType list_type) const override;
+  bool IsElementInPropertyTrees(ElementId element_id,
+                                ElementListType list_type) const override;
   void SetMutatorsNeedCommit() override;
   void SetMutatorsNeedRebuildPropertyTrees() override;
   void SetElementFilterMutated(ElementId element_id,
                                ElementListType list_type,
                                const FilterOperations& filters) override;
+  void SetElementBackdropFilterMutated(
+      ElementId element_id,
+      ElementListType list_type,
+      const FilterOperations& backdrop_filters) override;
   void SetElementOpacityMutated(ElementId element_id,
                                 ElementListType list_type,
                                 float opacity) override;
@@ -590,7 +600,20 @@ class CC_EXPORT LayerTreeHostImpl
     return accumulated_root_overscroll_;
   }
 
-  bool pinch_gesture_active() const { return pinch_gesture_active_; }
+  bool pinch_gesture_active() const {
+    return pinch_gesture_active_ || external_pinch_gesture_active_;
+  }
+  // Used to set the pinch gesture active state when the pinch gesture is
+  // handled on another layer tree. In a page with OOPIFs, only the main
+  // frame's layer tree directly handles pinch events. But layer trees for
+  // sub-frames need to know when pinch gestures are active so they can
+  // throttle the re-rastering. This function allows setting this flag on
+  // OOPIF layer trees using information sent (initially) from the main-frame.
+  void set_external_pinch_gesture_active(bool external_pinch_gesture_active) {
+    external_pinch_gesture_active_ = external_pinch_gesture_active;
+    // Only one of the flags should ever be true at any given time.
+    DCHECK(!pinch_gesture_active_ || !external_pinch_gesture_active_);
+  }
 
   void SetTreePriority(TreePriority priority);
   TreePriority GetTreePriority() const;
@@ -729,13 +752,12 @@ class CC_EXPORT LayerTreeHostImpl
   void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer);
 
-  void SetActiveURL(const GURL& url);
+  void SetActiveURL(const GURL& url, ukm::SourceId source_id);
 
-  // Called when LayerTreeImpl's LocalSurfaceIdAllocation changes.
-  void OnLayerTreeLocalSurfaceIdAllocationChanged();
-
-  // See SyncSurfaceIdAllocator for details.
-  uint32_t GenerateChildSurfaceSequenceNumberSync();
+  CompositorFrameReportingController* compositor_frame_reporting_controller()
+      const {
+    return compositor_frame_reporting_controller_.get();
+  }
 
  protected:
   LayerTreeHostImpl(
@@ -763,6 +785,9 @@ class CC_EXPORT LayerTreeHostImpl
   TaskRunnerProvider* const task_runner_provider_;
 
   BeginFrameTracker current_begin_frame_tracker_;
+
+  std::unique_ptr<CompositorFrameReportingController>
+      compositor_frame_reporting_controller_;
 
  private:
   const gfx::ColorSpace& GetRasterColorSpaceAndId(int* id) const;
@@ -801,7 +826,7 @@ class CC_EXPORT LayerTreeHostImpl
 
   // Returns true if status changed.
   bool UpdateGpuRasterizationStatus();
-  void UpdateTreeResourcesIfNeeded();
+  void UpdateTreeResourcesForGpuRasterizationIfNeeded();
 
   Viewport* viewport() const { return viewport_.get(); }
 
@@ -1006,7 +1031,17 @@ class CC_EXPORT LayerTreeHostImpl
   bool did_scroll_x_for_scroll_gesture_;
   bool did_scroll_y_for_scroll_gesture_;
 
+  // This value is used to allow the compositor to throttle re-rastering during
+  // pinch gestures, when the page scale factor may be changing frequently. It
+  // is set in one of two ways:
+  // i) In a layer tree serving the root of the frame/compositor tree, it is
+  // directly set during processing of GesturePinch events on the impl thread
+  // (only the root layer tree has access to these).
+  // ii) In a layer tree serving a sub-frame in the frame/compositor tree, it
+  // is set from the main thread during the commit process, using information
+  // sent from the root layer tree via IPC messaging.
   bool pinch_gesture_active_ = false;
+  bool external_pinch_gesture_active_ = false;
   bool pinch_gesture_end_should_clear_scrolling_node_ = false;
 
   std::unique_ptr<BrowserControlsOffsetManager>
@@ -1125,42 +1160,17 @@ class CC_EXPORT LayerTreeHostImpl
   base::Optional<RenderFrameMetadata> last_draw_render_frame_metadata_;
   viz::ChildLocalSurfaceIdAllocator child_local_surface_id_allocator_;
 
-  // Set to true if waiting to receive a LocalSurfaceIdAllocation that matches
-  // that of |child_local_surface_id_allocator_|.
-  bool waiting_for_local_surface_id_ = false;
-
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
-  // Stores information needed once we get a response for a particular
-  // presentation token.
-  struct FrameTokenInfo {
-    FrameTokenInfo(
-        uint32_t token,
-        base::TimeTicks cc_frame_time,
-        std::vector<LayerTreeHost::PresentationTimeCallback> callbacks);
-    FrameTokenInfo(const FrameTokenInfo&) = delete;
-    FrameTokenInfo(FrameTokenInfo&&);
-    ~FrameTokenInfo();
-
-    FrameTokenInfo& operator=(const FrameTokenInfo&) = delete;
-    FrameTokenInfo& operator=(FrameTokenInfo&&) = default;
-
-    uint32_t token;
-
-    // The compositor frame time used to produce the frame.
-    base::TimeTicks cc_frame_time;
-
-    // The callbacks to send back to the main thread.
-    std::vector<LayerTreeHost::PresentationTimeCallback> callbacks;
-  };
-
-  base::circular_deque<FrameTokenInfo> frame_token_infos_;
+  PresentationTimeCallbackBuffer presentation_time_callbacks_;
   ui::FrameMetrics frame_metrics_;
   ui::SkippedFrameTracker skipped_frame_tracker_;
-  int last_color_space_id_ = -1;
   bool is_animating_for_snap_;
 
   const PaintImage::GeneratorClientId paint_image_generator_client_id_;
+
+  // Manages composited scrollbar hit testing.
+  std::unique_ptr<ScrollbarController> scrollbar_controller_;
 
   // Set to true when a scroll gesture being handled on the compositor has
   // ended. i.e. When a GSE has arrived and any ongoing scroll animation has

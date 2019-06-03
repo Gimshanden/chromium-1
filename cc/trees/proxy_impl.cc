@@ -69,8 +69,6 @@ ProxyImpl::ProxyImpl(base::WeakPtr<ProxyMain> proxy_main_weak_ptr,
                               base::Unretained(this)),
           base::TimeDelta::FromSecondsD(
               kSmoothnessTakesPriorityExpirationDelay)),
-      rendering_stats_instrumentation_(
-          layer_tree_host->rendering_stats_instrumentation()),
       proxy_main_weak_ptr_(proxy_main_weak_ptr) {
   TRACE_EVENT0("cc", "ProxyImpl::ProxyImpl");
   DCHECK(IsImplThread());
@@ -90,7 +88,8 @@ ProxyImpl::ProxyImpl(base::WeakPtr<ProxyMain> proxy_main_weak_ptr,
       new CompositorTimingHistory(
           scheduler_settings.using_synchronous_renderer_compositor,
           CompositorTimingHistory::RENDERER_UMA,
-          rendering_stats_instrumentation_));
+          layer_tree_host->rendering_stats_instrumentation(),
+          host_impl_->compositor_frame_reporting_controller()));
   scheduler_.reset(new Scheduler(this, scheduler_settings, layer_tree_host_id_,
                                  task_runner_provider_->ImplThreadTaskRunner(),
                                  std::move(compositor_timing_history)));
@@ -498,13 +497,6 @@ void ProxyImpl::DidPresentCompositorFrameOnImplThread(
                                 std::move(callbacks), feedback));
 }
 
-void ProxyImpl::DidGenerateLocalSurfaceIdAllocationOnImplThread(
-    const viz::LocalSurfaceIdAllocation& allocation) {
-  MainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&ProxyMain::DidGenerateLocalSurfaceIdAllocation,
-                                proxy_main_weak_ptr_, allocation));
-}
-
 void ProxyImpl::NotifyAnimationWorkletStateChange(
     AnimationWorkletMutationState state,
     ElementListType element_list_type) {
@@ -746,9 +738,9 @@ base::SingleThreadTaskRunner* ProxyImpl::MainThreadTaskRunner() {
   return task_runner_provider_->MainThreadTaskRunner();
 }
 
-void ProxyImpl::SetURLForUkm(const GURL& url) {
+void ProxyImpl::SetSourceURL(ukm::SourceId source_id, const GURL& url) {
   DCHECK(IsImplThread());
-  host_impl_->SetActiveURL(url);
+  host_impl_->SetActiveURL(url, source_id);
 }
 
 void ProxyImpl::ClearHistory() {

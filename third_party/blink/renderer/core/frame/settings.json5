@@ -337,6 +337,7 @@
     {
       name: "spatialNavigationEnabled",
       initial: false,
+      invalidate: "SpatialNavigation",
     },
 
     // This setting adds a means to enable/disable touch initiated drag & drop. If
@@ -779,11 +780,6 @@
       type: "double",
     },
 
-    {
-      name: "historyEntryRequiresUserGesture",
-      initial: false,
-    },
-
     // Do we want to try to save screen real estate in the media player by hiding
     // the volume slider / mute button?
     {
@@ -914,6 +910,18 @@
       name: "darkModePagePolicy",
       initial: "DarkModePagePolicy::kFilterByBackground",
       type: "DarkModePagePolicy",
+      invalidate: "Paint",
+    },
+    {
+      name: "darkModeTextPolicy",
+      initial: "DarkModeTextPolicy::kInvertAll",
+      type: "DarkModeTextPolicy",
+      invalidate: "Paint",
+    },
+    {
+      name: "darkModeImageGrayscale",
+      initial: "0.0",
+      type: "float",
       invalidate: "Paint",
     },
     {

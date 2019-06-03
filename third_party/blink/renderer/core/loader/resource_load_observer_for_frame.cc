@@ -10,6 +10,8 @@
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
+#include "third_party/blink/renderer/core/loader/alternate_signed_exchange_resource_info.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_or_imported_document.h"
@@ -58,11 +60,24 @@ void ResourceLoadObserverForFrame::WillSendRequest(
     interactive_detector->OnResourceLoadBegin(base::nullopt);
 }
 
+void ResourceLoadObserverForFrame::DidChangePriority(
+    uint64_t identifier,
+    ResourceLoadPriority priority,
+    int intra_priority_value) {
+  DocumentLoader& document_loader =
+      frame_or_imported_document_->GetMasterDocumentLoader();
+  TRACE_EVENT1("devtools.timeline", "ResourceChangePriority", "data",
+               inspector_change_resource_priority_event::Data(
+                   &document_loader, identifier, priority));
+  probe::DidChangeResourcePriority(&frame_or_imported_document_->GetFrame(),
+                                   &document_loader, identifier, priority);
+}
+
 void ResourceLoadObserverForFrame::DidReceiveResponse(
     uint64_t identifier,
     const ResourceRequest& request,
     const ResourceResponse& response,
-    Resource* resource,
+    const Resource* resource,
     ResponseSource response_source) {
   LocalFrame& frame = frame_or_imported_document_->GetFrame();
   DocumentLoader& document_loader =
@@ -97,6 +112,21 @@ void ResourceLoadObserverForFrame::DidReceiveResponse(
   MixedContentChecker::CheckMixedPrivatePublic(&frame,
                                                response.RemoteIPAddress());
 
+  std::unique_ptr<AlternateSignedExchangeResourceInfo> alternate_resource_info;
+  if (RuntimeEnabledFeatures::SignedExchangeSubresourcePrefetchEnabled() &&
+      response.IsSignedExchangeInnerResponse() &&
+      resource->GetType() == ResourceType::kLinkPrefetch &&
+      resource->LastResourceResponse()) {
+    // If this is a prefetch for a SXG, see if the outer response (which must be
+    // the last response in the redirect chain) had provided alternate links for
+    // the prefetch.
+    alternate_resource_info =
+        AlternateSignedExchangeResourceInfo::CreateIfValid(
+            resource->LastResourceResponse()->HttpHeaderField(
+                http_names::kLink),
+            response.HttpHeaderField(http_names::kLink));
+  }
+
   PreloadHelper::CanLoadResources resource_loading_policy =
       response_source == ResponseSource::kFromMemoryCache
           ? PreloadHelper::kDoNotLoadResources
@@ -104,7 +134,9 @@ void ResourceLoadObserverForFrame::DidReceiveResponse(
   PreloadHelper::LoadLinksFromHeader(
       response.HttpHeaderField(http_names::kLink), response.CurrentRequestUrl(),
       frame, &frame_or_imported_document_->GetDocument(),
-      resource_loading_policy, PreloadHelper::kLoadAll, nullptr);
+      resource_loading_policy, PreloadHelper::kLoadAll,
+      base::nullopt /* viewport_description */,
+      std::move(alternate_resource_info));
 
   if (response.HasMajorCertificateErrors()) {
     MixedContentChecker::HandleCertificateError(&frame, response,
@@ -117,7 +149,6 @@ void ResourceLoadObserverForFrame::DidReceiveResponse(
   }
 
   frame.Loader().Progress().IncrementProgress(identifier, response);
-  frame_client->DispatchDidReceiveResponse(response);
   probe::DidReceiveResourceResponse(GetProbe(), identifier, &document_loader,
                                     response, resource);
   // It is essential that inspector gets resource response BEFORE console.
@@ -226,8 +257,9 @@ CoreProbeSink* ResourceLoadObserverForFrame::GetProbe() {
 }
 
 void ResourceLoadObserverForFrame::CountUsage(WebFeature feature) {
-  frame_or_imported_document_->GetMasterDocumentLoader().GetUseCounter().Count(
-      feature, &frame_or_imported_document_->GetFrame());
+  frame_or_imported_document_->GetMasterDocumentLoader()
+      .GetUseCounterHelper()
+      .Count(feature, &frame_or_imported_document_->GetFrame());
 }
 
 }  // namespace blink

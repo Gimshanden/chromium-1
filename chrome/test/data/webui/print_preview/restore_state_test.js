@@ -26,7 +26,7 @@ cr.define('restore_state_test', function() {
     });
 
     /**
-     * @param {!print_preview_new.SerializedSettings} stickySettings Settings
+     * @param {!print_preview.SerializedSettings} stickySettings Settings
      *     to verify.
      */
     function verifyStickySettingsApplied(stickySettings) {
@@ -66,7 +66,7 @@ cr.define('restore_state_test', function() {
     }
 
     /**
-     * @param {!print_preview_new.SerializedSettings} stickySettings
+     * @param {!print_preview.SerializedSettings} stickySettings
      * @return {!Promise} Promise that resolves when initialization is done and
      *     settings have been verified.
      */
@@ -78,7 +78,7 @@ cr.define('restore_state_test', function() {
           print_preview_test_utils.getCddTemplateWithAdvancedSettings(
               2, initialSettings.printerName));
       const pluginProxy = new print_preview.PDFPluginStub();
-      print_preview_new.PluginProxy.setInstance(pluginProxy);
+      print_preview.PluginProxy.setInstance(pluginProxy);
 
       page = document.createElement('print-preview-app');
       document.body.appendChild(page);
@@ -126,6 +126,10 @@ cr.define('restore_state_test', function() {
         isLandscapeEnabled: true,
         isColorEnabled: true,
       };
+      if (cr.isChromeOS) {
+        stickySettings.pin = true;
+        stickySettings.pinValue = '0000';
+      }
       return testInitializeWithStickySettings(stickySettings);
     });
 
@@ -162,6 +166,10 @@ cr.define('restore_state_test', function() {
         isLandscapeEnabled: false,
         isColorEnabled: false,
       };
+      if (cr.isChromeOS) {
+        stickySettings.pin = false;
+        stickySettings.pinValue = '';
+      }
       return testInitializeWithStickySettings(stickySettings);
     });
 
@@ -266,6 +274,21 @@ cr.define('restore_state_test', function() {
           },
         }
       ];
+      if (cr.isChromeOS) {
+        testData.push(
+            {
+              section: 'print-preview-pin-settings',
+              settingName: 'pin',
+              key: 'isPinEnabled',
+              value: true,
+            },
+            {
+              section: 'print-preview-pin-settings',
+              settingName: 'pinValue',
+              key: 'pinValue',
+              value: '0000',
+            });
+      }
 
       // Setup
       nativeLayer.setInitialSettings(initialSettings);

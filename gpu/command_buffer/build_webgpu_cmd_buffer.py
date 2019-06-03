@@ -42,11 +42,15 @@ _FUNCTION_INFO = {
       'commands': 'size * sizeof(char)',
     },
   },
-  'Dummy': {
-    'impl_func': False,
+  'AssociateMailbox': {
+    'type': 'PUT',
+    'count': 16,  # GL_MAILBOX_SIZE_CHROMIUM
+    'trace_level': 1,
+  },
+  'DissociateMailbox': {
+    'trace_level': 1,
   },
 }
-
 
 def main(argv):
   """This is the main function."""
@@ -92,6 +96,10 @@ def main(argv):
     "gpu/command_buffer/client/webgpu_interface_autogen.h")
   gen.WriteGLES2ImplementationHeader(
     "gpu/command_buffer/client/webgpu_implementation_autogen.h")
+  gen.WriteGLES2InterfaceStub(
+    "gpu/command_buffer/client/webgpu_interface_stub_autogen.h")
+  gen.WriteGLES2InterfaceStubImpl(
+      "gpu/command_buffer/client/webgpu_interface_stub_impl_autogen.h")
   gen.WriteGLES2Implementation(
     "gpu/command_buffer/client/webgpu_implementation_impl_autogen.h")
   gen.WriteGLES2ImplementationUnitTests(

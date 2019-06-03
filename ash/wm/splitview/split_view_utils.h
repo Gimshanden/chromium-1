@@ -7,6 +7,7 @@
 
 #include "ash/ash_export.h"
 #include "ash/display/screen_orientation_controller.h"
+#include "ash/wm/splitview/split_view_controller.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/transform.h"
 
@@ -79,13 +80,18 @@ void DoSplitviewTransformAnimation(ui::Layer* layer,
                                    SplitviewAnimationType type,
                                    const gfx::Transform& target_transform);
 
-// Returns true if split view mode is supported. Currently the split view
-// mode is only supported in tablet mode.
+// Returns true if we allow dragging an overview window to snap to split view in
+// clamshell mode.
+ASH_EXPORT bool IsClamshellSplitViewModeEnabled();
+
+// Returns true if split view mode is supported.
 ASH_EXPORT bool ShouldAllowSplitView();
 
 // Returns true if |window| can be activated and snapped in split screen in
 // tablet mode.
 ASH_EXPORT bool CanSnapInSplitview(aura::Window* window);
+
+ASH_EXPORT bool IsPhysicalLeftOrTop(SplitViewController::SnapPosition position);
 
 }  // namespace ash
 

@@ -9,8 +9,11 @@
 
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_safearray.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/platform/ax_fragment_root_win.h"
 #include "ui/accessibility/platform/ax_platform_node_textprovider_win.h"
+#include "ui/accessibility/platform/ax_platform_node_textrangeprovider_win.h"
+#include "ui/accessibility/platform/test_ax_node_wrapper.h"
 #include "ui/base/win/accessibility_misc_utils.h"
 
 using Microsoft::WRL::ComPtr;
@@ -28,6 +31,14 @@ class AXPlatformNodeTextProviderTest : public ui::AXPlatformNodeWinTest {
   ui::AXPlatformNodeWin* GetOwner(
       const AXPlatformNodeTextProviderWin* text_provider) {
     return text_provider->owner_;
+  }
+  const AXNodePosition::AXPositionInstance& GetStart(
+      const AXPlatformNodeTextRangeProviderWin* text_range) {
+    return text_range->start_;
+  }
+  const AXNodePosition::AXPositionInstance& GetEnd(
+      const AXPlatformNodeTextRangeProviderWin* text_range) {
+    return text_range->end_;
   }
 };
 
@@ -163,6 +174,62 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderRangeFromChild) {
 
   EXPECT_UIA_INVALIDOPERATION(text_provider->RangeFromChild(
       other_root_node_raw.Get(), &text_range_provider));
+}
+
+TEST_F(AXPlatformNodeTextProviderTest, TestNearestTextIndexToPoint) {
+  ui::AXNodeData text_data;
+  text_data.id = 2;
+  text_data.role = ax::mojom::Role::kInlineTextBox;
+  text_data.SetName("text");
+  // spacing: "t-e-x---t--"
+  text_data.AddIntListAttribute(ax::mojom::IntListAttribute::kCharacterOffsets,
+                                {2, 2, 4, 2});
+
+  ui::AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kStaticText;
+  root_data.relative_bounds.bounds = gfx::RectF(1, 1, 2, 2);
+  root_data.child_ids.push_back(2);
+
+  Init(root_data, text_data);
+
+  AXNode* root_node = GetRootNode();
+  AXNodePosition::SetTreeForTesting(tree_.get());
+  AXNode* text_node = root_node->children()[0];
+
+  struct NearestTextIndexTestData {
+    AXNode* node;
+    struct point_offset_expected_index_pair {
+      int point_offset_x;
+      int expected_index;
+    };
+    std::vector<point_offset_expected_index_pair> test_data;
+  };
+  NearestTextIndexTestData nodes[] = {
+      {text_node,
+       {{0, 0}, {2, 0}, {3, 1}, {4, 1}, {5, 2}, {8, 2}, {9, 3}, {10, 3}}},
+      {root_node,
+       {{0, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}, {8, 0}, {9, 0}, {10, 0}}}};
+  for (auto data : nodes) {
+    ComPtr<IRawElementProviderSimple> element_provider =
+        QueryInterfaceFromNode<IRawElementProviderSimple>(data.node);
+    ComPtr<ITextProvider> text_provider;
+    EXPECT_HRESULT_SUCCEEDED(element_provider->GetPatternProvider(
+        UIA_TextPatternId, &text_provider));
+    // get internal implementation to access helper for testing
+    ComPtr<AXPlatformNodeTextProviderWin> platform_text_provider;
+    EXPECT_HRESULT_SUCCEEDED(
+        text_provider->QueryInterface(IID_PPV_ARGS(&platform_text_provider)));
+
+    ComPtr<AXPlatformNodeWin> platform_node;
+    EXPECT_HRESULT_SUCCEEDED(
+        element_provider->QueryInterface(IID_PPV_ARGS(&platform_node)));
+
+    for (auto pair : data.test_data) {
+      EXPECT_EQ(pair.expected_index, platform_node->NearestTextIndexToPoint(
+                                         gfx::Point(pair.point_offset_x, 0)));
+    }
+  }
 }
 
 TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderDocumentRange) {
@@ -306,14 +373,14 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetSelection) {
   root_text_provider->GetSelection(selections.Receive());
   ASSERT_NE(nullptr, selections.Get());
 
-  long ubound;
+  LONG ubound;
   EXPECT_HRESULT_SUCCEEDED(SafeArrayGetUBound(selections.Get(), 1, &ubound));
   EXPECT_EQ(0, ubound);
-  long lbound;
+  LONG lbound;
   EXPECT_HRESULT_SUCCEEDED(SafeArrayGetLBound(selections.Get(), 1, &lbound));
   EXPECT_EQ(0, lbound);
 
-  long index = 0;
+  LONG index = 0;
   CComPtr<ITextRangeProvider> text_range_provider;
   EXPECT_HRESULT_SUCCEEDED(
       SafeArrayGetElement(selections.Get(), &index, &text_range_provider));
@@ -324,6 +391,7 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetSelection) {
   EXPECT_EQ(0, wcscmp(text_content, L"some"));
   text_content.Reset();
   selections.Reset();
+  text_range_provider.Release();
 
   // Verify that start and end are appropriately swapped when sel_anchor_offset
   // is greater than sel_focus_offset
@@ -348,6 +416,7 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetSelection) {
   EXPECT_EQ(0, wcscmp(text_content, L"some"));
   text_content.Reset();
   selections.Reset();
+  text_range_provider.Release();
 
   // Verify that text ranges at an insertion point returns a degenerate (empty)
   // text range via textbox with sel_anchor_offset equal to sel_focus_offset
@@ -384,6 +453,7 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetSelection) {
   EXPECT_EQ(0U, SysStringLen(text_content));
   text_content.Reset();
   selections.Reset();
+  text_edit_range_provider.Release();
 
   // Now delete the tree (which will delete the associated elements) and verify
   // that UIA_E_ELEMENTNOTAVAILABLE is returned when calling GetSelection on
@@ -394,6 +464,130 @@ TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetSelection) {
             text_edit_provider->GetSelection(selections.Receive()));
 
   AXNodePosition::SetTreeForTesting(nullptr);
+}
+
+TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetActiveComposition) {
+  ui::AXNodeData text_data;
+  text_data.id = 2;
+  text_data.role = ax::mojom::Role::kStaticText;
+  text_data.SetName("some text");
+
+  ui::AXNodeData root_data;
+  root_data.id = 1;
+  root_data.SetName("Document");
+  root_data.role = ax::mojom::Role::kRootWebArea;
+  root_data.child_ids.push_back(2);
+
+  ui::AXTreeUpdate update;
+  ui::AXTreeData tree_data;
+  tree_data.tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  update.tree_data = tree_data;
+  update.has_tree_data = true;
+  update.root_id = root_data.id;
+  update.nodes.push_back(root_data);
+  update.nodes.push_back(text_data);
+  Init(update);
+
+  AXNodePosition::SetTreeForTesting(tree_.get());
+
+  ComPtr<IRawElementProviderSimple> root_node =
+      GetRootIRawElementProviderSimple();
+
+  ComPtr<ITextProvider> root_text_provider;
+  EXPECT_HRESULT_SUCCEEDED(
+      root_node->GetPatternProvider(UIA_TextPatternId, &root_text_provider));
+
+  ComPtr<ITextEditProvider> root_text_edit_provider;
+  EXPECT_HRESULT_SUCCEEDED(root_node->GetPatternProvider(
+      UIA_TextEditPatternId, &root_text_edit_provider));
+
+  CComPtr<ITextRangeProvider> text_range_provider;
+  root_text_edit_provider->GetActiveComposition(&text_range_provider);
+  ASSERT_EQ(nullptr, text_range_provider);
+
+  ComPtr<AXPlatformNodeTextProviderWin> root_platform_node;
+  root_text_provider->QueryInterface(IID_PPV_ARGS(&root_platform_node));
+
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kFocus;
+  action_data.target_node_id = 1;
+  AXPlatformNodeWin* owner = GetOwner(root_platform_node.Get());
+  owner->GetDelegate()->AccessibilityPerformAction(action_data);
+  const base::string16 active_composition_text = L"a";
+  owner->OnActiveComposition(gfx::Range(0, 1), active_composition_text, false);
+
+  root_text_edit_provider->GetActiveComposition(&text_range_provider);
+  ASSERT_NE(nullptr, text_range_provider);
+  ComPtr<AXPlatformNodeTextRangeProviderWin> actual_range;
+  AXNodePosition::AXPositionInstance expected_start =
+      owner->GetDelegate()->CreateTextPositionAt(0);
+  AXNodePosition::AXPositionInstance expected_end =
+      owner->GetDelegate()->CreateTextPositionAt(1);
+  text_range_provider->QueryInterface(IID_PPV_ARGS(&actual_range));
+  EXPECT_EQ(*GetStart(actual_range.Get()), *expected_start);
+  EXPECT_EQ(*GetEnd(actual_range.Get()), *expected_end);
+}
+
+TEST_F(AXPlatformNodeTextProviderTest, TestITextProviderGetConversionTarget) {
+  ui::AXNodeData text_data;
+  text_data.id = 2;
+  text_data.role = ax::mojom::Role::kStaticText;
+  text_data.SetName("some text");
+
+  ui::AXNodeData root_data;
+  root_data.id = 1;
+  root_data.SetName("Document");
+  root_data.role = ax::mojom::Role::kRootWebArea;
+  root_data.child_ids.push_back(2);
+
+  ui::AXTreeUpdate update;
+  ui::AXTreeData tree_data;
+  tree_data.tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  update.tree_data = tree_data;
+  update.has_tree_data = true;
+  update.root_id = root_data.id;
+  update.nodes.push_back(root_data);
+  update.nodes.push_back(text_data);
+  Init(update);
+
+  AXNodePosition::SetTreeForTesting(tree_.get());
+
+  ComPtr<IRawElementProviderSimple> root_node =
+      GetRootIRawElementProviderSimple();
+
+  ComPtr<ITextProvider> root_text_provider;
+  EXPECT_HRESULT_SUCCEEDED(
+      root_node->GetPatternProvider(UIA_TextPatternId, &root_text_provider));
+
+  ComPtr<ITextEditProvider> root_text_edit_provider;
+  EXPECT_HRESULT_SUCCEEDED(root_node->GetPatternProvider(
+      UIA_TextEditPatternId, &root_text_edit_provider));
+
+  CComPtr<ITextRangeProvider> text_range_provider;
+  root_text_edit_provider->GetConversionTarget(&text_range_provider);
+  ASSERT_EQ(nullptr, text_range_provider);
+
+  ComPtr<AXPlatformNodeTextProviderWin> root_platform_node;
+  root_text_provider->QueryInterface(IID_PPV_ARGS(&root_platform_node));
+
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kFocus;
+  action_data.target_node_id = 1;
+  AXPlatformNodeWin* owner = GetOwner(root_platform_node.Get());
+  owner->GetDelegate()->AccessibilityPerformAction(action_data);
+  const base::string16 active_composition_text = L"a";
+  owner->OnActiveComposition(gfx::Range(0, 1), active_composition_text, false);
+
+  root_text_edit_provider->GetConversionTarget(&text_range_provider);
+  ASSERT_NE(nullptr, text_range_provider);
+  ComPtr<AXPlatformNodeTextRangeProviderWin> actual_range;
+  AXNodePosition::AXPositionInstance expected_start =
+      owner->GetDelegate()->CreateTextPositionAt(0);
+  AXNodePosition::AXPositionInstance expected_end =
+      owner->GetDelegate()->CreateTextPositionAt(1);
+  text_range_provider->QueryInterface(IID_PPV_ARGS(&actual_range));
+  EXPECT_EQ(*GetStart(actual_range.Get()), *expected_start);
+  EXPECT_EQ(*GetEnd(actual_range.Get()), *expected_end);
 }
 
 }  // namespace ui

@@ -7,6 +7,8 @@
 
 #include <memory>
 #include <vector>
+
+#include "base/optional.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_rtc_stats.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -40,9 +42,11 @@ class BLINK_PLATFORM_EXPORT WebRTCRtpReceiver {
   virtual const WebMediaStreamTrack& Track() const = 0;
   virtual WebVector<WebString> StreamIds() const = 0;
   virtual WebVector<std::unique_ptr<WebRTCRtpSource>> GetSources() = 0;
-  virtual void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>,
+  virtual void GetStats(blink::WebRTCStatsReportCallback,
                         const std::vector<webrtc::NonStandardGroupId>&) = 0;
   virtual std::unique_ptr<webrtc::RtpParameters> GetParameters() const = 0;
+  virtual void SetJitterBufferMinimumDelay(
+      base::Optional<double> delay_seconds) = 0;
 };
 
 }  // namespace blink

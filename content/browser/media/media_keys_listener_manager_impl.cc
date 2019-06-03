@@ -11,15 +11,21 @@
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/hardware_key_media_controller.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/idle/idle.h"
 #include "ui/base/mpris/buildflags/buildflags.h"
 
 #if BUILDFLAG(USE_MPRIS)
+#include "content/browser/media/mpris_notifier.h"
 #include "ui/base/mpris/mpris_service.h"  // nogncheck
 #endif
 
 #if defined(OS_MACOSX)
 #include "content/browser/media/now_playing_info_center_notifier.h"
 #include "ui/base/now_playing/now_playing_info_center_delegate.h"
+#endif
+
+#if defined(OS_WIN)
+#include "content/browser/media/system_media_controls_notifier.h"
 #endif
 
 namespace content {
@@ -124,6 +130,16 @@ void MediaKeysListenerManagerImpl::OnMediaKeysAccelerator(
   // We should never receive an accelerator that was never registered.
   DCHECK(delegate_map_.contains(accelerator.key_code()));
 
+#if defined(OS_WIN) || defined(OS_MACOSX)
+  // For privacy, we don't want to handle media keys when the system is locked.
+  // On Windows and Mac OS X, this will happen unless we explicitly prevent it.
+  // TODO(steimel): Consider adding an idle monitor instead and disabling the
+  // RemoteCommandCenter/SystemMediaTransportControls on lock so that other OS
+  // apps can take control.
+  if (ui::CheckIdleStateIsLocked())
+    return;
+#endif
+
   ListeningData* listening_data = delegate_map_[accelerator.key_code()].get();
 
   // If the HardwareKeyMediaController is listening and is allowed to listen,
@@ -145,9 +161,16 @@ void MediaKeysListenerManagerImpl::EnsureAuxiliaryServices() {
 
 #if BUILDFLAG(USE_MPRIS)
   mpris::MprisService::GetInstance()->StartService();
+
+  mpris_notifier_ = std::make_unique<MprisNotifier>(connector_);
+  mpris_notifier_->Initialize();
 #endif
 
 #if defined(OS_MACOSX)
+  // On Mac OS, we need to initialize the idle monitor in order to check if the
+  // system is locked.
+  ui::InitIdleMonitor();
+
   // Only create the NowPlayingInfoCenterNotifier if we're able to get a
   // NowPlayingInfoCenterDelegate.
   auto now_playing_info_center_delegate =
@@ -158,6 +181,12 @@ void MediaKeysListenerManagerImpl::EnsureAuxiliaryServices() {
             connector_, std::move(now_playing_info_center_delegate));
   }
 #endif
+
+#if defined(OS_WIN)
+  system_media_controls_notifier_ =
+      std::make_unique<SystemMediaControlsNotifier>(connector_);
+  system_media_controls_notifier_->Initialize();
+#endif  // defined(OS_WIN)
 
   auxiliary_services_started_ = true;
 }

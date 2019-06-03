@@ -102,13 +102,6 @@ function getCategoryRankerProperties() {
   });
 }
 
-/* Check if pushing dummy suggestions is possible. */
-function checkIfPushingDummySuggestionPossible() {
-  pageHandler.isPushingDummySuggestionPossible().then(function(response) {
-    $('push-dummy-suggestion').disabled = !response.result;
-  });
-}
-
 /* Retrieve the remote content suggestions properties. */
 function getRemoteContentSuggestionsProperties() {
   pageHandler.getRemoteContentSuggestionsProperties().then(function(response) {
@@ -194,7 +187,6 @@ function refreshContent() {
   getUserClassifierProperties();
   getCategoryRankerProperties();
   getRemoteContentSuggestionsProperties();
-  checkIfPushingDummySuggestionPossible();
 }
 
 /* Setup buttons and other event listeners. */
@@ -205,16 +197,6 @@ function setupEventListeners() {
 
   $('reload-suggestions').addEventListener('click', function(event) {
     pageHandler.reloadSuggestions();
-  });
-
-  $('debug-log-dump').addEventListener('click', function(event) {
-    pageHandler.getDebugLog().then(function(response) {
-      let logs = response.debugLog;
-      if (logs === '') {
-        logs = 'No data yet. Have you enabled debug logging in chrome://flags?';
-      }
-      downloadData('debug_log.txt', 'text/plain', logs);
-    });
   });
 
   $('clear-cached-suggestions').addEventListener('click', function(event) {
@@ -230,14 +212,6 @@ function setupEventListeners() {
 
       // After we've fetched, update the page.
       getRemoteContentSuggestionsProperties();
-    });
-  });
-
-  $('push-dummy-suggestion').addEventListener('click', function(event) {
-    const content = $('push-dummy-suggestion').textContent;
-    $('push-dummy-suggestion').textContent = '...';
-    pageHandler.pushDummySuggestionInBackground(10).then(function(response) {
-      $('push-dummy-suggestion').textContent = content;
     });
   });
 
@@ -258,16 +232,6 @@ function setupEventListeners() {
       downloadJson('last_snippets.json', response.json);
     });
   });
-
-  $('reset-notifications-state-button')
-      .addEventListener('click', function(event) {
-        pageHandler.resetNotificationState();
-      });
-
-  $('reset-notifications-state-button')
-      .addEventListener('click', function(event) {
-        pageHandler.resetNotificationState();
-      });
 
   $('submit-dump').addEventListener('click', function(event) {
     pageHandler.getSuggestionsByCategory().then(function(response) {

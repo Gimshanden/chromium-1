@@ -4,17 +4,12 @@
 
 #import "ios/web/shell/test/earl_grey/shell_earl_grey.h"
 
-#import <EarlGrey/EarlGrey.h>
-
+#import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/web/public/test/earl_grey/js_test_util.h"
-#include "ios/web/public/test/element_selector.h"
-#import "ios/web/public/test/navigation_test_util.h"
-#import "ios/web/public/test/web_view_content_test_util.h"
-#import "ios/web/public/test/web_view_interaction_test_util.h"
-#include "ios/web/shell/test/app/navigation_test_util.h"
-#import "ios/web/shell/test/app/web_shell_test_util.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
+#import "ios/web/shell/test/earl_grey/shell_earl_grey_app_interface.h"
 
+using base::test::ios::kWaitForPageLoadTimeout;
 using base::test::ios::kWaitForUIElementTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
 
@@ -22,29 +17,55 @@ using base::test::ios::WaitUntilConditionOrTimeout;
 #error "This file requires ARC support."
 #endif
 
-@implementation ShellEarlGrey
+#if defined(CHROME_EARL_GREY_2)
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(ShellEarlGreyAppInterface)
+#endif
 
-+ (bool)loadURL:(const GURL&)URL {
-  web::shell_test_util::LoadUrl(URL);
-  web::WebState* webState = web::shell_test_util::GetCurrentWebState();
+@implementation ShellEarlGreyImpl
 
-  if (!web::test::WaitForPageToFinishLoading(webState))
-    return false;
+- (void)loadURL:(const GURL&)URL {
+  NSString* spec = base::SysUTF8ToNSString(URL.spec());
+  [ShellEarlGreyAppInterface startLoadingURL:spec];
 
-  if (webState->ContentIsHTML())
-    web::WaitUntilWindowIdInjected(webState);
+  NSString* loadingErrorDescription = [NSString
+      stringWithFormat:@"Current WebState did not finish loading %@ URL", spec];
+  GREYCondition* condition = [GREYCondition
+      conditionWithName:loadingErrorDescription
+                  block:^{
+                    return !
+                        [ShellEarlGreyAppInterface isCurrentWebStateLoading];
+                  }];
+  BOOL pageLoaded = [condition waitWithTimeout:kWaitForPageLoadTimeout];
+  EG_TEST_HELPER_ASSERT_TRUE(pageLoaded, loadingErrorDescription);
+
+  EG_TEST_HELPER_ASSERT_NO_ERROR(
+      [ShellEarlGreyAppInterface waitForWindowIDInjectedInCurrentWebState]);
 
   // Ensure any UI elements handled by EarlGrey become idle for any subsequent
   // EarlGrey steps.
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  return true;
 }
 
-+ (bool)waitForWebViewContainingText:(std::string)text {
-  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^bool {
-    return web::test::IsWebViewContainingText(
-        web::shell_test_util::GetCurrentWebState(), text);
-  });
+- (void)waitForWebStateContainingText:(NSString*)text {
+  NSString* description = [NSString
+      stringWithFormat:@"Current WebState does not contain: '%@'", text];
+  GREYCondition* condition =
+      [GREYCondition conditionWithName:description
+                                 block:^{
+                                   return [ShellEarlGreyAppInterface
+                                       currentWebStateContainsText:text];
+                                 }];
+
+  BOOL containsText = [condition waitWithTimeout:kWaitForPageLoadTimeout];
+  EG_TEST_HELPER_ASSERT_TRUE(containsText, description);
+}
+
+- (BOOL)webUsageEnabledForCurrentWebState {
+  return [ShellEarlGreyAppInterface webUsageEnabledForCurrentWebState];
+}
+
+- (NSString*)instanceGroupForCurrentBrowserState {
+  return [ShellEarlGreyAppInterface instanceGroupForCurrentBrowserState];
 }
 
 @end

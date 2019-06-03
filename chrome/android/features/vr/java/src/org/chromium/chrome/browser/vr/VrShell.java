@@ -41,6 +41,7 @@ import org.chromium.chrome.browser.page_info.PageInfoController;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAssociatedApp;
+import org.chromium.chrome.browser.tab.TabBrowserControlsState;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tab.TabRedirectHandler;
 import org.chromium.chrome.browser.tabmodel.ChromeTabCreator;
@@ -475,7 +476,7 @@ public class VrShell extends GvrLayout
         if (mTab != null) {
             initializeTabForVR();
             mTab.addObserver(mTabObserver);
-            mTab.updateBrowserControlsState(BrowserControlsState.HIDDEN, false);
+            TabBrowserControlsState.update(mTab, BrowserControlsState.HIDDEN, false);
         }
         mTabObserver.onContentChanged(mTab);
     }
@@ -496,8 +497,9 @@ public class VrShell extends GvrLayout
         ImeAdapter imeAdapter = ImeAdapter.fromWebContents(webContents);
         if (imeAdapter == null) return;
 
-        imeAdapter.setInputMethodManagerWrapper(
-                ImeAdapter.createDefaultInputMethodManagerWrapper(mActivity));
+        // Use application context here to avoid leaking the activity context.
+        imeAdapter.setInputMethodManagerWrapper(ImeAdapter.createDefaultInputMethodManagerWrapper(
+                mActivity.getApplicationContext()));
         mInputMethodManagerWrapper = null;
     }
 
@@ -793,7 +795,7 @@ public class VrShell extends GvrLayout
                 View parent = mTab.getContentView();
                 mTab.getWebContents().setSize(parent.getWidth(), parent.getHeight());
             }
-            mTab.updateBrowserControlsState(BrowserControlsState.SHOWN, false);
+            TabBrowserControlsState.update(mTab, BrowserControlsState.SHOWN, false);
         }
 
         mContentVirtualDisplay.destroy();
@@ -1117,7 +1119,7 @@ public class VrShell extends GvrLayout
         if (mActivity instanceof ChromeTabbedActivity) {
             // If hitting back would minimize Chrome, disable the back button.
             // See ChromeTabbedActivity#handleBackPressed().
-            willCloseTab = ChromeTabbedActivity.backShouldCloseTab(mTab)
+            willCloseTab = mActivity.backShouldCloseTab(mTab)
                     && !TabAssociatedApp.isOpenedFromExternalApp(mTab);
         }
         boolean canGoBack = mTab.canGoBack() || willCloseTab;

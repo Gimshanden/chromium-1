@@ -29,16 +29,16 @@ cca.views.camera.Layout = function() {
    * @type {CSSStyleDeclaration}
    * @private
    */
-  this.squareViewport_ = cca.views.camera.Layout.cssStyle_(
-      'body:not(.mode-switching).square-mode #preview-wrapper');
+  this.squareViewport_ =
+      cca.views.camera.Layout.cssStyle_('body.square-preview #preview-wrapper');
 
   /**
    * CSS style of the video in square mode.
    * @type {CSSStyleDeclaration}
    * @private
    */
-  this.squareVideo_ = cca.views.camera.Layout.cssStyle_(
-      'body:not(.mode-switching).square-mode #preview-video');
+  this.squareVideo_ =
+      cca.views.camera.Layout.cssStyle_('body.square-preview #preview-video');
 
   // End of properties, seal the object.
   Object.seal(this);
@@ -65,24 +65,27 @@ cca.views.camera.Layout.cssStyle_ = function(selector) {
 
 /**
  * Updates the video element size for previewing in the window.
- * @param {boolean} fullWindow Whether the window is maximized or fullscreen..
  * @return {Array<number>} Letterbox size in [width, height].
  * @private
  */
-cca.views.camera.Layout.prototype.updatePreviewSize_ = function(fullWindow) {
+cca.views.camera.Layout.prototype.updatePreviewSize_ = function() {
   // Make video content keeps its aspect ratio inside the window's inner-bounds;
   // it may fill up the window or be letterboxed when fullscreen/maximized.
   // Don't use app-window.innerBounds' width/height properties during resizing
   // as they are not updated immediately.
   var video = document.querySelector('#preview-video');
   if (video.videoHeight) {
-    var f = fullWindow ? Math.min : Math.max;
-    var scale = f(window.innerHeight / video.videoHeight,
-        window.innerWidth / video.videoWidth);
+    var scale = cca.state.get('square-mode') ?
+        Math.min(window.innerHeight, window.innerWidth) /
+            Math.min(video.videoHeight, video.videoWidth) :
+        Math.min(
+            window.innerHeight / video.videoHeight,
+            window.innerWidth / video.videoWidth);
     video.width = scale * video.videoWidth;
     video.height = scale * video.videoHeight;
   }
   var [viewportW, viewportH] = [video.width, video.height];
+  cca.state.set('square-preview', cca.state.get('square-mode'));
   if (cca.state.get('square-mode')) {
     viewportW = viewportH = Math.min(video.width, video.height);
     this.squareVideo_.setProperty('left', `${(viewportW - video.width) / 2}px`);
@@ -98,8 +101,13 @@ cca.views.camera.Layout.prototype.updatePreviewSize_ = function(fullWindow) {
  */
 cca.views.camera.Layout.prototype.update = function() {
   var fullWindow = cca.util.isWindowFullSize();
+  var tall = window.innerHeight > window.innerWidth;
+  var tabletLandscape = fullWindow && !tall;
+  cca.state.set('tablet-landscape', tabletLandscape);
+  cca.state.set('max-wnd', fullWindow);
+  cca.state.set('tall', tall);
 
-  var [letterboxW, letterboxH] = this.updatePreviewSize_(fullWindow);
+  var [letterboxW, letterboxH] = this.updatePreviewSize_();
   var isLetterboxW = letterboxH < letterboxW;
 
   cca.state.set('w-letterbox', isLetterboxW);

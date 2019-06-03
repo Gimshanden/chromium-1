@@ -16,7 +16,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmark_api_constants.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmark_api_helpers.h"
@@ -434,10 +433,7 @@ bool BookmarkManagerPrivateDropFunction::RunOnReady() {
     return false;
 
   content::WebContents* web_contents = GetSenderWebContents();
-  if (GetViewType(web_contents) != VIEW_TYPE_TAB_CONTENTS) {
-    NOTREACHED();
-    return false;
-  }
+  DCHECK_EQ(VIEW_TYPE_TAB_CONTENTS, GetViewType(web_contents));
 
   int drop_index;
   if (params->index)
@@ -450,10 +446,7 @@ bool BookmarkManagerPrivateDropFunction::RunOnReady() {
 
   DCHECK(router);
   const BookmarkNodeData* drag_data = router->GetBookmarkNodeData();
-  if (drag_data == NULL) {
-    NOTREACHED() <<"Somehow we're dropping null bookmark data";
-    return false;
-  }
+  DCHECK_NE(nullptr, drag_data) << "Somehow we're dropping null bookmark data";
   const bool copy = false;
   chrome::DropBookmarks(
       GetProfile(), *drag_data, drop_parent, drop_index, copy);

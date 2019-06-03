@@ -216,7 +216,7 @@ void WebAssociatedURLLoaderImpl::ClientAdapter::DidReceiveResponse(
   WebHTTPHeaderSet blocked_headers;
   for (const auto& header : response.HttpHeaderFields()) {
     if (FetchUtils::IsForbiddenResponseHeaderName(header.key) ||
-        (!cors::IsOnAccessControlResponseHeaderWhitelist(header.key) &&
+        (!cors::IsCorsSafelistedResponseHeader(header.key) &&
          exposed_headers.find(header.key.Ascii().data()) ==
              exposed_headers.end()))
       blocked_headers.insert(header.key.Ascii().data());
@@ -363,7 +363,7 @@ void WebAssociatedURLLoaderImpl::LoadAsynchronously(
     allow_load = observer_ && IsValidHTTPToken(method) &&
                  !FetchUtils::IsForbiddenMethod(method);
     if (allow_load) {
-      new_request.SetHTTPMethod(FetchUtils::NormalizeMethod(method));
+      new_request.SetHttpMethod(FetchUtils::NormalizeMethod(method));
       HTTPRequestHeaderValidator validator;
       new_request.VisitHttpHeaderFields(&validator);
       allow_load = validator.IsSafe();

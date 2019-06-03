@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/callback.h"
@@ -16,6 +16,7 @@
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/dbus/power/power_policy_controller.h"
 #include "chromeos/dbus/power_manager/idle.pb.h"
+#include "chromeos/dbus/power_manager/policy.pb.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry.h"
@@ -25,8 +26,11 @@ namespace ash {
 
 namespace {
 
-using PeakShiftDayConfiguration =
-    chromeos::PowerPolicyController::PeakShiftDayConfiguration;
+using PeakShiftDayConfig =
+    power_manager::PowerManagementPolicy::PeakShiftDayConfig;
+
+using AdvancedBatteryChargeModeDayConfig =
+    power_manager::PowerManagementPolicy::AdvancedBatteryChargeModeDayConfig;
 
 chromeos::PowerPolicyController::Action GetPowerPolicyAction(
     const PrefService* prefs,
@@ -59,7 +63,7 @@ chromeos::PowerPolicyController::Action GetPowerPolicyAction(
 // used: if more-restrictive power-related prefs are set by policy, it's most
 // likely to be on this profile.
 PrefService* GetPrefService() {
-  ash::SessionController* controller = Shell::Get()->session_controller();
+  ash::SessionControllerImpl* controller = Shell::Get()->session_controller();
   PrefService* prefs = controller->GetPrimaryUserPrefService();
   return prefs ? prefs : controller->GetActivePrefService();
 }
@@ -119,6 +123,8 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry, bool for_test) {
                                 true, PrefRegistry::PUBLIC);
   registry->RegisterBooleanPref(prefs::kPowerSmartDimEnabled, true,
                                 PrefRegistry::PUBLIC);
+  registry->RegisterBooleanPref(prefs::kPowerAlsLoggingEnabled, false,
+                                PrefRegistry::PUBLIC);
 
   if (for_test) {
     registry->RegisterBooleanPref(prefs::kAllowScreenLock, true,
@@ -126,123 +132,59 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry, bool for_test) {
     registry->RegisterBooleanPref(
         prefs::kEnableAutoScreenLock, false,
         user_prefs::PrefRegistrySyncable::SYNCABLE_PREF | PrefRegistry::PUBLIC);
-  } else {
-    registry->RegisterForeignPref(prefs::kAllowScreenLock);
-    registry->RegisterForeignPref(prefs::kEnableAutoScreenLock);
   }
-}
-
-// Saves appropriate value to |week_day| and returns true if there is mapping
-// between week day string and enum value.
-bool GetWeekDayFromString(const std::string& week_day_str,
-                          chromeos::PowerPolicyController::WeekDay* week_day) {
-  DCHECK(week_day);
-  if (week_day_str == "MONDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_MONDAY;
-  } else if (week_day_str == "TUESDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_TUESDAY;
-  } else if (week_day_str == "WEDNESDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_WEDNESDAY;
-  } else if (week_day_str == "THURSDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_THURSDAY;
-  } else if (week_day_str == "FRIDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_FRIDAY;
-  } else if (week_day_str == "SATURDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_SATURDAY;
-  } else if (week_day_str == "SUNDAY") {
-    *week_day = chromeos::PowerPolicyController::WeekDay::WEEK_DAY_SUNDAY;
-  } else {
-    return false;
-  }
-  return true;
-}
-
-// Converts |base::Value| to |std::vector<PeakShiftDayConfiguration>| and
-// returns true if there are no missing fields and errors.
-bool GetPeakShiftDayConfigurations(
-    const base::DictionaryValue& value,
-    std::vector<PeakShiftDayConfiguration>* configs_out) {
-  DCHECK(configs_out);
-  configs_out->clear();
-
-  const base::Value* entries =
-      value.FindKeyOfType({"entries"}, base::Value::Type::LIST);
-  if (!entries) {
-    return false;
-  }
-
-  for (const base::Value& item : entries->GetList()) {
-    const base::Value* week_day_value =
-        item.FindKeyOfType({"day"}, base::Value::Type::STRING);
-    const base::Value* start_time_hour =
-        item.FindPathOfType({"start_time", "hour"}, base::Value::Type::INTEGER);
-    const base::Value* start_time_minute = item.FindPathOfType(
-        {"start_time", "minute"}, base::Value::Type::INTEGER);
-    const base::Value* end_time_hour =
-        item.FindPathOfType({"end_time", "hour"}, base::Value::Type::INTEGER);
-    const base::Value* end_time_minute =
-        item.FindPathOfType({"end_time", "minute"}, base::Value::Type::INTEGER);
-    const base::Value* charge_start_time_hour = item.FindPathOfType(
-        {"charge_start_time", "hour"}, base::Value::Type::INTEGER);
-    const base::Value* charge_start_time_minute = item.FindPathOfType(
-        {"charge_start_time", "minute"}, base::Value::Type::INTEGER);
-
-    chromeos::PowerPolicyController::WeekDay week_day_enum;
-    if (!week_day_value ||
-        !GetWeekDayFromString(week_day_value->GetString(), &week_day_enum) ||
-        !start_time_hour || !start_time_minute || !end_time_hour ||
-        !end_time_minute || !charge_start_time_hour ||
-        !charge_start_time_minute) {
-      return false;
-    }
-
-    PeakShiftDayConfiguration config;
-    config.day = week_day_enum;
-    config.start_time.hour = start_time_hour->GetInt();
-    config.start_time.minute = start_time_minute->GetInt();
-    config.end_time.hour = end_time_hour->GetInt();
-    config.end_time.minute = end_time_minute->GetInt();
-    config.charge_start_time.hour = charge_start_time_hour->GetInt();
-    config.charge_start_time.minute = charge_start_time_minute->GetInt();
-
-    configs_out->push_back(std::move(config));
-  }
-
-  return true;
 }
 
 }  // namespace
 
 PowerPrefs::PowerPrefs(chromeos::PowerPolicyController* power_policy_controller,
-                       chromeos::PowerManagerClient* power_manager_client)
+                       chromeos::PowerManagerClient* power_manager_client,
+                       PrefService* local_state)
     : power_policy_controller_(power_policy_controller),
       power_manager_client_observer_(this),
-      tick_clock_(base::DefaultTickClock::GetInstance()) {
+      tick_clock_(base::DefaultTickClock::GetInstance()),
+      local_state_(local_state) {
   DCHECK(power_manager_client);
   DCHECK(power_policy_controller_);
   DCHECK(tick_clock_);
 
-  Shell::Get()->AddShellObserver(this);
-
   power_manager_client_observer_.Add(power_manager_client);
   Shell::Get()->session_controller()->AddObserver(this);
+
+  // |local_state_| could be null in tests.
+  if (local_state_)
+    ObserveLocalStatePrefs(local_state_);
 }
 
 PowerPrefs::~PowerPrefs() {
-  Shell::Get()->RemoveShellObserver(this);
   Shell::Get()->session_controller()->RemoveObserver(this);
 }
 
 // static
 void PowerPrefs::RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
-  registry->RegisterBooleanPref(prefs::kDevicePowerPeakShiftEnabled, false,
+  registry->RegisterBooleanPref(prefs::kPowerPeakShiftEnabled, false,
                                 PrefRegistry::PUBLIC);
-  registry->RegisterIntegerPref(prefs::kDevicePowerPeakShiftBatteryThreshold,
-                                -1, PrefRegistry::PUBLIC);
-  registry->RegisterDictionaryPref(prefs::kDevicePowerPeakShiftDayConfig,
+  registry->RegisterIntegerPref(prefs::kPowerPeakShiftBatteryThreshold, -1,
+                                PrefRegistry::PUBLIC);
+  registry->RegisterDictionaryPref(prefs::kPowerPeakShiftDayConfig,
                                    PrefRegistry::PUBLIC);
 
-  registry->RegisterBooleanPref(prefs::kDeviceBootOnAcEnabled, false,
+  registry->RegisterBooleanPref(prefs::kBootOnAcEnabled, false,
+                                PrefRegistry::PUBLIC);
+
+  registry->RegisterBooleanPref(prefs::kAdvancedBatteryChargeModeEnabled, false,
+                                PrefRegistry::PUBLIC);
+  registry->RegisterDictionaryPref(prefs::kAdvancedBatteryChargeModeDayConfig,
+                                   PrefRegistry::PUBLIC);
+
+  registry->RegisterIntegerPref(prefs::kBatteryChargeMode, -1,
+                                PrefRegistry::PUBLIC);
+  registry->RegisterIntegerPref(prefs::kBatteryChargeCustomStartCharging, -1,
+                                PrefRegistry::PUBLIC);
+  registry->RegisterIntegerPref(prefs::kBatteryChargeCustomStopCharging, -1,
+                                PrefRegistry::PUBLIC);
+
+  registry->RegisterBooleanPref(prefs::kUsbPowerShareEnabled, true,
                                 PrefRegistry::PUBLIC);
 }
 
@@ -304,16 +246,6 @@ void PowerPrefs::OnSigninScreenPrefServiceInitialized(PrefService* prefs) {
 
 void PowerPrefs::OnActiveUserPrefServiceChanged(PrefService* prefs) {
   ObservePrefs(prefs);
-}
-
-void PowerPrefs::OnLocalStatePrefServiceInitialized(PrefService* prefs) {
-  local_state_ = prefs;
-
-  // Pass |nullptr| in tests, because lifetime of local state prefs is shorter
-  // than lifetime of PowerPrefs.
-  if (local_state_) {
-    ObserveLocalStatePrefs(prefs);
-  }
 }
 
 void PowerPrefs::UpdatePowerPolicyFromPrefs() {
@@ -396,29 +328,73 @@ void PowerPrefs::UpdatePowerPolicyFromPrefs() {
   values.fast_suspend_when_backlights_forced_off =
       prefs->GetBoolean(prefs::kPowerFastSuspendWhenBacklightsForcedOff);
 
-  if (local_state_->GetBoolean(prefs::kDevicePowerPeakShiftEnabled) &&
-      local_state_->IsManagedPreference(prefs::kDevicePowerPeakShiftEnabled) &&
+  if (local_state_->GetBoolean(prefs::kPowerPeakShiftEnabled) &&
+      local_state_->IsManagedPreference(prefs::kPowerPeakShiftEnabled) &&
       local_state_->IsManagedPreference(
-          prefs::kDevicePowerPeakShiftBatteryThreshold) &&
-      local_state_->IsManagedPreference(
-          prefs::kDevicePowerPeakShiftDayConfig)) {
+          prefs::kPowerPeakShiftBatteryThreshold) &&
+      local_state_->IsManagedPreference(prefs::kPowerPeakShiftDayConfig)) {
     const base::DictionaryValue* configs_value =
-        local_state_->GetDictionary(prefs::kDevicePowerPeakShiftDayConfig);
+        local_state_->GetDictionary(prefs::kPowerPeakShiftDayConfig);
     DCHECK(configs_value);
-    std::vector<PeakShiftDayConfiguration> configs;
-    if (GetPeakShiftDayConfigurations(*configs_value, &configs)) {
+    std::vector<PeakShiftDayConfig> configs;
+    if (chromeos::PowerPolicyController::GetPeakShiftDayConfigs(*configs_value,
+                                                                &configs)) {
       values.peak_shift_enabled = true;
-      values.peak_shift_battery_threshold = local_state_->GetInteger(
-          prefs::kDevicePowerPeakShiftBatteryThreshold);
-      values.peak_shift_day_configurations = std::move(configs);
+      values.peak_shift_battery_threshold =
+          local_state_->GetInteger(prefs::kPowerPeakShiftBatteryThreshold);
+      values.peak_shift_day_configs = std::move(configs);
     } else {
       LOG(WARNING) << "Invalid Peak Shift day configs format: "
                    << *configs_value;
     }
   }
 
-  if (local_state_->IsManagedPreference(prefs::kDeviceBootOnAcEnabled)) {
-    values.boot_on_ac = local_state_->GetBoolean(prefs::kDeviceBootOnAcEnabled);
+  if (local_state_->GetBoolean(prefs::kAdvancedBatteryChargeModeEnabled) &&
+      local_state_->IsManagedPreference(
+          prefs::kAdvancedBatteryChargeModeEnabled) &&
+      local_state_->IsManagedPreference(
+          prefs::kAdvancedBatteryChargeModeDayConfig)) {
+    const base::DictionaryValue* configs_value =
+        local_state_->GetDictionary(prefs::kAdvancedBatteryChargeModeDayConfig);
+    DCHECK(configs_value);
+    std::vector<AdvancedBatteryChargeModeDayConfig> configs;
+    if (chromeos::PowerPolicyController::GetAdvancedBatteryChargeModeDayConfigs(
+            *configs_value, &configs)) {
+      values.advanced_battery_charge_mode_enabled = true;
+      values.advanced_battery_charge_mode_day_configs = std::move(configs);
+    } else {
+      LOG(WARNING)
+          << "Invalid Advanced Battery Charge Mode day configs format: "
+          << *configs_value;
+    }
+  }
+
+  if (local_state_->IsManagedPreference(prefs::kBatteryChargeMode)) {
+    if (chromeos::PowerPolicyController::GetBatteryChargeModeFromInteger(
+            local_state_->GetInteger(prefs::kBatteryChargeMode),
+            &values.battery_charge_mode)) {
+      if (local_state_->IsManagedPreference(
+              prefs::kBatteryChargeCustomStartCharging) &&
+          local_state_->IsManagedPreference(
+              prefs::kBatteryChargeCustomStopCharging)) {
+        values.custom_charge_start =
+            local_state_->GetInteger(prefs::kBatteryChargeCustomStartCharging);
+        values.custom_charge_stop =
+            local_state_->GetInteger(prefs::kBatteryChargeCustomStopCharging);
+      }
+    } else {
+      LOG(WARNING) << "Invalid Battery Charge Mode value: "
+                   << local_state_->GetInteger(prefs::kBatteryChargeMode);
+    }
+  }
+
+  if (local_state_->IsManagedPreference(prefs::kBootOnAcEnabled)) {
+    values.boot_on_ac = local_state_->GetBoolean(prefs::kBootOnAcEnabled);
+  }
+
+  if (local_state_->IsManagedPreference(prefs::kUsbPowerShareEnabled)) {
+    values.usb_power_share =
+        local_state_->GetBoolean(prefs::kUsbPowerShareEnabled);
   }
 
   power_policy_controller_->ApplyPrefs(values);
@@ -471,6 +447,7 @@ void PowerPrefs::ObservePrefs(PrefService* prefs) {
   profile_registrar_->Add(prefs::kPowerSmartDimEnabled, update_callback);
   profile_registrar_->Add(prefs::kPowerFastSuspendWhenBacklightsForcedOff,
                           update_callback);
+  profile_registrar_->Add(prefs::kPowerAlsLoggingEnabled, update_callback);
 
   UpdatePowerPolicyFromPrefs();
 }
@@ -482,14 +459,25 @@ void PowerPrefs::ObserveLocalStatePrefs(PrefService* prefs) {
 
   local_state_registrar_ = std::make_unique<PrefChangeRegistrar>();
   local_state_registrar_->Init(prefs);
-  local_state_registrar_->Add(prefs::kDevicePowerPeakShiftEnabled,
+  local_state_registrar_->Add(prefs::kPowerPeakShiftEnabled, update_callback);
+  local_state_registrar_->Add(prefs::kPowerPeakShiftBatteryThreshold,
                               update_callback);
-  local_state_registrar_->Add(prefs::kDevicePowerPeakShiftBatteryThreshold,
+  local_state_registrar_->Add(prefs::kPowerPeakShiftDayConfig, update_callback);
+
+  local_state_registrar_->Add(prefs::kAdvancedBatteryChargeModeEnabled,
                               update_callback);
-  local_state_registrar_->Add(prefs::kDevicePowerPeakShiftDayConfig,
+  local_state_registrar_->Add(prefs::kAdvancedBatteryChargeModeDayConfig,
                               update_callback);
 
-  local_state_registrar_->Add(prefs::kDeviceBootOnAcEnabled, update_callback);
+  local_state_registrar_->Add(prefs::kBatteryChargeMode, update_callback);
+  local_state_registrar_->Add(prefs::kBatteryChargeCustomStartCharging,
+                              update_callback);
+  local_state_registrar_->Add(prefs::kBatteryChargeCustomStopCharging,
+                              update_callback);
+
+  local_state_registrar_->Add(prefs::kBootOnAcEnabled, update_callback);
+
+  local_state_registrar_->Add(prefs::kUsbPowerShareEnabled, update_callback);
 
   UpdatePowerPolicyFromPrefs();
 }

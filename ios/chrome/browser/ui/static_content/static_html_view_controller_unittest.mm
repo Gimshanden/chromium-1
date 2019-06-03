@@ -14,12 +14,12 @@
 #include "ios/chrome/browser/url_loading/url_loading_service_factory.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
+#import "ios/web/public/deprecated/crw_native_content.h"
 #include "ios/web/public/referrer.h"
 #import "ios/web/public/test/fakes/test_web_client.h"
 #import "ios/web/public/test/js_test_util.h"
 #include "ios/web/public/test/scoped_testing_web_client.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
-#import "ios/web/public/web_state/ui/crw_native_content.h"
 #import "net/base/mac/url_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
@@ -122,13 +122,11 @@ TEST_F(StaticHtmlViewControllerTest, LoadResourceTest) {
           chrome_browser_state_.get());
   EXPECT_EQ(0, url_loader->load_current_tab_call_count);
   EXPECT_EQ(0, url_loader->load_new_tab_call_count);
-  EXPECT_EQ(nullptr, url_loader->last_params);
 
   DryRunLoop(true);
 
   EXPECT_EQ(0, url_loader->load_current_tab_call_count);
   EXPECT_EQ(0, url_loader->load_new_tab_call_count);
-  EXPECT_EQ(nullptr, url_loader->last_params);
   ASSERT_OCMOCK_VERIFY((OCMockObject*)delegate);
 }
 
@@ -163,13 +161,11 @@ TEST_F(StaticHtmlViewControllerTest, LoadFileURLTest) {
           chrome_browser_state_.get());
   EXPECT_EQ(0, url_loader->load_current_tab_call_count);
   EXPECT_EQ(0, url_loader->load_new_tab_call_count);
-  EXPECT_EQ(nullptr, url_loader->last_params);
 
   DryRunLoop(true);
 
   EXPECT_EQ(0, url_loader->load_current_tab_call_count);
   EXPECT_EQ(0, url_loader->load_new_tab_call_count);
-  EXPECT_EQ(nullptr, url_loader->last_params);
   ASSERT_OCMOCK_VERIFY((OCMockObject*)delegate);
 }
 

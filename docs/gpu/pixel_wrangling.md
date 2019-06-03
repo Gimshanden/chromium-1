@@ -204,6 +204,8 @@ shift, and a calendar appointment.
         the "pixel" step.
     1.  The output will contain a link of the form
         <http://chromium-browser-gpu-tests.commondatastorage.googleapis.com/view_test_results.html?242523_Linux_Release_Intel__telemetry>
+        * For pixel_skia_gold_tests the output link will be of the form
+        <https://chrome-gpu-gold.skia.org/detail?test=Pixel_BackgroundImage&digest=13c038c8d426720ae575f4cb9f0bf8da>
     1.  Visit the link to see whether the generated or reference images look
         incorrect.
     1.  All of the reference images for all of the bots are stored in cloud
@@ -219,10 +221,10 @@ shift, and a calendar appointment.
 1.  Update Telemetry-based test expectations if necessary.
     1.  Most of the GPU tests are run inside a full Chromium browser, launched
         by Telemetry, rather than a Gtest harness. The tests and their
-        expectations are contained in [src/content/test/gpu/gpu_tests/] . See
-        for example <code>[webgl_conformance_expectations.py]</code>,
-        <code>[gpu_process_expectations.py]</code> and
-        <code>[pixel_expectations.py]</code>.
+        expectations are contained in [src/content/test/gpu/gpu_tests/test_expectations] . See
+        for example <code>[webgl_conformance_expectations.txt]</code>,
+        <code>[gpu_process_expectations.txt]</code> and
+        <code>[pixel_expectations.txt]</code>.
     1.  See the header of the file a list of modifiers to specify a bot
         configuration. It is possible to specify OS (down to a specific
         version, say, Windows 7 or Mountain Lion), GPU vendor
@@ -256,10 +258,10 @@ https://ci.chromium.org/p/chromium/builders/luci.chromium.try/win7-rel
 [chromium-gpu-archive/reference-images]: https://console.developers.google.com/storage/chromium-gpu-archive/reference-images
 [instructions on the GPU testing page]: https://chromium.googlesource.com/chromium/src/+/master/docs/gpu/gpu_testing.md
 [Chrome Internal GPU Pixel Wrangling Instructions]: https://sites.google.com/a/google.com/client3d/documents/chrome-internal-gpu-pixel-wrangling-instructions
-[src/content/test/gpu/gpu_tests/]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/
-[webgl_conformance_expectations.py]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/webgl_conformance_expectations.py
-[gpu_process_expectations.py]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/gpu_process_expectations.py
-[pixel_expectations.py]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/pixel_expectations.py
+[src/content/test/gpu/gpu_tests/test_expectations]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/test_expectations
+[webgl_conformance_expectations.txt]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/test_expectations/webgl_conformance_expectations.txt
+[gpu_process_expectations.txt]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/test_expectations/gpu_process_expectations.txt
+[pixel_expectations.txt]: https://chromium.googlesource.com/chromium/src/+/master/content/test/gpu/gpu_tests/test_expectations/pixel_expectations.txt
 [stamping out flakiness]: gpu_testing.md#Stamping-out-Flakiness
 [gtest-DISABLED]: https://github.com/google/googletest/blob/master/googletest/docs/AdvancedGuide.md#temporarily-disabling-tests
 

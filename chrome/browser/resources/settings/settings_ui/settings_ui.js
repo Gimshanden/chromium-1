@@ -33,10 +33,19 @@ Polymer({
     prefs: Object,
 
     /** @private */
-    advancedOpened_: {
+    advancedOpenedInMain_: {
       type: Boolean,
       value: false,
       notify: true,
+      observer: 'onAdvancedOpenedInMainChanged_',
+    },
+
+    /** @private */
+    advancedOpenedInMenu_: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onAdvancedOpenedInMenuChanged_',
     },
 
     /** @private {boolean} */
@@ -45,10 +54,19 @@ Polymer({
       value: false,
     },
 
+    /** @private */
+    narrow_: {
+      type: Boolean,
+      observer: 'onNarrowChanged_',
+    },
+
     /**
-     * @private {!GuestModePageVisibility}
+     * @private {!PageVisibility}
      */
     pageVisibility_: {type: Object, value: settings.pageVisibility},
+
+    /** @private */
+    showApps_: Boolean,
 
     /** @private */
     showAndroidApps_: Boolean,
@@ -58,6 +76,12 @@ Polymer({
 
     /** @private */
     showCrostini_: Boolean,
+
+    /** @private */
+    showParentalControls_: Boolean,
+
+    /** @private */
+    showPluginVm_: Boolean,
 
     /** @private */
     havePlayStoreApp_: Boolean,
@@ -111,6 +135,8 @@ Polymer({
           loadTimeData.getString('controlledSettingWithOwner'),
       controlledSettingNoOwner:
           loadTimeData.getString('controlledSettingNoOwner'),
+      controlledSettingParent:
+          loadTimeData.getString('controlledSettingParent'),
       // </if>
     };
 
@@ -140,13 +166,28 @@ Polymer({
     };
     // </if>
 
-    this.showAndroidApps_ = loadTimeData.valueExists('androidAppsVisible') &&
+    // The SplitSettings feature hides OS settings in the browser settings page.
+    // https://crbug.com/950007
+    const showOSSettings = loadTimeData.getBoolean('showOSSettings');
+    this.showApps_ = showOSSettings && loadTimeData.valueExists('showApps') &&
+        loadTimeData.getBoolean('showApps');
+    this.showAndroidApps_ = showOSSettings &&
+        loadTimeData.valueExists('androidAppsVisible') &&
         loadTimeData.getBoolean('androidAppsVisible');
-    this.showKioskNextShell_ = loadTimeData.valueExists('showKioskNextShell') &&
+    this.showKioskNextShell_ = showOSSettings &&
+        loadTimeData.valueExists('showKioskNextShell') &&
         loadTimeData.getBoolean('showKioskNextShell');
-    this.showCrostini_ = loadTimeData.valueExists('showCrostini') &&
+    this.showCrostini_ = showOSSettings &&
+        loadTimeData.valueExists('showCrostini') &&
         loadTimeData.getBoolean('showCrostini');
-    this.havePlayStoreApp_ = loadTimeData.valueExists('havePlayStoreApp') &&
+    this.showParentalControls_ = showOSSettings &&
+        loadTimeData.valueExists('showParentalControls') &&
+        loadTimeData.getBoolean('showParentalControls');
+    this.showPluginVm_ = showOSSettings &&
+        loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm');
+    this.havePlayStoreApp_ = showOSSettings &&
+        loadTimeData.valueExists('havePlayStoreApp') &&
         loadTimeData.getBoolean('havePlayStoreApp');
 
     this.addEventListener('show-container', () => {
@@ -297,5 +338,26 @@ Polymer({
     listenOnce(this.$.container, ['blur', 'pointerdown'], () => {
       this.$.container.removeAttribute('tabindex');
     });
+  },
+
+  /** @private */
+  onAdvancedOpenedInMainChanged_: function() {
+    if (this.advancedOpenedInMain_) {
+      this.advancedOpenedInMenu_ = true;
+    }
+  },
+
+  /** @private */
+  onAdvancedOpenedInMenuChanged_: function() {
+    if (this.advancedOpenedInMenu_) {
+      this.advancedOpenedInMain_ = true;
+    }
+  },
+
+  /** @private */
+  onNarrowChanged_: function() {
+    if (this.$.drawer.open && !this.narrow_) {
+      this.$.drawer.close();
+    }
   },
 });

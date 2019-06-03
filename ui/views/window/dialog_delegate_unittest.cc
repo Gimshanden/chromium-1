@@ -57,6 +57,7 @@ class TestDialog : public DialogDelegateView {
     closed_ = true;
     return closeable_;
   }
+  bool IsDialogDraggable() const override { return true; }
 
   gfx::Size CalculatePreferredSize() const override {
     return gfx::Size(200, 200);
@@ -216,22 +217,22 @@ TEST_F(DialogTest, HitTest_HiddenTitle) {
   const NonClientView* view = dialog()->GetWidget()->non_client_view();
   BubbleFrameView* frame = static_cast<BubbleFrameView*>(view->frame_view());
 
-  struct {
+  constexpr struct {
     const int point;
     const int hit;
-  } cases[] = {
-      {0, HTSYSMENU},
-      {10, HTSYSMENU},
+  } kCases[] = {
+      {0, HTTRANSPARENT},
+      {10, HTCAPTION},
       {20, HTNOWHERE},
       {50, HTCLIENT /* Space is reserved for the close button. */},
       {60, HTCLIENT},
       {1000, HTNOWHERE},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
-    gfx::Point point(cases[i].point, cases[i].point);
-    EXPECT_EQ(cases[i].hit, frame->NonClientHitTest(point))
-        << " case " << i << " at point " << cases[i].point;
+  for (const auto test_case : kCases) {
+    gfx::Point point(test_case.point, test_case.point);
+    EXPECT_EQ(test_case.hit, frame->NonClientHitTest(point))
+        << " at point " << test_case.point;
   }
 }
 
@@ -243,41 +244,42 @@ TEST_F(DialogTest, HitTest_HiddenTitleNoCloseButton) {
   const NonClientView* view = dialog()->GetWidget()->non_client_view();
   BubbleFrameView* frame = static_cast<BubbleFrameView*>(view->frame_view());
 
-  struct {
+  constexpr struct {
     const int point;
     const int hit;
-  } cases[] = {
-      {0, HTSYSMENU}, {10, HTSYSMENU}, {20, HTCLIENT},
-      {50, HTCLIENT}, {60, HTCLIENT},  {1000, HTNOWHERE},
+  } kCases[] = {
+      {0, HTTRANSPARENT}, {10, HTCAPTION}, {20, HTCLIENT},
+      {50, HTCLIENT},     {60, HTCLIENT},  {1000, HTNOWHERE},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
-    gfx::Point point(cases[i].point, cases[i].point);
-    EXPECT_EQ(cases[i].hit, frame->NonClientHitTest(point))
-        << " case " << i << " at point " << cases[i].point;
+  for (const auto test_case : kCases) {
+    gfx::Point point(test_case.point, test_case.point);
+    EXPECT_EQ(test_case.hit, frame->NonClientHitTest(point))
+        << " at point " << test_case.point;
   }
 }
 
 TEST_F(DialogTest, HitTest_WithTitle) {
-  // Ensure that BubbleFrameView hit-tests as expected when the title is shown.
+  // Ensure that BubbleFrameView hit-tests as expected when the title is shown
+  // and the modal type is something other than not modal.
   const NonClientView* view = dialog()->GetWidget()->non_client_view();
   dialog()->set_title(base::ASCIIToUTF16("Title"));
   dialog()->GetWidget()->UpdateWindowTitle();
   dialog()->GetWidget()->LayoutRootViewIfNecessary();
   BubbleFrameView* frame = static_cast<BubbleFrameView*>(view->frame_view());
 
-  struct {
+  constexpr struct {
     const int point;
     const int hit;
-  } cases[] = {
-      {0, HTSYSMENU}, {10, HTSYSMENU}, {20, HTCAPTION},
-      {50, HTCLIENT}, {60, HTCLIENT},  {1000, HTNOWHERE},
+  } kCases[] = {
+      {0, HTTRANSPARENT}, {10, HTCAPTION}, {20, HTCAPTION},
+      {50, HTCLIENT},     {60, HTCLIENT},  {1000, HTNOWHERE},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
-    gfx::Point point(cases[i].point, cases[i].point);
-    EXPECT_EQ(cases[i].hit, frame->NonClientHitTest(point))
-        << " at point " << cases[i].point;
+  for (const auto test_case : kCases) {
+    gfx::Point point(test_case.point, test_case.point);
+    EXPECT_EQ(test_case.hit, frame->NonClientHitTest(point))
+        << " at point " << test_case.point;
   }
 }
 

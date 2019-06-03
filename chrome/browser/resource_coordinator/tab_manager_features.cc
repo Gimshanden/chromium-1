@@ -54,13 +54,6 @@ const base::Feature kStaggeredBackgroundTabOpeningExperiment{
 // on last focused time.
 const base::Feature kTabRanker{"TabRanker", base::FEATURE_DISABLED_BY_DEFAULT};
 
-#if defined(OS_CHROMEOS)
-// On ChromeOS, enables using new ProcessType enums that combine apps and tabs
-// in the same categories.
-const base::Feature kNewProcessTypes{
-  "NewProcessTypes", base::FEATURE_DISABLED_BY_DEFAULT};
-#endif // defined(OS_CHROMEOS)
-
 }  // namespace features
 
 namespace resource_coordinator {
@@ -269,6 +262,11 @@ int GetNumOldestTabsToScoreWithTabRanker() {
       std::numeric_limits<int>::max());
 }
 
+int GetProcessTypeToScoreWithTabRanker() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      features::kTabRanker, "process_type_of_tabs_to_score_with_TabRanker", 4);
+}
+
 int GetNumOldestTabsToLogWithTabRanker() {
   return base::GetFieldTrialParamByFeatureAsInt(
       features::kTabRanker, "number_of_oldest_tabs_to_log_with_TabRanker", 0);
@@ -276,7 +274,22 @@ int GetNumOldestTabsToLogWithTabRanker() {
 
 bool DisableBackgroundLogWithTabRanker() {
   return base::GetFieldTrialParamByFeatureAsBool(
-      features::kTabRanker, "disable_background_log_with_TabRanker", false);
+      features::kTabRanker, "disable_background_log_with_TabRanker", true);
+}
+
+float GetDiscardCountPenaltyTabRanker() {
+  return static_cast<float>(base::GetFieldTrialParamByFeatureAsDouble(
+      features::kTabRanker, "discard_count_penalty", 0.0));
+}
+
+float GetMRUScorerPenaltyTabRanker() {
+  return static_cast<float>(base::GetFieldTrialParamByFeatureAsDouble(
+      features::kTabRanker, "mru_scorer_penalty", 1.0));
+}
+
+int GetScorerTypeForTabRanker() {
+  return base::GetFieldTrialParamByFeatureAsInt(features::kTabRanker,
+                                                "scorer_type", 1);
 }
 
 }  // namespace resource_coordinator

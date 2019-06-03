@@ -57,7 +57,6 @@ interface CoreProbes {
   class FontCustomPlatformData;
   class FontFace;
   class HTMLDocumentParser;
-  class WorkerInspectorProxy;
   class XMLHttpRequest;
 
   void DidClearDocumentOfWindowObject([Keep] LocalFrame*);
@@ -94,7 +93,7 @@ interface CoreProbes {
   void WillSendRequest(CoreProbeSink*, uint64_t identifier, DocumentLoader*, const KURL& fetch_context_url, const ResourceRequest&, const ResourceResponse& redirect_response, const FetchInitiatorInfo&, ResourceType);
   void WillSendNavigationRequest(CoreProbeSink*, uint64_t identifier, DocumentLoader*, const KURL&, const AtomicString& http_method, EncodedFormData*);
   void MarkResourceAsCached(LocalFrame*, DocumentLoader*, uint64_t identifier);
-  void DidReceiveResourceResponse(CoreProbeSink*, uint64_t identifier, DocumentLoader*, const ResourceResponse&, Resource*);
+  void DidReceiveResourceResponse(CoreProbeSink*, uint64_t identifier, DocumentLoader*, const ResourceResponse&, const Resource*);
   void DidReceiveData(CoreProbeSink*, uint64_t identifier, DocumentLoader*, const char* data, uint64_t data_length);
   void DidReceiveBlob(CoreProbeSink*, uint64_t identifier, DocumentLoader*, BlobDataHandle*);
   void DidReceiveEncodedDataLength(CoreProbeSink*, DocumentLoader* loader, uint64_t identifier, size_t encoded_data_length);
@@ -121,7 +120,7 @@ interface CoreProbes {
   void FrameOwnerContentUpdated([Keep] LocalFrame*, HTMLFrameOwnerElement*);
   void FrameStartedLoading([Keep] LocalFrame*);
   void FrameStoppedLoading([Keep] LocalFrame*);
-  void FrameRequestedNavigation([Keep] LocalFrame*, const KURL& url, ClientNavigationReason reason);
+  void FrameRequestedNavigation(LocalFrame*, Frame* target_frame, const KURL& url, ClientNavigationReason reason);
   void FrameScheduledNavigation([Keep] LocalFrame*, const KURL& url, double delay, ClientNavigationReason reason);
   void FrameClearedScheduledNavigation([Keep] LocalFrame*);
   void DidCreateWebSocket([Keep] ExecutionContext*, uint64_t identifier, const KURL& request_url, const String& protocol);

@@ -56,8 +56,6 @@
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/browser_plugin/browser_plugin.h"
 #include "content/renderer/compositor/layer_tree_view.h"
-#include "content/renderer/cursor_utils.h"
-#include "content/renderer/devtools/render_widget_screen_metrics_emulator.h"
 #include "content/renderer/drop_data_builder.h"
 #include "content/renderer/external_popup_menu.h"
 #include "content/renderer/frame_swap_message_queue.h"
@@ -72,6 +70,7 @@
 #include "content/renderer/render_process.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
+#include "content/renderer/render_widget_screen_metrics_emulator.h"
 #include "content/renderer/renderer_blink_platform_impl.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "ipc/ipc_message_start.h"
@@ -110,6 +109,7 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/types/scroll_types.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -129,10 +129,6 @@
 #include "third_party/skia/include/core/SkMallocPixelRef.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
 #endif  // defined(OS_POSIX)
-
-#if defined(USE_AURA)
-#include "content/renderer/mus/renderer_window_tree_client.h"
-#endif
 
 #if defined(OS_MACOSX)
 #include "content/renderer/text_input_client_observer.h"
@@ -312,31 +308,29 @@ WebDragData DropDataToWebDragData(const DropData& drop_data) {
     item_list.push_back(item);
   }
 
-  for (auto it = drop_data.filenames.begin(); it != drop_data.filenames.end();
-       ++it) {
+  for (const ui::FileInfo& filename : drop_data.filenames) {
     WebDragData::Item item;
     item.storage_type = WebDragData::Item::kStorageTypeFilename;
-    item.filename_data = blink::FilePathToWebString(it->path);
+    item.filename_data = blink::FilePathToWebString(filename.path);
     item.display_name_data =
-        blink::FilePathToWebString(base::FilePath(it->display_name));
+        blink::FilePathToWebString(base::FilePath(filename.display_name));
     item_list.push_back(item);
   }
 
-  for (auto it = drop_data.file_system_files.begin();
-       it != drop_data.file_system_files.end(); ++it) {
+  for (const DropData::FileSystemFileInfo& file : drop_data.file_system_files) {
     WebDragData::Item item;
     item.storage_type = WebDragData::Item::kStorageTypeFileSystemFile;
-    item.file_system_url = it->url;
-    item.file_system_file_size = it->size;
-    item.file_system_id = blink::WebString::FromASCII(it->filesystem_id);
+    item.file_system_url = file.url;
+    item.file_system_file_size = file.size;
+    item.file_system_id = blink::WebString::FromASCII(file.filesystem_id);
     item_list.push_back(item);
   }
 
-  for (const auto& it : drop_data.custom_data) {
+  for (const auto& data : drop_data.custom_data) {
     WebDragData::Item item;
     item.storage_type = WebDragData::Item::kStorageTypeString;
-    item.string_type = WebString::FromUTF16(it.first);
-    item.string_data = WebString::FromUTF16(it.second);
+    item.string_type = WebString::FromUTF16(data.first);
+    item.string_data = WebString::FromUTF16(data.second);
     item_list.push_back(item);
   }
 
@@ -445,9 +439,7 @@ RenderWidget::RenderWidget(int32_t widget_routing_id,
       webwidget_internal_(nullptr),
       auto_resize_mode_(false),
       is_hidden_(hidden),
-      // When there's no RenderThreadImpl we can't start the compositor without
-      // crashing, so just behave like a never-visible widget.
-      compositor_never_visible_(never_visible || !RenderThreadImpl::current()),
+      compositor_never_visible_(never_visible),
       is_fullscreen_granted_(false),
       display_mode_(display_mode),
       ime_event_guard_(nullptr),
@@ -472,9 +464,7 @@ RenderWidget::RenderWidget(int32_t widget_routing_id,
       first_update_visual_state_after_hidden_(false),
       was_shown_time_(base::TimeTicks::Now()),
       current_content_source_id_(0),
-      widget_binding_(this, std::move(widget_request)),
-      warmup_weak_ptr_factory_(this),
-      weak_ptr_factory_(this) {
+      widget_binding_(this, std::move(widget_request)) {
   DCHECK_NE(routing_id_, MSG_ROUTING_NONE);
   DCHECK(RenderThread::IsMainThread());
 
@@ -485,11 +475,6 @@ RenderWidget::RenderWidget(int32_t widget_routing_id,
                                           ->NewRenderWidgetSchedulingState();
     render_widget_scheduling_state_->SetHidden(is_hidden_);
   }
-#if defined(USE_AURA)
-  RendererWindowTreeClient::CreateIfNecessary(routing_id_);
-  if (features::IsMultiProcessMash())
-    RendererWindowTreeClient::Get(routing_id_)->SetVisible(!is_hidden_);
-#endif
 
   if (routing_id_ != MSG_ROUTING_NONE)
     g_routing_id_widget_map.Get().emplace(routing_id_, this);
@@ -503,13 +488,6 @@ RenderWidget::~RenderWidget() {
   // and RenderViewImpl are rationalized. Currently, too many unit and
   // browser tests delete a RenderWidget without correclty going through
   // the shutdown. https://crbug.com/545684
-
-#if defined(USE_AURA)
-  // It is possible for a RenderWidget to be destroyed before it was embedded
-  // in a mus window. The RendererWindowTreeClient will leak in such cases. So
-  // explicitly delete it here.
-  RendererWindowTreeClient::Destroy(routing_id_);
-#endif
 }
 
 // static
@@ -864,10 +842,18 @@ void RenderWidget::OnSynchronizeVisualProperties(
         // the visual properties here. While blink doesn't need to know this
         // page scale factor outside the main frame, the compositor does in
         // order to produce its output at the correct scale.
-        layer_tree_view_->SetExternalPageScaleFactor(params.page_scale_factor);
+        layer_tree_view_->SetExternalPageScaleFactor(
+            params.page_scale_factor, params.is_pinch_gesture_active);
         // Store the value to give to any new RenderFrameProxy that is
         // registered.
         page_scale_factor_from_mainframe_ = params.page_scale_factor;
+        // Similarly, only the main frame knows when a pinch gesture is active,
+        // but this information is needed in subframes so they can throttle
+        // re-rastering in the same manner as the main frame.
+        // |is_pinch_gesture_active| follows the same path to the subframe
+        // compositor(s) as |page_scale_factor|.
+        is_pinch_gesture_active_from_mainframe_ =
+            params.is_pinch_gesture_active;
         // Push the page scale factor down to any child RenderWidgets via our
         // child proxy frames.
         // TODO(danakj): This ends up setting the page scale factor in the
@@ -876,8 +862,10 @@ void RenderWidget::OnSynchronizeVisualProperties(
         // global value per-page, we could instead store it once in the browser
         // (such as in RenderViewHost) and distribute it to each frame-hosted
         // RenderWidget from there.
-        for (auto& child_proxy : render_frame_proxies_)
-          child_proxy.OnPageScaleFactorChanged(params.page_scale_factor);
+        for (auto& child_proxy : render_frame_proxies_) {
+          child_proxy.OnPageScaleFactorChanged(params.page_scale_factor,
+                                               params.is_pinch_gesture_active);
+        }
       }
 
       gfx::Size old_visible_viewport_size = visible_viewport_size_;
@@ -931,13 +919,17 @@ void RenderWidget::OnWasHidden() {
 
   SetHidden(true);
 
+  tab_switch_time_recorder_.TabWasHidden();
+
   for (auto& observer : render_frames_)
     observer.WasHidden();
 }
 
-void RenderWidget::OnWasShown(base::TimeTicks show_request_timestamp,
-                              bool was_evicted,
-                              base::TimeTicks tab_switch_start_time) {
+void RenderWidget::OnWasShown(
+    base::TimeTicks show_request_timestamp,
+    bool was_evicted,
+    const base::Optional<content::RecordTabSwitchTimeRequest>&
+        record_tab_switch_time_request) {
   // A frozen main frame widget does not become shown, since it has no frame
   // associated with it. It must be thawed before changing visibility.
   DCHECK(!is_frozen_);
@@ -948,11 +940,11 @@ void RenderWidget::OnWasShown(base::TimeTicks show_request_timestamp,
   was_shown_time_ = base::TimeTicks::Now();
 
   SetHidden(false);
-  if (!show_request_timestamp.is_null()) {
+  if (record_tab_switch_time_request) {
     layer_tree_view_->layer_tree_host()->RequestPresentationTimeForNextFrame(
-        tab_switch_time_recorder_.BeginTimeRecording(
-            tab_switch_start_time, false /* has_saved_frames */,
-            show_request_timestamp));
+        tab_switch_time_recorder_.TabWasShown(
+            false /* has_saved_frames */,
+            record_tab_switch_time_request.value(), show_request_timestamp));
   }
 
   for (auto& observer : render_frames_)
@@ -977,11 +969,7 @@ void RenderWidget::OnForceRedraw(int snapshot_id) {
 void RenderWidget::RequestPresentation(PresentationTimeCallback callback) {
   layer_tree_view_->layer_tree_host()->RequestPresentationTimeForNextFrame(
       std::move(callback));
-  layer_tree_view_->SetNeedsForcedRedraw();
-
-  // Need this since single thread mode doesn't have a scheduler so the above
-  // call won't cause us to generate a new frame.
-  ScheduleAnimation();
+  layer_tree_view_->layer_tree_host()->SetNeedsCommitWithForcedRedraw();
 }
 
 void RenderWidget::DidPresentForceDrawFrame(
@@ -1174,7 +1162,7 @@ void RenderWidget::DoRequestNewLayerTreeFrameSink(
   // kOOPIF would denote that it is not for the main frame. However, kRenderer
   // would also be used for other widgets such as popups.
   const char* client_name = for_child_local_root_frame_ ? kOOPIF : kRenderer;
-  RenderThreadImpl::current()->RequestNewLayerTreeFrameSink(
+  compositor_deps_->RequestNewLayerTreeFrameSink(
       routing_id_, frame_swap_message_queue_, std::move(url),
       std::move(callback), std::move(client_request), std::move(ptr),
       client_name);
@@ -1337,7 +1325,7 @@ void RenderWidget::BeginUpdateLayers() {
 
 void RenderWidget::EndUpdateLayers() {
   if (GetWebWidget())
-    GetWebWidget()->BeginUpdateLayers();
+    GetWebWidget()->EndUpdateLayers();
 }
 
 void RenderWidget::WillBeginCompositorFrame() {
@@ -1479,6 +1467,7 @@ void RenderWidget::UpdateTextInputStateInternal(bool show_virtual_keyboard,
     TextInputState params;
     params.type = new_type;
     params.mode = new_mode;
+    params.action = new_info.action;
     params.flags = new_info.flags;
 #if defined(OS_ANDROID)
     if (next_previous_flags_ == kInvalidNextPreviousFlagsValue) {
@@ -1678,12 +1667,10 @@ std::unique_ptr<cc::SwapPromise> RenderWidget::QueueMessageImpl(
   bool first_message_for_frame = false;
   frame_swap_message_queue->QueueMessageForFrame(
       source_frame_number, base::WrapUnique(msg), &first_message_for_frame);
-  if (first_message_for_frame) {
-    std::unique_ptr<cc::SwapPromise> promise(new QueueMessageSwapPromise(
-        sync_message_filter, frame_swap_message_queue, source_frame_number));
-    return promise;
-  }
-  return nullptr;
+  if (!first_message_for_frame)
+    return nullptr;
+  return std::make_unique<QueueMessageSwapPromise>(
+      sync_message_filter, frame_swap_message_queue, source_frame_number);
 }
 
 void RenderWidget::SetHandlingInputEvent(bool handling_input_event) {
@@ -1704,15 +1691,15 @@ void RenderWidget::QueueMessage(IPC::Message* msg) {
       QueueMessageImpl(msg, frame_swap_message_queue_.get(),
                        RenderThreadImpl::current()->sync_message_filter(),
                        layer_tree_view_->GetSourceFrameNumber());
-
-  if (swap_promise)
-    layer_tree_view_->QueueSwapPromise(std::move(swap_promise));
+  if (swap_promise) {
+    layer_tree_view_->layer_tree_host()->QueueSwapPromise(
+        std::move(swap_promise));
+  }
 }
 
 void RenderWidget::DidChangeCursor(const WebCursorInfo& cursor_info) {
   // TODO(darin): Eliminate this temporary.
-  WebCursor cursor;
-  InitializeCursorFromWebCursorInfo(&cursor, cursor_info);
+  WebCursor cursor((CursorInfo(cursor_info)));
   // Only send a SetCursor message if we need to make a change.
   if (input_handler_->DidChangeCursor(cursor))
     Send(new WidgetHostMsg_SetCursor(routing_id_, cursor));
@@ -1950,6 +1937,8 @@ void RenderWidget::CloseWebWidget() {
   // in all cases.
   webwidget_internal_->Close();
   webwidget_internal_ = nullptr;
+
+  close_weak_ptr_factory_.InvalidateWeakPtrs();
 }
 
 void RenderWidget::UpdateWebViewWithDeviceScaleFactor() {
@@ -2517,14 +2506,8 @@ void RenderWidget::SetHidden(bool hidden) {
   // throttled acks are released in case frame production ceases.
   is_hidden_ = hidden;
 
-#if defined(USE_AURA)
-  if (features::IsMultiProcessMash())
-    RendererWindowTreeClient::Get(routing_id_)->SetVisible(!hidden);
-#endif
-
-  if (is_hidden_) {
+  if (is_hidden_)
     first_update_visual_state_after_hidden_ = true;
-  }
 
   if (render_widget_scheduling_state_)
     render_widget_scheduling_state_->SetHidden(hidden);
@@ -2767,11 +2750,10 @@ void RenderWidget::DidHandleGestureEvent(const WebGestureEvent& event,
 }
 
 void RenderWidget::DidOverscroll(
-    const blink::WebFloatSize& overscrollDelta,
-    const blink::WebFloatSize& accumulatedOverscroll,
+    const blink::WebFloatSize& overscroll_delta,
+    const blink::WebFloatSize& accumulated_overscroll,
     const blink::WebFloatPoint& position,
-    const blink::WebFloatSize& velocity,
-    const cc::OverscrollBehavior& behavior) {
+    const blink::WebFloatSize& velocity) {
 #if defined(OS_MACOSX)
   // On OSX the user can disable the elastic overscroll effect. If that's the
   // case, don't forward the overscroll notification.
@@ -2779,8 +2761,24 @@ void RenderWidget::DidOverscroll(
   if (!compositor_deps()->IsElasticOverscrollEnabled())
     return;
 #endif
-  input_handler_->DidOverscrollFromBlink(overscrollDelta, accumulatedOverscroll,
-                                         position, velocity, behavior);
+  input_handler_->DidOverscrollFromBlink(
+      overscroll_delta, accumulated_overscroll, position, velocity,
+      layer_tree_view_->layer_tree_host()->overscroll_behavior());
+}
+
+void RenderWidget::InjectGestureScrollEvent(
+    blink::WebGestureDevice device,
+    const blink::WebFloatSize& delta,
+    ui::input_types::ScrollGranularity granularity,
+    cc::ElementId scrollable_area_element_id,
+    blink::WebInputEvent::Type injected_type) {
+  input_handler_->InjectGestureScrollEvent(
+      device, delta, granularity, scrollable_area_element_id, injected_type);
+}
+
+void RenderWidget::SetOverscrollBehavior(
+    const cc::OverscrollBehavior& behavior) {
+  layer_tree_view_->layer_tree_host()->SetOverscrollBehavior(behavior);
 }
 
 // static
@@ -2837,8 +2835,8 @@ cc::LayerTreeSettings RenderWidget::GenerateLayerTreeSettings(
       *result = int_value;
       return true;
     } else {
-      LOG(WARNING) << "Failed to parse switch " << switch_string << ": "
-                   << string_value;
+      DLOG(WARNING) << "Failed to parse switch " << switch_string << ": "
+                    << string_value;
       return false;
     }
   };
@@ -2962,6 +2960,8 @@ cc::LayerTreeSettings RenderWidget::GenerateLayerTreeSettings(
       cmd.HasSwitch(cc::switches::kShowLayerAnimationBounds);
   settings.initial_debug_state.show_paint_rects =
       cmd.HasSwitch(switches::kShowPaintRects);
+  settings.initial_debug_state.show_layout_shift_regions =
+      cmd.HasSwitch(switches::kShowLayoutShiftRegions);
   settings.initial_debug_state.show_property_changed_rects =
       cmd.HasSwitch(cc::switches::kShowPropertyChangedRects);
   settings.initial_debug_state.show_surface_damage_rects =
@@ -3243,9 +3243,9 @@ cc::ManagedMemoryPolicy RenderWidget::GetGpuMemoryPolicy(
   return actual;
 }
 
-void RenderWidget::HasPointerRawMoveEventHandlers(bool has_handlers) {
+void RenderWidget::HasPointerRawUpdateEventHandlers(bool has_handlers) {
   if (input_event_queue_)
-    input_event_queue_->HasPointerRawMoveEventHandlers(has_handlers);
+    input_event_queue_->HasPointerRawUpdateEventHandlers(has_handlers);
 }
 
 void RenderWidget::HasTouchEventHandlers(bool has_handlers) {
@@ -3305,11 +3305,40 @@ void RenderWidget::FallbackCursorModeSetCursorVisibility(bool visible) {
   widget_input_handler_manager_->FallbackCursorModeSetCursorVisibility(visible);
 }
 
-void RenderWidget::SetPageScaleFactorAndLimits(float page_scale_factor,
-                                               float minimum,
-                                               float maximum) {
+void RenderWidget::SetAllowGpuRasterization(bool allow_gpu_raster) {
+  layer_tree_view_->layer_tree_host()->SetHasGpuRasterizationTrigger(
+      allow_gpu_raster);
+}
+
+void RenderWidget::SetPageScaleStateAndLimits(float page_scale_factor,
+                                              bool is_pinch_gesture_active,
+                                              float minimum,
+                                              float maximum) {
   layer_tree_view_->layer_tree_host()->SetPageScaleFactorAndLimits(
       page_scale_factor, minimum, maximum);
+
+  // Only continue if this is a mainframe, or something's actually changed.
+  if (!delegate() ||
+      (page_scale_factor == page_scale_factor_from_mainframe_ &&
+       is_pinch_gesture_active == is_pinch_gesture_active_from_mainframe_)) {
+    return;
+  }
+
+  // The page scale is controlled by the WebView for the local main frame of
+  // the Page. So this is called from blink by for the RenderWidget of that
+  // local main frame. We forward the value on to each child RenderWidget (each
+  // of which will be via proxy child frame). These will each in turn forward
+  // the message to their child RenderWidgets (through their proxy child
+  // frames).
+  DCHECK(!is_frozen_);
+
+  for (auto& observer : render_frame_proxies_) {
+    observer.OnPageScaleFactorChanged(page_scale_factor,
+                                      is_pinch_gesture_active);
+  }
+  // Store the value to give to any new RenderFrameProxy that is registered.
+  page_scale_factor_from_mainframe_ = page_scale_factor;
+  is_pinch_gesture_active_from_mainframe_ = is_pinch_gesture_active;
 }
 
 void RenderWidget::StartPageScaleAnimation(const gfx::Vector2d& target_offset,
@@ -3319,6 +3348,116 @@ void RenderWidget::StartPageScaleAnimation(const gfx::Vector2d& target_offset,
   base::TimeDelta duration = base::TimeDelta::FromSecondsD(duration_sec);
   layer_tree_view_->layer_tree_host()->StartPageScaleAnimation(
       target_offset, use_anchor, new_page_scale, duration);
+}
+
+void RenderWidget::RequestDecode(const cc::PaintImage& image,
+                                 base::OnceCallback<void(bool)> callback) {
+  layer_tree_view_->layer_tree_host()->QueueImageDecode(image,
+                                                        std::move(callback));
+}
+
+// Enables measuring and reporting both presentation times and swap times in
+// swap promises.
+class ReportTimeSwapPromise : public cc::SwapPromise {
+  using ReportTimeCallback = blink::WebWidgetClient::ReportTimeCallback;
+
+ public:
+  ReportTimeSwapPromise(ReportTimeCallback callback,
+                        scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+                        base::WeakPtr<RenderWidget> render_widget)
+      : callback_(std::move(callback)),
+        task_runner_(std::move(task_runner)),
+        render_widget_(std::move(render_widget)) {}
+  ~ReportTimeSwapPromise() override = default;
+
+  void DidActivate() override {}
+
+  void WillSwap(viz::CompositorFrameMetadata* metadata) override {
+    DCHECK_GT(metadata->frame_token, 0u);
+    // The interval between the current swap and its presentation time is
+    // reported in UMA (see corresponding code in DidSwap() below).
+    frame_token_ = metadata->frame_token;
+  }
+  void DidSwap() override {
+    DCHECK_GT(frame_token_, 0u);
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::TimeTicks timestamp, ReportTimeCallback callback,
+               base::WeakPtr<RenderWidget> render_widget, int frame_token) {
+              std::move(callback).Run(
+                  blink::WebWidgetClient::SwapResult::kDidSwap, timestamp);
+              if (render_widget) {
+                render_widget->layer_tree_view()->AddPresentationCallback(
+                    frame_token,
+                    base::BindOnce(&RecordSwapTimeToPresentationTime,
+                                   timestamp));
+              }
+            },
+            base::TimeTicks::Now(), std::move(callback_), render_widget_,
+            frame_token_));
+  }
+
+  cc::SwapPromise::DidNotSwapAction DidNotSwap(
+      DidNotSwapReason reason) override {
+    blink::WebWidgetClient::SwapResult result;
+    switch (reason) {
+      case cc::SwapPromise::DidNotSwapReason::SWAP_FAILS:
+        result = blink::WebWidgetClient::SwapResult::kDidNotSwapSwapFails;
+        break;
+      case cc::SwapPromise::DidNotSwapReason::COMMIT_FAILS:
+        result = blink::WebWidgetClient::SwapResult::kDidNotSwapCommitFails;
+        break;
+      case cc::SwapPromise::DidNotSwapReason::COMMIT_NO_UPDATE:
+        result = blink::WebWidgetClient::SwapResult::kDidNotSwapCommitNoUpdate;
+        break;
+      case cc::SwapPromise::DidNotSwapReason::ACTIVATION_FAILS:
+        result = blink::WebWidgetClient::SwapResult::kDidNotSwapActivationFails;
+        break;
+    }
+    // During a failed swap, return the current time regardless of whether we're
+    // using presentation or swap timestamps.
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback_), result, base::TimeTicks::Now()));
+    return DidNotSwapAction::BREAK_PROMISE;
+  }
+
+  int64_t TraceId() const override { return 0; }
+
+ private:
+  static void RecordSwapTimeToPresentationTime(
+      base::TimeTicks swap_time,
+      base::TimeTicks presentation_time) {
+    DCHECK(!swap_time.is_null());
+    bool presentation_time_is_valid =
+        !presentation_time.is_null() && (presentation_time > swap_time);
+    UMA_HISTOGRAM_BOOLEAN("PageLoad.Internal.Renderer.PresentationTime.Valid",
+                          presentation_time_is_valid);
+    if (presentation_time_is_valid) {
+      // This measures from 1ms to 10seconds.
+      UMA_HISTOGRAM_TIMES(
+          "PageLoad.Internal.Renderer.PresentationTime.DeltaFromSwapTime",
+          presentation_time - swap_time);
+    }
+  }
+
+  ReportTimeCallback callback_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  base::WeakPtr<RenderWidget> render_widget_;
+  uint32_t frame_token_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(ReportTimeSwapPromise);
+};
+
+void RenderWidget::NotifySwapTime(ReportTimeCallback callback) {
+  cc::LayerTreeHost* layer_tree_host = layer_tree_view_->layer_tree_host();
+  // When the WebWidget is closed we cancel any pending SwapPromise that would
+  // call back into blink, so we use |close_weak_ptr_factory_|.
+  layer_tree_host->QueueSwapPromise(std::make_unique<ReportTimeSwapPromise>(
+      std::move(callback),
+      layer_tree_host->GetTaskRunnerProvider()->MainThreadTaskRunner(),
+      close_weak_ptr_factory_.GetWeakPtr()));
 }
 
 void RenderWidget::RequestUnbufferedInputEvents() {
@@ -3339,7 +3478,8 @@ void RenderWidget::RegisterRenderFrameProxy(RenderFrameProxy* proxy) {
   // frame trees). A new RenderFrameProxy means there is a new child
   // RenderWidget in another frame tree. In order for it to hear about
   // the page scale factor we pass along the last seen value here.
-  proxy->OnPageScaleFactorChanged(page_scale_factor_from_mainframe_);
+  proxy->OnPageScaleFactorChanged(page_scale_factor_from_mainframe_,
+                                  is_pinch_gesture_active_from_mainframe_);
 }
 
 void RenderWidget::UnregisterRenderFrameProxy(RenderFrameProxy* proxy) {
@@ -3476,31 +3616,6 @@ void RenderWidget::SetMouseCapture(bool capture) {
 bool RenderWidget::IsSurfaceSynchronizationEnabled() const {
   return layer_tree_view_ &&
          layer_tree_view_->IsSurfaceSynchronizationEnabled();
-}
-
-void RenderWidget::PageScaleFactorChanged(float page_scale_factor,
-                                          bool is_pinch_gesture_active) {
-  // The page scale is controlled by the WebView for the local main frame of
-  // the Page. So this is called from blink by for the RenderWidget of that
-  // local main frame. We forward the value on to each child RenderWidget (each
-  // of which will be via proxy child frame). These will each in turn forward
-  // the message to their child RenderWidgets (through their proxy child
-  // frames).
-  // TODO(crbug.com/924336): This value is continuously propagated during a
-  // pinch-zoom, causing the child RenderWidgets to re-raster, while the main
-  // frame is able to throttle re-raster to powers of 2. We could find some way
-  // to throttle child RenderWidgets also, perhaps by informing them when the
-  // pinch-zoom gesture is started and stopped.
-  DCHECK(!is_frozen_);
-  DCHECK(delegate());
-
-  // TODO(wjmaclean): In the next CL, plumb |is_pinch_gesture_active| into the
-  // observer via observer.OnPageScaleFactorChanged() and allow it to trigger
-  // SynchronizeVisualProperties if needed.
-  for (auto& observer : render_frame_proxies_)
-    observer.OnPageScaleFactorChanged(page_scale_factor);
-  // Store the value to give to any new RenderFrameProxy that is registered.
-  page_scale_factor_from_mainframe_ = page_scale_factor;
 }
 
 void RenderWidget::UseSynchronousResizeModeForTesting(bool enable) {

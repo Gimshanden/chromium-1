@@ -37,7 +37,6 @@
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_home_node_item.h"
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_table_cell_title_edit_delegate.h"
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_table_signin_promo_cell.h"
-#import "ios/chrome/browser/ui/chrome_load_params.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/ui/material_components/utils.h"
@@ -275,7 +274,8 @@ std::vector<GURL> GetUrlsToOpen(const std::vector<const BookmarkNode*>& nodes) {
         bookmark_utils_ios::FindFolderById(self.bookmarks, nodeID);
     DCHECK(node);
     // if node is an empty permanent node, stop.
-    if (node->empty() && IsPrimaryPermanentNode(node, self.bookmarks)) {
+    if (node->children().empty() &&
+        IsPrimaryPermanentNode(node, self.bookmarks)) {
       break;
     }
 
@@ -1055,10 +1055,9 @@ std::vector<GURL> GetUrlsToOpen(const std::vector<const BookmarkNode*>& nodes) {
                                  new_tab_page_uma::ACTION_OPENED_BOOKMARK);
   base::RecordAction(
       base::UserMetricsAction("MobileBookmarkManagerEntryOpened"));
-  web::NavigationManager::WebLoadParams params(url);
-  params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-  UrlLoadingServiceFactory::GetForBrowserState(self.browserState)
-      ->Load(UrlLoadParams::InCurrentTab(params));
+  UrlLoadParams params = UrlLoadParams::InCurrentTab(url);
+  params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+  UrlLoadingServiceFactory::GetForBrowserState(self.browserState)->Load(params);
 }
 
 - (void)addNewFolder {
@@ -1228,7 +1227,7 @@ std::vector<GURL> GetUrlsToOpen(const std::vector<const BookmarkNode*>& nodes) {
     return [self
         hasItemsInSectionIdentifier:BookmarkHomeSectionIdentifierBookmarks];
   } else {
-    return !self.sharedState.tableViewDisplayedRootNode->empty();
+    return !self.sharedState.tableViewDisplayedRootNode->children().empty();
   }
 }
 

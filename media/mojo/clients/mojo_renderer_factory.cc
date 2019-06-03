@@ -19,10 +19,8 @@
 namespace media {
 
 MojoRendererFactory::MojoRendererFactory(
-    const GetGpuFactoriesCB& get_gpu_factories_cb,
     media::mojom::InterfaceFactory* interface_factory)
-    : get_gpu_factories_cb_(get_gpu_factories_cb),
-      interface_factory_(interface_factory) {
+    : interface_factory_(interface_factory) {
   DCHECK(interface_factory_);
 }
 
@@ -37,9 +35,7 @@ std::unique_ptr<Renderer> MojoRendererFactory::CreateRenderer(
     const gfx::ColorSpace& /* target_color_space */) {
   DCHECK(interface_factory_);
 
-  DCHECK(get_gpu_factories_cb_);
-  auto overlay_factory =
-      std::make_unique<VideoOverlayFactory>(get_gpu_factories_cb_.Run());
+  auto overlay_factory = std::make_unique<VideoOverlayFactory>();
 
   mojom::RendererPtr renderer_ptr;
   interface_factory_->CreateDefaultRenderer(std::string(),
@@ -53,11 +49,14 @@ std::unique_ptr<Renderer> MojoRendererFactory::CreateRenderer(
 #if defined(OS_ANDROID)
 std::unique_ptr<MojoRenderer> MojoRendererFactory::CreateFlingingRenderer(
     const std::string& presentation_id,
+    mojom::FlingingRendererClientExtensionPtr client_extension_ptr,
     const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
     VideoRendererSink* video_renderer_sink) {
   DCHECK(interface_factory_);
   mojom::RendererPtr renderer_ptr;
+
   interface_factory_->CreateFlingingRenderer(presentation_id,
+                                             std::move(client_extension_ptr),
                                              mojo::MakeRequest(&renderer_ptr));
 
   return std::make_unique<MojoRenderer>(

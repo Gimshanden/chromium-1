@@ -25,6 +25,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_LINK_ELEMENT_H_
 
 #include <memory>
+
 #include "base/single_thread_task_runner.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/create_element_flags.h"
@@ -51,8 +52,6 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   USING_GARBAGE_COLLECTED_MIXIN(HTMLLinkElement);
 
  public:
-  static HTMLLinkElement* Create(Document&, const CreateElementFlags);
-
   HTMLLinkElement(Document&, const CreateElementFlags);
   ~HTMLLinkElement() override;
 

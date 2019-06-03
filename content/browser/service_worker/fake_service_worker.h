@@ -20,6 +20,8 @@ class EmbeddedWorkerTestHelper;
 // by default the lifetime is tied to the Mojo connection.
 class FakeServiceWorker : public blink::mojom::ServiceWorker {
  public:
+  using FetchHandlerExistence = blink::mojom::FetchHandlerExistence;
+
   // |helper| must outlive this instance.
   explicit FakeServiceWorker(EmbeddedWorkerTestHelper* helper);
 
@@ -36,12 +38,16 @@ class FakeServiceWorker : public blink::mojom::ServiceWorker {
 
   bool is_zero_idle_timer_delay() const { return is_zero_idle_timer_delay_; }
 
+  FetchHandlerExistence fetch_handler_existence() const {
+    return fetch_handler_existence_;
+  }
+
  protected:
   // blink::mojom::ServiceWorker overrides:
   void InitializeGlobalScope(
       blink::mojom::ServiceWorkerHostAssociatedPtrInfo service_worker_host,
-      blink::mojom::ServiceWorkerRegistrationObjectInfoPtr registration_info)
-      override;
+      blink::mojom::ServiceWorkerRegistrationObjectInfoPtr registration_info,
+      FetchHandlerExistence fetch_handler_existence) override;
   void DispatchInstallEvent(DispatchInstallEventCallback callback) override;
   void DispatchActivateEvent(DispatchActivateEventCallback callback) override;
   void DispatchBackgroundFetchAbortEvent(
@@ -80,6 +86,10 @@ class FakeServiceWorker : public blink::mojom::ServiceWorker {
                          bool last_chance,
                          base::TimeDelta timeout,
                          DispatchSyncEventCallback callback) override;
+  void DispatchPeriodicSyncEvent(
+      const std::string& tag,
+      base::TimeDelta timeout,
+      DispatchPeriodicSyncEventCallback callback) override;
   void DispatchAbortPaymentEvent(
       payments::mojom::PaymentHandlerResponseCallbackPtr response_callback,
       DispatchAbortPaymentEventCallback callback) override;
@@ -112,6 +122,8 @@ class FakeServiceWorker : public blink::mojom::ServiceWorker {
 
   blink::mojom::ServiceWorkerHostAssociatedPtr host_;
   blink::mojom::ServiceWorkerRegistrationObjectInfoPtr registration_info_;
+  FetchHandlerExistence fetch_handler_existence_ =
+      FetchHandlerExistence::UNKNOWN;
   base::OnceClosure quit_closure_for_initialize_global_scope_;
 
   mojo::Binding<blink::mojom::ServiceWorker> binding_;

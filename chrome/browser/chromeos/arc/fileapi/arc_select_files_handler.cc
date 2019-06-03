@@ -13,6 +13,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_content_file_system_url_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_util.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_select_files_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/path_util.h"
@@ -35,6 +36,10 @@ namespace arc {
 // Script for clicking OK button on the selector.
 const char kScriptClickOk[] =
     "(function() { document.querySelector('#ok-button').click(); })();";
+
+// Script for clicking Cancel button on the selector.
+const char kScriptClickCancel[] =
+    "(function() { document.querySelector('#cancel-button').click(); })();";
 
 // Script for clicking a directory element in the left pane of the selector.
 // %s should be replaced by the target directory name wrapped by double-quotes.
@@ -95,16 +100,7 @@ void ContentUrlsResolved(mojom::FileSystemHost::SelectFilesCallback callback,
                          const std::vector<GURL>& content_urls) {
   mojom::SelectFilesResultPtr result = mojom::SelectFilesResult::New();
   for (const GURL& content_url : content_urls) {
-    // Replace intent_helper.fileprovider with file_system.fileprovider in URL.
-    // TODO(niwa): Remove this and update path_util to use
-    // file_system.fileprovider by default once we complete migration.
-    std::string url_string = content_url.spec();
-    if (base::StartsWith(url_string, arc::kIntentHelperFileproviderUrl,
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      url_string.replace(0, strlen(arc::kIntentHelperFileproviderUrl),
-                         arc::kFileSystemFileproviderUrl);
-    }
-    result->urls.push_back(GURL(url_string));
+    result->urls.push_back(content_url);
   }
   std::move(callback).Run(std::move(result));
 }
@@ -147,7 +143,12 @@ void BuildFileTypeInfo(const mojom::SelectFilesRequestPtr& request,
   for (const std::string& mime_type : request->mime_types) {
     std::vector<base::FilePath::StringType> extensions;
     net::GetExtensionsForMimeType(mime_type, &extensions);
-    file_type_info->extensions.push_back(extensions);
+    if (extensions.empty()) {
+      // Allow the user to select all files if MIME type conversion fails.
+      file_type_info->include_all_files = true;
+    } else {
+      file_type_info->extensions.push_back(extensions);
+    }
   }
 }
 
@@ -155,17 +156,10 @@ void BuildFileTypeInfo(const mojom::SelectFilesRequestPtr& request,
 
 ArcSelectFilesHandler::ArcSelectFilesHandler(content::BrowserContext* context)
     : profile_(Profile::FromBrowserContext(context)) {
-  select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
-  dialog_script_executor_ =
-      base::MakeRefCounted<SelectFileDialogScriptExecutor>(
-          select_file_dialog_.get());
+  dialog_holder_ = std::make_unique<SelectFileDialogHolder>(this);
 }
 
-ArcSelectFilesHandler::~ArcSelectFilesHandler() {
-  // select_file_dialog_ can be nullptr only in unit tests.
-  if (select_file_dialog_.get())
-    select_file_dialog_->ListenerDestroyed();
-}
+ArcSelectFilesHandler::~ArcSelectFilesHandler() = default;
 
 void ArcSelectFilesHandler::SelectFiles(
     const mojom::SelectFilesRequestPtr& request,
@@ -187,20 +181,29 @@ void ArcSelectFilesHandler::SelectFiles(
   BuildFileTypeInfo(request, &file_type_info);
   base::FilePath default_path = GetInitialFilePath(request);
 
-  select_file_dialog_->SelectFile(
-      dialog_type,
-      /*title=*/base::string16(),
-      /*default_path=*/default_path, &file_type_info,
-      /*file_type_index=*/0,
-      /*default_extension=*/base::FilePath::StringType(),
-      /*owning_window=*/nullptr,
-      /*params=*/nullptr);
+  // Android picker apps should be shown in GET_CONTENT mode.
+  bool show_android_picker_apps =
+      request->action_type == mojom::SelectFilesActionType::GET_CONTENT;
+
+  dialog_holder_->SelectFile(dialog_type, default_path, &file_type_info,
+                             show_android_picker_apps);
 }
 
 void ArcSelectFilesHandler::FileSelected(const base::FilePath& path,
                                          int index,
                                          void* params) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(callback_);
+
+  const std::string& activity = ConvertFilePathToAndroidActivity(path);
+  if (!activity.empty()) {
+    // The user selected an Android picker activity instead of a file.
+    mojom::SelectFilesResultPtr result = mojom::SelectFilesResult::New();
+    result->picker_activity = activity;
+    std::move(callback_).Run(std::move(result));
+    return;
+  }
+
   std::vector<base::FilePath> files;
   files.push_back(path);
   FilesSelectedInternal(files, params);
@@ -254,6 +257,9 @@ void ArcSelectFilesHandler::OnFileSelectorEvent(
     case mojom::FileSelectorEventType::CLICK_OK:
       script = kScriptClickOk;
       break;
+    case mojom::FileSelectorEventType::CLICK_CANCEL:
+      script = kScriptClickCancel;
+      break;
     case mojom::FileSelectorEventType::CLICK_DIRECTORY:
       script = base::StringPrintf(kScriptClickDirectory,
                                   quotedClickTargetName.c_str());
@@ -263,7 +269,7 @@ void ArcSelectFilesHandler::OnFileSelectorEvent(
           base::StringPrintf(kScriptClickFile, quotedClickTargetName.c_str());
       break;
   }
-  dialog_script_executor_->ExecuteJavaScript(script, {});
+  dialog_holder_->ExecuteJavaScript(script, {});
 
   std::move(callback).Run();
 }
@@ -272,33 +278,46 @@ void ArcSelectFilesHandler::GetFileSelectorElements(
     mojom::FileSystemHost::GetFileSelectorElementsCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  dialog_script_executor_->ExecuteJavaScript(
+  dialog_holder_->ExecuteJavaScript(
       kScriptGetElements,
       base::BindOnce(&OnGetElementsScriptResults, std::move(callback)));
 }
 
-void ArcSelectFilesHandler::SetSelectFileDialogForTesting(
-    ui::SelectFileDialog* dialog) {
-  select_file_dialog_ = dialog;
+void ArcSelectFilesHandler::SetDialogHolderForTesting(
+    std::unique_ptr<SelectFileDialogHolder> dialog_holder) {
+  dialog_holder_ = std::move(dialog_holder);
 }
 
-void ArcSelectFilesHandler::SetDialogScriptExecutorForTesting(
-    SelectFileDialogScriptExecutor* dialog_script_executor) {
-  dialog_script_executor_ = dialog_script_executor;
+SelectFileDialogHolder::SelectFileDialogHolder(
+    ui::SelectFileDialog::Listener* listener) {
+  select_file_dialog_ = static_cast<SelectFileDialogExtension*>(
+      ui::SelectFileDialog::Create(listener, nullptr).get());
 }
 
-SelectFileDialogScriptExecutor::SelectFileDialogScriptExecutor(
-    ui::SelectFileDialog* dialog)
-    : select_file_dialog_(dialog) {}
+SelectFileDialogHolder::~SelectFileDialogHolder() {
+  // select_file_dialog_ can be nullptr only in unit tests.
+  if (select_file_dialog_.get())
+    select_file_dialog_->ListenerDestroyed();
+}
 
-SelectFileDialogScriptExecutor::~SelectFileDialogScriptExecutor() {}
+void SelectFileDialogHolder::SelectFile(
+    ui::SelectFileDialog::Type type,
+    const base::FilePath& default_path,
+    const ui::SelectFileDialog::FileTypeInfo* file_types,
+    bool show_android_picker_apps) {
+  select_file_dialog_->SelectFileWithFileManagerParams(
+      type,
+      /*title=*/base::string16(), default_path, file_types,
+      /*file_type_index=*/0,
+      /*default_extension=*/base::FilePath::StringType(),
+      /*owning_window=*/nullptr,
+      /*params=*/nullptr, show_android_picker_apps);
+}
 
-void SelectFileDialogScriptExecutor::ExecuteJavaScript(
+void SelectFileDialogHolder::ExecuteJavaScript(
     const std::string& script,
     content::RenderFrameHost::JavaScriptResultCallback callback) {
-  content::RenderViewHost* view_host =
-      static_cast<SelectFileDialogExtension*>(select_file_dialog_)
-          ->GetRenderViewHost();
+  content::RenderViewHost* view_host = select_file_dialog_->GetRenderViewHost();
   content::RenderFrameHost* frame_host =
       view_host ? view_host->GetMainFrame() : nullptr;
 

@@ -26,14 +26,6 @@
 
 namespace {
 constexpr int kSlideValueChangeDurationMs = 150;
-
-// The image chunks.
-enum BorderElements {
-  LEFT,
-  CENTER_LEFT,
-  CENTER_RIGHT,
-  RIGHT,
-};
 }  // namespace
 
 namespace views {
@@ -41,12 +33,11 @@ namespace views {
 namespace {
 
 // Color of slider at the active and the disabled state, respectively.
-constexpr SkColor kActiveColor = SkColorSetARGB(0xFF, 0x42, 0x85, 0xF4);
-constexpr SkColor kDisabledColor = SkColorSetARGB(0xFF, 0xBD, 0xBD, 0xBD);
-constexpr uint8_t kHighlightColorAlpha = 0x4D;
+constexpr SkColor kActiveColor = SkColorSetARGB(0xFF, 0x25, 0x81, 0xDF);
+constexpr SkColor kDisabledColor = SkColorSetARGB(0x6E, 0xF1, 0xF3, 0xF4);
 
-// Color of the empty portion of the slider
-const SkColor kEmptySliderColor = SkColorSetARGB(0xFF, 0xBD, 0xBD, 0xBD);
+constexpr uint8_t kActiveColorAlpha = 0x40;
+constexpr uint8_t kDisabledColorAlpha = 0x19;
 
 // The thickness of the slider.
 constexpr int kLineThickness = 2;
@@ -59,9 +50,9 @@ constexpr int kSliderPadding = 2;
 
 // The radius of the thumb and the highlighted thumb of the slider,
 // respectively.
-constexpr float kThumbRadius = 6.f;
+constexpr float kThumbRadius = 4.f;
 constexpr float kThumbWidth = 2 * kThumbRadius;
-constexpr float kThumbHighlightRadius = 10.f;
+constexpr float kThumbHighlightRadius = 12.f;
 
 // Duration of the thumb highlight growing effect animation.
 constexpr int kSlideHighlightChangeDurationMs = 150;
@@ -274,13 +265,15 @@ void Slider::OnPaint(gfx::Canvas* canvas) {
   const int x = content.x() + full + kThumbRadius;
   const SkColor current_thumb_color =
       is_active_ ? kActiveColor : kDisabledColor;
+  const uint8_t current_color_alpha =
+      is_active_ ? kActiveColorAlpha : kDisabledColorAlpha;
   const SkColor empty_slider_color =
-      is_active_ ? kEmptySliderColor
-                 : SkColorSetA(kEmptySliderColor, kHighlightColorAlpha);
+      SkColorSetA(current_thumb_color, current_color_alpha);
 
-  // Extra space used to hide slider ends behind the thumb when slider is
-  // disabled.
-  const int extra_padding = is_active_ ? 0 : kSliderPadding;
+  // Padding used to adjust space between slider ends and slider thumb.
+  // Value is negative when slider is active so that there is no separation
+  // between slider and thumb.
+  const int extra_padding = is_active_ ? -kSliderPadding : kSliderPadding;
 
   cc::PaintFlags slider_flags;
   slider_flags.setAntiAlias(true);
@@ -301,7 +294,7 @@ void Slider::OnPaint(gfx::Canvas* canvas) {
   if (thumb_highlight_radius > kThumbRadius) {
     cc::PaintFlags highlight;
     SkColor highlight_color =
-        SkColorSetA(current_thumb_color, kHighlightColorAlpha);
+        SkColorSetA(current_thumb_color, current_color_alpha);
     highlight.setColor(highlight_color);
     highlight.setAntiAlias(true);
     canvas->DrawCircle(thumb_center, thumb_highlight_radius, highlight);

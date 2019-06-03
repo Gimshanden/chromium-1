@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 #include <utility>
@@ -79,8 +80,8 @@ class TestCustomElementDefinition : public CustomElementDefinition {
   bool HasAdoptedCallback() const override { return false; }
   bool HasFormAssociatedCallback() const override { return false; }
   bool HasFormResetCallback() const override { return false; }
-  bool HasDisabledStateChangedCallback() const override { return false; }
-  bool HasRestoreStateCallback() const override { return false; }
+  bool HasFormDisabledCallback() const override { return false; }
+  bool HasFormStateRestoreCallback() const override { return false; }
 
   void RunConnectedCallback(Element&) override {
     NOTREACHED() << "definition does not have connected callback";
@@ -111,14 +112,13 @@ class TestCustomElementDefinition : public CustomElementDefinition {
     NOTREACHED() << "definition does not have formResetCallback";
   }
 
-  void RunDisabledStateChangedCallback(Element& element,
-                                       bool is_disabled) override {
+  void RunFormDisabledCallback(Element& element, bool is_disabled) override {
     NOTREACHED() << "definition does not have disabledStateChangedCallback";
   }
 
-  void RunRestoreStateCallback(Element& element,
-                               const FileOrUSVStringOrFormData& value,
-                               const String& mode) override {
+  void RunFormStateRestoreCallback(Element& element,
+                                   const FileOrUSVStringOrFormData& value,
+                                   const String& mode) override {
     NOTREACHED() << "definition does not have restoreValueCallback";
   }
 
@@ -156,7 +156,7 @@ class CreateElement {
   operator Element*() const {
     Document* document = document_.Get();
     if (!document)
-      document = HTMLDocument::CreateForTest();
+      document = MakeGarbageCollected<HTMLDocument>();
     NonThrowableExceptionState no_exceptions;
     Element* element = document->CreateElement(
         QualifiedName(g_null_atom, local_name_, namespace_uri_),

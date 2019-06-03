@@ -83,6 +83,7 @@ var Runtime = class {  // eslint-disable-line
       const xhr = new XMLHttpRequest();
       xhr.open('GET', url, true);
       xhr.onreadystatechange = onreadystatechange;
+      const requestStart = performance.now();
 
       /**
        * @param {Event} e
@@ -93,6 +94,13 @@ var Runtime = class {  // eslint-disable-line
 
         // DevTools Proxy server can mask 404s as 200s, check the body to be sure
         const status = /^HTTP\/1.1 404/.test(e.target.response) ? 404 : xhr.status;
+
+        if (url.indexOf('remote') > -1) {
+          // Log performance for remote modules
+          const requestDone = performance.now();
+          InspectorFrontendHost.recordPerformanceHistogram(
+              'DevTools.FrontendRemoteRequestLoadTime', (requestDone - requestStart));
+        }
 
         if ([0, 200, 304].indexOf(status) === -1)  // Testing harness file:/// results in 0.
           reject(new Error('While loading from url ' + url + ' server responded with a status of ' + status));
@@ -111,7 +119,7 @@ var Runtime = class {  // eslint-disable-line
     return Runtime.loadResourcePromise(url).catch(err => {
       const urlWithFallbackVersion = url.replace(/@[0-9a-f]{40}/, REMOTE_MODULE_FALLBACK_REVISION);
       // TODO(phulce): mark fallbacks in module.json and modify build script instead
-      if (urlWithFallbackVersion === url || !url.includes('audits2_worker_module'))
+      if (urlWithFallbackVersion === url || !url.includes('audits_worker_module'))
         throw err;
       return Runtime.loadResourcePromise(urlWithFallbackVersion);
     });
@@ -376,6 +384,13 @@ var Runtime = class {  // eslint-disable-line
       sourceURL = sourceURL.replace(self.location.search, '');
     sourceURL = sourceURL.substring(0, sourceURL.lastIndexOf('/') + 1) + path;
     return '\n/*# sourceURL=' + sourceURL + ' */';
+  }
+
+  /**
+   * @param {function(string):string} localizationFunction
+   */
+  static setL10nCallback(localizationFunction) {
+    Runtime._l10nCallback = localizationFunction;
   }
 
   useTestBase() {
@@ -890,8 +905,10 @@ Runtime.Extension = class {
    * @return {string}
    */
   title() {
-    // FIXME: should be Common.UIString() but runtime is not l10n aware yet.
-    return this._descriptor['title-' + Runtime._platform] || this._descriptor['title'];
+    const title = this._descriptor['title-' + Runtime._platform] || this._descriptor['title'];
+    if (title && Runtime._l10nCallback)
+      return Runtime._l10nCallback(title);
+    return title;
   }
 
   /**
@@ -1071,12 +1088,16 @@ Runtime.experiments = new Runtime.ExperimentsSupport();
 /** @type {Function} */
 Runtime._appStartedPromiseCallback;
 Runtime._appStartedPromise = new Promise(fulfil => Runtime._appStartedPromiseCallback = fulfil);
+
+/** @type {function(string):string} */
+Runtime._l10nCallback;
+
 /**
  * @type {?string}
  */
 Runtime._remoteBase;
 (function validateRemoteBase() {
-  if (location.href.startsWith('chrome-devtools://devtools/bundled/') && Runtime.queryParam('remoteBase')) {
+  if (location.href.startsWith('devtools://devtools/bundled/') && Runtime.queryParam('remoteBase')) {
     const versionMatch = /\/serve_file\/(@[0-9a-zA-Z]+)\/?$/.exec(Runtime.queryParam('remoteBase'));
     if (versionMatch)
       Runtime._remoteBase = `${location.origin}/remote/serve_file/${versionMatch[1]}/`;

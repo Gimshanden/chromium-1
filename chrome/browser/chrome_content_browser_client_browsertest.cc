@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -23,12 +24,14 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/policy_header_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
@@ -95,6 +98,55 @@ IN_PROC_BROWSER_TEST_F(ChromeContentBrowserClientBrowserTest,
   ASSERT_TRUE(entry != NULL);
   EXPECT_EQ(url, entry->GetURL());
   EXPECT_EQ(url, entry->GetVirtualURL());
+}
+
+class ChromeContentBrowserClientPopupsTest : public InProcessBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // Required setup for kAllowPopupsDuringPageUnload switch
+    // as its being checked (whether its going to be enabled or not)
+    // only if the process type is renderer process.
+    command_line_.AppendSwitchASCII(switches::kProcessType,
+                                    switches::kRendererProcess);
+  }
+  void SetUpOnMainThread() override {
+    kChildProcessId = browser()
+                          ->tab_strip_model()
+                          ->GetActiveWebContents()
+                          ->GetMainFrame()
+                          ->GetProcess()
+                          ->GetID();
+  }
+  ChromeContentBrowserClientPopupsTest()
+      : command_line_(base::CommandLine::NO_PROGRAM) {}
+
+  void AppendContentBrowserClientSwitches() {
+    client_.AppendExtraCommandLineSwitches(&command_line_, kChildProcessId);
+  }
+
+  const base::CommandLine& command_line() const { return command_line_; }
+
+ private:
+  ChromeContentBrowserClient client_;
+  base::CommandLine command_line_;
+  int kChildProcessId;
+};
+
+IN_PROC_BROWSER_TEST_F(ChromeContentBrowserClientPopupsTest,
+                       AllowPopupsDuringPageUnload) {
+  // Verify that the switch is included only when the
+  // pref AllowPopupsDuringPageUnload value is true.
+
+  PrefService* pref_service = browser()->profile()->GetPrefs();
+  pref_service->SetBoolean(prefs::kAllowPopupsDuringPageUnload, false);
+  AppendContentBrowserClientSwitches();
+  EXPECT_FALSE(
+      command_line().HasSwitch(switches::kAllowPopupsDuringPageUnload));
+  // When the pref value is being set to true
+  // the switch should be included.
+  pref_service->SetBoolean(prefs::kAllowPopupsDuringPageUnload, true);
+  AppendContentBrowserClientSwitches();
+  EXPECT_TRUE(command_line().HasSwitch(switches::kAllowPopupsDuringPageUnload));
 }
 
 // Helper class to mark "https://ntp.com/" as an isolated origin.
@@ -592,5 +644,69 @@ IN_PROC_BROWSER_TEST_F(OpenWindowFromNTPBrowserTest,
   EXPECT_FALSE(instant_service->IsInstantProcess(
       opened_tab->GetMainFrame()->GetProcess()->GetID()));
 }
+
+class PrefersColorSchemeTest : public testing::WithParamInterface<bool>,
+                               public InProcessBrowserTest {
+ protected:
+  PrefersColorSchemeTest() = default;
+  const char* ExpectedColorScheme() const {
+    return ui::NativeTheme::GetInstanceForNativeUi()->SystemDarkModeEnabled()
+               ? "dark"
+               : "light";
+  }
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    InProcessBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII("enable-blink-features",
+                                    "MediaQueryPrefersColorScheme");
+    if (GetParam())
+      command_line->AppendSwitch("force-dark-mode");
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(PrefersColorSchemeTest, PrefersColorScheme) {
+  ui_test_utils::NavigateToURL(
+      browser(),
+      ui_test_utils::GetTestUrl(
+          base::FilePath(base::FilePath::kCurrentDirectory),
+          base::FilePath(FILE_PATH_LITERAL("prefers-color-scheme.html"))));
+  base::string16 tab_title;
+  ASSERT_TRUE(ui_test_utils::GetCurrentTabTitle(browser(), &tab_title));
+  EXPECT_EQ(base::ASCIIToUTF16(ExpectedColorScheme()), tab_title);
+}
+
+INSTANTIATE_TEST_SUITE_P(All, PrefersColorSchemeTest, testing::Bool());
+
+#if defined(OS_CHROMEOS)
+class ProtocolHandlerTest : public InProcessBrowserTest {
+ public:
+  ProtocolHandlerTest() = default;
+
+  void SetUpOnMainThread() override {
+    InProcessBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ProtocolHandlerTest);
+};
+
+// Tests that if a protocol handler is registered for a scheme, an external
+// program (another Chrome tab in this case) is not launched to handle the
+// navigation.
+IN_PROC_BROWSER_TEST_F(ProtocolHandlerTest, ExternalProgramNotLaunched) {
+  ui_test_utils::NavigateToURL(browser(), GURL("mailto:bob@example.com"));
+
+  // If an external program (Chrome) was launched, it will result in a second
+  // tab being opened.
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+
+  // Make sure the protocol handler redirected the navigation.
+  base::string16 expected_title = base::ASCIIToUTF16("mail.google.com");
+  content::TitleWatcher title_watcher(
+      browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
+  EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+}
+#endif
 
 }  // namespace content

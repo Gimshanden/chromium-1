@@ -58,13 +58,15 @@ cr.define('app_management.util', function() {
    * @param {number} permissionId
    * @param {!PermissionValueType} valueType
    * @param {number} value
+   * @param {boolean} isManaged
    * @return {!Permission}
    */
-  function createPermission(permissionId, valueType, value) {
+  function createPermission(permissionId, valueType, value, isManaged) {
     return {
-      permissionId: permissionId,
-      valueType: valueType,
-      value: value,
+      permissionId,
+      valueType,
+      value,
+      isManaged,
     };
   }
 
@@ -208,8 +210,19 @@ cr.define('app_management.util', function() {
     return selectedAppId ? state.apps[selectedAppId] : null;
   }
 
+  /**
+   * A comparator function to sort strings alphabetically.
+   *
+   * @param {string} a
+   * @param {string} b
+   */
+  function alphabeticalSort(a, b) {
+    return a.localeCompare(b);
+  }
+
   return {
     addIfNeeded: addIfNeeded,
+    alphabeticalSort: alphabeticalSort,
     createEmptyState: createEmptyState,
     createInitialState: createInitialState,
     createPermission: createPermission,

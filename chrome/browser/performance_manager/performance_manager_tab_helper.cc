@@ -4,7 +4,7 @@
 
 #include "chrome/browser/performance_manager/performance_manager_tab_helper.h"
 
-#include <utility>
+#include <type_traits>
 #include <vector>
 
 #include "base/bind.h"
@@ -16,23 +16,13 @@
 #include "chrome/browser/performance_manager/render_process_user_data.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 
 namespace performance_manager {
 
-PerformanceManagerTabHelper* PerformanceManagerTabHelper::first_ = nullptr;
-
 // static
-bool PerformanceManagerTabHelper::GetCoordinationIDForWebContents(
-    content::WebContents* web_contents,
-    resource_coordinator::CoordinationUnitID* id) {
-  PerformanceManagerTabHelper* helper = FromWebContents(web_contents);
-  if (!helper)
-    return false;
-  *id = helper->page_node_->id();
-
-  return true;
-}
+PerformanceManagerTabHelper* PerformanceManagerTabHelper::first_ = nullptr;
 
 // static
 void PerformanceManagerTabHelper::DetachAndDestroyAll() {
@@ -44,21 +34,18 @@ PerformanceManagerTabHelper::PerformanceManagerTabHelper(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       performance_manager_(PerformanceManager::GetInstance()),
-      page_node_(performance_manager_->CreatePageNode()) {
-  // Make sure to set the visibility property when we create
-  // |page_resource_coordinator_|.
-  UpdatePageNodeVisibility(web_contents->GetVisibility());
+      weak_factory_(this) {
+  page_node_ = performance_manager_->CreatePageNode(
+      WebContentsProxy(weak_factory_.GetWeakPtr()),
+      web_contents->GetVisibility() == content::Visibility::VISIBLE);
 
   // Dispatch creation notifications for any pre-existing frames.
-  // This seems to occur only in tests, but dealing with this allows asserting
-  // a strong invariant on the |frames_| collection.
-  // TODO(siggi): Eliminate this once test injection is all or nothing.
   std::vector<content::RenderFrameHost*> existing_frames =
       web_contents->GetAllFrames();
   for (content::RenderFrameHost* frame : existing_frames) {
-    // Only send notifications for live frames, the non-live ones will generate
-    // creation notifications when animated.
-    if (frame->IsRenderFrameLive())
+    // Only send notifications for created frames, the others will generate
+    // creation notifications in due course (or not at all).
+    if (frame->IsRenderFrameCreated())
       RenderFrameCreated(frame);
   }
 
@@ -108,22 +95,29 @@ void PerformanceManagerTabHelper::RenderFrameCreated(
     parent_frame_node = frames_[parent].get();
   }
 
-  std::unique_ptr<FrameNodeImpl> frame = performance_manager_->CreateFrameNode(
-      page_node_.get(), parent_frame_node);
+  // Ideally this would strictly be a "Get", but it is possible in tests for
+  // the the RenderProcessUserData to not have attached at this point.
+  auto* process_node = RenderProcessUserData::GetOrCreateForRenderProcessHost(
+                           render_frame_host->GetProcess())
+                           ->process_node();
 
-  RenderProcessUserData* user_data =
-      RenderProcessUserData::GetForRenderProcessHost(
-          render_frame_host->GetProcess());
-  // In unittests the user data isn't populated as the relevant main parts
-  // is not in play.
-  // TODO(siggi): Figure out how to assert on this when the main parts are
-  //     registered with the content browser client.
-  if (user_data) {
-    performance_manager_->task_runner()->PostTask(
-        FROM_HERE, base::BindOnce(&FrameNodeImpl::SetProcess,
-                                  base::Unretained(frame.get()),
-                                  user_data->process_node()));
-  }
+  auto* site_instance = render_frame_host->GetSiteInstance();
+
+  // Create the frame node, and provide a callback that will run in the graph to
+  // initialize it.
+  std::unique_ptr<FrameNodeImpl> frame = performance_manager_->CreateFrameNode(
+      process_node, page_node_.get(), parent_frame_node,
+      render_frame_host->GetFrameTreeNodeId(),
+      render_frame_host->GetDevToolsFrameToken(),
+      site_instance->GetBrowsingInstanceId(), site_instance->GetId(),
+      base::BindOnce(
+          [](const GURL& url, bool is_current, FrameNodeImpl* frame_node) {
+            if (!url.is_empty())
+              frame_node->OnNavigationCommitted(url, /* same_document */ false);
+            frame_node->SetIsCurrent(is_current);
+          },
+          render_frame_host->GetLastCommittedURL(),
+          render_frame_host->IsCurrent()));
 
   frames_[render_frame_host] = std::move(frame);
 }
@@ -131,27 +125,91 @@ void PerformanceManagerTabHelper::RenderFrameCreated(
 void PerformanceManagerTabHelper::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
   auto it = frames_.find(render_frame_host);
+  if (it == frames_.end()) {
+    // https://crbug.com/948088.
+    // At the present time (May 2019), it's possible for speculative render
+    // frame hosts to exist at the time this TabHelper is attached to a
+    // WebContents. These speculative render frame hosts are not exposed in
+    // enumeration, and so may be first observed at deletion time.
+    return;
+  }
   DCHECK(it != frames_.end());
 
   performance_manager_->DeleteNode(std::move(it->second));
   frames_.erase(it);
 }
 
-void PerformanceManagerTabHelper::DidStartLoading() {
+void PerformanceManagerTabHelper::RenderFrameHostChanged(
+    content::RenderFrameHost* old_host,
+    content::RenderFrameHost* new_host) {
+  // |old_host| is null when a new frame tree position is being created and a
+  // new frame is its first occupant.
+  FrameNodeImpl* old_frame = nullptr;
+  if (old_host) {
+    auto it = frames_.find(old_host);
+    if (it != frames_.end()) {
+      // This can be received for a frame that hasn't yet been created. We can
+      // safely ignore this. It would be nice to track those frames too, but
+      // since they're not yet "created" we'd have no guarantee of seeing a
+      // corresponding delete and the frames can be leaked.
+      old_frame = it->second.get();
+    }
+  }
+
+  // It's entirely possible that this is the first time we're seeing this frame.
+  // We'll eventually see a corresponding RenderFrameCreated if the frame ends
+  // up actually being needed, so we can ignore it until that time. Artificially
+  // creating the frame causes problems because we aren't guaranteed to see a
+  // subsequent RenderFrameCreated call, meaning we won't see a
+  // RenderFrameDeleted, and the frame node will be leaked until process tear
+  // down.
+  DCHECK(new_host);
+  FrameNodeImpl* new_frame = nullptr;
+  auto it = frames_.find(new_host);
+  if (it != frames_.end()) {
+    new_frame = it->second.get();
+  } else if (new_host->IsRenderFrameCreated()) {
+    // https://crbug.com/948088.
+    // In the case of speculative frames already existent and created at attach
+    // time, fake the creation event at this point.
+    RenderFrameCreated(new_host);
+
+    new_frame = frames_[new_host].get();
+    DCHECK_NE(nullptr, new_frame);
+  }
+  // If neither frame could be looked up there's nothing to do.
+  if (!old_frame && !new_frame)
+    return;
+
+  // Perform the swap in the graph.
   performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&PageNodeImpl::SetIsLoading,
-                                base::Unretained(page_node_.get()), true));
+      FROM_HERE, base::BindOnce(
+                     [](FrameNodeImpl* old_frame, FrameNodeImpl* new_frame) {
+                       if (old_frame) {
+                         DCHECK(old_frame->is_current());
+                         old_frame->SetIsCurrent(false);
+                       }
+                       if (new_frame) {
+                         DCHECK(!new_frame->is_current());
+                         new_frame->SetIsCurrent(true);
+                       }
+                     },
+                     base::Unretained(old_frame), base::Unretained(new_frame)));
+}
+
+void PerformanceManagerTabHelper::DidStartLoading() {
+  PostToGraph(FROM_HERE, &PageNodeImpl::SetIsLoading, page_node_.get(), true);
 }
 
 void PerformanceManagerTabHelper::DidStopLoading() {
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&PageNodeImpl::SetIsLoading,
-                                base::Unretained(page_node_.get()), false));
+  PostToGraph(FROM_HERE, &PageNodeImpl::SetIsLoading, page_node_.get(), false);
 }
 
 void PerformanceManagerTabHelper::OnVisibilityChanged(
     content::Visibility visibility) {
-  UpdatePageNodeVisibility(visibility);
+  const bool is_visible = visibility == content::Visibility::VISIBLE;
+  PostToGraph(FROM_HERE, &PageNodeImpl::SetIsVisible, page_node_.get(),
+              is_visible);
 }
 
 void PerformanceManagerTabHelper::DidFinishNavigation(
@@ -176,9 +234,8 @@ void PerformanceManagerTabHelper::DidFinishNavigation(
 
   // Notify the frame of the committed URL.
   GURL url = navigation_handle->GetURL();
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&FrameNodeImpl::set_url,
-                                base::Unretained(frame_node), url));
+  PostToGraph(FROM_HERE, &FrameNodeImpl::OnNavigationCommitted, frame_node, url,
+              navigation_handle->IsSameDocument());
 
   if (navigation_handle->IsSameDocument() ||
       !navigation_handle->IsInMainFrame()) {
@@ -188,11 +245,9 @@ void PerformanceManagerTabHelper::DidFinishNavigation(
   // Make sure the hierarchical structure is constructed before sending signal
   // to the performance manager.
   OnMainFrameNavigation(navigation_handle->GetNavigationId());
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&PageNodeImpl::OnMainFrameNavigationCommitted,
-                                base::Unretained(page_node_.get()),
-                                navigation_committed_time,
-                                navigation_handle->GetNavigationId(), url));
+  PostToGraph(FROM_HERE, &PageNodeImpl::OnMainFrameNavigationCommitted,
+              page_node_.get(), navigation_committed_time,
+              navigation_handle->GetNavigationId(), url);
 }
 
 void PerformanceManagerTabHelper::TitleWasSet(content::NavigationEntry* entry) {
@@ -201,9 +256,7 @@ void PerformanceManagerTabHelper::TitleWasSet(content::NavigationEntry* entry) {
     first_time_title_set_ = true;
     return;
   }
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&PageNodeImpl::OnTitleUpdated,
-                                base::Unretained(page_node_.get())));
+  PostToGraph(FROM_HERE, &PageNodeImpl::OnTitleUpdated, page_node_.get());
 }
 
 void PerformanceManagerTabHelper::DidUpdateFaviconURL(
@@ -213,9 +266,7 @@ void PerformanceManagerTabHelper::DidUpdateFaviconURL(
     first_time_favicon_set_ = true;
     return;
   }
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&PageNodeImpl::OnFaviconUpdated,
-                                base::Unretained(page_node_.get())));
+  PostToGraph(FROM_HERE, &PageNodeImpl::OnFaviconUpdated, page_node_.get());
 }
 
 void PerformanceManagerTabHelper::OnInterfaceRequestFromFrame(
@@ -223,39 +274,45 @@ void PerformanceManagerTabHelper::OnInterfaceRequestFromFrame(
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle* interface_pipe) {
   if (interface_name !=
-      resource_coordinator::mojom::FrameCoordinationUnit::Name_)
+      resource_coordinator::mojom::DocumentCoordinationUnit::Name_)
     return;
 
   auto it = frames_.find(render_frame_host);
   DCHECK(it != frames_.end());
+  PostToGraph(FROM_HERE, &FrameNodeImpl::Bind, it->second.get(),
+              resource_coordinator::mojom::DocumentCoordinationUnitRequest(
+                  std::move(*interface_pipe)));
+}
+
+content::WebContents* PerformanceManagerTabHelper::GetWebContents() const {
+  return web_contents();
+}
+
+int64_t PerformanceManagerTabHelper::LastNavigationId() const {
+  return last_navigation_id_;
+}
+
+template <typename Functor, typename NodeType, typename... Args>
+void PerformanceManagerTabHelper::PostToGraph(const base::Location& from_here,
+                                              Functor&& functor,
+                                              NodeType* node,
+                                              Args&&... args) {
+  static_assert(std::is_base_of<NodeBase, NodeType>::value,
+                "NodeType must be descended from NodeBase");
   performance_manager_->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&FrameNodeImpl::AddBinding,
-                     base::Unretained(it->second.get()),
-                     resource_coordinator::mojom::FrameCoordinationUnitRequest(
-                         std::move(*interface_pipe))));
+      from_here, base::BindOnce(functor, base::Unretained(node),
+                                std::forward<Args>(args)...));
 }
 
 void PerformanceManagerTabHelper::OnMainFrameNavigation(int64_t navigation_id) {
+  last_navigation_id_ = navigation_id;
   ukm_source_id_ =
       ukm::ConvertToSourceId(navigation_id, ukm::SourceIdType::NAVIGATION_ID);
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&PageNodeImpl::SetUkmSourceId,
-                     base::Unretained(page_node_.get()), ukm_source_id_));
+  PostToGraph(FROM_HERE, &PageNodeImpl::SetUkmSourceId, page_node_.get(),
+              ukm_source_id_);
 
   first_time_title_set_ = false;
   first_time_favicon_set_ = false;
-}
-
-void PerformanceManagerTabHelper::UpdatePageNodeVisibility(
-    content::Visibility visibility) {
-  // TODO(fdoray): An OCCLUDED tab should not be considered visible.
-  const bool is_visible = visibility != content::Visibility::HIDDEN;
-  performance_manager_->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&PageNodeImpl::SetIsVisible,
-                     base::Unretained(page_node_.get()), is_visible));
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PerformanceManagerTabHelper)

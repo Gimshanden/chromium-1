@@ -30,36 +30,9 @@ using ::testing::Return;
 
 namespace policy {
 
-namespace {
-
-void WriteInstallAttributesFile(const std::string& install_attrs_blob) {
-  base::FilePath install_attrs_file;
-  ASSERT_TRUE(base::PathService::Get(
-      chromeos::dbus_paths::FILE_INSTALL_ATTRIBUTES, &install_attrs_file));
-  base::ScopedAllowBlockingForTesting allow_io;
-  ASSERT_EQ(base::checked_cast<int>(install_attrs_blob.size()),
-            base::WriteFile(install_attrs_file, install_attrs_blob.c_str(),
-                            install_attrs_blob.size()));
-}
-
-}  // namespace
-
 DevicePolicyCrosTestHelper::DevicePolicyCrosTestHelper() {}
 
 DevicePolicyCrosTestHelper::~DevicePolicyCrosTestHelper() {}
-
-// static
-void DevicePolicyCrosTestHelper::MarkAsEnterpriseOwnedBy(
-    const std::string& user_name) {
-  OverridePaths();
-  WriteInstallAttributesFile(
-      chromeos::InstallAttributes::
-          GetEnterpriseOwnedInstallAttributesBlobForTesting(user_name));
-}
-
-void DevicePolicyCrosTestHelper::MarkAsEnterpriseOwned() {
-  MarkAsEnterpriseOwnedBy(device_policy_.policy_data().username());
-}
 
 void DevicePolicyCrosTestHelper::InstallOwnerKey() {
   OverridePaths();
@@ -89,32 +62,6 @@ DevicePolicyCrosBrowserTest::DevicePolicyCrosBrowserTest()
     : fake_session_manager_client_(new chromeos::FakeSessionManagerClient) {}
 
 DevicePolicyCrosBrowserTest::~DevicePolicyCrosBrowserTest() = default;
-
-void DevicePolicyCrosBrowserTest::SetUp() {
-  // Set some fake state keys to make surethey are not empty.
-  std::vector<std::string> state_keys;
-  state_keys.push_back("1");
-  fake_session_manager_client_->set_server_backed_state_keys(state_keys);
-  chromeos::MixinBasedInProcessBrowserTest::SetUp();
-}
-
-void DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture() {
-  InstallOwnerKey();
-  MarkOwnership();
-  chromeos::MixinBasedInProcessBrowserTest::SetUpInProcessBrowserTestFixture();
-}
-
-void DevicePolicyCrosBrowserTest::MarkOwnership() {
-  MarkAsEnterpriseOwned();
-}
-
-void DevicePolicyCrosBrowserTest::MarkAsEnterpriseOwned() {
-  test_helper_.MarkAsEnterpriseOwned();
-}
-
-void DevicePolicyCrosBrowserTest::InstallOwnerKey() {
-  test_helper_.InstallOwnerKey();
-}
 
 void DevicePolicyCrosBrowserTest::RefreshDevicePolicy() {
   // Reset the key to its original state.

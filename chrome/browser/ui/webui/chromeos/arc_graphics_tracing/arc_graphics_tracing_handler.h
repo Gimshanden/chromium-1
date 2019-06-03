@@ -18,6 +18,7 @@
 
 namespace arc {
 class ArcGraphicsJankDetector;
+class ArcSystemStatCollector;
 }  // namespace arc
 
 namespace base {
@@ -58,6 +59,7 @@ class ArcGraphicsTracingHandler : public content::WebUIMessageHandler,
   void OnKeyEvent(ui::KeyEvent* event) override;
 
  private:
+  void Activate();
   void StartTracing();
   void StopTracing();
   void SetStatus(const std::string& status);
@@ -74,6 +76,7 @@ class ArcGraphicsTracingHandler : public content::WebUIMessageHandler,
   // Handlers for calls from JS.
   void HandleReady(const base::ListValue* args);
   void HandleSetStopOnJank(const base::ListValue* args);
+  void HandleLoadFromText(const base::ListValue* args);
 
   // Updates title and icon for the active ARC window.
   void UpdateActiveArcWindowInfo();
@@ -106,6 +109,9 @@ class ArcGraphicsTracingHandler : public content::WebUIMessageHandler,
 
   // Used to detect janks for the currently active ARC++ window.
   std::unique_ptr<arc::ArcGraphicsJankDetector> jank_detector_;
+
+  // Collects system stat runtime.
+  std::unique_ptr<arc::ArcSystemStatCollector> system_stat_colletor_;
 
   // Information about tasks, title and icon.
   base::DictionaryValue tasks_info_;

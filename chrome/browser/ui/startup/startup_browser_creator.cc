@@ -69,8 +69,11 @@
 #include "printing/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/ash_pref_names.h"
 #include "chrome/browser/chromeos/app_mode/app_launch_utils.h"
 #include "chrome/browser/chromeos/login/demo_mode/demo_app_launcher.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
@@ -277,6 +280,36 @@ void ShowUserManagerOnStartup(const base::CommandLine& command_line) {
 #endif  // !defined(OS_CHROMEOS)
 }
 
+bool IsSilentLaunchEnabled(const base::CommandLine& command_line,
+                           const Profile* profile) {
+  // Note: This check should have been done in ProcessCmdLineImpl()
+  // before calling this function. However chromeos/login/login_utils.cc
+  // calls this function directly (see comments there) so it has to be checked
+  // again.
+
+#if defined(KIOSK_NEXT)
+  // FeatureList::IsEnabled has side effects so we call it first before doing
+  // an early return if possible
+  DCHECK(!chromeos::ProfileHelper::IsSigninProfile(profile));
+  if (base::FeatureList::IsEnabled(ash::features::kKioskNextShell)) {
+    const PrefService* prefs = profile->GetPrefs();
+    if (prefs->GetBoolean(ash::prefs::kKioskNextShellEnabled)) {
+      return true;
+    }
+  }
+#endif  // defined(KIOSK_NEXT)
+
+  if (command_line.HasSwitch(switches::kSilentLaunch))
+    return true;
+
+#if defined(OS_CHROMEOS)
+  return profile->GetPrefs()->GetBoolean(
+      prefs::kStartupBrowserWindowLaunchSuppressed);
+#endif  // defined(OS_CHROMEOS)
+
+  return false;
+}
+
 }  // namespace
 
 StartupBrowserCreator::StartupBrowserCreator()
@@ -336,13 +369,7 @@ bool StartupBrowserCreator::LaunchBrowser(
     profile = profile->GetOffTheRecordProfile();
 #endif
 
-  // Note: This check should have been done in ProcessCmdLineImpl()
-  // before calling this function. However chromeos/login/login_utils.cc
-  // calls this function directly (see comments there) so it has to be checked
-  // again.
-  const bool silent_launch = command_line.HasSwitch(switches::kSilentLaunch);
-
-  if (!silent_launch) {
+  if (!IsSilentLaunchEnabled(command_line, profile)) {
     StartupBrowserCreatorImpl lwp(cur_dir, command_line, this, is_first_run);
     const std::vector<GURL> urls_to_launch =
         GetURLsFromCommandLine(command_line, cur_dir, profile);
@@ -458,6 +485,8 @@ void StartupBrowserCreator::RegisterLocalStatePrefs(
 #endif
 #if !defined(OS_CHROMEOS)
   registry->RegisterBooleanPref(prefs::kPromotionalTabsEnabled, true);
+  registry->RegisterBooleanPref(prefs::kCommandLineFlagSecurityWarningsEnabled,
+                                true);
 #endif
   registry->RegisterBooleanPref(prefs::kSuppressUnsupportedOSWarning, false);
   registry->RegisterBooleanPref(prefs::kWasRestarted, false);
@@ -894,6 +923,28 @@ bool StartupBrowserCreator::ProcessLoadApps(
 }
 
 // static
+void StartupBrowserCreator::ProcessCommandLineAlreadyRunningImpl(
+    const base::CommandLine& command_line,
+    const base::FilePath& cur_dir,
+    const base::FilePath& profile_path) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  Profile* profile = profile_manager->GetProfileByPath(profile_path);
+
+  // The profile isn't loaded yet and so needs to be loaded asynchronously.
+  if (!profile) {
+    profile_manager->CreateProfileAsync(
+        profile_path,
+        base::BindRepeating(&ProcessCommandLineOnProfileCreated, command_line,
+                            cur_dir),
+        base::string16(), std::string());
+    return;
+  }
+  StartupBrowserCreator startup_browser_creator;
+  startup_browser_creator.ProcessCmdLineImpl(
+      command_line, cur_dir, /*process_startup=*/false, profile, Profiles());
+}
+
+// static
 void StartupBrowserCreator::ProcessCommandLineOnProfileCreated(
     const base::CommandLine& command_line,
     const base::FilePath& cur_dir,
@@ -911,20 +962,15 @@ void StartupBrowserCreator::ProcessCommandLineAlreadyRunning(
     const base::CommandLine& command_line,
     const base::FilePath& cur_dir,
     const base::FilePath& profile_path) {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  Profile* profile = profile_manager->GetProfileByPath(profile_path);
-
-  // The profile isn't loaded yet and so needs to be loaded asynchronously.
-  if (!profile) {
-    profile_manager->CreateProfileAsync(
-        profile_path,
-        base::Bind(&ProcessCommandLineOnProfileCreated, command_line, cur_dir),
-        base::string16(), std::string());
-    return;
-  }
-  StartupBrowserCreator startup_browser_creator;
-  startup_browser_creator.ProcessCmdLineImpl(command_line, cur_dir, false,
-                                             profile, Profiles());
+  // The Windows-specific code in browser_finder.cc that determines if a window
+  // is on the current virtual desktop uses a COM interface that can't be
+  // invoked if we're processing a SendMessage call. So, we post a task to
+  // finish the command line processing.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &StartupBrowserCreator::ProcessCommandLineAlreadyRunningImpl,
+          command_line, cur_dir, profile_path));
 }
 
 // static

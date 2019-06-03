@@ -8,6 +8,7 @@
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 
 #include <set>
+#include <vector>
 
 namespace ui {
 
@@ -51,27 +52,34 @@ class AX_EXPORT AXPlatformNodeDelegateBase : public AXPlatformNodeDelegate {
   // Get the child of a node given a 0-based index.
   gfx::NativeViewAccessible ChildAtIndex(int index) override;
 
-  // Get the bounds of this node in screen coordinates, applying clipping
-  // to all bounding boxes so that the resulting rect is within the window.
-  gfx::Rect GetClippedScreenBoundsRect() const override;
+  base::string16 GetHypertext() const override;
+  bool SetHypertextSelection(int start_offset, int end_offset) override;
 
-  // Get the bounds of this node in screen coordinates without applying
-  // any clipping; it may be outside of the window or offscreen.
-  gfx::Rect GetUnclippedScreenBoundsRect() const override;
+  base::string16 GetInnerText() const override;
 
-  // Get the bounds of this node with text offsets in screen coordinates,
-  // optionally applying clipping to all bounding boxes so that the resulting
-  // rect is within the window. Only valid when the role is
-  // ax::mojom::Role::kStaticText.
-  gfx::Rect GetScreenBoundsForRange(int start,
-                                    int len,
-                                    bool clipped = false) const override;
+  gfx::Rect GetBoundsRect(const AXCoordinateSystem coordinate_system,
+                          const AXClippingBehavior clipping_behavior,
+                          AXOffscreenResult* offscreen_result) const override;
 
-  gfx::Rect GetTextRangeBoundsRect(
-      int start_offset,
-      int end_offset,
-      AXPlatformNodeDelegate::TextRangeBoundsCoordinateSystem coordinate_system)
-      const override;
+  gfx::Rect GetHypertextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result) const override;
+
+  gfx::Rect GetInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result) const override;
+
+  // Derivative utils for AXPlatformNodeDelegate::GetBoundsRect
+  gfx::Rect GetClippedScreenBoundsRect(
+      AXOffscreenResult* offscreen_result = nullptr) const;
+  gfx::Rect GetUnclippedScreenBoundsRect(
+      AXOffscreenResult* offscreen_result = nullptr) const;
 
   // Do a *synchronous* hit test of the given location in global screen
   // coordinates, and the node within this node's subtree (inclusive) that's
@@ -122,11 +130,14 @@ class AX_EXPORT AXPlatformNodeDelegateBase : public AXPlatformNodeDelegate {
   std::set<AXPlatformNode*> GetReverseRelations(
       ax::mojom::IntListAttribute attr) override;
 
+  base::string16 GetAuthorUniqueId() const override;
+
   const AXUniqueId& GetUniqueId() const override;
 
-  AXPlatformNodeDelegate::EnclosingBoundaryOffsets FindTextBoundariesAtOffset(
-      TextBoundaryType boundary_type,
+  base::Optional<int> FindTextBoundary(
+      AXTextBoundary boundary,
       int offset,
+      TextBoundaryDirection direction,
       ax::mojom::TextAffinity affinity) const override;
 
   const std::vector<gfx::NativeViewAccessible> GetDescendants() const override;
@@ -199,6 +210,7 @@ class AX_EXPORT AXPlatformNodeDelegateBase : public AXPlatformNodeDelegate {
       ax::mojom::ImageAnnotationStatus status) const override;
   base::string16 GetLocalizedRoleDescriptionForUnlabeledImage() const override;
   base::string16 GetLocalizedStringForLandmarkType() const override;
+  base::string16 GetStyleNameAttributeAsLocalizedString() const override;
 
   //
   // Testing.

@@ -42,9 +42,9 @@
 
 namespace blink {
 
-class AnimatableValue;
 class CSSRuleList;
 class CSSValue;
+class CompositorKeyframeValue;
 class Document;
 class Element;
 class Interpolation;
@@ -75,7 +75,7 @@ class CORE_EXPORT StyleResolver final
 
   static scoped_refptr<ComputedStyle> InitialStyleForElement(Document&);
 
-  static AnimatableValue* CreateAnimatableValueSnapshot(
+  static CompositorKeyframeValue* CreateCompositorKeyframeValueSnapshot(
       Element&,
       const ComputedStyle& base_style,
       const ComputedStyle* parent_style,
@@ -256,7 +256,7 @@ class CORE_EXPORT StyleResolver final
                        bool is_important,
                        bool inherited_only,
                        NeedsApplyPass&,
-                       PropertyWhitelistType = kPropertyWhitelistNone);
+                       ValidPropertyFilter = ValidPropertyFilter::kNoFilter);
   template <CSSPropertyPriority priority>
   void ApplyAnimatedStandardProperties(StyleResolverState&,
                                        const ActiveInterpolationsMap&);
@@ -264,7 +264,7 @@ class CORE_EXPORT StyleResolver final
   void ApplyAllProperty(StyleResolverState&,
                         const CSSValue&,
                         bool inherited_only,
-                        PropertyWhitelistType);
+                        ValidPropertyFilter);
 
   bool PseudoStyleForElementInternal(Element&,
                                      const PseudoStyleRequest&,

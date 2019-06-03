@@ -39,16 +39,6 @@ TestIdentityManagerObserver::PrimaryAccountFromClearedCallback() {
   return primary_account_from_cleared_callback_;
 }
 
-void TestIdentityManagerObserver::SetOnPrimaryAccountSigninFailedCallback(
-    base::OnceClosure callback) {
-  on_primary_account_signin_failed_callback_ = std::move(callback);
-}
-
-const GoogleServiceAuthError&
-TestIdentityManagerObserver::ErrorFromSigninFailedCallback() const {
-  return google_signin_failed_error_;
-}
-
 void TestIdentityManagerObserver::SetOnRefreshTokenUpdatedCallback(
     base::OnceClosure callback) {
   on_refresh_token_updated_callback_ = std::move(callback);
@@ -80,7 +70,7 @@ void TestIdentityManagerObserver::SetOnRefreshTokenRemovedCallback(
   on_refresh_token_removed_callback_ = std::move(callback);
 }
 
-const std::string&
+const CoreAccountId&
 TestIdentityManagerObserver::AccountIdFromRefreshTokenRemovedCallback() {
   return account_from_refresh_token_removed_callback_;
 }
@@ -126,7 +116,7 @@ bool TestIdentityManagerObserver::WasCalledAccountRemovedWithInfoCallback() {
 
 // Each element represents all the changes from an individual batch that has
 // occurred, with the elements ordered from oldest to newest batch occurrence.
-const std::vector<std::vector<std::string>>&
+const std::vector<std::vector<CoreAccountId>>&
 TestIdentityManagerObserver::BatchChangeRecords() const {
   return batch_change_records_;
 }
@@ -146,13 +136,6 @@ void TestIdentityManagerObserver::OnPrimaryAccountCleared(
     std::move(on_primary_account_cleared_callback_).Run();
 }
 
-void TestIdentityManagerObserver::OnPrimaryAccountSigninFailed(
-    const GoogleServiceAuthError& error) {
-  google_signin_failed_error_ = error;
-  if (on_primary_account_signin_failed_callback_)
-    std::move(on_primary_account_signin_failed_callback_).Run();
-}
-
 void TestIdentityManagerObserver::OnRefreshTokenUpdatedForAccount(
     const CoreAccountInfo& account_info) {
   if (!is_inside_batch_)
@@ -165,7 +148,7 @@ void TestIdentityManagerObserver::OnRefreshTokenUpdatedForAccount(
 }
 
 void TestIdentityManagerObserver::OnRefreshTokenRemovedForAccount(
-    const std::string& account_id) {
+    const CoreAccountId& account_id) {
   if (!is_inside_batch_)
     StartBatchOfRefreshTokenStateChanges();
 
@@ -218,7 +201,7 @@ void TestIdentityManagerObserver::StartBatchOfRefreshTokenStateChanges() {
   is_inside_batch_ = true;
 
   // Start a new batch.
-  batch_change_records_.emplace_back(std::vector<std::string>());
+  batch_change_records_.emplace_back(std::vector<CoreAccountId>());
 }
 
 void TestIdentityManagerObserver::OnEndBatchOfRefreshTokenStateChanges() {

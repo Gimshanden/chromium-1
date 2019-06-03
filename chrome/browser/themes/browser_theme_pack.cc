@@ -33,6 +33,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/color_analysis.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -56,9 +57,10 @@ constexpr int kTallestFrameHeight = kTallestTabHeight + 19;
 
 // Version number of the current theme pack. We just throw out and rebuild
 // theme packs that aren't int-equal to this. Increment this number if you
-// change default theme assets or if you need themes to recreate their generated
-// images (which are cached).
-const int kThemePackVersion = 63;
+// change default theme assets, if you need themes to recreate their generated
+// images (which are cached), or if you changed how missing values are
+// generated.
+const int kThemePackVersion = 66;
 
 // IDs that are in the DataPack won't clash with the positive integer
 // uint16_t. kHeaderID should always have the maximum value because we want the
@@ -369,32 +371,48 @@ SkBitmap CreateLowQualityResizedBitmap(const SkBitmap& source_bitmap,
   return scaled_bitmap;
 }
 
-// Returns corrected background color so that it has at least minimum contrast
-// with lightest or darkest possible foreground colors. If it is not possible to
-// achieve minimum contrast, it returns the best attempt.
-SkColor EnsureReadableContrastIsPossible(SkColor background) {
-  const SkColor foreground = color_utils::GetColorWithMaxContrast(background);
-  return color_utils::GetColorWithContrast(background, foreground,
-                                           kPreferredReadableContrastRatio);
+// Decreases the lightness of the given color.
+SkColor DarkenColor(SkColor color, float change) {
+  color_utils::HSL hsl;
+  SkColorToHSL(color, &hsl);
+  hsl.l -= change;
+  if (hsl.l >= 0.0f)
+    return HSLToSkColor(hsl, 255);
+  return color;
 }
 
-// Generate active tab color for the given |frame_color|.
-// Always generates lighter color which will not work if given color is very
-// light.
-SkColor GenerateActiveTabColor(SkColor frame_color) {
-  // How much to lighten the |frame_color|.
-  const float lightness_ratio = 0.4f;
+// Increases the lightness of |source| until it reaches |contrast_ratio| with
+// |base| or reaches |white_contrast| with white. This avoids decreasing
+// saturation, as the alternative contrast-guaranteeing functions in color_utils
+// would do.
+SkColor LightenUntilContrast(SkColor source,
+                             SkColor base,
+                             float contrast_ratio,
+                             float white_contrast) {
+  const float kBaseLuminance = color_utils::GetRelativeLuminance(base);
+  constexpr float kWhiteLuminance = 1.0f;
 
-  // Generate active tab color so that it has enough contrast with the
-  // |frame_color| to avoid the isolation line in the tab strip.
-  SkColor color =
-      color_utils::AlphaBlend(SK_ColorWHITE, frame_color, lightness_ratio);
-  SkAlpha alpha = color_utils::GetBlendValueWithMinimumContrast(
-      color, SK_ColorWHITE, frame_color, kActiveTabMinContrast);
-  color = color_utils::AlphaBlend(SK_ColorWHITE, color, alpha);
+  color_utils::HSL hsl;
+  SkColorToHSL(source, &hsl);
+  float min_l = hsl.l;
+  float max_l = 1.0f;
 
-  // Ensure text on active tabs can still have sufficient contrast.
-  return EnsureReadableContrastIsPossible(color);
+  // Need only precision of 2 digits.
+  while (max_l - min_l > 0.01) {
+    hsl.l = min_l + (max_l - min_l) / 2;
+    float luminance = color_utils::GetRelativeLuminance(HSLToSkColor(hsl, 255));
+    if (color_utils::GetContrastRatio(kBaseLuminance, luminance) >=
+            contrast_ratio ||
+        (color_utils::GetContrastRatio(kWhiteLuminance, luminance) <
+         white_contrast)) {
+      max_l = hsl.l;
+    } else {
+      min_l = hsl.l;
+    }
+  }
+
+  hsl.l = max_l;
+  return HSLToSkColor(hsl, 255);
 }
 
 // A ImageSkiaSource that scales 100P image to the target scale factor
@@ -636,30 +654,6 @@ SkColor BrowserThemePack::ComputeImageColor(const gfx::Image& image,
 }
 
 // static
-void BrowserThemePack::BuildFromColor(SkColor color, BrowserThemePack* pack) {
-  DCHECK(!pack->is_valid());
-
-  pack->InitEmptyPack();
-
-  // Init |source_images_| only here as other code paths initialize it
-  // differently.
-  pack->InitSourceImages();
-
-  // Ensure text on background tabs can still have sufficient contrast.
-  SkColor frame_color = EnsureReadableContrastIsPossible(color);
-
-  SkColor active_tab_color = GenerateActiveTabColor(frame_color);
-  pack->SetColor(TP::COLOR_FRAME, frame_color);
-  pack->SetColor(TP::COLOR_TOOLBAR, active_tab_color);
-  pack->SetColor(TP::COLOR_NTP_BACKGROUND, active_tab_color);
-
-  pack->AdjustThemePack();
-
-  // The BrowserThemePack is now in a consistent state.
-  pack->is_valid_ = true;
-}
-
-// static
 void BrowserThemePack::BuildFromExtension(
     const extensions::Extension* extension,
     BrowserThemePack* pack) {
@@ -768,6 +762,112 @@ bool BrowserThemePack::IsPersistentImageID(int id) {
       return true;
 
   return false;
+}
+
+// static
+void BrowserThemePack::BuildFromColor(SkColor color, BrowserThemePack* pack) {
+  DCHECK(!pack->is_valid());
+
+  pack->InitEmptyPack();
+
+  // Init |source_images_| only here as other code paths initialize it
+  // differently.
+  pack->InitSourceImages();
+
+  GenerateFrameAndTabColors(color, pack);
+
+  SkColor tab_color;
+  pack->GetColor(TP::COLOR_TOOLBAR, &tab_color);
+  pack->SetColor(TP::COLOR_NTP_BACKGROUND, tab_color);
+  pack->SetColor(TP::COLOR_NTP_TEXT,
+                 color_utils::GetColorWithMaxContrast(tab_color));
+
+  SkColor tab_text_color;
+  pack->GetColor(TP::COLOR_TAB_TEXT, &tab_text_color);
+  pack->SetColor(TP::COLOR_TOOLBAR_BUTTON_ICON, tab_text_color);
+  pack->SetColor(TP::COLOR_BOOKMARK_TEXT, tab_text_color);
+
+  pack->AdjustThemePack();
+
+  // The BrowserThemePack is now in a consistent state.
+  pack->is_valid_ = true;
+}
+
+// static
+void BrowserThemePack::GenerateFrameAndTabColors(SkColor color,
+                                                 BrowserThemePack* pack) {
+  SkColor frame_color = color;
+  SkColor frame_text_color;
+  SkColor active_tab_color = color;
+  SkColor tab_text_color;
+  constexpr float kDarkenStep = 0.03f;
+  constexpr float kMinWhiteContrast = 1.3f;
+  constexpr float kNoWhiteContrast = 0.0f;
+
+  // Increasingly darken frame color and calculate the rest until colors with
+  // sufficient contrast are found.
+  while (true) {
+    // Calculate frame color to have sufficient contrast with white or dark grey
+    // text.
+    frame_text_color = color_utils::GetColorWithMaxContrast(frame_color);
+    SkColor blend_target =
+        color_utils::GetColorWithMaxContrast(frame_text_color);
+    frame_color = color_utils::BlendForMinContrast(
+                      frame_color, frame_text_color, blend_target,
+                      kPreferredReadableContrastRatio)
+                      .color;
+
+    // Generate active tab color so that it has enough contrast with the
+    // |frame_color| to avoid the isolation line in the tab strip.
+    active_tab_color = LightenUntilContrast(
+        frame_color, frame_color, kActiveTabMinContrast, kNoWhiteContrast);
+    // Try lightening the color to get more contrast with frame without getting
+    // too close to white.
+    active_tab_color =
+        LightenUntilContrast(active_tab_color, frame_color,
+                             kActiveTabPreferredContrast, kMinWhiteContrast);
+
+    // If we didn't succeed in generating active tab color with minimum
+    // contrast with frame, then darken the frame color and try again.
+    if (color_utils::GetContrastRatio(frame_color, active_tab_color) <
+        kActiveTabMinContrast) {
+      frame_color = DarkenColor(frame_color, kDarkenStep);
+      continue;
+    }
+
+    // Select active tab text color, if possible.
+    tab_text_color = color_utils::GetColorWithMaxContrast(active_tab_color);
+
+    if (!color_utils::IsDark(active_tab_color)) {
+      // If active tab is light color then continue lightening it until enough
+      // contrast with dark text is reached.
+      tab_text_color = color_utils::GetColorWithMaxContrast(active_tab_color);
+      active_tab_color = LightenUntilContrast(active_tab_color, tab_text_color,
+                                              kPreferredReadableContrastRatio,
+                                              kNoWhiteContrast);
+      break;
+    }
+
+    // If the active tab color is dark and has enough contrast with white text.
+    // Then we are all set.
+    if (color_utils::GetContrastRatio(active_tab_color, SK_ColorWHITE) >=
+        kPreferredReadableContrastRatio)
+      break;
+
+    // If the active tab color is a dark color but the contrast with white is
+    // not enough then we should darken the active tab color to reach the
+    // contrast with white. But to keep the contrast with the frame we should
+    // also darken the frame color. Therefore, just darken the frame color and
+    // try again.
+    frame_color = DarkenColor(frame_color, kDarkenStep);
+  }
+
+  pack->SetColor(TP::COLOR_FRAME, frame_color);
+  pack->SetColor(TP::COLOR_BACKGROUND_TAB, frame_color);
+  pack->SetColor(TP::COLOR_BACKGROUND_TAB_TEXT, frame_text_color);
+
+  pack->SetColor(TP::COLOR_TOOLBAR, active_tab_color);
+  pack->SetColor(TP::COLOR_TAB_TEXT, tab_text_color);
 }
 
 BrowserThemePack::BrowserThemePack(ThemeType theme_type)
@@ -961,10 +1061,10 @@ void BrowserThemePack::AdjustThemePack() {
   // compositing the image).
   CreateFrameImagesAndColors(&images_);
 
-  // Generate any missing frame colors.  This must be done after generating
-  // colors from the frame images, so only colors with no matching images are
-  // generated.
-  GenerateFrameColors();
+  // Generate any missing frame colors from tints. This must be done after
+  // generating colors from the frame images, so only colors with no matching
+  // images are generated.
+  GenerateFrameColorsFromTints();
 
   // Generate background color information for window control buttons.  This
   // must be done after frame colors are set, since they are used when
@@ -980,6 +1080,9 @@ void BrowserThemePack::AdjustThemePack() {
   // and tab colors, as generated text colors will try to appropriately contrast
   // with the frame/tab behind them.
   GenerateMissingTextColors();
+
+  // Generates missing NTP related colors.
+  GenerateMissingNtpColors();
 
   // Make sure the |images_on_file_thread_| has bitmaps for supported
   // scale factors before passing to FILE thread.
@@ -1060,8 +1163,6 @@ void BrowserThemePack::InitDisplayProperties() {
     display_properties_[i].id = -1;
     display_properties_[i].property = 0;
   }
-  display_properties_[0].id = TP::NTP_LOGO_ALTERNATE;
-  display_properties_[0].property = 1;
 }
 
 void BrowserThemePack::InitSourceImages() {
@@ -1406,7 +1507,8 @@ void BrowserThemePack::CreateToolbarImageAndColors(ImageCache* images) {
   const gfx::Image dest_image(gfx::ImageSkia(std::move(source), dest_size));
   temp_output[kSrcImageId] = dest_image;
 
-  SetColor(kToolbarColorId, ComputeImageColor(dest_image, dest_size.height()));
+  SetColorIfUnspecified(kToolbarColorId,
+                        ComputeImageColor(dest_image, dest_size.height()));
 
   MergeImageCaches(temp_output, images);
 }
@@ -1464,37 +1566,33 @@ void BrowserThemePack::CreateFrameImagesAndColors(ImageCache* images) {
       temp_output[frame_values.prs_id] = dest_image;
 
       if (frame_values.color_id) {
-        SetColor(frame_values.color_id.value(),
-                 ComputeImageColor(dest_image, kTallestFrameHeight));
+        SetColorIfUnspecified(
+            frame_values.color_id.value(),
+            ComputeImageColor(dest_image, kTallestFrameHeight));
       }
     }
   }
   MergeImageCaches(temp_output, images);
 }
 
-void BrowserThemePack::GenerateFrameColors() {
+void BrowserThemePack::GenerateFrameColorsFromTints() {
   SkColor frame;
   if (!GetColor(TP::COLOR_FRAME, &frame)) {
     frame = TP::GetDefaultColor(TP::COLOR_FRAME, false);
     SetColor(TP::COLOR_FRAME, HSLShift(frame, GetTintInternal(TP::TINT_FRAME)));
   }
 
-  SkColor temp;
-  if (!GetColor(TP::COLOR_FRAME_INACTIVE, &temp)) {
-    SetColor(TP::COLOR_FRAME_INACTIVE,
-             HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INACTIVE)));
-  }
+  SetColorIfUnspecified(
+      TP::COLOR_FRAME_INACTIVE,
+      HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INACTIVE)));
 
-  if (!GetColor(TP::COLOR_FRAME_INCOGNITO, &temp)) {
-    SetColor(TP::COLOR_FRAME_INCOGNITO,
-             HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INCOGNITO)));
-  }
+  SetColorIfUnspecified(
+      TP::COLOR_FRAME_INCOGNITO,
+      HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INCOGNITO)));
 
-  if (!GetColor(TP::COLOR_FRAME_INCOGNITO_INACTIVE, &temp)) {
-    SetColor(
-        TP::COLOR_FRAME_INCOGNITO_INACTIVE,
-        HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INCOGNITO_INACTIVE)));
-  }
+  SetColorIfUnspecified(
+      TP::COLOR_FRAME_INCOGNITO_INACTIVE,
+      HSLShift(frame, GetTintInternal(TP::TINT_FRAME_INCOGNITO_INACTIVE)));
 }
 
 void BrowserThemePack::GenerateWindowControlButtonColor(ImageCache* images) {
@@ -1730,9 +1828,25 @@ void BrowserThemePack::GenerateMissingTextColorForID(int text_color_id,
     }
   }
 
-  const SkColor result_color =
-      color_utils::GetColorWithMinimumContrast(blend_source_color, bg_color);
-  SetColor(text_color_id, result_color);
+  SetColor(
+      text_color_id,
+      color_utils::BlendForMinContrast(blend_source_color, bg_color).color);
+}
+
+void BrowserThemePack::GenerateMissingNtpColors() {
+  // Calculate NTP text color based on NTP background.
+  SkColor ntp_background_color;
+  gfx::Image image = GetImageNamed(IDR_THEME_NTP_BACKGROUND);
+  if (!image.IsEmpty()) {
+    ntp_background_color = ComputeImageColor(image, image.Height());
+    SetColorIfUnspecified(
+        TP::COLOR_NTP_TEXT,
+        color_utils::GetColorWithMaxContrast(ntp_background_color));
+  } else if (GetColor(TP::COLOR_NTP_BACKGROUND, &ntp_background_color)) {
+    SetColorIfUnspecified(
+        TP::COLOR_NTP_TEXT,
+        color_utils::GetColorWithMaxContrast(ntp_background_color));
+  }
 }
 
 void BrowserThemePack::RepackImages(const ImageCache& images,

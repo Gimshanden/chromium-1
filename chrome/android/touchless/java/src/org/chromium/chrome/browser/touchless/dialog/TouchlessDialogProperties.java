@@ -6,12 +6,15 @@ package org.chromium.chrome.browser.touchless.dialog;
 
 import android.graphics.drawable.Drawable;
 import android.support.annotation.IntDef;
-import android.view.View.OnClickListener;
+import android.support.annotation.StringRes;
+import android.view.InputEvent;
+import android.view.View;
 
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.ReadableBooleanPropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
@@ -36,6 +39,18 @@ public class TouchlessDialogProperties {
         int LOW = 2;
     }
 
+    /**
+     * A click listener for dialog actions.
+     */
+    public interface OnClickListener {
+        /**
+         * Called when a view has been clicked.
+         *
+         * @param event The input event that triggered the click.
+         */
+        void onClick(InputEvent event);
+    }
+
     /** Properties that determine how list items are displayed in the touchless dialog. */
     public static class DialogListItemProperties {
         /** The icon of the dialog. */
@@ -46,11 +61,29 @@ public class TouchlessDialogProperties {
         public static final WritableObjectPropertyKey<String> TEXT =
                 new WritableObjectPropertyKey<>();
 
+        /** Whether this item can be clicked more than one time. */
+        public static final WritableBooleanPropertyKey MULTI_CLICKABLE =
+                new WritableBooleanPropertyKey();
+
         /** The action to be performed when the item is selected. */
-        public static final WritableObjectPropertyKey<OnClickListener> CLICK_LISTENER =
+        public static final WritableObjectPropertyKey<View.OnClickListener> CLICK_LISTENER =
                 new WritableObjectPropertyKey<>();
 
-        public static final PropertyKey[] ALL_KEYS = {ICON, TEXT, CLICK_LISTENER};
+        /** Whether this item has a focus change listener attached to its view. */
+        public static final WritableBooleanPropertyKey FOCUS_LISTENER_SET =
+                new WritableBooleanPropertyKey();
+
+        public static final PropertyKey[] ALL_KEYS = {
+                ICON, TEXT, MULTI_CLICKABLE, CLICK_LISTENER, FOCUS_LISTENER_SET};
+    }
+
+    /**
+     * Struct-like class for holding the Names for the dialog actions.
+     */
+    public static class ActionNames {
+        public @StringRes int cancel;
+        public @StringRes int select;
+        public @StringRes int alt;
     }
 
     /**
@@ -66,34 +99,36 @@ public class TouchlessDialogProperties {
     public static final WritableObjectPropertyKey<PropertyModel[]> LIST_MODELS =
             new WritableObjectPropertyKey<>();
 
-    /** The cancel event's name. */
-    public static final WritableObjectPropertyKey<String> CANCEL_NAME =
+    /** The names for the Actions. */
+    public static final WritableObjectPropertyKey<ActionNames> ACTION_NAMES =
             new WritableObjectPropertyKey<>();
 
     /** What will happen when cancel is triggered. */
     public static final WritableObjectPropertyKey<OnClickListener> CANCEL_ACTION =
             new WritableObjectPropertyKey<>();
 
-    /** The name of the select action. */
-    public static final WritableObjectPropertyKey<String> SELECT_NAME =
-            new WritableObjectPropertyKey<>();
-
-    /** The alternative action's name. */
-    public static final WritableObjectPropertyKey<String> ALT_NAME =
-            new WritableObjectPropertyKey<>();
+    /** Do not use, this is in the process of being deleted. */
+    @Deprecated
+    public static final WritableBooleanPropertyKey IS_CANCEL_ACTION_EXTERNAL =
+            new WritableBooleanPropertyKey();
 
     /** What will happen when alternative action is triggered. */
     public static final WritableObjectPropertyKey<OnClickListener> ALT_ACTION =
             new WritableObjectPropertyKey<>();
 
+    /** Do not use, this is in the process of being deleted. */
+    @Deprecated
+    public static final WritableBooleanPropertyKey IS_ALT_ACTION_EXTERNAL =
+            new WritableBooleanPropertyKey();
+
     /** The priority for this set of properties. */
     public static final WritableIntPropertyKey PRIORITY = new WritableIntPropertyKey();
 
-    public static final PropertyKey[] MINIMAL_DIALOG_KEYS = {ModalDialogProperties.TITLE,
-            CANCEL_NAME, CANCEL_ACTION, SELECT_NAME, ALT_NAME, ALT_ACTION, PRIORITY};
+    public static final PropertyKey[] MINIMAL_DIALOG_KEYS = {
+            ModalDialogProperties.TITLE, ACTION_NAMES, CANCEL_ACTION, ALT_ACTION, PRIORITY};
 
     public static final PropertyKey[] ALL_DIALOG_KEYS =
             PropertyModel.concatKeys(ModalDialogProperties.ALL_KEYS,
-                    new PropertyKey[] {CANCEL_NAME, CANCEL_ACTION, SELECT_NAME, ALT_NAME,
-                            ALT_ACTION, PRIORITY, IS_FULLSCREEN, LIST_MODELS});
+                    new PropertyKey[] {ACTION_NAMES, CANCEL_ACTION, ALT_ACTION, PRIORITY,
+                            IS_FULLSCREEN, LIST_MODELS});
 }

@@ -39,8 +39,8 @@
         <attr name="floatLabelHint" format="reference|string" />
     </declare-styleable>
 
-    <declare-styleable name="EmptyAlertEditText">
-        <attr name="alertMessage" format="string" />
+    <declare-styleable name="BookmarkTextInputLayout">
+        <attr name="emptyErrorMessage" format="string" />
     </declare-styleable>
 
     <declare-styleable name="PaddedFrameLayout">
@@ -83,5 +83,9 @@
         <attr name="drawableHeight" format="dimension"/>
         <!-- drawableTint wasn't added in Android until API level 23. -->
         <attr name="chromeDrawableTint" format="color"/>
+    </declare-styleable>
+
+    <declare-styleable name="TileGridLayout">
+        <attr name="minHorizontalSpacing" format="dimension"/>
     </declare-styleable>
 </resources>

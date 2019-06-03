@@ -9,10 +9,14 @@
 #include <utility>
 #include <vector>
 
+#include "ui/accessibility/ax_clipping_behavior.h"
+#include "ui/accessibility/ax_coordinate_system.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_node_position.h"
+#include "ui/accessibility/ax_offscreen_result.h"
 #include "ui/accessibility/ax_position.h"
+#include "ui/accessibility/ax_text_boundary.h"
 #include "ui/accessibility/ax_text_utils.h"
 #include "ui/accessibility/platform/ax_unique_id.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -78,34 +82,51 @@ class AX_EXPORT AXPlatformNodeDelegate {
   // Get the child of a node given a 0-based index.
   virtual gfx::NativeViewAccessible ChildAtIndex(int index) = 0;
 
-  // Get the bounds of this node in screen coordinates, applying clipping
-  // to all bounding boxes so that the resulting rect is within the window.
-  virtual gfx::Rect GetClippedScreenBoundsRect() const = 0;
+  // Returns the text of this node and represent the text of descendant nodes
+  // with a special character in place of every embedded object. This represents
+  // the concept of text in ATK and IA2 APIs.
+  virtual base::string16 GetHypertext() const = 0;
 
-  // Get the bounds of this node in screen coordinates without applying
-  // any clipping; it may be outside of the window or offscreen.
-  virtual gfx::Rect GetUnclippedScreenBoundsRect() const = 0;
+  // Set the selection in the hypertext of this node. Depending on the
+  // implementation, this may mean the new selection will span multiple nodes.
+  virtual bool SetHypertextSelection(int start_offset, int end_offset) = 0;
 
-  // Returns the bounds of the given range in screen coordinates. Only valid
-  // when the role is WebAXRoleStaticText.
-  virtual gfx::Rect GetScreenBoundsForRange(int start,
-                                            int len,
-                                            bool clipped = false) const = 0;
+  // Returns the text of this node and all descendant nodes; including text
+  // found in embedded objects.
+  virtual base::string16 GetInnerText() const = 0;
 
-  // Get the bounds of the given text range in the given coordinate system.
-  // Screen gets these boundaries in screen coordinates, Window in coordinates
-  // relative to the parent window, and Parent relative to the parent node. The
-  // offsets refer to offsets within the text returned for this node when
-  // treated as a platform text node.
-  enum TextRangeBoundsCoordinateSystem {
-    Screen,
-    Window,
-    Parent,
-  };
-  virtual gfx::Rect GetTextRangeBoundsRect(
-      int start_offset,
-      int end_offset,
-      TextRangeBoundsCoordinateSystem coordinate_system) const = 0;
+  // Return the bounds of this node in the coordinate system indicated. If the
+  // clipping behavior is set to clipped, clipping is applied. If an offscreen
+  // result address is provided, it will be populated depending on whether the
+  // returned bounding box is onscreen or offscreen.
+  virtual gfx::Rect GetBoundsRect(
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result = nullptr) const = 0;
+
+  // Return the bounds of the text range given by text offsets relative to
+  // GetHypertext in the coordinate system indicated. If the clipping behavior
+  // is set to clipped, clipping is applied. If an offscreen result address is
+  // provided, it will be populated depending on whether the returned bounding
+  // box is onscreen or offscreen.
+  virtual gfx::Rect GetHypertextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result = nullptr) const = 0;
+
+  // Return the bounds of the text range given by text offsets relative to
+  // GetInnerText in the coordinate system indicated. If the clipping behavior
+  // is set to clipped, clipping is applied. If an offscreen result address is
+  // provided, it will be populated depending on whether the returned bounding
+  // box is onscreen or offscreen.
+  virtual gfx::Rect GetInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result = nullptr) const = 0;
 
   // Do a *synchronous* hit test of the given location in global screen
   // coordinates, and the node within this node's subtree (inclusive) that's
@@ -156,15 +177,25 @@ class AX_EXPORT AXPlatformNodeDelegate {
   virtual std::set<AXPlatformNode*> GetReverseRelations(
       ax::mojom::IntListAttribute attr) = 0;
 
+  // Return the string representation of the unique ID assigned by the author,
+  // otherwise return an empty string. The author ID must be persistent across
+  // any instance of the application, regardless of locale. The author ID should
+  // be unique among sibling accessibility nodes and is best if unique across
+  // the application, however, not meeting this requirement is non-fatal.
+  virtual base::string16 GetAuthorUniqueId() const = 0;
+
   virtual const AXUniqueId& GetUniqueId() const = 0;
 
   // This method finds text boundaries in the text used for platform text APIs.
   // Implementations may use side-channel data such as line or word indices to
-  // produce appropriate results.
-  using EnclosingBoundaryOffsets = base::Optional<std::pair<size_t, size_t>>;
-  virtual EnclosingBoundaryOffsets FindTextBoundariesAtOffset(
-      TextBoundaryType boundary_type,
+  // produce appropriate results. It may optionally return no value, indicating
+  // that the delegate does not have all the information required to calculate
+  // this value and it is the responsibility of the AXPlatformNode itself to
+  // to calculate it.
+  virtual base::Optional<int> FindTextBoundary(
+      AXTextBoundary boundary,
       int offset,
+      TextBoundaryDirection direction,
       ax::mojom::TextAffinity affinity) const = 0;
 
   // Return a vector of all the descendants of this delegate's node.
@@ -240,6 +271,7 @@ class AX_EXPORT AXPlatformNodeDelegate {
   virtual base::string16 GetLocalizedStringForImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus status) const = 0;
   virtual base::string16 GetLocalizedStringForLandmarkType() const = 0;
+  virtual base::string16 GetStyleNameAttributeAsLocalizedString() const = 0;
 
   //
   // Testing.

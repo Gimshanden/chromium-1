@@ -27,10 +27,13 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_current_time_display_element.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_elements_helper.h"
+#include "third_party/blink/renderer/modules/media_controls/elements/media_control_remaining_time_display_element.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_resource_loader.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_shared_helper.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/text/platform_locale.h"
 
 namespace {
 
@@ -58,7 +61,7 @@ namespace blink {
 // +-HTMLStyleElement
 MediaControlTimelineElement::MediaControlTimelineElement(
     MediaControlsImpl& media_controls)
-    : MediaControlSliderElement(media_controls, kMediaSlider) {
+    : MediaControlSliderElement(media_controls) {
   SetShadowPseudoId(AtomicString("-webkit-media-controls-timeline"));
 
   if (MediaControlsImpl::IsModern()) {
@@ -68,7 +71,8 @@ MediaControlTimelineElement::MediaControlTimelineElement(
     // be re-combined with the UA sheet.
     // This stylesheet element contains rules that cannot be present in the UA
     // stylesheet (e.g. animations).
-    auto* style = HTMLStyleElement::Create(GetDocument(), CreateElementFlags());
+    auto* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
+                                                         CreateElementFlags());
     style->setTextContent(
         MediaControlsResourceLoader::GetShadowTimelineStyleSheet());
     track.ParserAppendChild(style);
@@ -81,15 +85,25 @@ bool MediaControlTimelineElement::WillRespondToMouseClickEvents() {
 
 void MediaControlTimelineElement::SetPosition(double current_time) {
   setValue(String::Number(current_time));
-  setAttribute(
-      html_names::kAriaValuetextAttr,
-      AtomicString(GetMediaControls().CurrentTimeDisplay().textContent(true)));
+  String aria_label =
+      GetLocale().QueryString(
+          MediaElement().IsHTMLVideoElement()
+              ? WebLocalizedString::kAXMediaVideoSliderHelp
+              : WebLocalizedString::kAXMediaAudioSliderHelp) +
+      " " + GetMediaControls().CurrentTimeDisplay().textContent(true) + " " +
+      GetMediaControls().RemainingTimeDisplay().textContent(true);
+  setAttribute(html_names::kAriaLabelAttr, AtomicString(aria_label));
+
+  setAttribute(html_names::kAriaValuetextAttr,
+               AtomicString(GetLocale().QueryString(
+                   WebLocalizedString::kAXMediaCurrentTimeDisplay,
+                   GetMediaControls().CurrentTimeDisplay().textContent(true))));
   RenderBarSegments();
 }
 
 void MediaControlTimelineElement::SetDuration(double duration) {
-  SetFloatingPointAttribute(html_names::kMaxAttr,
-                            std::isfinite(duration) ? duration : 0);
+  double duration_value = std::isfinite(duration) ? duration : 0;
+  SetFloatingPointAttribute(html_names::kMaxAttr, duration_value);
   RenderBarSegments();
 }
 
@@ -206,9 +220,9 @@ void MediaControlTimelineElement::RenderBarSegments() {
   // Convert 6px into ratio respect to progress bar width since
   // current_position is range from 0 to 1
   double width = TrackWidth() / ZoomFactor();
-  if (width != 0) {
+  if (width != 0 && current_position != 0) {
     double offset = kThumbRadius / width;
-    current_position += offset - 2 * offset * current_position;
+    current_position += offset - (2 * offset * current_position);
   }
 
   MediaControlSliderElement::Position before_segment(0, 0);
@@ -232,9 +246,11 @@ void MediaControlTimelineElement::RenderBarSegments() {
     double end_position = end / duration;
 
     if (MediaControlsImpl::IsModern()) {
-      // Draw dark grey highlight to show what we have loaded.
-      after_segment.left = current_position;
-      after_segment.width = end_position - current_position;
+      // Draw dark grey highlight to show what we have loaded. This just uses a
+      // width since it just starts at zero just like the before segment.
+      // We use |std::max()| here because |current_position| has an offset added
+      // to it and can therefore be greater than |end_position| in some cases.
+      after_segment.width = std::max(current_position, end_position);
     } else {
       // Draw highlight to show what we have played.
       if (current_position > start_position) {

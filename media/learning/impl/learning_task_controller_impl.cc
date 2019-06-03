@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "media/learning/impl/distribution_reporter.h"
 #include "media/learning/impl/extra_trees_trainer.h"
 #include "media/learning/impl/lookup_table_trainer.h"
 
@@ -21,17 +22,18 @@ LearningTaskControllerImpl::LearningTaskControllerImpl(
     SequenceBoundFeatureProvider feature_provider)
     : task_(task),
       training_data_(std::make_unique<TrainingData>()),
-      reporter_(std::move(reporter)) {
+      reporter_(std::move(reporter)),
+      helper_(std::make_unique<LearningTaskControllerHelper>(
+          task,
+          base::BindRepeating(&LearningTaskControllerImpl::AddFinishedExample,
+                              AsWeakPtr()),
+          std::move(feature_provider))),
+      expected_feature_count_(task_.feature_descriptions.size()) {
+  // Note that |helper_| uses the full set of features.
+
   // TODO(liberato): Make this compositional.  FeatureSubsetTaskController?
   if (task_.feature_subset_size)
     DoFeatureSubsetSelection();
-
-  // Now that we have the updated task, create a helper for it.
-  helper_ = std::make_unique<LearningTaskControllerHelper>(
-      task,
-      base::BindRepeating(&LearningTaskControllerImpl::AddFinishedExample,
-                          AsWeakPtr()),
-      std::move(feature_provider));
 
   switch (task_.model) {
     case LearningTask::Model::kExtraTrees:
@@ -48,30 +50,50 @@ LearningTaskControllerImpl::~LearningTaskControllerImpl() = default;
 void LearningTaskControllerImpl::BeginObservation(
     base::UnguessableToken id,
     const FeatureVector& features) {
-  // Copy just the subset we care about.
-  FeatureVector new_features;
-  if (task_.feature_subset_size) {
-    for (auto& iter : feature_indices_)
-      new_features.push_back(features[iter]);
-  } else {
-    // Use them all.
-    new_features = features;
-  }
+  // TODO(liberato): Should we enforce that the right number of features are
+  // present here?  Right now, we allow it to be shorter, so that features from
+  // a FeatureProvider may be omitted.  Of course, they have to be at the end in
+  // that case.  If we start enforcing it here, make sure that LearningHelper
+  // starts adding the placeholder features.
+  if (!trainer_)
+    return;
 
-  helper_->BeginObservation(id, new_features);
+  helper_->BeginObservation(id, features);
 }
 
 void LearningTaskControllerImpl::CompleteObservation(
     base::UnguessableToken id,
     const ObservationCompletion& completion) {
+  if (!trainer_)
+    return;
   helper_->CompleteObservation(id, completion);
 }
 
 void LearningTaskControllerImpl::CancelObservation(base::UnguessableToken id) {
+  if (!trainer_)
+    return;
   helper_->CancelObservation(id);
 }
 
-void LearningTaskControllerImpl::AddFinishedExample(LabelledExample example) {
+void LearningTaskControllerImpl::AddFinishedExample(LabelledExample example,
+                                                    ukm::SourceId source_id) {
+  // Verify that we have a trainer and that we got the right number of features.
+  // We don't compare to |task_.feature_descriptions.size()| since that has been
+  // adjusted to the subset size already.  We expect the original count.
+  if (!trainer_ || example.features.size() != expected_feature_count_)
+    return;
+
+  // Now that we have the whole set of features, select the subset we want.
+  FeatureVector new_features;
+  if (task_.feature_subset_size) {
+    for (auto& iter : feature_indices_)
+      new_features.push_back(example.features[iter]);
+    example.features = std::move(new_features);
+  }  // else use them all.
+
+  // The features should now match the task.
+  DCHECK_EQ(example.features.size(), task_.feature_descriptions.size());
+
   if (training_data_->size() >= task_.max_data_set_size) {
     // Replace a random example.  We don't necessarily want to replace the
     // oldest, since we don't necessarily want to enforce an ad-hoc recency
@@ -87,9 +109,12 @@ void LearningTaskControllerImpl::AddFinishedExample(LabelledExample example) {
   if (model_ && reporter_) {
     TargetHistogram predicted = model_->PredictDistribution(example.features);
 
-    TargetHistogram observed;
-    observed += example.target_value;
-    reporter_->GetPredictionCallback(observed).Run(predicted);
+    DistributionReporter::PredictionInfo info;
+    info.observed = example.target_value;
+    info.source_id = source_id;
+    info.total_training_weight = last_training_weight_;
+    info.total_training_examples = last_training_size_;
+    reporter_->GetPredictionCallback(info).Run(predicted);
   }
 
   // Can't train more than one model concurrently.
@@ -104,8 +129,13 @@ void LearningTaskControllerImpl::AddFinishedExample(LabelledExample example) {
 
   num_untrained_examples_ = 0;
 
+  // Record these for metrics.
+  last_training_weight_ = training_data_->total_weight();
+  last_training_size_ = training_data_->size();
+
   TrainedModelCB model_cb =
-      base::BindOnce(&LearningTaskControllerImpl::OnModelTrained, AsWeakPtr());
+      base::BindOnce(&LearningTaskControllerImpl::OnModelTrained, AsWeakPtr(),
+                     training_data_->total_weight(), training_data_->size());
   training_is_in_progress_ = true;
   // Note that this copies the training data, so it's okay if we add more
   // examples to our copy before this returns.
@@ -115,10 +145,15 @@ void LearningTaskControllerImpl::AddFinishedExample(LabelledExample example) {
   trainer_->Train(task_, *training_data_, std::move(model_cb));
 }
 
-void LearningTaskControllerImpl::OnModelTrained(std::unique_ptr<Model> model) {
+void LearningTaskControllerImpl::OnModelTrained(double training_weight,
+                                                int training_size,
+                                                std::unique_ptr<Model> model) {
   DCHECK(training_is_in_progress_);
   training_is_in_progress_ = false;
   model_ = std::move(model);
+  // Record these for metrics.
+  last_training_weight_ = training_weight;
+  last_training_size_ = training_size;
 }
 
 void LearningTaskControllerImpl::SetTrainerForTesting(
@@ -156,7 +191,8 @@ void LearningTaskControllerImpl::DoFeatureSubsetSelection() {
 
   task_.feature_descriptions = adjusted_descriptions;
 
-  reporter_->SetFeatureSubset(feature_indices_);
+  if (reporter_)
+    reporter_->SetFeatureSubset(feature_indices_);
 }
 
 }  // namespace learning

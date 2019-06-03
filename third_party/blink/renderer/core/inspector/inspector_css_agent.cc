@@ -57,6 +57,7 @@
 #include "third_party/blink/renderer/core/css/style_sheet.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/css/style_sheet_list.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/node.h"
@@ -91,7 +92,9 @@
 #include "third_party/blink/renderer/platform/fonts/font_custom_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/caching_word_shaper.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/text/text_run.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_concatenate.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
@@ -105,6 +108,8 @@ namespace {
 int g_frontend_operation_counter = 0;
 
 class FrontendOperationScope {
+  STACK_ALLOCATED();
+
  public:
   FrontendOperationScope() { ++g_frontend_operation_counter; }
   ~FrontendOperationScope() { --g_frontend_operation_counter; }
@@ -115,13 +120,13 @@ String CreateShorthandValue(Document* document,
                             const String& old_text,
                             const String& longhand,
                             const String& new_value) {
-  StyleSheetContents* style_sheet_contents = StyleSheetContents::Create(
+  auto* style_sheet_contents = MakeGarbageCollected<StyleSheetContents>(
       StrictCSSParserContext(document->GetSecureContextMode()));
   String text = " div { " + shorthand + ": " + old_text + "; }";
-  CSSParser::ParseSheet(CSSParserContext::Create(*document),
+  CSSParser::ParseSheet(MakeGarbageCollected<CSSParserContext>(*document),
                         style_sheet_contents, text);
 
-  CSSStyleSheet* style_sheet = CSSStyleSheet::Create(style_sheet_contents);
+  auto* style_sheet = MakeGarbageCollected<CSSStyleSheet>(style_sheet_contents);
   auto* rule = To<CSSStyleRule>(style_sheet->item(0));
   CSSStyleDeclaration* style = rule->style();
   DummyExceptionStateForTesting exception_state;
@@ -1158,12 +1163,27 @@ void InspectorCSSAgent::CollectPlatformFontsForLayoutObject(
   if (!layout_object->IsText()) {
     if (!descendants_depth)
       return;
+
+    // Skip recursing inside a display-locked tree.
+    if (layout_object->GetNode() &&
+        DisplayLockUtilities::NearestLockedInclusiveAncestor(
+            *layout_object->GetNode())) {
+      return;
+    }
+
     if (!layout_object->IsAnonymous())
       --descendants_depth;
     for (LayoutObject* child = layout_object->SlowFirstChild(); child;
          child = child->NextSibling()) {
       CollectPlatformFontsForLayoutObject(child, font_stats, descendants_depth);
     }
+    return;
+  }
+
+  // Don't gather text on a display-locked tree.
+  if (layout_object->GetNode() &&
+      DisplayLockUtilities::NearestLockedExclusiveAncestor(
+          *layout_object->GetNode())) {
     return;
   }
 
@@ -1893,7 +1913,7 @@ InspectorStyleSheet* InspectorCSSAgent::InspectorStyleSheetForRule(
   // this issue, we use CSSOM wrapper created by inspector.
   if (!rule->parentStyleSheet()) {
     if (!inspector_user_agent_style_sheet_)
-      inspector_user_agent_style_sheet_ = CSSStyleSheet::Create(
+      inspector_user_agent_style_sheet_ = MakeGarbageCollected<CSSStyleSheet>(
           CSSDefaultStyleSheets::Instance().DefaultStyleSheet());
     rule->SetParentStyleSheet(inspector_user_agent_style_sheet_.Get());
   }
@@ -1958,7 +1978,8 @@ protocol::CSS::StyleSheetOrigin InspectorCSSAgent::DetectOrigin(
     Document* owner_document) {
   DCHECK(page_style_sheet);
 
-  if (!page_style_sheet->ownerNode() && page_style_sheet->href().IsEmpty())
+  if (!page_style_sheet->ownerNode() && page_style_sheet->href().IsEmpty() &&
+      !page_style_sheet->IsConstructed())
     return protocol::CSS::StyleSheetOriginEnum::UserAgent;
 
   if (page_style_sheet->ownerNode() &&
@@ -2315,34 +2336,19 @@ void InspectorCSSAgent::GetBackgroundColors(Element* element,
                                             Vector<Color>* colors,
                                             String* computed_font_size,
                                             String* computed_font_weight) {
-  LayoutRect content_bounds;
-  LayoutObject* element_layout = element->GetLayoutObject();
-  if (!element_layout)
+  // TODO: only support the single text child node here.
+  // Follow up with a larger fix post-merge.
+  auto* text_node = DynamicTo<Text>(element->firstChild());
+  if (!text_node || element->firstChild()->nextSibling()) {
     return;
-
-  for (const Node* child = element->firstChild(); child;
-       child = child->nextSibling()) {
-    if (!child->IsTextNode())
-      continue;
-    content_bounds.Unite(LayoutRect(child->BoundingBox()));
-  }
-  if (content_bounds.Size().IsEmpty() && element_layout->IsBox()) {
-    // Return content box instead - may have indirect text children.
-    LayoutBox* layout_box = ToLayoutBox(element_layout);
-    content_bounds = layout_box->PhysicalContentBoxRect();
-    content_bounds = LayoutRect(
-        element_layout->LocalToAbsoluteQuad(FloatRect(content_bounds))
-            .BoundingBox());
   }
 
-  if (content_bounds.Size().IsEmpty())
-    return;
-
-  LocalFrameView* view = element->GetDocument().View();
+  LayoutRect content_bounds(text_node->BoundingBox());
+  LocalFrameView* view = text_node->GetDocument().View();
   if (!view)
     return;
 
-  Document& document = element->GetDocument();
+  Document& document = text_node->GetDocument();
   bool is_main_frame = document.IsInMainFrame();
   bool found_opaque_color = false;
   if (is_main_frame) {
@@ -2352,8 +2358,8 @@ void InspectorCSSAgent::GetBackgroundColors(Element* element,
     found_opaque_color = !base_background_color.HasAlpha();
   }
 
-  found_opaque_color = GetColorsFromRect(content_bounds, element->GetDocument(),
-                                         element, *colors);
+  found_opaque_color = GetColorsFromRect(
+      content_bounds, text_node->GetDocument(), element, *colors);
 
   if (!found_opaque_color && !is_main_frame) {
     for (HTMLFrameOwnerElement* owner_element = document.LocalOwner();
@@ -2368,10 +2374,12 @@ void InspectorCSSAgent::GetBackgroundColors(Element* element,
       MakeGarbageCollected<CSSComputedStyleDeclaration>(element, true);
   const CSSValue* font_size =
       computed_style_info->GetPropertyCSSValue(GetCSSPropertyFontSize());
-  *computed_font_size = font_size->CssText();
+  if (font_size)
+    *computed_font_size = font_size->CssText();
   const CSSValue* font_weight =
       computed_style_info->GetPropertyCSSValue(GetCSSPropertyFontWeight());
-  *computed_font_weight = font_weight->CssText();
+  if (font_weight)
+    *computed_font_weight = font_weight->CssText();
 }
 
 void InspectorCSSAgent::SetCoverageEnabled(bool enabled) {

@@ -4,10 +4,10 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_hover_card_bubble_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
@@ -70,8 +70,14 @@ class TabHoverCardBubbleViewInteractiveUiTest : public InProcessBrowserTest {
 
 #if defined(USE_AURA)
 // Verify that the hover card is not visible when any key is pressed.
+// TODO(crbug.com/947668): The test is flaky on Win10.
+#if defined(OS_WIN)
+#define MAYBE_HoverCardHidesOnAnyKeyPressInSameWindow DISABLED_HoverCardHidesOnAnyKeyPressInSameWindow
+#else
+#define MAYBE_HoverCardHidesOnAnyKeyPressInSameWindow HoverCardHidesOnAnyKeyPressInSameWindow
+#endif
 IN_PROC_BROWSER_TEST_F(TabHoverCardBubbleViewInteractiveUiTest,
-                       HoverCardHidesOnAnyKeyPressInSameWindow) {
+                       MAYBE_HoverCardHidesOnAnyKeyPressInSameWindow) {
   TabStrip* tab_strip =
       BrowserView::GetBrowserViewForBrowser(browser())->tabstrip();
   Tab* tab = tab_strip->tab_at(0);

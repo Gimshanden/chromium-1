@@ -4,6 +4,8 @@
 
 #include "chrome/updater/updater.h"
 
+#include <stdint.h>
+
 #include <iterator>
 #include <memory>
 #include <string>
@@ -11,7 +13,7 @@
 #include <vector>
 
 #include "base/at_exit.h"
-#include "base/callback_forward.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
@@ -21,8 +23,7 @@
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/task/post_task.h"
-#include "base/task/task_scheduler/initialization_util.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -31,23 +32,14 @@
 #include "chrome/updater/configurator.h"
 #include "chrome/updater/crash_client.h"
 #include "chrome/updater/crash_reporter.h"
+#include "chrome/updater/installer.h"
 #include "chrome/updater/updater_constants.h"
 #include "chrome/updater/updater_version.h"
 #include "chrome/updater/util.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/prefs/pref_service.h"
-#include "components/services/patch/public/cpp/manifest.h"
-#include "components/services/patch/public/interfaces/constants.mojom.h"
-#include "components/services/unzip/public/cpp/manifest.h"
-#include "components/services/unzip/public/interfaces/constants.mojom.h"
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/update_client.h"
-#include "mojo/core/embedder/embedder.h"
-#include "services/service_manager/background_service_manager.h"
-#include "services/service_manager/public/cpp/manifest_builder.h"
-#include "services/service_manager/public/cpp/service.h"
-#include "services/service_manager/public/cpp/service_binding.h"
-#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace updater {
 
@@ -60,68 +52,16 @@ const uint8_t mimo_hash[] = {0xc8, 0xce, 0x99, 0xba, 0xce, 0x89, 0xf8, 0x20,
                              0xb9, 0x40, 0xc5, 0x55, 0xaf, 0x08, 0x63, 0x70,
                              0x54, 0xf9, 0x56, 0xd3, 0xe7, 0x88, 0xba, 0x8c};
 
-void TaskSchedulerStart() {
-  base::TaskScheduler::Create("Updater");
-  const auto task_scheduler_init_params =
-      std::make_unique<base::TaskScheduler::InitParams>(
-          base::SchedulerWorkerPoolParams(
-              base::RecommendedMaxNumberOfThreadsInPool(3, 8, 0.1, 0),
-              base::TimeDelta::FromSeconds(30)),
-          base::SchedulerWorkerPoolParams(
-              base::RecommendedMaxNumberOfThreadsInPool(8, 32, 0.3, 0),
-              base::TimeDelta::FromSeconds(30)));
-  base::TaskScheduler::GetInstance()->Start(*task_scheduler_init_params);
+void ThreadPoolStart() {
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("Updater");
 }
 
-void TaskSchedulerStop() {
-  base::TaskScheduler::GetInstance()->Shutdown();
+void ThreadPoolStop() {
+  base::ThreadPoolInstance::Get()->Shutdown();
 }
 
 void QuitLoop(base::OnceClosure quit_closure) {
   std::move(quit_closure).Run();
-}
-
-// An EmbedderService is a no-op service that represents the updater main (the
-// embedder of the service_manager). It exposes its Connector for use in the
-// configurator, and owns the service_manager itself.
-class EmbedderService : public service_manager::Service {
- public:
-  EmbedderService(service_manager::mojom::ServiceRequest request,
-                  std::unique_ptr<service_manager::BackgroundServiceManager>
-                      service_manager)
-      : binding_(this, std::move(request)),
-        service_manager_(std::move(service_manager)) {}
-  ~EmbedderService() override {}
-  std::unique_ptr<service_manager::Connector> Connector() {
-    return binding_.GetConnector()->Clone();
-  }
-
- private:
-  service_manager::ServiceBinding binding_;
-  std::unique_ptr<service_manager::BackgroundServiceManager> service_manager_;
-  DISALLOW_COPY_AND_ASSIGN(EmbedderService);
-};
-
-std::unique_ptr<EmbedderService> CreateEmbedderService() {
-  const char* kEmbedderServiceName = "embedder_updater";
-  auto service_manager =
-      std::make_unique<service_manager::BackgroundServiceManager>(
-          std::vector<service_manager::Manifest>(
-              {patch::GetManifest(), unzip::GetManifest(),
-               service_manager::ManifestBuilder()
-                   .WithServiceName(kEmbedderServiceName)
-                   .RequireCapability(patch::mojom::kServiceName, "patch_file")
-                   .RequireCapability(unzip::mojom::kServiceName, "unzip_file")
-                   .Build()}));
-  service_manager::mojom::ServicePtr service;
-  service_manager::mojom::ServiceRequest request = mojo::MakeRequest(&service);
-  service_manager->RegisterService(
-      service_manager::Identity{kEmbedderServiceName,
-                                base::Token::CreateRandom(), base::Token{},
-                                base::Token::CreateRandom()},
-      std::move(service), nullptr);
-  return std::make_unique<EmbedderService>(std::move(request),
-                                           std::move(service_manager));
 }
 
 class Observer : public update_client::UpdateClient::Observer {
@@ -131,12 +71,16 @@ class Observer : public update_client::UpdateClient::Observer {
 
   // Overrides for update_client::UpdateClient::Observer.
   void OnEvent(Events event, const std::string& id) override {
-    update_client::CrxUpdateItem item;
-    update_client_->GetCrxUpdateState(id, &item);
+    update_client_->GetCrxUpdateState(id, &crx_update_item_);
+  }
+
+  const update_client::CrxUpdateItem& crx_update_item() const {
+    return crx_update_item_;
   }
 
  private:
   scoped_refptr<update_client::UpdateClient> update_client_;
+  update_client::CrxUpdateItem crx_update_item_;
   DISALLOW_COPY_AND_ASSIGN(Observer);
 };
 
@@ -163,19 +107,18 @@ void InitializeUpdaterMain() {
       "process_type");
   crash_key_process_type.Set("updater");
 
-  if (CrashClient::GetInstance()->InitializeCrashReporting()) {
+  if (CrashClient::GetInstance()->InitializeCrashReporting())
     VLOG(1) << "Crash reporting initialized.";
-  } else {
+  else
     VLOG(1) << "Crash reporting is not available.";
-  }
+
   StartCrashReporter(UPDATER_VERSION_STRING);
 
-  mojo::core::Init();
-  TaskSchedulerStart();
+  ThreadPoolStart();
 }
 
 void TerminateUpdaterMain() {
-  TaskSchedulerStop();
+  ThreadPoolStop();
 }
 
 }  // namespace
@@ -202,14 +145,16 @@ int UpdaterMain(int argc, const char* const* argv) {
     return *ptr;
   }
 
+  auto installer = base::MakeRefCounted<Installer>(
+      std::vector<uint8_t>(std::cbegin(mimo_hash), std::cend(mimo_hash)));
+  installer->FindInstallOfApp();
+  const auto component = installer->MakeCrxComponent();
+
   base::MessageLoopForUI message_loop;
   base::RunLoop runloop;
   DCHECK(base::ThreadTaskRunnerHandle::IsSet());
 
-  auto embedder_service = CreateEmbedderService();
-  auto config =
-      base::MakeRefCounted<Configurator>(embedder_service->Connector());
-
+  auto config = base::MakeRefCounted<Configurator>();
   {
     base::ScopedDisallowBlocking no_blocking_allowed;
 
@@ -218,20 +163,17 @@ int UpdaterMain(int argc, const char* const* argv) {
     Observer observer(update_client);
     update_client->AddObserver(&observer);
 
-    const std::vector<std::string> ids = {"mimojjlkmoijpicakmndhoigimigcmbb"};
+    const std::vector<std::string> ids = {installer->crx_id()};
     update_client->Update(
         ids,
         base::BindOnce(
-            [](const std::vector<std::string>& ids)
+            [](const update_client::CrxComponent& component,
+               const std::vector<std::string>& ids)
                 -> std::vector<base::Optional<update_client::CrxComponent>> {
-              update_client::CrxComponent component;
-              component.name = "mimo";
-              component.pk_hash.assign(std::begin(mimo_hash),
-                                       std::end(mimo_hash));
-              component.version = base::Version("0.0");
-              component.requires_network_encryption = false;
+              DCHECK_EQ(1u, ids.size());
               return {component};
-            }),
+            },
+            component),
         true,
         base::BindOnce(
             [](base::OnceClosure closure, update_client::Error error) {
@@ -242,6 +184,21 @@ int UpdaterMain(int argc, const char* const* argv) {
 
     runloop.Run();
 
+    const auto& update_item = observer.crx_update_item();
+    switch (update_item.state) {
+      case update_client::ComponentState::kUpdated:
+        VLOG(1) << "Update success.";
+        break;
+      case update_client::ComponentState::kUpToDate:
+        VLOG(1) << "No updates.";
+        break;
+      case update_client::ComponentState::kUpdateError:
+        VLOG(1) << "Updater error: " << update_item.error_code << ".";
+        break;
+      default:
+        NOTREACHED();
+        break;
+    }
     update_client->RemoveObserver(&observer);
     update_client = nullptr;
   }

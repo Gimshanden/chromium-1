@@ -8,7 +8,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/time/time.h"
-#include "net/base/auth.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/cert/sct_status_flags.h"
@@ -421,6 +420,7 @@ bool HttpResponseInfo::DidUseQuic() const {
     case CONNECTION_INFO_QUIC_46:
     case CONNECTION_INFO_QUIC_47:
     case CONNECTION_INFO_QUIC_99:
+    case CONNECTION_INFO_QUIC_999:
       return true;
     case NUM_OF_CONNECTION_INFOS:
       NOTREACHED();
@@ -491,6 +491,8 @@ std::string HttpResponseInfo::ConnectionInfoToString(
       return "http/0.9";
     case CONNECTION_INFO_HTTP1_0:
       return "http/1.0";
+    case CONNECTION_INFO_QUIC_999:
+      return "http2+quic/999";
     case NUM_OF_CONNECTION_INFOS:
       break;
   }

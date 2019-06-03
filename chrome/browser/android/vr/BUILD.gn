@@ -24,6 +24,8 @@ static_library("vr_android") {
     "cardboard_input_delegate.cc",
     "cardboard_input_delegate.h",
     "gl_browser_interface.h",
+    "gvr_consent_helper_impl.cc",
+    "gvr_consent_helper_impl.h",
     "gvr_graphics_delegate.cc",
     "gvr_graphics_delegate.h",
     "gvr_input_delegate.cc",
@@ -82,16 +84,11 @@ static_library("vr_android") {
       "arcore_device/arcore_install_utils.h",
       "arcore_device/arcore_java_utils.cc",
       "arcore_device/arcore_java_utils.h",
-      "arcore_device/arcore_permission_helper.cc",
-      "arcore_device/arcore_permission_helper.h",
       "arcore_device/arcore_shim.cc",
       "arcore_device/arcore_shim.h",
+      "arcore_device/type_converters.cc",
+      "arcore_device/type_converters.h",
     ]
-
-    # TODO(https://crbug.com/936004): Remove this once arcore_c_api.h is
-    # -Wextra-semi clean.
-    configs -= [ "//build/config/compiler:chromium_code" ]
-    configs += [ "//build/config/compiler:no_chromium_code" ]
   }
 
   deps = [
@@ -99,9 +96,9 @@ static_library("vr_android") {
     "//base",
     "//cc",
     "//chrome/android/features/vr:jni_headers",
-    "//chrome/browser/ui:ui",
+    "//chrome/browser/ui",
     "//chrome/browser/vr:vr_common",
-    "//chrome/common:common",
+    "//chrome/common",
     "//chrome/common:constants",
     "//components/language/core/browser",
     "//components/omnibox/browser",
@@ -179,6 +176,29 @@ source_set("ui_module_factory") {
   ]
 }
 
+# Similar to the ui_default_factory but also tries to open a dummy lib for the
+# purpose of exercising the library loading mechanism.
+source_set("ui_module_dummy_factory") {
+  sources = [
+    "ui_module_dummy_factory.cc",
+    "ui_module_dummy_factory.h",
+  ]
+  deps = [
+    ":ui_factory",
+    "//chrome/browser/vr:vr_base",
+    "//chrome/browser/vr:vr_ui",
+  ]
+}
+
+# A dummy lib used to test the library loading mechanism.
+loadable_module("vr_ui_dummy_lib") {
+  sources = [
+    "ui_dummy.cc",
+    "ui_dummy.h",
+  ]
+  no_default_deps = true
+}
+
 android_library("ar_java") {
   deps = [
     "//third_party/android_deps:com_google_ar_core_java",
@@ -241,7 +261,7 @@ test("vr_android_unittests") {
     ":test_support",
     ":vr_android",
     "//base/test:test_support",
-    "//chrome/browser:browser",
+    "//chrome/browser",
     "//components/translate/core/language_detection:language_detection",
     "//device/vr:fakes",
     "//device/vr/public/mojom",
@@ -250,6 +270,6 @@ test("vr_android_unittests") {
     "//services/network:test_support",
     "//testing/android/native_test:native_test_native_code",
     "//testing/gmock",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
   ]
 }

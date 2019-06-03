@@ -9,6 +9,8 @@
 #include "third_party/blink/renderer/modules/webgpu/gpu_color.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_extent_3d.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_origin_3d.h"
+#include "third_party/blink/renderer/modules/webgpu/gpu_pipeline_stage_descriptor.h"
+#include "third_party/blink/renderer/modules/webgpu/gpu_shader_module.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -26,6 +28,9 @@ DawnBindingType AsDawnEnum<DawnBindingType>(const WTF::String& webgpu_enum) {
   }
   if (webgpu_enum == "uniform-buffer") {
     return DAWN_BINDING_TYPE_UNIFORM_BUFFER;
+  }
+  if (webgpu_enum == "dynamic-uniform-buffer") {
+    return DAWN_BINDING_TYPE_DYNAMIC_UNIFORM_BUFFER;
   }
   NOTREACHED();
   return DAWN_BINDING_TYPE_FORCE32;
@@ -511,6 +516,33 @@ DawnFilterMode AsDawnEnum<DawnFilterMode>(const WTF::String& webgpu_enum) {
   return DAWN_FILTER_MODE_FORCE32;
 }
 
+template <>
+DawnCullMode AsDawnEnum<DawnCullMode>(const WTF::String& webgpu_enum) {
+  if (webgpu_enum == "none") {
+    return DAWN_CULL_MODE_NONE;
+  }
+  if (webgpu_enum == "front") {
+    return DAWN_CULL_MODE_FRONT;
+  }
+  if (webgpu_enum == "back") {
+    return DAWN_CULL_MODE_BACK;
+  }
+  NOTREACHED();
+  return DAWN_CULL_MODE_FORCE32;
+}
+
+template <>
+DawnFrontFace AsDawnEnum<DawnFrontFace>(const WTF::String& webgpu_enum) {
+  if (webgpu_enum == "ccw") {
+    return DAWN_FRONT_FACE_CCW;
+  }
+  if (webgpu_enum == "cw") {
+    return DAWN_FRONT_FACE_CW;
+  }
+  NOTREACHED();
+  return DAWN_FRONT_FACE_FORCE32;
+}
+
 DawnColor AsDawnType(const GPUColor* webgpu_color) {
   DCHECK(webgpu_color);
 
@@ -543,6 +575,21 @@ DawnOrigin3D AsDawnType(const GPUOrigin3D* webgpu_origin) {
   dawn_origin.z = webgpu_origin->z();
 
   return dawn_origin;
+}
+
+std::tuple<DawnPipelineStageDescriptor, CString> AsDawnType(
+    const GPUPipelineStageDescriptor* webgpu_stage) {
+  DCHECK(webgpu_stage);
+
+  CString entry_point_string = webgpu_stage->entryPoint().Ascii();
+
+  DawnPipelineStageDescriptor dawn_stage;
+  dawn_stage.module = webgpu_stage->module()->GetHandle();
+  dawn_stage.entryPoint = entry_point_string.data();
+
+  // CString holds a scoped_refptr to the string data so it is valid to move
+  // it into the return value without invalidating the entryPoint.
+  return std::make_tuple(dawn_stage, std::move(entry_point_string));
 }
 
 }  // namespace blink

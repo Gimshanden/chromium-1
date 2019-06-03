@@ -18,8 +18,12 @@ int ContextProviderMain() {
       base::fuchsia::ServiceDirectory::GetDefault();
 
   ContextProviderImpl context_provider;
-  base::fuchsia::ScopedServiceBinding<chromium::web::ContextProvider> binding(
+  base::fuchsia::ScopedServiceBinding<fuchsia::web::ContextProvider> binding(
       directory, &context_provider);
+
+  fuchsia::web::ContextProviderPtr fuchsia_context_provider;
+  fidl::Binding<fuchsia::web::ContextProvider> fuchsia_binding(
+      &context_provider, fuchsia_context_provider.NewRequest());
 
   base::RunLoop run_loop;
   cr_fuchsia::LifecycleImpl lifecycle(directory, run_loop.QuitClosure());

@@ -37,20 +37,18 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
-#if defined(OS_CHROMEOS)
-#include "ui/aura/env.h"
-#endif
-
 namespace printing {
 
 namespace {
 
 constexpr int kDefaultDocumentCookie = 1234;
 
-class PrintPreviewObserver : PrintPreviewUI::TestingDelegate {
+class PrintPreviewObserver : PrintPreviewUI::TestDelegate {
  public:
   PrintPreviewObserver() { PrintPreviewUI::SetDelegateForTesting(this); }
-  ~PrintPreviewObserver() { PrintPreviewUI::SetDelegateForTesting(nullptr); }
+  ~PrintPreviewObserver() override {
+    PrintPreviewUI::SetDelegateForTesting(nullptr);
+  }
 
   void WaitUntilPreviewIsReady() {
     if (rendered_page_count_ >= total_page_count_)
@@ -62,12 +60,12 @@ class PrintPreviewObserver : PrintPreviewUI::TestingDelegate {
   }
 
  private:
-  // PrintPreviewUI::TestingDelegate implementation.
+  // PrintPreviewUI::TestDelegate:
   void DidGetPreviewPageCount(int page_count) override {
     total_page_count_ = page_count;
   }
 
-  // PrintPreviewUI::TestingDelegate implementation.
+  // PrintPreviewUI::TestDelegate:
   void DidRenderPreviewPage(content::WebContents* preview_dialog) override {
     ++rendered_page_count_;
     CHECK(rendered_page_count_ <= total_page_count_);
@@ -79,6 +77,35 @@ class PrintPreviewObserver : PrintPreviewUI::TestingDelegate {
   int total_page_count_ = 1;
   int rendered_page_count_ = 0;
   base::RunLoop* run_loop_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(PrintPreviewObserver);
+};
+
+class NupPrintingTestDelegate : public PrintingMessageFilter::TestDelegate {
+ public:
+  NupPrintingTestDelegate() {
+    PrintingMessageFilter::SetDelegateForTesting(this);
+  }
+  ~NupPrintingTestDelegate() override {
+    PrintingMessageFilter::SetDelegateForTesting(nullptr);
+  }
+
+  // PrintingMessageFilter::TestDelegate:
+  PrintMsg_Print_Params GetPrintParams() override {
+    PrintMsg_Print_Params params;
+    params.page_size = gfx::Size(612, 792);
+    params.content_size = gfx::Size(540, 720);
+    params.printable_area = gfx::Rect(612, 792);
+    params.dpi = gfx::Size(72, 72);
+    params.document_cookie = kDefaultDocumentCookie;
+    params.pages_per_sheet = 4;
+    params.printed_doc_type =
+        IsOopifEnabled() ? SkiaDocumentType::MSKP : SkiaDocumentType::PDF;
+    return params;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NupPrintingTestDelegate);
 };
 
 class TestPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
@@ -201,19 +228,6 @@ class PrintBrowserTest : public InProcessBrowserTest {
     PrintMsg_PrintFrame_Params params;
     params.printable_area = gfx::Rect(800, 600);
     params.document_cookie = kDefaultDocumentCookie;
-    return params;
-  }
-
-  static PrintMsg_Print_Params GetNupPrintParams() {
-    PrintMsg_Print_Params params;
-    params.page_size = gfx::Size(612, 792);
-    params.content_size = gfx::Size(540, 720);
-    params.printable_area = gfx::Rect(612, 792);
-    params.dpi = gfx::Size(72, 72);
-    params.document_cookie = kDefaultDocumentCookie;
-    params.pages_per_sheet = 4;
-    params.printed_doc_type =
-        IsOopifEnabled() ? SkiaDocumentType::MSKP : SkiaDocumentType::PDF;
     return params;
   }
 
@@ -560,12 +574,6 @@ IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest, OopifPrinting) {
 // Printing an extension option page.
 // The test should not crash or timeout.
 IN_PROC_BROWSER_TEST_F(PrintExtensionBrowserTest, PrintOptionPage) {
-#if defined(OS_CHROMEOS)
-  // Mus can not support this test now https://crbug.com/823782.
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
-    return;
-#endif
-
   LoadExtensionAndNavigateToOptionPage();
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
@@ -574,12 +582,6 @@ IN_PROC_BROWSER_TEST_F(PrintExtensionBrowserTest, PrintOptionPage) {
 // The test should not crash or timeout.
 IN_PROC_BROWSER_TEST_F(SitePerProcessPrintExtensionBrowserTest,
                        PrintOptionPage) {
-#if defined(OS_CHROMEOS)
-  // Mus can not support this test now https://crbug.com/823782.
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
-    return;
-#endif
-
   LoadExtensionAndNavigateToOptionPage();
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
@@ -587,21 +589,21 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPrintExtensionBrowserTest,
 // Printing frame content for the main frame of a generic webpage with N-up
 // priting. This is a regression test for https://crbug.com/937247
 IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintNup) {
+  NupPrintingTestDelegate test_delegate;
   ASSERT_TRUE(embedded_test_server()->Started());
   GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  PrintingMessageFilter::SetTestUpdatePrintSettingsReply(GetNupPrintParams());
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
 
 // Site per process version of PrintBrowserTest.PrintNup.
 IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest, PrintNup) {
+  NupPrintingTestDelegate test_delegate;
   ASSERT_TRUE(embedded_test_server()->Started());
   GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  PrintingMessageFilter::SetTestUpdatePrintSettingsReply(GetNupPrintParams());
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
 

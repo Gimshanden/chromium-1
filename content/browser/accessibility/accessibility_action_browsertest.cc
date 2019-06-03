@@ -591,4 +591,99 @@ IN_PROC_BROWSER_TEST_F(AccessibilityActionBrowserTest,
   }
 }
 
+IN_PROC_BROWSER_TEST_F(AccessibilityActionBrowserTest,
+                       AriaControlsChangedEvent) {
+  NavigateToURL(shell(), GURL(url::kAboutBlankURL));
+
+  AccessibilityNotificationWaiter waiter(shell()->web_contents(),
+                                         ui::kAXModeComplete,
+                                         ax::mojom::Event::kLoadComplete);
+  GURL url(
+      "data:text/html,"
+      "<body>"
+      "<script>"
+      "function setcontrols(ele, event) {"
+      "  ele.setAttribute('aria-controls', 'radio1 radio2');"
+      "}"
+      "</script>"
+      "<div id='radiogroup' role='radiogroup' aria-label='group'"
+      "     onclick='setcontrols(this, event)'>"
+      "<div id='radio1' role='radio'>radio1</div>"
+      "<div id='radio2' role='radio'>radio2</div>"
+      "</div>"
+      "</body>");
+  NavigateToURL(shell(), url);
+  waiter.WaitForNotification();
+
+  BrowserAccessibility* target =
+      FindNode(ax::mojom::Role::kRadioGroup, "group");
+  ASSERT_NE(nullptr, target);
+  BrowserAccessibility* radio1 =
+      FindNode(ax::mojom::Role::kRadioButton, "radio1");
+  ASSERT_NE(nullptr, radio1);
+  BrowserAccessibility* radio2 =
+      FindNode(ax::mojom::Role::kRadioButton, "radio2");
+  ASSERT_NE(nullptr, radio2);
+
+  AccessibilityNotificationWaiter waiter2(
+      shell()->web_contents(), ui::kAXModeComplete,
+      ui::AXEventGenerator::Event::CONTROLS_CHANGED);
+  GetManager()->DoDefaultAction(*target);
+  waiter2.WaitForNotification();
+
+  auto&& control_list = target->GetData().GetIntListAttribute(
+      ax::mojom::IntListAttribute::kControlsIds);
+  EXPECT_EQ(2u, control_list.size());
+
+  auto find_radio1 =
+      std::find(control_list.cbegin(), control_list.cend(), radio1->GetId());
+  auto find_radio2 =
+      std::find(control_list.cbegin(), control_list.cend(), radio2->GetId());
+  EXPECT_NE(find_radio1, control_list.cend());
+  EXPECT_NE(find_radio2, control_list.cend());
+}
+
+IN_PROC_BROWSER_TEST_F(AccessibilityActionBrowserTest, FocusLostOnDeletedNode) {
+  NavigateToURL(shell(), GURL(url::kAboutBlankURL));
+
+  GURL url(
+      "data:text/html,"
+      "<button id='1'>1</button>"
+      "<iframe id='iframe' srcdoc=\""
+      "<button id='2'>2</button>"
+      "\"></iframe>");
+
+  NavigateToURL(shell(), url);
+  EnableAccessibilityForWebContents(shell()->web_contents());
+
+  auto FocusNodeAndReload = [this, &url](const std::string& node_name,
+                                         const std::string& focus_node_script) {
+    WaitForAccessibilityTreeToContainNodeWithName(shell()->web_contents(),
+                                                  node_name);
+    BrowserAccessibility* node = FindNode(ax::mojom::Role::kButton, node_name);
+    ASSERT_NE(nullptr, node);
+
+    EXPECT_TRUE(ExecuteScript(shell(), focus_node_script));
+    WaitForAccessibilityFocusChange();
+
+    EXPECT_EQ(node->GetId(),
+              GetFocusedAccessibilityNodeInfo(shell()->web_contents()).id);
+
+    // Reloading the frames will achieve two things:
+    //   1. Force the deletion of the node being tested.
+    //   2. Lose focus on the node by focusing a new frame.
+    AccessibilityNotificationWaiter load_waiter(
+        shell()->web_contents(), ui::kAXModeComplete,
+        ax::mojom::Event::kLoadComplete);
+    NavigateToURL(shell(), url);
+    load_waiter.WaitForNotification();
+  };
+
+  FocusNodeAndReload("1", "document.getElementById('1').focus();");
+  FocusNodeAndReload("2",
+                     "var iframe = document.getElementById('iframe');"
+                     "var inner_doc = iframe.contentWindow.document;"
+                     "inner_doc.getElementById('2').focus();");
+}
+
 }  // namespace content

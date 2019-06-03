@@ -10,11 +10,13 @@
 #include <utility>
 #include <vector>
 
+#include "base/callback.h"
+#include "base/location.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
-#include "chrome/browser/performance_manager/graph/graph.h"
-#include "chrome/browser/performance_manager/graph/graph_introspector_impl.h"
+#include "chrome/browser/performance_manager/graph/graph_impl.h"
 #include "chrome/browser/performance_manager/performance_manager.h"
+#include "chrome/browser/performance_manager/public/web_contents_proxy.h"
 #include "chrome/browser/performance_manager/webui_graph_dump_impl.h"
 #include "services/resource_coordinator/public/mojom/coordination_unit.mojom.h"
 #include "services/service_manager/public/cpp/bind_source_info.h"
@@ -28,7 +30,6 @@ class MojoUkmRecorder;
 namespace performance_manager {
 
 class PageNodeImpl;
-struct ProcessResourceMeasurementBatch;
 
 // The performance manager is a rendezvous point for binding to performance
 // manager interfaces.
@@ -36,6 +37,8 @@ struct ProcessResourceMeasurementBatch;
 // {Frame|Page|Process|System}ResourceCoordinator classes.
 class PerformanceManager {
  public:
+  using FrameNodeCreationCallback = base::OnceCallback<void(FrameNodeImpl*)>;
+
   ~PerformanceManager();
 
   // Retrieves the currently registered instance.
@@ -51,23 +54,40 @@ class PerformanceManager {
   // deletion on its sequence.
   static void Destroy(std::unique_ptr<PerformanceManager> instance);
 
+  // Invokes |graph_callback| on the performance manager's sequence, with the
+  // graph as a parameter.
+  using GraphCallback = base::OnceCallback<void(GraphImpl*)>;
+  void CallOnGraph(const base::Location& from_here,
+                   GraphCallback graph_callback);
+
   // Forwards the binding request to the implementation class.
   template <typename Interface>
   void BindInterface(mojo::InterfaceRequest<Interface> request);
 
-  // Dispatches a measurement batch to the SystemNode on the performance
-  // sequence. This is a temporary method to support the RenderProcessProbe,
-  // which will soon go away as the performance measurement moves to the
-  // performance sequence.
-  void DistributeMeasurementBatch(
-      std::unique_ptr<ProcessResourceMeasurementBatch> batch);
-
   // Creates a new node of the requested type and adds it to the graph.
-  // May be called from any sequence.
+  // May be called from any sequence. If a |creation_callback| is provided it
+  // will be run on the performance manager sequence immediately after creating
+  // the node.
   std::unique_ptr<FrameNodeImpl> CreateFrameNode(
+      ProcessNodeImpl* process_node,
       PageNodeImpl* page_node,
-      FrameNodeImpl* parent_frame_node);
-  std::unique_ptr<PageNodeImpl> CreatePageNode();
+      FrameNodeImpl* parent_frame_node,
+      int frame_tree_node_id,
+      const base::UnguessableToken& dev_tools_token,
+      int32_t browsing_instance_id,
+      int32_t site_instance_id);
+  std::unique_ptr<FrameNodeImpl> CreateFrameNode(
+      ProcessNodeImpl* process_node,
+      PageNodeImpl* page_node,
+      FrameNodeImpl* parent_frame_node,
+      int frame_tree_node_id,
+      const base::UnguessableToken& dev_tools_token,
+      int32_t browsing_instance_id,
+      int32_t site_instance_id,
+      FrameNodeCreationCallback creation_callback);
+  std::unique_ptr<PageNodeImpl> CreatePageNode(
+      const WebContentsProxy& contents_proxy,
+      bool is_visible);
   std::unique_ptr<ProcessNodeImpl> CreateProcessNode();
 
   // Destroys a node returned from the creation functions above.
@@ -85,18 +105,25 @@ class PerformanceManager {
     return task_runner_;
   }
 
+  // This allows an observer to be passed to this class, and bound to the
+  // lifetime of the performance manager. This will disappear post
+  // resource_coordinator migration, so do not use this unless you know what
+  // you're doing! Must be called from the performance manager sequence.
+  // TODO(chrisha): Kill this dead.
+  void RegisterObserver(std::unique_ptr<GraphObserver> observer);
+
  private:
   using InterfaceRegistry = service_manager::BinderRegistryWithArgs<
       const service_manager::BindSourceInfo&>;
 
   PerformanceManager();
-
-  void RegisterObserver(std::unique_ptr<GraphObserver> observer);
   void PostBindInterface(const std::string& interface_name,
                          mojo::ScopedMessagePipeHandle message_pipe);
 
-  template <typename NodeType>
-  std::unique_ptr<NodeType> CreateNodeImpl();
+  template <typename NodeType, typename... Args>
+  std::unique_ptr<NodeType> CreateNodeImpl(
+      base::OnceCallback<void(NodeType*)> creation_callback,
+      Args&&... constructor_args);
 
   void PostDeleteNode(std::unique_ptr<NodeBase> node);
   void DeleteNodeImpl(std::unique_ptr<NodeBase> node);
@@ -104,26 +131,22 @@ class PerformanceManager {
 
   void OnStart();
   void OnStartImpl(std::unique_ptr<service_manager::Connector> connector);
+  void CallOnGraphImpl(GraphCallback graph_callback);
   void BindInterfaceImpl(const std::string& interface_name,
                          mojo::ScopedMessagePipeHandle message_pipe);
-  void DistributeMeasurementBatchImpl(
-      std::unique_ptr<ProcessResourceMeasurementBatch> batch);
 
-  void BindWebUIGraphDump(
-      resource_coordinator::mojom::WebUIGraphDumpRequest request,
-      const service_manager::BindSourceInfo& source_info);
+  void BindWebUIGraphDump(mojom::WebUIGraphDumpRequest request,
+                          const service_manager::BindSourceInfo& source_info);
   void OnGraphDumpConnectionError(WebUIGraphDumpImpl* graph_dump);
 
   InterfaceRegistry interface_registry_;
 
   // The performance task runner.
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  Graph graph_;
+  GraphImpl graph_;
 
   // The registered graph observers.
   std::vector<std::unique_ptr<GraphObserver>> observers_;
-
-  CoordinationUnitIntrospectorImpl introspector_;
 
   // Provided to |graph_|.
   // TODO(siggi): This no longer needs to go through mojo.

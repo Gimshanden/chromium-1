@@ -32,9 +32,6 @@ extern const base::Feature* const kAllFeatures[];
 
 extern const base::Feature kArticleSuggestionsFeature;
 
-// Feature to listen for GCM push updates from the server.
-extern const base::Feature kBreakingNewsPushFeature;
-
 // Feature for simple experimental comparison and validation of changes since
 // M58: enabling this brings back the M58 Stable fetching schedule (which is
 // suitable for Holdback groups).
@@ -81,9 +78,6 @@ constexpr int kNotificationsIgnoredDefaultLimit = 3;
 // Whether to keep some prefetched content suggestions even when new suggestions
 // have been fetched.
 extern const base::Feature kKeepPrefetchedContentSuggestions;
-
-// Enables debug logging accessible through snippets-internals.
-extern const base::Feature kContentSuggestionsDebugLog;
 
 // Return all the features as a vector.
 std::vector<const base::Feature*> GetAllFeatures();

@@ -18,9 +18,10 @@
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "remoting/signaling/ftl.pb.h"
-#include "remoting/signaling/grpc_support/grpc_test_util.h"
-#include "remoting/signaling/grpc_support/scoped_grpc_server_stream.h"
+#include "remoting/base/grpc_support/scoped_grpc_server_stream.h"
+#include "remoting/base/grpc_test_support/grpc_test_util.h"
+#include "remoting/proto/ftl/v1/ftl_messages.pb.h"
+#include "remoting/signaling/ftl_grpc_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -64,11 +65,6 @@ ftl::ReceiveMessagesResponse CreateStartOfBatchResponse() {
   return response;
 }
 
-base::OnceCallback<void(const grpc::Status& status)> AssertOkCallback() {
-  return base::BindOnce(
-      [](const grpc::Status& status) { ASSERT_TRUE(status.ok()); });
-}
-
 // Creates a gmock EXPECT_CALL action that:
 //   1. Creates a fake server stream and returns it as the start stream result
 //   2. Posts a task to call |on_stream_opened| at the end of current sequence
@@ -95,6 +91,18 @@ decltype(auto) StartStream(
 template <typename OnStreamOpenedLambda>
 decltype(auto) StartStream(OnStreamOpenedLambda on_stream_opened) {
   return StartStream(on_stream_opened, nullptr);
+}
+
+base::OnceClosure NotReachedClosure() {
+  return base::BindOnce([]() { NOTREACHED(); });
+}
+
+base::RepeatingCallback<void(const grpc::Status&)> NotReachedStatusCallback(
+    const base::Location& location) {
+  return base::BindLambdaForTesting([=](const grpc::Status& status) {
+    NOTREACHED() << "Location: " << location.ToString()
+                 << ", status code: " << status.error_code();
+  });
 }
 
 }  // namespace
@@ -148,8 +156,10 @@ TEST_F(FtlMessageReceptionChannelTest,
             channel_->StopReceivingMessages();
           }));
 
-  channel_->StartReceivingMessages(test::CheckStatusThenQuitRunLoopCallback(
-      FROM_HERE, grpc::StatusCode::CANCELLED, &run_loop));
+  channel_->StartReceivingMessages(
+      NotReachedClosure(),
+      test::CheckStatusThenQuitRunLoopCallback(
+          FROM_HERE, grpc::StatusCode::CANCELLED, &run_loop));
 
   run_loop.Run();
 }
@@ -166,8 +176,10 @@ TEST_F(FtlMessageReceptionChannelTest,
                 .Run(grpc::Status(grpc::StatusCode::UNAUTHENTICATED, ""));
           }));
 
-  channel_->StartReceivingMessages(test::CheckStatusThenQuitRunLoopCallback(
-      FROM_HERE, grpc::StatusCode::UNAUTHENTICATED, &run_loop));
+  channel_->StartReceivingMessages(
+      NotReachedClosure(),
+      test::CheckStatusThenQuitRunLoopCallback(
+          FROM_HERE, grpc::StatusCode::UNAUTHENTICATED, &run_loop));
 
   run_loop.Run();
 }
@@ -183,8 +195,8 @@ TEST_F(FtlMessageReceptionChannelTest,
             on_incoming_msg.Run(CreateStartOfBatchResponse());
           }));
 
-  channel_->StartReceivingMessages(test::CheckStatusThenQuitRunLoopCallback(
-      FROM_HERE, grpc::StatusCode::OK, &run_loop));
+  channel_->StartReceivingMessages(run_loop.QuitClosure(),
+                                   NotReachedStatusCallback(FROM_HERE));
 
   run_loop.Run();
 }
@@ -205,9 +217,8 @@ TEST_F(FtlMessageReceptionChannelTest,
                 .Run(grpc::Status(grpc::StatusCode::UNAVAILABLE, ""));
 
             ASSERT_EQ(1, GetRetryFailureCount());
-            ASSERT_NEAR(
-                FtlMessageReceptionChannel::kBackoffInitialDelay.InSecondsF(),
-                GetTimeUntilRetry().InSecondsF(), 0.5);
+            ASSERT_NEAR(FtlGrpcContext::kBackoffInitialDelay.InSecondsF(),
+                        GetTimeUntilRetry().InSecondsF(), 0.5);
 
             // This will make the channel reopen the stream.
             scoped_task_environment_.FastForwardBy(GetTimeUntilRetry());
@@ -227,8 +238,8 @@ TEST_F(FtlMessageReceptionChannelTest,
             ASSERT_EQ(0, GetRetryFailureCount());
           }));
 
-  channel_->StartReceivingMessages(test::CheckStatusThenQuitRunLoopCallback(
-      FROM_HERE, grpc::StatusCode::OK, &run_loop));
+  channel_->StartReceivingMessages(run_loop.QuitClosure(),
+                                   NotReachedStatusCallback(FROM_HERE));
 
   run_loop.Run();
 }
@@ -237,15 +248,13 @@ TEST_F(FtlMessageReceptionChannelTest,
        TestStartReceivingMessages_MultipleCalls) {
   base::RunLoop run_loop;
 
-  base::MockCallback<FtlMessageReceptionChannel::DoneCallback>
-      start_receiving_messages_callback;
+  base::MockCallback<base::OnceClosure> stream_ready_callback;
 
   // Exits the run loop iff the callback is called three times with OK.
-  EXPECT_CALL(start_receiving_messages_callback,
-              Run(Property(&grpc::Status::error_code, grpc::StatusCode::OK)))
+  EXPECT_CALL(stream_ready_callback, Run())
       .WillOnce(Return())
       .WillOnce(Return())
-      .WillOnce(Invoke([&](const grpc::Status& status) { run_loop.Quit(); }));
+      .WillOnce([&]() { run_loop.Quit(); });
 
   EXPECT_CALL(mock_stream_opener_, Run(_, _))
       .WillOnce(StartStream(
@@ -254,9 +263,12 @@ TEST_F(FtlMessageReceptionChannelTest,
             on_incoming_msg.Run(CreateStartOfBatchResponse());
           }));
 
-  channel_->StartReceivingMessages(start_receiving_messages_callback.Get());
-  channel_->StartReceivingMessages(start_receiving_messages_callback.Get());
-  channel_->StartReceivingMessages(start_receiving_messages_callback.Get());
+  channel_->StartReceivingMessages(stream_ready_callback.Get(),
+                                   NotReachedStatusCallback(FROM_HERE));
+  channel_->StartReceivingMessages(stream_ready_callback.Get(),
+                                   NotReachedStatusCallback(FROM_HERE));
+  channel_->StartReceivingMessages(stream_ready_callback.Get(),
+                                   NotReachedStatusCallback(FROM_HERE));
 
   run_loop.Run();
 }
@@ -297,7 +309,9 @@ TEST_F(FtlMessageReceptionChannelTest, StreamsTwoMessages) {
             std::move(on_channel_closed).Run(grpc::Status::OK);
           }));
 
-  channel_->StartReceivingMessages(AssertOkCallback());
+  channel_->StartReceivingMessages(
+      base::DoNothing(), test::CheckStatusThenQuitRunLoopCallback(
+                             FROM_HERE, grpc::StatusCode::OK, &run_loop));
 
   run_loop.Run();
 }
@@ -315,9 +329,8 @@ TEST_F(FtlMessageReceptionChannelTest, NoPongWithinTimeout_ResetsStream) {
                 FtlMessageReceptionChannel::kPongTimeout);
 
             ASSERT_EQ(1, GetRetryFailureCount());
-            ASSERT_NEAR(
-                FtlMessageReceptionChannel::kBackoffInitialDelay.InSecondsF(),
-                GetTimeUntilRetry().InSecondsF(), 0.5);
+            ASSERT_NEAR(FtlGrpcContext::kBackoffInitialDelay.InSecondsF(),
+                        GetTimeUntilRetry().InSecondsF(), 0.5);
 
             // This will make the channel reopen the stream.
             scoped_task_environment_.FastForwardBy(GetTimeUntilRetry());
@@ -338,7 +351,8 @@ TEST_F(FtlMessageReceptionChannelTest, NoPongWithinTimeout_ResetsStream) {
             run_loop.Quit();
           }));
 
-  channel_->StartReceivingMessages(AssertOkCallback());
+  channel_->StartReceivingMessages(base::DoNothing(),
+                                   NotReachedStatusCallback(FROM_HERE));
 
   run_loop.Run();
 }
@@ -380,7 +394,8 @@ TEST_F(FtlMessageReceptionChannelTest, LifetimeExceeded_ResetsStream) {
             run_loop.Quit();
           }));
 
-  channel_->StartReceivingMessages(AssertOkCallback());
+  channel_->StartReceivingMessages(base::DoNothing(),
+                                   NotReachedStatusCallback(FROM_HERE));
 
   run_loop.Run();
 }
@@ -414,7 +429,7 @@ TEST_F(FtlMessageReceptionChannelTest, TimeoutIncreasesToMaximum) {
             base::TimeDelta time_until_retry = GetTimeUntilRetry();
 
             base::TimeDelta max_delay_diff =
-                time_until_retry - FtlMessageReceptionChannel::kBackoffMaxDelay;
+                time_until_retry - FtlGrpcContext::kBackoffMaxDelay;
 
             // Adjust for fuzziness.
             if (max_delay_diff.magnitude() <
@@ -426,7 +441,55 @@ TEST_F(FtlMessageReceptionChannelTest, TimeoutIncreasesToMaximum) {
             scoped_task_environment_.FastForwardBy(time_until_retry);
           }));
 
-  channel_->StartReceivingMessages(AssertOkCallback());
+  channel_->StartReceivingMessages(base::DoNothing(),
+                                   NotReachedStatusCallback(FROM_HERE));
+
+  run_loop.Run();
+}
+
+TEST_F(FtlMessageReceptionChannelTest,
+       StartStreamFailsWithUnRecoverableErrorAndRetry_TimeoutApplied) {
+  base::RunLoop run_loop;
+
+  base::WeakPtr<FakeScopedGrpcServerStream> old_stream;
+  EXPECT_CALL(mock_stream_opener_, Run(_, _))
+      .WillOnce(StartStream(
+          [&](const ReceiveMessagesResponseCallback& on_incoming_msg,
+              StatusCallback on_channel_closed) {
+            // The first open stream attempt fails with UNAUTHENTICATED error.
+            ASSERT_EQ(0, GetRetryFailureCount());
+
+            std::move(on_channel_closed)
+                .Run(grpc::Status(grpc::StatusCode::UNAUTHENTICATED, ""));
+
+            ASSERT_EQ(1, GetRetryFailureCount());
+            ASSERT_NEAR(FtlGrpcContext::kBackoffInitialDelay.InSecondsF(),
+                        GetTimeUntilRetry().InSecondsF(), 0.5);
+          },
+          &old_stream))
+      .WillOnce(StartStream(
+          [&](const ReceiveMessagesResponseCallback& on_incoming_msg,
+              StatusCallback on_channel_closed) {
+            // Second open stream attempt succeeds.
+
+            // Assert old stream closed.
+            ASSERT_FALSE(old_stream);
+
+            ASSERT_EQ(1, GetRetryFailureCount());
+
+            // Send a StartOfBatch and verify it resets the failure counter.
+            on_incoming_msg.Run(CreateStartOfBatchResponse());
+
+            ASSERT_EQ(0, GetRetryFailureCount());
+          }));
+
+  channel_->StartReceivingMessages(
+      base::DoNothing(),
+      base::BindLambdaForTesting([&](const grpc::Status& status) {
+        ASSERT_EQ(grpc::StatusCode::UNAUTHENTICATED, status.error_code());
+        channel_->StartReceivingMessages(run_loop.QuitClosure(),
+                                         NotReachedStatusCallback(FROM_HERE));
+      }));
 
   run_loop.Run();
 }

@@ -12,10 +12,12 @@
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/send_tab_to_self/send_tab_to_self_desktop_util.h"
 #include "chrome/browser/sync/send_tab_to_self_sync_service_factory.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "components/send_tab_to_self/send_tab_to_self_entry.h"
+#include "components/send_tab_to_self/send_tab_to_self_metrics.h"
 #include "components/send_tab_to_self/send_tab_to_self_model.h"
 #include "components/send_tab_to_self/send_tab_to_self_sync_service.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -26,8 +28,11 @@
 #include "ui/strings/grit/ui_strings.h"
 
 namespace send_tab_to_self {
+
 namespace {
+
 const char kDesktopNotificationSharedPrefix[] = "shared";
+
 }  // namespace
 
 DesktopNotificationHandler::DesktopNotificationHandler(Profile* profile)
@@ -48,12 +53,13 @@ void DesktopNotificationHandler::DisplayNewEntries(
     // Declare a notification
     message_center::Notification notification(
         message_center::NOTIFICATION_TYPE_SIMPLE, entry->GetGUID(),
-        base::UTF8ToUTF16(entry->GetTitle()), device_info, gfx::Image(),
-        base::UTF8ToUTF16(url.host()), url, message_center::NotifierId(url),
-        optional_fields, /*delegate=*/nullptr);
+        base::UTF8ToUTF16(entry->GetTitle()), device_info,
+        GetImageForNotification(), base::UTF8ToUTF16(url.host()), url,
+        message_center::NotifierId(url), optional_fields, /*delegate=*/nullptr);
     NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
         NotificationHandler::Type::SEND_TAB_TO_SELF, notification,
         /*metadata=*/nullptr);
+    RecordNotificationHistogram(SendTabToSelfNotification::kShown);
   }
 }
 
@@ -62,6 +68,7 @@ void DesktopNotificationHandler::DismissEntries(
   for (const std::string& guid : guids) {
     NotificationDisplayServiceFactory::GetForProfile(profile_)->Close(
         NotificationHandler::Type::SEND_TAB_TO_SELF, guid);
+    RecordNotificationHistogram(SendTabToSelfNotification::kDismissedRemotely);
   }
 }
 
@@ -74,6 +81,7 @@ void DesktopNotificationHandler::OnClose(Profile* profile,
     SendTabToSelfSyncServiceFactory::GetForProfile(profile)
         ->GetSendTabToSelfModel()
         ->DismissEntry(notification_id);
+    RecordNotificationHistogram(SendTabToSelfNotification::kDismissed);
   }
   std::move(completed_closure).Run();
 }
@@ -94,23 +102,26 @@ void DesktopNotificationHandler::OnClick(
     Navigate(&params);
     NotificationDisplayServiceFactory::GetForProfile(profile)->Close(
         NotificationHandler::Type::SEND_TAB_TO_SELF, notification_id);
-    // Delete the entry in SendTabToSelfModel
+    // Marks the the entry as opened in SendTabToSelfModel
     SendTabToSelfSyncServiceFactory::GetForProfile(profile)
         ->GetSendTabToSelfModel()
-        ->DeleteEntry(notification_id);
+        ->MarkEntryOpened(notification_id);
+    RecordNotificationHistogram(SendTabToSelfNotification::kOpened);
   }
   std::move(completed_closure).Run();
 }
 
 void DesktopNotificationHandler::DisplaySendingConfirmation(
-    const SendTabToSelfEntry& entry) {
+    const SendTabToSelfEntry& entry,
+    const std::string& target_device_name) {
+  const base::string16 confirm_str = l10n_util::GetStringFUTF16(
+      IDS_MESSAGE_NOTIFICATION_SEND_TAB_TO_SELF_CONFIRMATION_SUCCESS,
+      base::UTF8ToUTF16(target_device_name));
   const GURL& url = entry.GetURL();
   message_center::Notification notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
-      kDesktopNotificationSharedPrefix + entry.GetGUID(),
-      l10n_util::GetStringUTF16(
-          IDS_MESSAGE_NOTIFICATION_SEND_TAB_TO_SELF_CONFIRMATION_SUCCESS),
-      base::UTF8ToUTF16(entry.GetTitle()), gfx::Image(),
+      kDesktopNotificationSharedPrefix + entry.GetGUID(), confirm_str,
+      base::UTF8ToUTF16(entry.GetTitle()), GetImageForNotification(),
       base::UTF8ToUTF16(url.host()), url, message_center::NotifierId(url),
       message_center::RichNotificationData(), /*delegate=*/nullptr);
   NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
@@ -126,7 +137,7 @@ void DesktopNotificationHandler::DisplayFailureMessage(const GURL& url) {
           IDS_MESSAGE_NOTIFICATION_SEND_TAB_TO_SELF_CONFIRMATION_FAILURE_TITLE),
       l10n_util::GetStringUTF16(
           IDS_MESSAGE_NOTIFICATION_SEND_TAB_TO_SELF_CONFIRMATION_FAILURE_MESSAGE),
-      gfx::Image(), base::UTF8ToUTF16(url.host()), url,
+      GetImageForNotification(), base::UTF8ToUTF16(url.host()), url,
       message_center::NotifierId(url), message_center::RichNotificationData(),
       /*delegate=*/nullptr);
   NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(

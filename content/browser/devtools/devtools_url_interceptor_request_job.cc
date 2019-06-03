@@ -53,11 +53,12 @@ class DevToolsURLInterceptorRequestJob::SubRequest
 
   // net::URLRequest::Delegate methods:
   void OnAuthRequired(net::URLRequest* request,
-                      net::AuthChallengeInfo* auth_info) override;
+                      const net::AuthChallengeInfo& auth_info) override;
   void OnCertificateRequested(
       net::URLRequest* request,
       net::SSLCertRequestInfo* cert_request_info) override;
   void OnSSLCertificateError(net::URLRequest* request,
+                             int net_error,
                              const net::SSLInfo& ssl_info,
                              bool fatal) override;
   void OnResponseStarted(net::URLRequest* request, int net_error) override;
@@ -148,7 +149,7 @@ DevToolsURLInterceptorRequestJob::SubRequest::SubRequest(
       resource_request_info->fetch_window_id(),
       resource_request_info->GetResourceType(),
       resource_request_info->GetPageTransition(),
-      resource_request_info->IsDownload(), resource_request_info->is_stream(),
+      resource_request_info->IsDownload(),
       resource_request_info->resource_intercept_policy(),
       resource_request_info->HasUserGesture(),
       resource_request_info->is_load_timing_enabled(),
@@ -188,7 +189,7 @@ void DevToolsURLInterceptorRequestJob::SubRequest::Cancel() {
 
 void DevToolsURLInterceptorRequestJob::SubRequest::OnAuthRequired(
     net::URLRequest* request,
-    net::AuthChallengeInfo* auth_info) {
+    const net::AuthChallengeInfo& auth_info) {
   devtools_interceptor_request_job_->OnSubRequestAuthRequired(auth_info);
 }
 
@@ -201,9 +202,11 @@ void DevToolsURLInterceptorRequestJob::SubRequest::OnCertificateRequested(
 
 void DevToolsURLInterceptorRequestJob::SubRequest::OnSSLCertificateError(
     net::URLRequest* request,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal) {
-  devtools_interceptor_request_job_->NotifySSLCertificateError(ssl_info, fatal);
+  devtools_interceptor_request_job_->NotifySSLCertificateError(net_error,
+                                                               ssl_info, fatal);
 }
 
 void DevToolsURLInterceptorRequestJob::SubRequest::OnResponseStarted(
@@ -547,6 +550,8 @@ DevToolsURLInterceptorRequestJob::DevToolsURLInterceptorRequestJob(
     : net::URLRequestJob(original_request, original_network_delegate),
       interceptor_(interceptor),
       request_details_(original_request->url(),
+                       original_request->site_for_cookies(),
+                       original_request->initiator(),
                        original_request->method(),
                        GetUploadData(original_request),
                        original_request->extra_request_headers(),
@@ -706,9 +711,10 @@ bool DevToolsURLInterceptorRequestJob::NeedsAuth() {
   return !!auth_info_;
 }
 
-void DevToolsURLInterceptorRequestJob::GetAuthChallengeInfo(
-    scoped_refptr<net::AuthChallengeInfo>* auth_info) {
-  *auth_info = auth_info_.get();
+std::unique_ptr<net::AuthChallengeInfo>
+DevToolsURLInterceptorRequestJob::GetAuthChallengeInfo() {
+  DCHECK(auth_info_);
+  return std::make_unique<net::AuthChallengeInfo>(*auth_info_);
 }
 
 void DevToolsURLInterceptorRequestJob::SetAuth(
@@ -723,8 +729,8 @@ void DevToolsURLInterceptorRequestJob::CancelAuth() {
 }
 
 void DevToolsURLInterceptorRequestJob::OnSubRequestAuthRequired(
-    net::AuthChallengeInfo* auth_info) {
-  auth_info_ = auth_info;
+    const net::AuthChallengeInfo& auth_info) {
+  auth_info_ = std::make_unique<net::AuthChallengeInfo>(auth_info);
 
   if (stage_to_intercept_ == InterceptionStage::DONT_INTERCEPT) {
     // This should trigger default auth behavior.
@@ -741,7 +747,8 @@ void DevToolsURLInterceptorRequestJob::OnSubRequestAuthRequired(
   waiting_for_user_response_ = WaitingForUserResponse::WAITING_FOR_AUTH_ACK;
 
   std::unique_ptr<InterceptedRequestInfo> request_info = BuildRequestInfo();
-  request_info->auth_challenge = auth_info;
+  request_info->auth_challenge =
+      std::make_unique<net::AuthChallengeInfo>(auth_info);
   base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
                            base::BindOnce(callback_, std::move(request_info)));
 }
@@ -1024,6 +1031,11 @@ void DevToolsURLInterceptorRequestJob::ProcessInterceptionResponse(
     // Set cookies in the network stack.
     net::CookieOptions options;
     options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::cookie_util::ComputeSameSiteContextForResponse(
+            request_details_.url, request_details_.site_for_cookies,
+            request_details_.initiator));
+
     base::Time response_date;
     if (!mock_response_details_->response_headers()->GetDateValue(
             &response_date)) {
@@ -1157,6 +1169,8 @@ void DevToolsURLInterceptorRequestJob::ContinueDespiteLastError() {
 
 DevToolsURLInterceptorRequestJob::RequestDetails::RequestDetails(
     const GURL& url,
+    const GURL& site_for_cookies,
+    base::Optional<url::Origin> initiator,
     const std::string& method,
     std::unique_ptr<net::UploadDataStream> post_data,
     const net::HttpRequestHeaders& extra_request_headers,
@@ -1165,6 +1179,8 @@ DevToolsURLInterceptorRequestJob::RequestDetails::RequestDetails(
     const net::RequestPriority& priority,
     const net::URLRequestContext* url_request_context)
     : url(url),
+      site_for_cookies(site_for_cookies),
+      initiator(std::move(initiator)),
       method(method),
       post_data(std::move(post_data)),
       extra_request_headers(extra_request_headers),

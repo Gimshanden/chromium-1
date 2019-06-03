@@ -43,7 +43,6 @@
 #include "chrome/browser/metrics/https_engagement_metrics_provider.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/browser/metrics/network_quality_estimator_provider_impl.h"
-#include "chrome/browser/metrics/persistent_histograms.h"
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
 #include "chrome/browser/metrics/sampling_metrics_provider.h"
 #include "chrome/browser/metrics/subprocess_metrics_provider.h"
@@ -78,6 +77,7 @@
 #include "components/metrics/net/cellular_logic_helper.h"
 #include "components/metrics/net/net_metrics_log_uploader.h"
 #include "components/metrics/net/network_metrics_provider.h"
+#include "components/metrics/persistent_histograms.h"
 #include "components/metrics/stability_metrics_helper.h"
 #include "components/metrics/ui/screen_info_metrics_provider.h"
 #include "components/metrics/url_constants.h"
@@ -85,8 +85,8 @@
 #include "components/omnibox/browser/omnibox_metrics_provider.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "components/sync/device_info/device_count_metrics_provider.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync_device_info/device_count_metrics_provider.h"
 #include "components/ukm/ukm_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -100,7 +100,6 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/build_info.h"
 #include "chrome/browser/metrics/android_metrics_provider.h"
 #include "chrome/browser/metrics/page_load_metrics_provider.h"
 #endif
@@ -129,6 +128,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/metrics/chromeos_metrics_provider.h"
 #include "chrome/browser/signin/signin_status_metrics_provider_chromeos.h"
+#include "chrome/browser/ui/app_list/search/search_result_ranker/app_list_launch_metrics_provider.h"
 #include "chromeos/assistant/buildflags.h"
 
 #if BUILDFLAG(ENABLE_CROS_ASSISTANT)
@@ -149,7 +149,7 @@
 #include "content/public/common/service_manager_connection.h"
 #endif
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_ANDROID)
 #include "third_party/crashpad/crashpad/client/crashpad_info.h"
 #endif
 
@@ -182,7 +182,7 @@ const int kMaxHistogramGatheringWaitDuration = 60000;  // 60 seconds.
 // third_party/crashpad/crashpad/handler/handler_main.cc.
 const char kCrashpadHistogramAllocatorName[] = "CrashpadMetrics";
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_ANDROID)
 // The stream type assigned to the minidump stream that holds the serialized
 // system profile proto.
 const uint32_t kSystemProfileMinidumpStreamType = 0x4B6B0003;
@@ -193,7 +193,7 @@ const uint32_t kSystemProfileMinidumpStreamType = 0x4B6B0003;
 // not assume it.
 // TODO(manzagop): revisit this if the Crashpad API evolves.
 base::LazyInstance<std::string>::Leaky g_environment_for_crash_reporter;
-#endif  // defined(OS_WIN) || defined(OS_MACOSX)
+#endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_ANDROID)
 
 void RegisterFileMetricsPreferences(PrefRegistrySimple* registry) {
   metrics::FileMetricsProvider::RegisterPrefs(registry, kBrowserMetricsName);
@@ -469,7 +469,7 @@ std::string ChromeMetricsServiceClient::GetVersionString() {
 }
 
 void ChromeMetricsServiceClient::OnEnvironmentUpdate(std::string* environment) {
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_ANDROID)
   DCHECK(environment);
 
   // Register the environment with the crash reporter. Note this only registers
@@ -490,7 +490,7 @@ void ChromeMetricsServiceClient::OnEnvironmentUpdate(std::string* environment) {
       reinterpret_cast<const void*>(
           g_environment_for_crash_reporter.Get().data()),
       g_environment_for_crash_reporter.Get().size());
-#endif  // OS_WIN || OS_MACOSX
+#endif  // OS_WIN || OS_MACOSX || OS_ANDROID
 }
 
 void ChromeMetricsServiceClient::OnLogCleanShutdown() {
@@ -680,6 +680,10 @@ void ChromeMetricsServiceClient::RegisterMetricsServiceProviders() {
 
   metrics_service_->RegisterMetricsProvider(
       std::make_unique<chromeos::PrinterMetricsProvider>());
+
+  // Using WrapUnique to access a private constructor.
+  metrics_service_->RegisterMetricsProvider(
+      base::WrapUnique(new app_list::AppListLaunchMetricsProvider()));
 #endif  // defined(OS_CHROMEOS)
 
 #if !defined(OS_CHROMEOS)
@@ -1060,10 +1064,7 @@ bool ChromeMetricsServiceClient::
 }
 
 std::string ChromeMetricsServiceClient::GetAppPackageName() {
-#if defined(OS_ANDROID)
-  return base::android::BuildInfo::GetInstance()->package_name();
-#endif
-  return std::string();
+  return metrics::GetAppPackageName();
 }
 
 std::string ChromeMetricsServiceClient::GetUploadSigningKey() {

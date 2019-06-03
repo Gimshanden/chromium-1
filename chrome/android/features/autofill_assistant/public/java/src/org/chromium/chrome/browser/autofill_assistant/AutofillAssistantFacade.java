@@ -9,12 +9,10 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 
-import org.chromium.base.Callback;
-import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.autofill_assistant.metrics.DropOutReason;
+import org.chromium.chrome.browser.autofill_assistant.metrics.OnBoarding;
 import org.chromium.chrome.browser.metrics.UmaSessionStats;
-import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.IntentUtils;
 
 import java.net.URLDecoder;
@@ -39,6 +37,12 @@ public class AutofillAssistantFacade {
     private static final String PARAMETER_ENABLED = "ENABLED";
 
     /**
+     * Identifier used by parameters/or special intent that indicates experiments passed from
+     * the caller.
+     */
+    private static final String EXPERIMENT_IDS_IDENTIFIER = "EXPERIMENT_IDS";
+
+    /**
      * Boolean parameter that trusted apps can use to declare that the user has agreed to Terms and
      * Conditions that cover the use of Autofill Assistant in Chrome for that specific invocation.
      */
@@ -46,6 +50,10 @@ public class AutofillAssistantFacade {
 
     /** Pending intent sent by first-party apps. */
     private static final String PENDING_INTENT_NAME = INTENT_SPECIAL_PREFIX + "PENDING_INTENT";
+
+    /** Intent extra name for csv list of experiment ids. */
+    private static final String EXPERIMENT_IDS_NAME =
+            INTENT_SPECIAL_PREFIX + EXPERIMENT_IDS_IDENTIFIER;
 
     /** Package names of trusted first-party apps, from the pending intent. */
     private static final String[] TRUSTED_CALLER_PACKAGES = {
@@ -58,8 +66,10 @@ public class AutofillAssistantFacade {
      * .../variations/generate_server_hashes.py and
      * .../website/components/variations_dash/variations_histogram_entry.js.
      */
-    private static final String SYNTHETIC_TRIAL = "AutofillAssistantTriggered";
+    private static final String TRIGGERED_SYNTHETIC_TRIAL = "AutofillAssistantTriggered";
     private static final String ENABLED_GROUP = "Enabled";
+
+    private static final String EXPERIMENTS_SYNTHETIC_TRIAL = "AutofillAssistantExperimentsTrial";
 
     /** Returns true if conditions are satisfied to attempt to start Autofill Assistant. */
     public static boolean isConfigured(@Nullable Bundle intentExtras) {
@@ -69,52 +79,79 @@ public class AutofillAssistantFacade {
     /** Starts Autofill Assistant on the given {@code activity}. */
     public static void start(ChromeActivity activity) {
         // Register synthetic trial as soon as possible.
-        UmaSessionStats.registerSyntheticFieldTrial(SYNTHETIC_TRIAL, ENABLED_GROUP);
+        UmaSessionStats.registerSyntheticFieldTrial(TRIGGERED_SYNTHETIC_TRIAL, ENABLED_GROUP);
+        // Synthetic trial for experiments.
+        String experimentIds = getExperimentIds(activity.getInitialIntent().getExtras());
+        if (!experimentIds.isEmpty()) {
+            for (String experimentId : experimentIds.split(",")) {
+                UmaSessionStats.registerSyntheticFieldTrial(
+                        EXPERIMENTS_SYNTHETIC_TRIAL, experimentId);
+            }
+        }
+
+        // Early exit if autofill assistant should not be triggered.
+        if (!canStart(activity.getInitialIntent())
+                && !AutofillAssistantPreferencesUtil.getShowOnboarding()) {
+            return;
+        }
+
         // Have an "attempted starts" baseline for the drop out histogram.
         AutofillAssistantMetrics.recordDropOut(DropOutReason.AA_START);
-        if (canStart(activity.getInitialIntent())) {
-            getTab(activity, tab -> startNow(activity, tab));
-            return;
-        }
-
-        if (AutofillAssistantPreferencesUtil.getShowOnboarding()) {
-            getTab(activity, tab -> {
-                AutofillAssistantClient client =
-                        AutofillAssistantClient.fromWebContents(tab.getWebContents());
-                client.showOnboarding(() -> startNow(activity, tab));
-            });
-            return;
-        }
+        AutofillAssistantModuleEntryProvider.getModuleEntry(activity, (moduleEntry) -> {
+            if (moduleEntry == null) {
+                AutofillAssistantMetrics.recordDropOut(DropOutReason.DFM_CANCELLED);
+                return;
+            }
+            // Starting autofill assistant without onboarding.
+            if (canStart(activity.getInitialIntent())) {
+                AutofillAssistantMetrics.recordOnBoarding(OnBoarding.OB_NOT_SHOWN);
+                startNow(activity, moduleEntry);
+                return;
+            }
+            // Starting autofill assistant with onboarding.
+            if (AutofillAssistantPreferencesUtil.getShowOnboarding()) {
+                moduleEntry.showOnboarding(
+                        getExperimentIds(activity.getInitialIntent().getExtras()),
+                        () -> startNow(activity, moduleEntry));
+                return;
+            }
+        });
     }
 
-    private static void startNow(ChromeActivity activity, Tab tab) {
-        Map<String, String> parameters = extractParameters(activity.getInitialIntent().getExtras());
+    /**
+     * In M74 experiment ids might come from parameters. This function merges both exp ids from
+     * special intent and parameters.
+     * @return Comma-separated list of active experiment ids.
+     */
+    private static String getExperimentIds(@Nullable Bundle bundleExtras) {
+        if (bundleExtras == null) {
+            return "";
+        }
+
+        StringBuilder experiments = new StringBuilder();
+        Map<String, String> parameters = extractParameters(bundleExtras);
+        if (parameters.containsKey(EXPERIMENT_IDS_IDENTIFIER)) {
+            experiments.append(parameters.get(EXPERIMENT_IDS_IDENTIFIER));
+        }
+
+        String experimentsFromIntent = IntentUtils.safeGetString(bundleExtras, EXPERIMENT_IDS_NAME);
+        if (experimentsFromIntent != null) {
+            if (experiments.length() > 0 && !experiments.toString().endsWith(",")) {
+                experiments.append(",");
+            }
+            experiments.append(experimentsFromIntent);
+        }
+        return experiments.toString();
+    }
+
+    private static void startNow(ChromeActivity activity, AutofillAssistantModuleEntry entry) {
+        Bundle bundleExtras = activity.getInitialIntent().getExtras();
+        Map<String, String> parameters = extractParameters(bundleExtras);
         parameters.remove(PARAMETER_ENABLED);
         String initialUrl = activity.getInitialIntent().getDataString();
 
-        AutofillAssistantClient client =
-                AutofillAssistantClient.fromWebContents(tab.getWebContents());
-        client.start(initialUrl, parameters, activity.getInitialIntent().getExtras());
-    }
-
-    private static void getTab(ChromeActivity activity, Callback<Tab> callback) {
-        if (activity.getActivityTab() != null
-                && activity.getActivityTab().getWebContents() != null) {
-            callback.onResult(activity.getActivityTab());
-            return;
-        }
-
-        // The tab is not yet available. We need to register as listener and wait for it.
-        activity.getActivityTabProvider().addObserverAndTrigger(
-                new ActivityTabProvider.HintlessActivityTabObserver() {
-                    @Override
-                    public void onActivityTabChanged(Tab tab) {
-                        if (tab == null) return;
-                        activity.getActivityTabProvider().removeObserver(this);
-                        assert tab.getWebContents() != null;
-                        callback.onResult(tab);
-                    }
-                });
+        entry.start(initialUrl, parameters, getExperimentIds(bundleExtras),
+                activity.getInitialIntent().getExtras());
     }
 
     /** Return the value if the given boolean parameter from the extras. */

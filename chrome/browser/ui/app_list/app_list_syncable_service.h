@@ -11,7 +11,6 @@
 #include <memory>
 #include <string>
 
-#include "ash/public/interfaces/app_list.mojom.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -151,6 +150,9 @@ class AppListSyncableService : public syncer::SyncableService,
 
   // Returns true if this service was initialized.
   bool IsInitialized() const;
+
+  // Returns true if sync was started.
+  bool IsSyncing() const;
 
   // Registers new observers and makes sure that service is started.
   void AddObserverAndStart(Observer* observer);

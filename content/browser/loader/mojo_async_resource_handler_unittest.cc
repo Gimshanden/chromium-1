@@ -29,7 +29,6 @@
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/resource_throttle.h"
-#include "content/public/browser/stream_info.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/test/test_browser_context.h"
@@ -55,6 +54,7 @@
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/constants.h"
 #include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -128,19 +128,6 @@ class TestResourceDispatcherHostDelegate final
     ADD_FAILURE() << "DownloadStarting should not be called.";
   }
 
-  bool ShouldInterceptResourceAsStream(net::URLRequest* request,
-                                       const std::string& mime_type,
-                                       GURL* origin,
-                                       std::string* payload) override {
-    ADD_FAILURE() << "ShouldInterceptResourceAsStream should not be called.";
-    return false;
-  }
-
-  void OnStreamCreated(net::URLRequest* request,
-                       std::unique_ptr<content::StreamInfo> stream) override {
-    ADD_FAILURE() << "OnStreamCreated should not be called.";
-  }
-
   void OnResponseStarted(net::URLRequest* request,
                          ResourceContext* resource_context,
                          network::ResourceResponse* response) override {}
@@ -178,7 +165,7 @@ class MojoAsyncResourceHandlerWithStubOperations
                                  rdh,
                                  std::move(mojo_request),
                                  std::move(url_loader_client),
-                                 RESOURCE_TYPE_MAIN_FRAME,
+                                 ResourceType::kMainFrame,
                                  options),
         task_runner_(new base::TestSimpleTaskRunner) {}
   ~MojoAsyncResourceHandlerWithStubOperations() override {}
@@ -308,7 +295,7 @@ class MojoAsyncResourceHandlerTestBase {
     request_->set_upload(std::move(upload_stream));
     ResourceRequestInfo::AllocateForTesting(
         request_.get(),                          // request
-        RESOURCE_TYPE_XHR,                       // resource_type
+        ResourceType::kXhr,                      // resource_type
         browser_context_->GetResourceContext(),  // context
         kChildId,                                // render_process_id
         kRouteId,                                // render_view_id
@@ -344,7 +331,7 @@ class MojoAsyncResourceHandlerTestBase {
 
   virtual ~MojoAsyncResourceHandlerTestBase() {
     MojoAsyncResourceHandler::SetAllocationSizeForTesting(
-        MojoAsyncResourceHandler::kDefaultAllocationSize);
+        network::kDataPipeDefaultAllocationSize);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -1368,9 +1355,9 @@ TEST_F(MojoAsyncResourceHandlerDeferOnResponseStartedTest,
     MockResourceLoader::Status result = mock_loader_->OnResponseStarted(
         base::MakeRefCounted<network::ResourceResponse>());
     EXPECT_EQ(MockResourceLoader::Status::CALLBACK_PENDING, result);
-    std::unique_ptr<base::Value> request_state = request_->GetStateAsValue();
+    base::Value request_state = request_->GetStateAsValue();
     base::Value* delegate_blocked_by =
-        request_state->FindKey("delegate_blocked_by");
+        request_state.FindKey("delegate_blocked_by");
     EXPECT_TRUE(delegate_blocked_by);
     EXPECT_EQ("MojoAsyncResourceHandler", delegate_blocked_by->GetString());
   }
@@ -1381,9 +1368,9 @@ TEST_F(MojoAsyncResourceHandlerDeferOnResponseStartedTest,
     handler_->ProceedWithResponse();
     mock_loader_->WaitUntilIdleOrCanceled();
     EXPECT_EQ(MockResourceLoader::Status::IDLE, mock_loader_->status());
-    std::unique_ptr<base::Value> request_state = request_->GetStateAsValue();
+    base::Value request_state = request_->GetStateAsValue();
     base::Value* delegate_blocked_by =
-        request_state->FindKey("delegate_blocked_by");
+        request_state.FindKey("delegate_blocked_by");
     EXPECT_FALSE(delegate_blocked_by);
   }
 }

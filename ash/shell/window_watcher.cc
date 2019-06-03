@@ -14,6 +14,7 @@
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell/window_watcher_shelf_item_delegate.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -42,19 +43,20 @@ class WindowWatcher::WorkspaceWindowWatcher : public aura::WindowObserver {
   }
 
   void RootWindowAdded(aura::Window* root) {
-    aura::Window* container =
-        root->GetChildById(kShellWindowId_DefaultContainer);
-    container->AddObserver(watcher_);
-    for (aura::Window* window : container->children())
-      watcher_->OnWindowAdded(window);
+    // The shelf is globally observing all active and inactive desks containers.
+    for (aura::Window* container : desks_util::GetDesksContainers(root)) {
+      container->AddObserver(watcher_);
+      for (aura::Window* window : container->children())
+        watcher_->OnWindowAdded(window);
+    }
   }
 
   void RootWindowRemoved(aura::Window* root) {
-    aura::Window* container =
-        root->GetChildById(kShellWindowId_DefaultContainer);
-    container->RemoveObserver(watcher_);
-    for (aura::Window* window : container->children())
-      watcher_->OnWillRemoveWindow(window);
+    for (aura::Window* container : desks_util::GetDesksContainers(root)) {
+      container->RemoveObserver(watcher_);
+      for (aura::Window* window : container->children())
+        watcher_->OnWillRemoveWindow(window);
+    }
   }
 
  private:
@@ -86,7 +88,7 @@ void WindowWatcher::OnWindowAdded(aura::Window* new_window) {
   if (!wm::IsWindowUserPositionable(new_window))
     return;
 
-  ShelfModel* model = Shell::Get()->shelf_model();
+  ShelfModel* model = ShelfModel::Get();
   ShelfItem item;
   item.type = TYPE_APP;
   static int shelf_id = 0;
@@ -110,7 +112,7 @@ void WindowWatcher::OnWillRemoveWindow(aura::Window* window) {
   for (IDToWindow::iterator i = id_to_window_.begin(); i != id_to_window_.end();
        ++i) {
     if (i->second == window) {
-      ShelfModel* model = Shell::Get()->shelf_model();
+      ShelfModel* model = ShelfModel::Get();
       int index = model->ItemIndexByID(i->first);
       DCHECK_NE(-1, index);
       model->RemoveItemAt(index);

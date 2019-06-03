@@ -65,6 +65,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -135,7 +136,7 @@ static HTMLElement* AncestorToRetainStructureAndAppearanceForBlock(
     return Traversal<HTMLTableElement>::FirstAncestor(*common_ancestor_block);
 
   if (IsNonTableCellHTMLBlockElement(common_ancestor_block))
-    return ToHTMLElement(common_ancestor_block);
+    return To<HTMLElement>(common_ancestor_block);
 
   return nullptr;
 }
@@ -149,7 +150,7 @@ static inline HTMLElement* AncestorToRetainStructureAndAppearance(
 static inline HTMLElement*
 AncestorToRetainStructureAndAppearanceWithNoLayoutObject(
     const Node& common_ancestor) {
-  HTMLElement* common_ancestor_block = ToHTMLElement(EnclosingNodeOfType(
+  auto* common_ancestor_block = To<HTMLElement>(EnclosingNodeOfType(
       FirstPositionInOrBeforeNode(common_ancestor), IsHTMLBlockElement));
   return AncestorToRetainStructureAndAppearanceForBlock(common_ancestor_block);
 }
@@ -200,7 +201,7 @@ static HTMLElement* HighestAncestorToWrapMarkup(
           ContainerNode* ancestor = parent_list_node->parentNode();
           while (ancestor && !IsHTMLListElement(ancestor))
             ancestor = ancestor->parentNode();
-          special_common_ancestor = ToHTMLElement(ancestor);
+          special_common_ancestor = To<HTMLElement>(ancestor);
         }
       }
 
@@ -225,8 +226,8 @@ static HTMLElement* HighestAncestorToWrapMarkup(
     constraining_ancestor = constraining_ancestor
                                 ? constraining_ancestor
                                 : EnclosingBlock(check_ancestor);
-    HTMLElement* new_special_common_ancestor =
-        ToHTMLElement(HighestEnclosingNodeOfType(
+    auto* new_special_common_ancestor =
+        To<HTMLElement>(HighestEnclosingNodeOfType(
             Position::FirstPositionInNode(*check_ancestor),
             &IsPresentationalHTMLElement, kCanCrossEditingBoundary,
             constraining_ancestor));
@@ -338,7 +339,7 @@ DocumentFragment* CreateFragmentFromMarkup(
     ParserContentPolicy parser_content_policy) {
   // We use a fake body element here to trick the HTML parser to using the
   // InBody insertion mode.
-  HTMLBodyElement* fake_body = HTMLBodyElement::Create(document);
+  auto* fake_body = MakeGarbageCollected<HTMLBodyElement>(document);
   DocumentFragment* fragment = DocumentFragment::Create(document);
 
   fragment->ParseHTML(markup, fake_body, parser_content_policy);
@@ -358,12 +359,12 @@ static bool FindNodesSurroundingContext(DocumentFragment* fragment,
   if (!fragment->firstChild())
     return false;
   for (Node& node : NodeTraversal::StartsAt(*fragment->firstChild())) {
-    if (node.getNodeType() == Node::kCommentNode &&
-        ToComment(node).data() == kFragmentMarkerTag) {
+    auto* comment_node = DynamicTo<Comment>(node);
+    if (comment_node && comment_node->data() == kFragmentMarkerTag) {
       if (!node_before_context) {
-        node_before_context = &ToComment(node);
+        node_before_context = comment_node;
       } else {
-        node_after_context = &ToComment(node);
+        node_after_context = comment_node;
         return true;
       }
     }
@@ -422,7 +423,8 @@ DocumentFragment* CreateFragmentFromMarkupWithContext(
                                    node_after_context))
     return nullptr;
 
-  Document* tagged_document = Document::Create(DocumentInit::Create());
+  auto* tagged_document =
+      MakeGarbageCollected<Document>(DocumentInit::Create());
   tagged_document->SetContextFeatures(document.GetContextFeatures());
 
   Element* root = Element::Create(QualifiedName::Null(), tagged_document);
@@ -446,7 +448,7 @@ DocumentFragment* CreateFragmentFromMarkupWithContext(
   if (special_common_ancestor)
     fragment->AppendChild(special_common_ancestor);
   else
-    fragment->ParserTakeAllChildrenFrom(ToContainerNode(common_ancestor));
+    fragment->ParserTakeAllChildrenFrom(To<ContainerNode>(common_ancestor));
 
   TrimFragment(fragment, node_before_context, node_after_context);
 
@@ -468,7 +470,7 @@ static void FillContainerFromString(ContainerNode* paragraph,
   Document& document = paragraph->GetDocument();
 
   if (string.IsEmpty()) {
-    paragraph->AppendChild(HTMLBRElement::Create(document));
+    paragraph->AppendChild(MakeGarbageCollected<HTMLBRElement>(document));
     return;
   }
 
@@ -557,7 +559,7 @@ DocumentFragment* CreateFragmentFromText(const EphemeralRange& context,
       ShouldPreserveNewline(context)) {
     fragment->AppendChild(document.createTextNode(string));
     if (string.EndsWith('\n')) {
-      HTMLBRElement* element = HTMLBRElement::Create(document);
+      auto* element = MakeGarbageCollected<HTMLBRElement>(document);
       element->setAttribute(kClassAttr, AppleInterchangeNewline);
       fragment->AppendChild(element);
     }
@@ -587,7 +589,7 @@ DocumentFragment* CreateFragmentFromText(const EphemeralRange& context,
     Element* element = nullptr;
     if (s.IsEmpty() && i + 1 == num_lines) {
       // For last line, use the "magic BR" rather than a P.
-      element = HTMLBRElement::Create(document);
+      element = MakeGarbageCollected<HTMLBRElement>(document);
       element->setAttribute(kClassAttr, AppleInterchangeNewline);
     } else {
       if (use_clones_of_enclosing_block)
@@ -645,7 +647,7 @@ DocumentFragment* CreateFragmentForTransformToFragment(
     // Unfortunately, that's an implementation detail of the parser. We achieve
     // that effect here by passing in a fake body element as context for the
     // fragment.
-    HTMLBodyElement* fake_body = HTMLBodyElement::Create(output_doc);
+    auto* fake_body = MakeGarbageCollected<HTMLBodyElement>(output_doc);
     fragment->ParseHTML(source_string, fake_body);
   } else if (source_mime_type == "text/plain") {
     fragment->ParserAppendChild(Text::Create(output_doc, source_string));
@@ -693,7 +695,7 @@ DocumentFragment* CreateContextualFragment(
     next_node = node->nextSibling();
     if (IsHTMLHtmlElement(*node) || IsHTMLHeadElement(*node) ||
         IsHTMLBodyElement(*node)) {
-      HTMLElement* element = ToHTMLElement(node);
+      auto* element = To<HTMLElement>(node);
       if (Node* first_child = element->firstChild())
         next_node = first_child;
       RemoveElementPreservingChildren(fragment, element);
@@ -756,11 +758,10 @@ void ReplaceChildrenWithText(ContainerNode* container,
 
 void MergeWithNextTextNode(Text* text_node, ExceptionState& exception_state) {
   DCHECK(text_node);
-  Node* next = text_node->nextSibling();
-  if (!next || !next->IsTextNode())
+  auto* text_next = DynamicTo<Text>(text_node->nextSibling());
+  if (!text_next)
     return;
 
-  Text* text_next = ToText(next);
   text_node->appendData(text_next->data());
   if (text_next->parentNode())  // Might have been removed by mutation event.
     text_next->remove(exception_state);

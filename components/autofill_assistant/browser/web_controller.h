@@ -13,6 +13,7 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "components/autofill_assistant/browser/actions/click_action.h"
 #include "components/autofill_assistant/browser/batch_element_checker.h"
 #include "components/autofill_assistant/browser/client_status.h"
 #include "components/autofill_assistant/browser/devtools/devtools/domains/types_dom.h"
@@ -41,6 +42,7 @@ struct FormFieldData;
 }
 
 namespace autofill_assistant {
+struct ClientSettings;
 
 // Controller to interact with the web pages.
 //
@@ -53,13 +55,16 @@ namespace autofill_assistant {
 // multiple operations, whether in sequence or in parallel.
 class WebController {
  public:
-  // Create web controller for a given |web_contents|.
+  // Create web controller for a given |web_contents|. |settings| must be valid
+  // for the lifetime of the controller.
   static std::unique_ptr<WebController> CreateForWebContents(
-      content::WebContents* web_contents);
+      content::WebContents* web_contents,
+      const ClientSettings* settings);
 
-  // |web_contents| must outlive this web controller.
+  // |web_contents| and |settings| must outlive this web controller.
   WebController(content::WebContents* web_contents,
-                std::unique_ptr<DevtoolsClient> devtools_client);
+                std::unique_ptr<DevtoolsClient> devtools_client,
+                const ClientSettings* settings);
   virtual ~WebController();
 
   // Load |url| in the current tab. Returns immediately, before the new page has
@@ -70,6 +75,7 @@ class WebController {
   // |selector| and return the result through callback.
   virtual void ClickOrTapElement(
       const Selector& selector,
+      ClickAction::ClickType click_type,
       base::OnceCallback<void(const ClientStatus&)> callback);
 
   // Fill the address form given by |selector| with the given address
@@ -121,6 +127,7 @@ class WebController {
       const Selector& selector,
       const std::string& value,
       bool simulate_key_presses,
+      int key_press_delay_in_millisecond,
       base::OnceCallback<void(const ClientStatus&)> callback);
 
   // Set the |value| of the |attribute| of the element given by |selector|.
@@ -131,11 +138,13 @@ class WebController {
       base::OnceCallback<void(const ClientStatus&)> callback);
 
   // Sets the keyboard focus to |selector| and inputs |codepoints|, one
-  // character at a time.
+  // character at a time. Key presses will have a delay of |delay_in_milli|
+  // between them.
   // Returns the result through |callback|.
   virtual void SendKeyboardInput(
       const Selector& selector,
       const std::vector<UChar32>& codepoints,
+      int delay_in_milli,
       base::OnceCallback<void(const ClientStatus&)> callback);
 
   // Return the outerHTML of |selector|.
@@ -162,19 +171,13 @@ class WebController {
   virtual void HasCookie(base::OnceCallback<void(bool)> callback);
   virtual void ClearCookie();
 
-  // Checks an element for:
+  // Checks whether an element matches the given selector.
   //
-  // kExistenceCheck: Checks whether at least one element given by |selector|
-  // exists on the web page.
-  //
-  // kVisibilityCheck: Checks whether at least on element given by |selector|
-  // is visible on the web page.
-  //
-  // If strict, there must be exactly one element.
+  // If strict, there must be exactly one matching element for the check to
+  // pass. Otherwise, there must be at least one.
   //
   // To check multiple elements, use a BatchElementChecker.
-  virtual void ElementCheck(ElementCheckType type,
-                            const Selector& selector,
+  virtual void ElementCheck(const Selector& selector,
                             bool strict,
                             base::OnceCallback<void(bool)> callback);
 
@@ -234,24 +237,14 @@ class WebController {
     base::string16 cvc;
   };
 
-  // Perform a mouse left button click on the element given by |selector| and
-  // return the result through callback.
-  void ClickElement(const Selector& selector,
-                    base::OnceCallback<void(const ClientStatus&)> callback);
-
-  // Perform a touch tap on the element given by |selector| and return the
-  // result through callback.
-  void TapElement(const Selector& selector,
-                  base::OnceCallback<void(const ClientStatus&)> callback);
-
   void OnFindElementForClickOrTap(
       base::OnceCallback<void(const ClientStatus&)> callback,
-      bool is_a_click,
+      ClickAction::ClickType click_type,
       const ClientStatus& status,
       std::unique_ptr<FindElementResult> result);
   void OnWaitDocumentToBecomeInteractiveForClickOrTap(
       base::OnceCallback<void(const ClientStatus&)> callback,
-      bool is_a_click,
+      ClickAction::ClickType click_type,
       std::unique_ptr<FindElementResult> target_element,
       bool result);
   void OnFindElementForTap(
@@ -260,16 +253,18 @@ class WebController {
       std::unique_ptr<FindElementResult> result);
   void ClickOrTapElement(
       std::unique_ptr<FindElementResult> target_element,
-      bool is_a_click,
+      ClickAction::ClickType click_type,
       base::OnceCallback<void(const ClientStatus&)> callback);
+  void OnClickJS(base::OnceCallback<void(const ClientStatus&)> callback,
+                 std::unique_ptr<runtime::CallFunctionOnResult> result);
   void OnScrollIntoView(std::unique_ptr<FindElementResult> target_element,
                         base::OnceCallback<void(const ClientStatus&)> callback,
-                        bool is_a_click,
+                        ClickAction::ClickType click_type,
                         std::unique_ptr<runtime::CallFunctionOnResult> result);
   void TapOrClickOnCoordinates(
       ElementPositionGetter* getter_to_release,
       base::OnceCallback<void(const ClientStatus&)> callback,
-      bool is_a_click,
+      ClickAction::ClickType click_type,
       bool has_coordinates,
       int x,
       int y);
@@ -295,7 +290,6 @@ class WebController {
   // |selector| and if |strict_mode| is false, return the first one that is
   // found. Otherwise if |strict-mode| is true, do not return any.
   void FindElement(const Selector& selector,
-                   ElementCheckType check_type,
                    bool strict_mode,
                    FindElementCallback callback);
   void OnFindElementResult(ElementFinder* finder_to_release,
@@ -352,19 +346,24 @@ class WebController {
   void OnClearFieldForSendKeyboardInput(
       const Selector& selector,
       const std::vector<UChar32>& codepoints,
+      int key_press_delay_in_millisecond,
       base::OnceCallback<void(const ClientStatus&)> callback,
       const ClientStatus& status);
   void OnClickElementForSendKeyboardInput(
       const std::vector<UChar32>& codepoints,
+      int delay_in_milli,
       base::OnceCallback<void(const ClientStatus&)> callback,
       const ClientStatus& click_status);
   void DispatchKeyboardTextDownEvent(
       const std::vector<UChar32>& codepoints,
       size_t index,
+      bool delay,
+      int delay_in_milli,
       base::OnceCallback<void(const ClientStatus&)> callback);
   void DispatchKeyboardTextUpEvent(
       const std::vector<UChar32>& codepoints,
       size_t index,
+      int delay_in_milli,
       base::OnceCallback<void(const ClientStatus&)> callback);
   void OnFindElementForSetAttribute(
       const std::vector<std::string>& attribute,
@@ -377,6 +376,7 @@ class WebController {
   void OnFindElementForSendKeyboardInput(
       const Selector& selector,
       const std::vector<UChar32>& codepoints,
+      int delay_in_milli,
       base::OnceCallback<void(const ClientStatus&)> callback,
       const ClientStatus& status,
       std::unique_ptr<FindElementResult> element_result);
@@ -432,6 +432,7 @@ class WebController {
   // is guaranteed by the owner of this object.
   content::WebContents* web_contents_;
   std::unique_ptr<DevtoolsClient> devtools_client_;
+  const ClientSettings* const settings_;
 
   // Workers currently running and using |devtools_client_|.
   std::map<Worker*, std::unique_ptr<Worker>> pending_workers_;

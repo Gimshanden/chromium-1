@@ -19,6 +19,7 @@
 #include "chrome/browser/web_applications/components/install_options.h"
 #include "chrome/browser/web_applications/components/web_app_constants.h"
 #include "chrome/browser/web_applications/test/test_data_retriever.h"
+#include "chrome/browser/web_applications/test/test_install_finalizer.h"
 #include "chrome/common/web_application_info.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -33,7 +34,9 @@ class BookmarkAppInstallManagerTest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
 
-    install_manager_ = std::make_unique<BookmarkAppInstallManager>(profile());
+    install_finalizer_ = std::make_unique<web_app::TestInstallFinalizer>();
+    install_manager_ = std::make_unique<BookmarkAppInstallManager>(
+        profile(), install_finalizer_.get());
 
     extensions::TestExtensionSystem* test_extension_system =
         static_cast<extensions::TestExtensionSystem*>(
@@ -69,16 +72,17 @@ class BookmarkAppInstallManagerTest : public ChromeRenderViewHostTestHarness {
   }
 
  protected:
+  std::unique_ptr<web_app::TestInstallFinalizer> install_finalizer_;
   std::unique_ptr<BookmarkAppInstallManager> install_manager_;
 };
 
-TEST_F(BookmarkAppInstallManagerTest, FromBanner_WebContentsDestroyed) {
+TEST_F(BookmarkAppInstallManagerTest, FromManifest_WebContentsDestroyed) {
   NavigateAndCommit(GURL("https://example.com/path"));
 
   base::RunLoop run_loop;
   bool callback_called = false;
 
-  install_manager_->InstallWebAppFromBanner(
+  install_manager_->InstallWebAppFromManifest(
       web_contents(), WebappInstallSource::MENU_BROWSER_TAB, base::DoNothing(),
       base::BindLambdaForTesting([&](const web_app::AppId& installed_app_id,
                                      web_app::InstallResultCode code) {
@@ -118,8 +122,8 @@ TEST_F(BookmarkAppInstallManagerTest, FromInfo_InstallManagerDestroyed) {
         run_loop.Quit();
       }));
 
-  // Destroy InstallManager: Call Reset as if Profile gets destroyed.
-  install_manager_->Reset();
+  // Destroy InstallManager: Call Shutdown as if Profile gets destroyed.
+  install_manager_->Shutdown();
   run_loop.Run();
 
   // Delete InstallManager object.
@@ -172,25 +176,26 @@ TEST_F(BookmarkAppInstallManagerTest,
 
   install_manager_->SetDataRetrieverFactoryForTesting(
       base::BindLambdaForTesting([&]() {
-        WebApplicationInfo info;
-        info.app_url = app_url;
-        auto data_retriever = std::make_unique<web_app::TestDataRetriever>(
-            std::make_unique<WebApplicationInfo>(std::move(info)));
+        auto info = std::make_unique<WebApplicationInfo>();
+        info->app_url = app_url;
+        auto data_retriever = std::make_unique<web_app::TestDataRetriever>();
+        data_retriever->SetRendererWebApplicationInfo(std::move(info));
 
         return std::unique_ptr<web_app::WebAppDataRetriever>(
             std::move(data_retriever));
       }));
 
   install_manager_->SetBookmarkAppHelperFactoryForTesting(
-      base::BindLambdaForTesting([&](Profile* profile,
-                                     const WebApplicationInfo& web_app_info,
-                                     content::WebContents* web_contents,
-                                     WebappInstallSource install_source) {
-        data_retrieval_passed = true;
-        retrieval_run_loop.Quit();
-        return std::make_unique<BookmarkAppHelper>(
-            profile, web_app_info, web_contents, install_source);
-      }));
+      base::BindLambdaForTesting(
+          [&](Profile* profile,
+              std::unique_ptr<WebApplicationInfo> web_app_info,
+              content::WebContents* web_contents,
+              WebappInstallSource install_source) {
+            data_retrieval_passed = true;
+            retrieval_run_loop.Quit();
+            return std::make_unique<BookmarkAppHelper>(
+                profile, std::move(web_app_info), web_contents, install_source);
+          }));
 
   base::RunLoop install_run_loop;
   bool callback_called = false;
@@ -240,8 +245,8 @@ TEST_F(BookmarkAppInstallManagerTest, WithOptions_InstallManagerDestroyed) {
       }));
   EXPECT_FALSE(callback_called);
 
-  // Destroy InstallManager: Call Reset as if Profile gets destroyed.
-  install_manager_->Reset();
+  // Destroy InstallManager: Call Shutdown as if Profile gets destroyed.
+  install_manager_->Shutdown();
   run_loop.Run();
 
   // Delete InstallManager object.
@@ -264,25 +269,26 @@ TEST_F(BookmarkAppInstallManagerTest,
 
   install_manager_->SetDataRetrieverFactoryForTesting(
       base::BindLambdaForTesting([&]() {
-        WebApplicationInfo info;
-        info.app_url = app_url;
-        auto data_retriever = std::make_unique<web_app::TestDataRetriever>(
-            std::make_unique<WebApplicationInfo>(std::move(info)));
+        auto info = std::make_unique<WebApplicationInfo>();
+        info->app_url = app_url;
+        auto data_retriever = std::make_unique<web_app::TestDataRetriever>();
+        data_retriever->SetRendererWebApplicationInfo(std::move(info));
 
         return std::unique_ptr<web_app::WebAppDataRetriever>(
             std::move(data_retriever));
       }));
 
   install_manager_->SetBookmarkAppHelperFactoryForTesting(
-      base::BindLambdaForTesting([&](Profile* profile,
-                                     const WebApplicationInfo& web_app_info,
-                                     content::WebContents* web_contents,
-                                     WebappInstallSource install_source) {
-        data_retrieval_passed = true;
-        retrieval_run_loop.Quit();
-        return std::make_unique<BookmarkAppHelper>(
-            profile, web_app_info, web_contents, install_source);
-      }));
+      base::BindLambdaForTesting(
+          [&](Profile* profile,
+              std::unique_ptr<WebApplicationInfo> web_app_info,
+              content::WebContents* web_contents,
+              WebappInstallSource install_source) {
+            data_retrieval_passed = true;
+            retrieval_run_loop.Quit();
+            return std::make_unique<BookmarkAppHelper>(
+                profile, std::move(web_app_info), web_contents, install_source);
+          }));
 
   base::RunLoop install_run_loop;
   bool callback_called = false;
@@ -302,8 +308,8 @@ TEST_F(BookmarkAppInstallManagerTest,
   EXPECT_TRUE(data_retrieval_passed);
   EXPECT_FALSE(callback_called);
 
-  // Destroy InstallManager: Call Reset as if Profile gets destroyed.
-  install_manager_->Reset();
+  // Destroy InstallManager: Call Shutdown as if Profile gets destroyed.
+  install_manager_->Shutdown();
   install_run_loop.Run();
 
   // Delete InstallManager object.

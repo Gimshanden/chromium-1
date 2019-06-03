@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
@@ -40,10 +41,12 @@
 #include "chrome/browser/prefs/in_process_service_factory_factory.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate.h"
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate_factory.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/transition_manager/full_browser_transition_manager.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_constants.h"
@@ -53,6 +56,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/simple_dependency_manager.h"
+#include "components/keyed_service/core/simple_key_map.h"
 #include "components/keyed_service/core/simple_keyed_service_factory.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/sync_preferences/pref_service_syncable.h"
@@ -86,10 +90,6 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/preferences.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#endif
-
-#if !defined(OS_CHROMEOS)
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -139,17 +139,20 @@ void NotifyOTRProfileDestroyedOnIOThread(void* original_profile,
 OffTheRecordProfileImpl::OffTheRecordProfileImpl(Profile* real_profile)
     : profile_(real_profile),
       start_time_(base::Time::Now()),
-      key_(
-          std::make_unique<SimpleFactoryKey>(profile_->GetPath(),
-                                             profile_->GetSimpleFactoryKey())) {
+      key_(std::make_unique<ProfileKey>(profile_->GetPath(),
+                                        profile_->GetProfileKey())) {
   // Must happen before we ask for prefs as prefs needs the connection to the
   // service manager, which is set up in Initialize.
   BrowserContext::Initialize(this, profile_->GetPath());
   prefs_ = CreateIncognitoPrefServiceSyncable(
       PrefServiceSyncableFromProfile(profile_),
       CreateExtensionPrefStore(profile_, true),
-      InProcessPrefServiceFactoryFactory::GetInstanceForContext(this)
+      InProcessPrefServiceFactoryFactory::GetInstanceForKey(key_.get())
           ->CreateDelegate());
+
+  key_->SetPrefs(prefs_.get());
+  SimpleKeyMap::GetInstance()->Associate(this, key_.get());
+
   // Register on BrowserContext.
   user_prefs::UserPrefs::Set(this, prefs_.get());
 }
@@ -162,12 +165,7 @@ void OffTheRecordProfileImpl::Init() {
   // we have to instantiate OffTheRecordProfileIOData::Handle here after a ctor.
   InitIoData();
 
-#if !defined(OS_CHROMEOS)
-  // Because UserCloudPolicyManager is in a component, it cannot access
-  // GetOriginalProfile. Instead, we have to inject this relation here.
-  policy::UserCloudPolicyManagerFactory::RegisterForOffTheRecordBrowserContext(
-      this->GetOriginalProfile(), this);
-#endif
+  FullBrowserTransitionManager::Get()->OnProfileCreated(this);
 
   BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(
       this);
@@ -224,14 +222,17 @@ OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
   GetDefaultStoragePartition(this)->GetNetworkContext()->ClearHostCache(
       nullptr, network::mojom::NetworkContext::ClearHostCacheCallback());
 
-  BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
-      this);
-  // The SimpleDependencyManager should always be called after the
+  FullBrowserTransitionManager::Get()->OnProfileDestroyed(this);
+
+  // The SimpleDependencyManager should always be passed after the
   // BrowserContextDependencyManager. This is because the KeyedService instances
   // in the BrowserContextDependencyManager's dependency graph can depend on the
   // ones in the SimpleDependencyManager's graph.
-  SimpleDependencyManager::GetInstance()->DestroyKeyedServices(
-      GetSimpleFactoryKey());
+  DependencyManager::PerformInterlockedTwoPhaseShutdown(
+      BrowserContextDependencyManager::GetInstance(), this,
+      SimpleDependencyManager::GetInstance(), key_.get());
+
+  SimpleKeyMap::GetInstance()->Dissociate(this);
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   base::PostTaskWithTraits(
@@ -242,6 +243,14 @@ OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
   // This must be called before ProfileIOData::ShutdownOnUIThread but after
   // other profile-related destroy notifications are dispatched.
   ShutdownStoragePartitions();
+
+  // Store incognito lifetime histogram.
+  if (!IsGuestSession()) {
+    auto duration = base::Time::Now() - start_time_;
+    base::UmaHistogramCustomCounts(
+        "Profile.Incognito.Lifetime", duration.InMinutes(), 1,
+        base::TimeDelta::FromDays(28).InMinutes(), 100);
+  }
 }
 
 void OffTheRecordProfileImpl::InitIoData() {
@@ -250,7 +259,7 @@ void OffTheRecordProfileImpl::InitIoData() {
 
 #if !defined(OS_ANDROID)
 void OffTheRecordProfileImpl::TrackZoomLevelsFromParent() {
-  DCHECK_NE(INCOGNITO_PROFILE, profile_->GetProfileType());
+  DCHECK(!profile_->IsIncognitoProfile());
 
   // Here we only want to use zoom levels stored in the main-context's default
   // storage partition. We're not interested in zoom levels in special
@@ -284,6 +293,8 @@ Profile::ProfileType OffTheRecordProfileImpl::GetProfileType() const {
 #if !defined(OS_CHROMEOS)
   return profile_->IsGuestSession() ? GUEST_PROFILE : INCOGNITO_PROFILE;
 #else
+  // GuestSessionProfile is used for guest sessions on ChromeOS.
+  DCHECK(!profile_->IsGuestSession());
   return INCOGNITO_PROFILE;
 #endif
 }
@@ -398,12 +409,34 @@ OffTheRecordProfileImpl::HandleServiceRequest(
     const std::string& service_name,
     service_manager::mojom::ServiceRequest request) {
   if (service_name == prefs::mojom::kServiceName) {
-    return InProcessPrefServiceFactoryFactory::GetInstanceForContext(this)
+    return InProcessPrefServiceFactoryFactory::GetInstanceForKey(key_.get())
         ->CreatePrefService(std::move(request));
   }
 
   return nullptr;
 }
+
+policy::SchemaRegistryService*
+OffTheRecordProfileImpl::GetPolicySchemaRegistryService() {
+  return nullptr;
+}
+
+#if defined(OS_CHROMEOS)
+policy::UserCloudPolicyManagerChromeOS*
+OffTheRecordProfileImpl::GetUserCloudPolicyManagerChromeOS() {
+  return GetOriginalProfile()->GetUserCloudPolicyManagerChromeOS();
+}
+
+policy::ActiveDirectoryPolicyManager*
+OffTheRecordProfileImpl::GetActiveDirectoryPolicyManager() {
+  return GetOriginalProfile()->GetActiveDirectoryPolicyManager();
+}
+#else
+policy::UserCloudPolicyManager*
+OffTheRecordProfileImpl::GetUserCloudPolicyManager() {
+  return GetOriginalProfile()->GetUserCloudPolicyManager();
+}
+#endif  // defined(OS_CHROMEOS)
 
 net::URLRequestContextGetter* OffTheRecordProfileImpl::GetRequestContext() {
   return GetDefaultStoragePartition(this)->GetURLRequestContext();
@@ -552,9 +585,19 @@ base::Time OffTheRecordProfileImpl::GetStartTime() const {
   return start_time_;
 }
 
-SimpleFactoryKey* OffTheRecordProfileImpl::GetSimpleFactoryKey() const {
+ProfileKey* OffTheRecordProfileImpl::GetProfileKey() const {
   DCHECK(key_);
   return key_.get();
+}
+
+policy::ProfilePolicyConnector*
+OffTheRecordProfileImpl::GetProfilePolicyConnector() {
+  return profile_->GetProfilePolicyConnector();
+}
+
+const policy::ProfilePolicyConnector*
+OffTheRecordProfileImpl::GetProfilePolicyConnector() const {
+  return profile_->GetProfilePolicyConnector();
 }
 
 void OffTheRecordProfileImpl::SetExitType(ExitType exit_type) {

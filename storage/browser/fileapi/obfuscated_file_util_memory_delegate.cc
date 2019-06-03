@@ -6,7 +6,8 @@
 
 #include <utility>
 
-#include "base/numerics/safe_conversions.h"
+#include "base/files/file_util.h"
+#include "base/numerics/checked_math.h"
 #include "build/build_config.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -401,6 +402,29 @@ bool ObfuscatedFileUtilMemoryDelegate::CopyOrMoveFileInternal(
   return true;
 }
 
+size_t ObfuscatedFileUtilMemoryDelegate::ComputeDirectorySize(
+    const base::FilePath& path) {
+  base::Optional<DecomposedPath> dp = ParsePath(path);
+  if (!dp || !dp->entry || dp->entry->type != Entry::kDirectory)
+    return 0;
+
+  base::CheckedNumeric<size_t> running_sum = 0;
+  std::vector<Entry*> directories;
+  directories.push_back(dp->entry);
+
+  while (!directories.empty()) {
+    Entry* current = directories.back();
+    directories.pop_back();
+    for (auto& child : current->directory_content) {
+      if (child.second.type == Entry::kDirectory)
+        directories.push_back(&child.second);
+      else
+        running_sum += child.second.file_content.size();
+    }
+  }
+  return running_sum.ValueOrDefault(0);
+}
+
 int ObfuscatedFileUtilMemoryDelegate::ReadFile(const base::FilePath& path,
                                                int64_t offset,
                                                net::IOBuffer* buf,
@@ -416,7 +440,7 @@ int ObfuscatedFileUtilMemoryDelegate::ReadFile(const base::FilePath& path,
   if (buf_len > remaining)
     buf_len = static_cast<int>(remaining);
 
-  memcpy(buf->data(), &dp->entry->file_content[offset], buf_len);
+  memcpy(buf->data(), dp->entry->file_content.data() + offset, buf_len);
 
   return buf_len;
 }
@@ -465,6 +489,54 @@ base::File::Error ObfuscatedFileUtilMemoryDelegate::CreateFileForTesting(
 
   dp->entry->file_content =
       std::vector<uint8_t>(content.begin(), content.end());
+
+  return base::File::FILE_OK;
+}
+
+base::File::Error ObfuscatedFileUtilMemoryDelegate::CopyInForeignFile(
+    const base::FilePath& src_path,
+    const base::FilePath& dest_path,
+    FileSystemOperation::CopyOrMoveOption /* option */,
+    NativeFileUtil::CopyOrMoveMode /* mode */) {
+  base::Optional<DecomposedPath> dest_dp = ParsePath(dest_path);
+
+  if (!dest_dp || !dest_dp->parent)
+    return base::File::FILE_ERROR_NOT_FOUND;
+
+  base::File::Info source_info;
+  if (!base::GetFileInfo(src_path, &source_info))
+    return base::File::FILE_ERROR_NOT_FOUND;
+
+  if (source_info.is_directory)
+    return base::File::FILE_ERROR_NOT_A_FILE;
+
+  // |size_t| limits the maximum size that the memory file can keep and |int|
+  // limits the maximum size that base::ReadFile function reads.
+  if (source_info.size > std::numeric_limits<size_t>::max() ||
+      source_info.size > std::numeric_limits<int>::max()) {
+    return base::File::FILE_ERROR_NO_SPACE;
+  }
+
+  // Create file.
+  Entry* entry = &dest_dp->parent->directory_content
+                      .emplace(dest_dp->components.back(), Entry::kFile)
+                      .first->second;
+  entry->creation_time = source_info.creation_time;
+  entry->last_modified = source_info.last_modified;
+  entry->last_accessed = source_info.last_accessed;
+
+  // Read content.
+  entry->file_content.resize(source_info.size);
+  int read_bytes = base::ReadFile(
+      src_path, reinterpret_cast<char*>(entry->file_content.data()),
+      source_info.size);
+
+  if (read_bytes != source_info.size) {
+    // Delete file and return error if source could not be fully read or any
+    // error happens.
+    dest_dp->parent->directory_content.erase(dest_dp->components.back());
+    return base::File::FILE_ERROR_FAILED;
+  }
 
   return base::File::FILE_OK;
 }

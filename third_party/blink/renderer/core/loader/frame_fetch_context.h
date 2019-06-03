@@ -66,7 +66,8 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
   // |document_loader_| will be set to nullptr.
   static ResourceFetcher* CreateFetcherForImportedDocument(Document* document);
 
-  explicit FrameFetchContext(const FrameOrImportedDocument&);
+  FrameFetchContext(const FrameOrImportedDocument&,
+                    const DetachableResourceFetcherProperties&);
   ~FrameFetchContext() override = default;
 
   void AddAdditionalRequestHeaders(ResourceRequest&) override;
@@ -81,9 +82,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
       const ResourceRequest&,
       ResourceType,
       FetchParameters::DeferOption) const override;
-  void DispatchDidChangeResourcePriority(uint64_t identifier,
-                                         ResourceLoadPriority,
-                                         int intra_priority_value) override;
   void PrepareRequest(ResourceRequest&,
                       const FetchInitiatorInfo&,
                       WebScopedVirtualTimePauser&,
@@ -110,9 +108,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
   FetchContext* Detach() override;
 
   void Trace(blink::Visitor*) override;
-
-  ResourceLoadPriority ModifyPriorityForExperiments(
-      ResourceLoadPriority) const override;
 
   bool CalculateIfAdSubresource(const ResourceRequest& resource_request,
                                 ResourceType type) override;

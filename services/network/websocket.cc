@@ -101,10 +101,11 @@ class WebSocket::WebSocketEventHandler final
       std::unique_ptr<net::WebSocketEventInterface::SSLErrorCallbacks>
           callbacks,
       const GURL& url,
+      int net_error,
       const net::SSLInfo& ssl_info,
       bool fatal) override;
   int OnAuthRequired(
-      scoped_refptr<net::AuthChallengeInfo> auth_info,
+      const net::AuthChallengeInfo& auth_info,
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       const net::IPEndPoint& remote_endpoint,
       base::OnceCallback<void(const net::AuthCredentials*)> callback,
@@ -277,6 +278,7 @@ void WebSocket::WebSocketEventHandler::OnFinishOpeningHandshake(
 void WebSocket::WebSocketEventHandler::OnSSLCertificateError(
     std::unique_ptr<net::WebSocketEventInterface::SSLErrorCallbacks> callbacks,
     const GURL& url,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal) {
   DVLOG(3) << "WebSocketEventHandler::OnSSLCertificateError"
@@ -284,11 +286,11 @@ void WebSocket::WebSocketEventHandler::OnSSLCertificateError(
            << " cert_status=" << ssl_info.cert_status << " fatal=" << fatal;
   impl_->delegate_->OnSSLCertificateError(std::move(callbacks), url,
                                           impl_->child_id_, impl_->frame_id_,
-                                          ssl_info, fatal);
+                                          net_error, ssl_info, fatal);
 }
 
 int WebSocket::WebSocketEventHandler::OnAuthRequired(
-    scoped_refptr<net::AuthChallengeInfo> auth_info,
+    const net::AuthChallengeInfo& auth_info,
     scoped_refptr<net::HttpResponseHeaders> response_headers,
     const net::IPEndPoint& remote_endpoint,
     base::OnceCallback<void(const net::AuthCredentials*)> callback,
@@ -301,7 +303,7 @@ int WebSocket::WebSocketEventHandler::OnAuthRequired(
   }
 
   impl_->auth_handler_->OnAuthRequired(
-      std::move(auth_info), std::move(response_headers), remote_endpoint,
+      auth_info, std::move(response_headers), remote_endpoint,
       base::BindOnce(&WebSocket::OnAuthRequiredComplete,
                      impl_->weak_ptr_factory_.GetWeakPtr(),
                      std::move(callback)));
@@ -420,9 +422,9 @@ void WebSocket::SendFrame(bool fin,
                       data.size());
 }
 
-void WebSocket::SendFlowControl(int64_t quota) {
-  DVLOG(3) << "WebSocket::OnFlowControl @" << reinterpret_cast<void*>(this)
-           << " quota=" << quota;
+void WebSocket::AddReceiveFlowControlQuota(int64_t quota) {
+  DVLOG(3) << "WebSocket::AddReceiveFlowControlQuota @"
+           << reinterpret_cast<void*>(this) << " quota=" << quota;
 
   if (!channel_) {
     // WebSocketChannel is not yet created due to the delay introduced by
@@ -432,7 +434,7 @@ void WebSocket::SendFlowControl(int64_t quota) {
     return;
   }
 
-  ignore_result(channel_->SendFlowControl(quota));
+  ignore_result(channel_->AddReceiveFlowControlQuota(quota));
 }
 
 void WebSocket::StartClosingHandshake(uint16_t code,
@@ -546,7 +548,7 @@ void WebSocket::AddChannel(
   channel_->SendAddChannelRequest(socket_url, requested_protocols, origin_,
                                   site_for_cookies, headers_to_pass);
   if (quota > 0)
-    SendFlowControl(quota);
+    AddReceiveFlowControlQuota(quota);
 }
 
 void WebSocket::OnAuthRequiredComplete(
@@ -566,6 +568,10 @@ void WebSocket::OnBeforeSendHeadersComplete(
     net::HttpRequestHeaders* out_headers,
     int result,
     const base::Optional<net::HttpRequestHeaders>& headers) {
+  if (!channel_) {
+    // Something happened before the OnBeforeSendHeaders response arrives.
+    return;
+  }
   if (headers)
     *out_headers = headers.value();
   std::move(callback).Run(result);
@@ -578,6 +584,10 @@ void WebSocket::OnHeadersReceivedComplete(
     int result,
     const base::Optional<std::string>& headers,
     const GURL& allowed_unsafe_redirect_url) {
+  if (!channel_) {
+    // Something happened before the OnHeadersReceived response arrives.
+    return;
+  }
   if (headers) {
     *out_headers =
         base::MakeRefCounted<net::HttpResponseHeaders>(headers.value());

@@ -193,7 +193,8 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
                                  GetKnownTypeStrings(),
                                  this,
                                  file_system_options.is_incognito()))),
-      file_system_usage_cache_(std::make_unique<FileSystemUsageCache>()),
+      file_system_usage_cache_(std::make_unique<FileSystemUsageCache>(
+          file_system_options.is_incognito())),
       quota_observer_(new SandboxQuotaObserver(quota_manager_proxy,
                                                file_task_runner,
                                                obfuscated_file_util(),
@@ -422,8 +423,10 @@ int64_t SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
 
   base::FilePath base_path =
       GetBaseDirectoryForOriginAndType(origin_url, type, false);
-  if (base_path.empty() || !base::DirectoryExists(base_path))
+  if (base_path.empty() ||
+      !obfuscated_file_util()->delegate()->DirectoryExists(base_path)) {
     return 0;
+  }
   base::FilePath usage_file_path =
       base_path.Append(FileSystemUsageCache::kUsageFileName);
 

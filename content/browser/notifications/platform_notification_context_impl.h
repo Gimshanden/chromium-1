@@ -93,12 +93,21 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
                              WriteResultCallback callback) override;
   void DeleteNotificationData(const std::string& notification_id,
                               const GURL& origin,
+                              bool close_notification,
                               DeleteResultCallback callback) override;
+  void DeleteAllNotificationDataForBlockedOrigins(
+      DeleteAllResultCallback callback) override;
   void ReadAllNotificationDataForServiceWorkerRegistration(
       const GURL& origin,
       int64_t service_worker_registration_id,
       ReadAllResultCallback callback) override;
   void TriggerNotifications() override;
+  void WriteNotificationResources(
+      std::vector<NotificationResourceData> resource_data,
+      WriteResourcesResultCallback callback) override;
+  void ReDisplayNotifications(
+      std::vector<GURL> origins,
+      ReDisplayNotificationsResultCallback callback) override;
 
   // ServiceWorkerContextCoreObserver implementation.
   void OnRegistrationDeleted(int64_t registration_id,
@@ -115,6 +124,10 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
                            bool supports_synchronization);
 
   using InitializeResultCallback = base::OnceCallback<void(bool)>;
+
+  using ReadAllOriginsResultCallback =
+      base::OnceCallback<void(bool /* success */,
+                              std::set<GURL> /* origins */)>;
 
   // Initializes the database if necessary. |callback| will be invoked on the
   // |task_runner_| thread. If everything is available, |callback| will be
@@ -200,6 +213,44 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   void DoDeleteNotificationData(const std::string& notification_id,
                                 const GURL& origin,
                                 DeleteResultCallback callback,
+                                bool should_log_close,
+                                bool initialized);
+
+  // Actually reads all notification origins from the database. Must only be
+  // called on the |task_runner_| thread. |callback| will be invoked on the UI
+  // thread when the operation has completed.
+  void DoReadAllNotificationOrigins(ReadAllOriginsResultCallback callback,
+                                    bool initialized);
+
+  // Checks permissions for all |origins| via PermissionController and deletes
+  // all notifications for origins that do not have granted permissions. Must be
+  // called on the UI thread. |callback| will be invoked on the UI thread when
+  // the operation has completed.
+  void CheckPermissionsAndDeleteBlocked(DeleteAllResultCallback callback,
+                                        bool success,
+                                        std::set<GURL> origins);
+
+  // Actually deletes the notification information from the database. Must only
+  // be called on the |task_runner_| thread. |callback| will be invoked on the
+  // UI thread when the operation has completed.
+  void DoDeleteAllNotificationDataForOrigins(std::set<GURL> origins,
+                                             DeleteAllResultCallback callback,
+                                             bool initialized);
+
+  // Actually writes the notification resources to the database. Must only be
+  // called on the |task_runner_| thread. |callback| will be invoked on the UI
+  // thread when the operation has completed.
+  void DoWriteNotificationResources(
+      std::vector<NotificationResourceData> resource_data,
+      WriteResourcesResultCallback callback,
+      bool initialized);
+
+  // Actually reads all notification that should be on screen for |origins| from
+  // the database and displays them. Must only be called on the |task_runner_|
+  // thread. |callback| will be invoked on the UI thread with the number of
+  // displayed notifications when the operation has completed.
+  void DoReDisplayNotifications(std::vector<GURL> origins,
+                                ReDisplayNotificationsResultCallback callback,
                                 bool initialized);
 
   void OnStorageWipedInitialized(bool initialized);
@@ -244,6 +295,9 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   std::vector<std::unique_ptr<BlinkNotificationServiceImpl>> services_;
 
   NotificationDatabase::UkmCallback ukm_callback_;
+
+  // Flag if the |browser_context_| has been shutdown already.
+  bool has_shutdown_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformNotificationContextImpl);
 };

@@ -3,10 +3,12 @@
 <translationbundle lang="lt">
 <translation id="1276998909102132017">Galerijos vaizdai</translation>
 <translation id="1430915738399379752">Spausdinti</translation>
+<translation id="1462966117743110941">Jūsų fotoaparatas dabar palaiko naujus režimus, o jūsų nuotraukos ir vaizdo įrašai bus pasiekiami atsisiųstų failų aplankuose.</translation>
 <translation id="1620510694547887537">Kamera</translation>
 <translation id="1627744224761163218">4 x 4</translation>
 <translation id="1664224225747386870">Nieko neįrašyta</translation>
 <translation id="1862930711583847113">Nepavyko eksportuoti „<ph name="FILE" />“</translation>
+<translation id="2008689030244369546">Visiškai nauja išvaizda</translation>
 <translation id="2036868001356139588">Laikmačio trukmė</translation>
 <translation id="2050339315714019657">Stačias</translation>
 <translation id="2064538373111010176"><ph name="CAMERA" /> aktyvus</translation>
@@ -21,9 +23,11 @@
 <translation id="3081586908890909590">Perjungti į filmavimo režimą</translation>
 <translation id="3183731565330012717">Tinklelio tipas</translation>
 <translation id="3227137524299004712">Mikrofonas</translation>
+<translation id="3517926952904427380">Nepavyko nufotografuoti portretinės nuotraukos</translation>
 <translation id="3569311554794739032">Ar tikrai norite pašalinti „<ph name="FILE" />“?</translation>
 <translation id="3810838688059735925">Vaizdo</translation>
 <translation id="4279490309300973883">Dubliuojama</translation>
+<translation id="4329152592498422850">Perjungti į kvadratinės nuotraukos režimą</translation>
 <translation id="4445542136948522167">Sustabdyti fotografavimą</translation>
 <translation id="4628948037717959914">Nuotrauka</translation>
 <translation id="4649291346448517080">Nepavyko išsaugoti failo</translation>
@@ -50,6 +54,8 @@
 <translation id="8145038249676204903">Perjungti į fotografavimo režimą</translation>
 <translation id="8261506727792406068">Ištrinti</translation>
 <translation id="8428213095426709021">Nustatymai</translation>
+<translation id="8712637175834984815">Supratau</translation>
+<translation id="8815966864175525708">Perjungti į portretinės nuotraukos režimą</translation>
 <translation id="8870695351537079478">Nepavyko pradėti įrašymo</translation>
 <translation id="9045155556724273246">10 sek.</translation>
 <translation id="945522503751344254">Siųsti atsiliepimą</translation>

@@ -26,6 +26,7 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/mediastream/media_devices.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_processor_options.h"
 #include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_track.h"
@@ -37,6 +38,7 @@
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_constraints_util.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/public/web/web_heap.h"
 
 using testing::_;
@@ -342,7 +344,9 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
     return VideoCaptureSettingsForTesting();
   }
 
-  blink::MediaStreamRequestResult error_reason() const { return result_; }
+  blink::mojom::MediaStreamRequestResult error_reason() const {
+    return result_;
+  }
   blink::WebString constraint_name() const { return constraint_name_; }
 
   // UserMediaProcessor overrides.
@@ -357,7 +361,7 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
 
   std::unique_ptr<blink::MediaStreamAudioSource> CreateAudioSource(
       const blink::MediaStreamDevice& device,
-      const blink::WebPlatformMediaStreamSource::ConstraintsCallback&
+      blink::WebPlatformMediaStreamSource::ConstraintsRepeatingCallback
           source_ready) override {
     std::unique_ptr<blink::MediaStreamAudioSource> source;
     if (create_source_that_fails_) {
@@ -388,7 +392,7 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
       blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
           FROM_HERE,
           base::BindOnce(&UserMediaProcessorUnderTest::SignalSourceReady,
-                         source_ready, source.get()));
+                         std::move(source_ready), source.get()));
     }
 
     return source;
@@ -402,7 +406,7 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
   }
 
   void GetUserMediaRequestFailed(
-      blink::MediaStreamRequestResult result,
+      blink::mojom::MediaStreamRequestResult result,
       const blink::WebString& constraint_name) override {
     last_generated_stream_.Reset();
     *state_ = REQUEST_FAILED;
@@ -412,10 +416,10 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
 
  private:
   static void SignalSourceReady(
-      const blink::WebPlatformMediaStreamSource::ConstraintsCallback&
-          source_ready,
+      blink::WebPlatformMediaStreamSource::ConstraintsOnceCallback source_ready,
       blink::WebPlatformMediaStreamSource* source) {
-    source_ready.Run(source, blink::MEDIA_DEVICE_OK, "");
+    std::move(source_ready)
+        .Run(source, blink::mojom::MediaStreamRequestResult::OK, "");
   }
 
   PeerConnectionDependencyFactory* factory_;
@@ -424,7 +428,8 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
   MockLocalMediaStreamAudioSource* local_audio_source_ = nullptr;
   bool create_source_that_fails_ = false;
   blink::WebMediaStream last_generated_stream_;
-  blink::MediaStreamRequestResult result_ = blink::NUM_MEDIA_REQUEST_RESULTS;
+  blink::mojom::MediaStreamRequestResult result_ =
+      blink::mojom::MediaStreamRequestResult::NUM_MEDIA_REQUEST_RESULTS;
   blink::WebString constraint_name_;
   RequestState* state_;
 };
@@ -626,7 +631,7 @@ class UserMediaClientImplTest : public ::testing::Test {
 
  protected:
   // The ScopedTaskEnvironment prevents the ChildProcess from leaking a
-  // TaskScheduler.
+  // ThreadPool.
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   ChildProcess child_process_;
   MediaStreamDeviceObserver* msd_observer_ =
@@ -804,7 +809,7 @@ TEST_F(UserMediaClientImplTest, MediaVideoSourceFailToStart) {
   FailToStartMockedVideoSource();
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(REQUEST_FAILED, request_state());
-  EXPECT_EQ(blink::MEDIA_DEVICE_TRACK_START_FAILURE_VIDEO,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::TRACK_START_FAILURE_VIDEO,
             user_media_processor_->error_reason());
   blink::WebHeap::CollectAllGarbageForTesting();
   EXPECT_EQ(1, mock_dispatcher_host_.request_stream_counter());
@@ -819,7 +824,7 @@ TEST_F(UserMediaClientImplTest, MediaAudioSourceFailToInitialize) {
   StartMockedVideoSource();
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(REQUEST_FAILED, request_state());
-  EXPECT_EQ(blink::MEDIA_DEVICE_TRACK_START_FAILURE_AUDIO,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::TRACK_START_FAILURE_AUDIO,
             user_media_processor_->error_reason());
   blink::WebHeap::CollectAllGarbageForTesting();
   EXPECT_EQ(1, mock_dispatcher_host_.request_stream_counter());
@@ -916,7 +921,6 @@ TEST_F(UserMediaClientImplTest, DefaultConstraintsPropagate) {
   EXPECT_EQ(
       blink::AudioProcessingProperties().goog_experimental_echo_cancellation,
       properties.goog_experimental_echo_cancellation);
-  EXPECT_TRUE(properties.goog_typing_noise_detection);
   EXPECT_TRUE(properties.goog_noise_suppression);
   EXPECT_TRUE(properties.goog_experimental_noise_suppression);
   EXPECT_TRUE(properties.goog_highpass_filter);
@@ -976,7 +980,6 @@ TEST_F(UserMediaClientImplTest, DefaultTabCapturePropagate) {
   EXPECT_FALSE(properties.goog_audio_mirroring);
   EXPECT_FALSE(properties.goog_auto_gain_control);
   EXPECT_FALSE(properties.goog_experimental_echo_cancellation);
-  EXPECT_FALSE(properties.goog_typing_noise_detection);
   EXPECT_FALSE(properties.goog_noise_suppression);
   EXPECT_FALSE(properties.goog_experimental_noise_suppression);
   EXPECT_FALSE(properties.goog_highpass_filter);
@@ -1034,7 +1037,6 @@ TEST_F(UserMediaClientImplTest, DefaultDesktopCapturePropagate) {
   EXPECT_FALSE(properties.goog_audio_mirroring);
   EXPECT_FALSE(properties.goog_auto_gain_control);
   EXPECT_FALSE(properties.goog_experimental_echo_cancellation);
-  EXPECT_FALSE(properties.goog_typing_noise_detection);
   EXPECT_FALSE(properties.goog_noise_suppression);
   EXPECT_FALSE(properties.goog_experimental_noise_suppression);
   EXPECT_FALSE(properties.goog_highpass_filter);
@@ -1070,7 +1072,6 @@ TEST_F(UserMediaClientImplTest, NonDefaultAudioConstraintsPropagate) {
   factory.basic().render_to_associated_sink.SetExact(true);
   factory.basic().echo_cancellation.SetExact(false);
   factory.basic().goog_audio_mirroring.SetExact(true);
-  factory.basic().goog_typing_noise_detection.SetExact(true);
   blink::WebMediaConstraints audio_constraints =
       factory.CreateWebMediaConstraints();
   // Request contains only audio
@@ -1098,7 +1099,6 @@ TEST_F(UserMediaClientImplTest, NonDefaultAudioConstraintsPropagate) {
   EXPECT_TRUE(properties.goog_audio_mirroring);
   EXPECT_FALSE(properties.goog_auto_gain_control);
   EXPECT_FALSE(properties.goog_experimental_echo_cancellation);
-  EXPECT_TRUE(properties.goog_typing_noise_detection);
   EXPECT_FALSE(properties.goog_noise_suppression);
   EXPECT_FALSE(properties.goog_experimental_noise_suppression);
   EXPECT_FALSE(properties.goog_highpass_filter);

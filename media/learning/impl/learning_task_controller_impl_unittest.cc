@@ -28,10 +28,12 @@ class LearningTaskControllerImplTest : public testing::Test {
     }
 
    protected:
-    void OnPrediction(TargetHistogram observed,
+    void OnPrediction(const PredictionInfo& info,
                       TargetHistogram predicted) override {
       num_reported_++;
-      if (observed == predicted)
+      TargetHistogram dist;
+      dist += info.observed;
+      if (dist == predicted)
         num_correct_++;
     }
 
@@ -106,6 +108,13 @@ class LearningTaskControllerImplTest : public testing::Test {
     task_.min_new_data_fraction = 0.1;
   }
 
+  ~LearningTaskControllerImplTest() override {
+    // To prevent a memory leak, reset the controller.  This may post
+    // destruction of other objects, so RunUntilIdle().
+    controller_.reset();
+    scoped_task_environment_.RunUntilIdle();
+  }
+
   void CreateController(SequenceBoundFeatureProvider feature_provider =
                             SequenceBoundFeatureProvider()) {
     std::unique_ptr<FakeDistributionReporter> reporter =
@@ -132,7 +141,6 @@ class LearningTaskControllerImplTest : public testing::Test {
 
   // Number of models that we trained.
   int num_models_ = 0;
-  FakeModel* last_model_ = nullptr;
 
   // Two distinct targets.
   const TargetValue predicted_target_;
@@ -191,6 +199,7 @@ TEST_F(LearningTaskControllerImplTest, AddingExamplesTrainsModelAndReports) {
 TEST_F(LearningTaskControllerImplTest, FeatureProviderIsUsed) {
   // If a FeatureProvider factory is provided, make sure that it's used to
   // adjust new examples.
+  task_.feature_descriptions.push_back({"AddedByFeatureProvider"});
   SequenceBoundFeatureProvider feature_provider =
       base::SequenceBound<FakeFeatureProvider>(
           base::SequencedTaskRunnerHandle::Get());

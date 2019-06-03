@@ -18,7 +18,8 @@ namespace {
 
 SyncCycleSnapshot MakeDefaultCycleSnapshot() {
   return SyncCycleSnapshot(
-      ModelNeutralState(), ProgressMarkerMap(), /*is_silenced-*/ false,
+      /*birthday=*/"", /*bag_of_chips=*/"", ModelNeutralState(),
+      ProgressMarkerMap(), /*is_silenced-*/ false,
       /*num_encryption_conflicts=*/5, /*num_hierarchy_conflicts=*/2,
       /*num_server_conflicts=*/7, /*notifications_enabled=*/false,
       /*num_entries=*/0, /*sync_start_time=*/base::Time::Now(),
@@ -149,6 +150,10 @@ GoogleServiceAuthError TestSyncService::GetAuthError() const {
   return auth_error_;
 }
 
+base::Time TestSyncService::GetAuthErrorTime() const {
+  return base::Time();
+}
+
 bool TestSyncService::RequiresClientUpgrade() const {
   return detailed_sync_status_.sync_protocol_error.action ==
          syncer::UPGRADE_CLIENT;
@@ -167,10 +172,6 @@ ModelTypeSet TestSyncService::GetRegisteredDataTypes() const {
   return ModelTypeSet::All();
 }
 
-ModelTypeSet TestSyncService::GetForcedDataTypes() const {
-  return ModelTypeSet();
-}
-
 ModelTypeSet TestSyncService::GetPreferredDataTypes() const {
   return preferred_data_types_;
 }
@@ -184,8 +185,6 @@ void TestSyncService::StopAndClear() {}
 void TestSyncService::OnDataTypeRequestsSyncStartup(ModelType type) {}
 
 void TestSyncService::TriggerRefresh(const ModelTypeSet& types) {}
-
-void TestSyncService::ReenableDatatype(ModelType type) {}
 
 void TestSyncService::ReadyForStartChanged(ModelType type) {}
 
@@ -205,7 +204,7 @@ UserShare* TestSyncService::GetUserShare() const {
   return nullptr;
 }
 
-SyncTokenStatus TestSyncService::GetSyncTokenStatus() const {
+SyncTokenStatus TestSyncService::GetSyncTokenStatusForDebugging() const {
   SyncTokenStatus token;
 
   if (GetAuthError().state() != GoogleServiceAuthError::NONE) {
@@ -223,11 +222,11 @@ bool TestSyncService::QueryDetailedSyncStatusForDebugging(
   return detailed_sync_status_engine_available_;
 }
 
-base::Time TestSyncService::GetLastSyncedTime() const {
+base::Time TestSyncService::GetLastSyncedTimeForDebugging() const {
   return base::Time();
 }
 
-SyncCycleSnapshot TestSyncService::GetLastCycleSnapshot() const {
+SyncCycleSnapshot TestSyncService::GetLastCycleSnapshotForDebugging() const {
   return last_cycle_snapshot_;
 }
 
@@ -235,15 +234,16 @@ std::unique_ptr<base::Value> TestSyncService::GetTypeStatusMapForDebugging() {
   return std::make_unique<base::ListValue>();
 }
 
-const GURL& TestSyncService::sync_service_url() const {
+const GURL& TestSyncService::GetSyncServiceUrlForDebugging() const {
   return sync_service_url_;
 }
 
-std::string TestSyncService::unrecoverable_error_message() const {
+std::string TestSyncService::GetUnrecoverableErrorMessageForDebugging() const {
   return std::string();
 }
 
-base::Location TestSyncService::unrecoverable_error_location() const {
+base::Location TestSyncService::GetUnrecoverableErrorLocationForDebugging()
+    const {
   return base::Location();
 }
 
@@ -263,7 +263,7 @@ base::WeakPtr<JsController> TestSyncService::GetJsController() {
   return base::WeakPtr<JsController>();
 }
 
-void TestSyncService::GetAllNodes(
+void TestSyncService::GetAllNodesForDebugging(
     const base::Callback<void(std::unique_ptr<base::ListValue>)>& callback) {}
 
 void TestSyncService::SetInvalidationsForSessionsEnabled(bool enabled) {}

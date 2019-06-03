@@ -44,11 +44,13 @@ import org.chromium.chrome.browser.DevToolsServer;
 import org.chromium.chrome.browser.banners.AppBannerManager;
 import org.chromium.chrome.browser.bookmarkswidget.BookmarkWidgetProvider;
 import org.chromium.chrome.browser.contacts_picker.ContactsPickerDialog;
+import org.chromium.chrome.browser.content_capture.ContentCaptureHistoryDeletionObserver;
 import org.chromium.chrome.browser.crash.LogcatExtractionRunnable;
 import org.chromium.chrome.browser.crash.MinidumpUploadService;
 import org.chromium.chrome.browser.download.DownloadController;
 import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.firstrun.ForcedSigninProcessor;
+import org.chromium.chrome.browser.history.HistoryDeletionBridge;
 import org.chromium.chrome.browser.identity.UniqueIdentificationGeneratorFactory;
 import org.chromium.chrome.browser.identity.UuidBasedUniqueIdentificationGenerator;
 import org.chromium.chrome.browser.incognito.IncognitoTabLauncher;
@@ -58,6 +60,7 @@ import org.chromium.chrome.browser.media.MediaCaptureNotificationService;
 import org.chromium.chrome.browser.media.MediaViewerUtils;
 import org.chromium.chrome.browser.metrics.LaunchMetrics;
 import org.chromium.chrome.browser.metrics.PackageMetrics;
+import org.chromium.chrome.browser.metrics.WebApkUma;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.notifications.channels.ChannelsUpdater;
 import org.chromium.chrome.browser.ntp.NewTabPage;
@@ -234,6 +237,12 @@ public class ProcessInitializationHandler {
                 public void onPhotoPickerDismissed() {
                     mDialog = null;
                 }
+
+                @Override
+                public boolean supportsVideos() {
+                    return ChromeFeatureList.isEnabled(
+                            ChromeFeatureList.PHOTO_PICKER_VIDEO_SUPPORT);
+                }
             });
         }
 
@@ -258,6 +267,8 @@ public class ProcessInitializationHandler {
         });
 
         SearchWidgetProvider.initialize();
+        HistoryDeletionBridge.getInstance().addObserver(
+                new ContentCaptureHistoryDeletionObserver());
     }
 
     /**
@@ -430,6 +441,7 @@ public class ProcessInitializationHandler {
         deferredStartupHandler.addDeferredTask(
                 ChromeApplication.getComponent().resolveTwaClearDataDialogRecorder()
                         ::makeDeferredRecordings);
+        deferredStartupHandler.addDeferredTask(WebApkUma::recordDeferredUma);
 
         deferredStartupHandler.addDeferredTask(
                 () -> IncognitoTabLauncher.updateComponentEnabledState());

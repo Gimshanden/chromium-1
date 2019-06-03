@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -47,15 +48,15 @@ using namespace html_names;
 // "Outdent" command considers <BLOCKQUOTE style="display:inline"> makes
 // indentation.
 static bool IsHTMLListOrBlockquoteElement(const Node* node) {
-  if (!node || !node->IsHTMLElement())
+  const auto* element = DynamicTo<HTMLElement>(node);
+  if (!element)
     return false;
   if (!node->GetLayoutObject() || !node->GetLayoutObject()->IsLayoutBlock())
     return false;
-  const HTMLElement& element = ToHTMLElement(*node);
   // TODO(yosin): We should check OL/UL element has "list-style-type" CSS
   // property to make sure they layout contents as list.
-  return IsHTMLUListElement(element) || IsHTMLOListElement(element) ||
-         element.HasTagName(kBlockquoteTag);
+  return IsHTMLUListElement(*element) || IsHTMLOListElement(*element) ||
+         element->HasTagName(kBlockquoteTag);
 }
 
 IndentOutdentCommand::IndentOutdentCommand(Document& document,
@@ -92,7 +93,7 @@ bool IndentOutdentCommand::TryIndentingAsListItem(const Position& start,
   // We should calculate visible range in list item because inserting new
   // list element will change visibility of list item, e.g. :first-child
   // CSS selector.
-  HTMLElement* new_list = ToHTMLElement(GetDocument().CreateElement(
+  auto* new_list = To<HTMLElement>(GetDocument().CreateElement(
       list_element->TagQName(), CreateElementFlags::ByCloneNode(),
       g_null_atom));
   InsertNodeBefore(new_list, selected_list_item, editing_state);
@@ -157,7 +158,7 @@ void IndentOutdentCommand::IndentIntoBlockquote(const Position& start,
                                                 const Position& end,
                                                 HTMLElement*& target_blockquote,
                                                 EditingState* editing_state) {
-  Element* enclosing_cell = ToElement(EnclosingNodeOfType(start, &IsTableCell));
+  auto* enclosing_cell = To<Element>(EnclosingNodeOfType(start, &IsTableCell));
   Element* element_to_split_to;
   if (enclosing_cell)
     element_to_split_to = enclosing_cell;
@@ -209,7 +210,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
   VisiblePosition visible_end_of_paragraph =
       EndOfParagraph(visible_start_of_paragraph);
 
-  HTMLElement* enclosing_element = ToHTMLElement(
+  auto* enclosing_element = To<HTMLElement>(
       EnclosingNodeOfType(visible_start_of_paragraph.DeepEquivalent(),
                           &IsHTMLListOrBlockquoteElement));
   // We can't outdent if there is no place to go!
@@ -274,7 +275,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
         CreateVisiblePosition(visible_start_of_paragraph.DeepEquivalent());
     if (visible_start_of_paragraph.IsNotNull() &&
         !IsStartOfParagraph(visible_start_of_paragraph)) {
-      InsertNodeAt(HTMLBRElement::Create(GetDocument()),
+      InsertNodeAt(MakeGarbageCollected<HTMLBRElement>(GetDocument()),
                    visible_start_of_paragraph.DeepEquivalent(), editing_state);
       if (editing_state->IsAborted())
         return;
@@ -285,7 +286,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
         CreateVisiblePosition(visible_end_of_paragraph.DeepEquivalent());
     if (visible_end_of_paragraph.IsNotNull() &&
         !IsEndOfParagraph(visible_end_of_paragraph))
-      InsertNodeAt(HTMLBRElement::Create(GetDocument()),
+      InsertNodeAt(MakeGarbageCollected<HTMLBRElement>(GetDocument()),
                    visible_end_of_paragraph.DeepEquivalent(), editing_state);
     return;
   }
@@ -298,9 +299,9 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
       // may be at different indentations.
       const Position& previous_element =
           PreviousCandidate(visible_start_of_paragraph.DeepEquivalent());
-      HTMLElement* const previous_element_is_blockquote =
-          ToHTMLElement(EnclosingNodeOfType(previous_element,
-                                            &IsHTMLListOrBlockquoteElement));
+      auto* const previous_element_is_blockquote =
+          To<HTMLElement>(EnclosingNodeOfType(previous_element,
+                                              &IsHTMLListOrBlockquoteElement));
       const bool is_previous_blockquote_same =
           !previous_element_is_blockquote ||
           (enclosing_element == previous_element_is_blockquote);
@@ -347,7 +348,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
       EndOfParagraph(visible_end_of_paragraph);
   if (start_of_paragraph_to_move.IsNull() || end_of_paragraph_to_move.IsNull())
     return;
-  HTMLBRElement* placeholder = HTMLBRElement::Create(GetDocument());
+  auto* placeholder = MakeGarbageCollected<HTMLBRElement>(GetDocument());
   InsertNodeBefore(placeholder, split_blockquote_node, editing_state);
   if (editing_state->IsAborted())
     return;

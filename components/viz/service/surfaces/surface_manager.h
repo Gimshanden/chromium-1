@@ -21,9 +21,9 @@
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
+#include "base/trace_event/trace_event.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/surface_id.h"
-#include "components/viz/service/surfaces/surface_dependency_tracker.h"
 #include "components/viz/service/surfaces/surface_observer.h"
 #include "components/viz/service/surfaces/surface_reference.h"
 
@@ -40,7 +40,9 @@ namespace viz {
 
 class Surface;
 class SurfaceAllocationGroup;
+class SurfaceClient;
 class SurfaceManagerDelegate;
+class SurfaceRange;
 struct BeginFrameAck;
 struct BeginFrameArgs;
 
@@ -65,10 +67,6 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
     return activation_deadline_in_frames_;
   }
 
-  SurfaceDependencyTracker* dependency_tracker() {
-    return &dependency_tracker_;
-  }
-
   // Sets an alternative base::TickClock to pass into surfaces for surface
   // synchronization deadlines. This allows unit tests to mock the wall clock.
   void SetTickClockForTesting(const base::TickClock* tick_clock);
@@ -82,8 +80,6 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // A temporary reference will be added to the new Surface.
   Surface* CreateSurface(base::WeakPtr<SurfaceClient> surface_client,
                          const SurfaceInfo& surface_info,
-                         BeginFrameSource* begin_frame_source,
-                         bool needs_sync_tokens,
                          bool block_activation_on_parent);
 
   // Marks |surface_id| for destruction. The surface will get destroyed when
@@ -116,17 +112,6 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // was not blocked on dependencies.
   void SurfaceActivated(Surface* surface,
                         base::Optional<base::TimeDelta> duration);
-
-  // Called when this |surface_id| is referenced as an activation dependency
-  // from a parent CompositorFrame.
-  void SurfaceDependencyAdded(const SurfaceId& surface_id);
-
-  // Called when the dependencies of a pending CompositorFrame within |surface|
-  // has changed.
-  void SurfaceDependenciesChanged(
-      Surface* surface,
-      const base::flat_set<FrameSinkId>& added_dependencies,
-      const base::flat_set<FrameSinkId>& removed_dependencies);
 
   // Called when |surface| is being destroyed.
   void SurfaceDestroyed(Surface* surface);
@@ -284,10 +269,11 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
 
   base::Optional<uint32_t> activation_deadline_in_frames_;
 
-  // SurfaceDependencyTracker needs to be destroyed after Surfaces are destroyed
-  // because they will call back into the dependency tracker.
-  SurfaceDependencyTracker dependency_tracker_;
-
+  base::flat_map<base::UnguessableToken,
+                 std::unique_ptr<SurfaceAllocationGroup>>
+      embed_token_to_allocation_group_;
+  base::flat_map<FrameSinkId, std::vector<SurfaceAllocationGroup*>>
+      frame_sink_id_to_allocation_groups_;
   base::flat_map<SurfaceId, std::unique_ptr<Surface>> surface_map_;
   base::ObserverList<SurfaceObserver>::Unchecked observer_list_;
   base::ThreadChecker thread_checker_;
@@ -331,10 +317,6 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // interval of time. The timer will started/stopped so it only runs if there
   // are temporary references. Also the timer isn't used with Android WebView.
   base::Optional<base::RepeatingTimer> expire_timer_;
-
-  base::flat_map<base::UnguessableToken,
-                 std::unique_ptr<SurfaceAllocationGroup>>
-      embed_token_to_allocation_group_;
 
   bool allocation_groups_need_garbage_collection_ = false;
 

@@ -36,19 +36,14 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLStyleElement::HTMLStyleElement(Document& document,
-                                          const CreateElementFlags flags)
+HTMLStyleElement::HTMLStyleElement(Document& document,
+                                   const CreateElementFlags flags)
     : HTMLElement(kStyleTag, document),
       StyleElement(&document, flags.IsCreatedByParser()),
       fired_load_(false),
       loaded_sheet_(false) {}
 
 HTMLStyleElement::~HTMLStyleElement() = default;
-
-HTMLStyleElement* HTMLStyleElement::Create(Document& document,
-                                           const CreateElementFlags flags) {
-  return MakeGarbageCollected<HTMLStyleElement>(document, flags);
-}
 
 void HTMLStyleElement::ParseAttribute(
     const AttributeModificationParams& params) {

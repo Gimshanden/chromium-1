@@ -17,17 +17,20 @@ ResetRequestHandler::ResetRequestHandler(
     service_manager::Connector* connector,
     const base::flat_set<FidoTransportProtocol>& supported_transports,
     ResetSentCallback reset_sent_callback,
-    FinishedCallback finished_callback)
-    : FidoRequestHandlerBase(connector, supported_transports),
+    FinishedCallback finished_callback,
+    std::unique_ptr<FidoDiscoveryFactory> fido_discovery_factory)
+    : FidoRequestHandlerBase(connector,
+                             fido_discovery_factory.get(),
+                             supported_transports),
       reset_sent_callback_(std::move(reset_sent_callback)),
       finished_callback_(std::move(finished_callback)),
+      fido_discovery_factory_(std::move(fido_discovery_factory)),
       weak_factory_(this) {
   Start();
 }
 
 ResetRequestHandler::~ResetRequestHandler() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
-  CancelActiveAuthenticators();
 }
 
 void ResetRequestHandler::DispatchRequest(FidoAuthenticator* authenticator) {
@@ -46,9 +49,9 @@ void ResetRequestHandler::OnTouch(FidoAuthenticator* authenticator) {
   }
 
   processed_touch_ = true;
-  CancelActiveAuthenticators();
+  CancelActiveAuthenticators(authenticator->GetId());
 
-  if (authenticator->SupportedProtocol() != ProtocolVersion::kCtap) {
+  if (authenticator->SupportedProtocol() != ProtocolVersion::kCtap2) {
     std::move(finished_callback_)
         .Run(CtapDeviceResponseCode::kCtap1ErrInvalidCommand);
     return;
@@ -64,10 +67,6 @@ void ResetRequestHandler::OnResetComplete(
     base::Optional<pin::EmptyResponse> response) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
   DCHECK(processed_touch_);
-
-  if (status == CtapDeviceResponseCode::kSuccess && !response) {
-    status = CtapDeviceResponseCode::kCtap2ErrInvalidCBOR;
-  }
 
   std::move(finished_callback_).Run(status);
 }

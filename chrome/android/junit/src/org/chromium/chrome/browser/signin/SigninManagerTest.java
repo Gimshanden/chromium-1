@@ -50,6 +50,9 @@ public class SigninManagerTest {
     @Mock
     SigninManager.Natives mNativeMock;
 
+    @Mock
+    SigninManagerDelegate mDelegateMock;
+
     private AccountTrackerService mAccountTrackerService;
     private SigninManager mSigninManager;
 
@@ -64,8 +67,8 @@ public class SigninManagerTest {
         mAccountTrackerService = mock(AccountTrackerService.class);
         AndroidSyncSettings androidSyncSettings = mock(AndroidSyncSettings.class);
 
-        mSigninManager = spy(new SigninManager(
-                ContextUtils.getApplicationContext(), mAccountTrackerService, androidSyncSettings));
+        mSigninManager = spy(new SigninManager(ContextUtils.getApplicationContext(), mDelegateMock,
+                mAccountTrackerService, androidSyncSettings));
 
         // SigninManager interacts with AndroidSyncSettings, but its not the focus
         // of this test. Using MockSyncContentResolver reduces burden of test setup.
@@ -210,7 +213,7 @@ public class SigninManagerTest {
         // Request that policy is loaded. It will pause sign-in until onPolicyCheckedBeforeSignIn is
         // invoked.
         doReturn(true).when(mNativeMock).shouldLoadPolicyForUser(any());
-        doNothing().when(mNativeMock).checkPolicyBeforeSignIn(any(), anyLong(), any());
+        doNothing().when(mNativeMock).registerAndFetchPolicyBeforeSignIn(any(), anyLong(), any());
 
         doReturn(true).when(mSigninManager).isSigninSupported();
         doNothing().when(mNativeMock).onSignInCompleted(any(), anyLong(), any());
@@ -225,7 +228,7 @@ public class SigninManagerTest {
         mSigninManager.runAfterOperationInProgress(callCount::incrementAndGet);
         assertEquals(0, callCount.get());
 
-        mSigninManager.onPolicyCheckedBeforeSignIn(null); // Test user is unmanaged.
+        mSigninManager.onPolicyFetchedBeforeSignIn();
         assertFalse(mSigninManager.isOperationInProgress());
         assertEquals(1, callCount.get());
     }

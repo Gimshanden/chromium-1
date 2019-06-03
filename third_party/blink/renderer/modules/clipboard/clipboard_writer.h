@@ -25,7 +25,7 @@ class FileReaderLoader;
 // (3) Writing the blob's decoded contents to the system clipboard.
 class ClipboardWriter : public FileReaderLoaderClient {
  public:
-  static std::unique_ptr<ClipboardWriter> Create(String mime_type,
+  static std::unique_ptr<ClipboardWriter> Create(const String& mime_type,
                                                  ClipboardPromise* promise);
   ~ClipboardWriter() override;
 
@@ -39,7 +39,7 @@ class ClipboardWriter : public FileReaderLoaderClient {
   void DidFail(FileErrorCode) override;
 
  protected:
-  ClipboardWriter(ClipboardPromise* promise);
+  explicit ClipboardWriter(ClipboardPromise* promise);
 
   virtual void DecodeOnBackgroundThread(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,

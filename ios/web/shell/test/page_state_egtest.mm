@@ -3,14 +3,13 @@
 // found in the LICENSE file.
 
 #import <CoreGraphics/CoreGraphics.h>
-#import <EarlGrey/EarlGrey.h>
 #import <Foundation/Foundation.h>
 #import <XCTest/XCTest.h>
 
 #include "base/strings/string_number_conversions.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/web/shell/test/earl_grey/shell_earl_grey.h"
 #import "ios/web/shell/test/earl_grey/shell_matchers.h"
-#import "ios/web/shell/test/earl_grey/shell_matchers_shorthand.h"
 #import "ios/web/shell/test/earl_grey/web_shell_test_case.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -55,8 +54,7 @@ void WaitForOffset(CGFloat y_offset) {
 // be {0, 0} before returning.
 void ScrollLongPageToTop(const GURL& url) {
   // Load the page and swipe down.
-  bool success = [ShellEarlGrey loadURL:url];
-  GREYAssert(success, @"Page did not complete loading.");
+  [ShellEarlGrey loadURL:url];
   [[EarlGrey selectElementWithMatcher:web::WebViewScrollView()]
       performAction:grey_scrollToContentEdge(kGREYContentEdgeTop)];
   // Waits for the {0, 0} offset.
@@ -113,8 +111,7 @@ void ScrollLongPageToTop(const GURL& url) {
 - (void)testZeroContentOffsetAfterLoad {
   // Set up the file-based server to load the tall page.
   const GURL baseURL = _server.GetURL(kLongPage1);
-  bool success = [ShellEarlGrey loadURL:baseURL];
-  GREYAssert(success, @"Page did not complete loading.");
+  [ShellEarlGrey loadURL:baseURL];
 
   // Scroll the page and load again to verify that the new page's scroll offset
   // is reset to {0, 0}.
@@ -127,8 +124,7 @@ void ScrollLongPageToTop(const GURL& url) {
     // Add a query parameter so the next load creates another NavigationItem.
     GURL::Replacements replacements;
     replacements.SetQueryStr(base::NumberToString(i));
-    GREYAssert([ShellEarlGrey loadURL:baseURL.ReplaceComponents(replacements)],
-               @"Page did not complete loading.");
+    [ShellEarlGrey loadURL:baseURL.ReplaceComponents(replacements)];
     // Wait for the content offset to be set to {0, 0}.
     WaitForOffset(0.0);
   }

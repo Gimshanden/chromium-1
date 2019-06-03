@@ -93,8 +93,8 @@ class SynchronousLayerTreeFrameSink::SoftwareOutputSurface
                bool has_alpha,
                bool use_stencil) override {}
   uint32_t GetFramebufferCopyTextureFormat() override { return 0; }
-  viz::OverlayCandidateValidator* GetOverlayCandidateValidator()
-      const override {
+  std::unique_ptr<viz::OverlayCandidateValidator>
+  TakeOverlayCandidateValidator() override {
     return nullptr;
   }
   bool IsDisplayedAsOverlayPlane() const override { return false; }
@@ -105,7 +105,18 @@ class SynchronousLayerTreeFrameSink::SoftwareOutputSurface
   bool HasExternalStencilTest() const override { return false; }
   void ApplyExternalStencil() override {}
   unsigned UpdateGpuFence() override { return 0; }
+  void SetUpdateVSyncParametersCallback(
+      viz::UpdateVSyncParametersCallback callback) override {}
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
+  gfx::OverlayTransform GetDisplayTransform() override {
+    return gfx::OVERLAY_TRANSFORM_NONE;
+  }
 };
+
+base::TimeDelta SynchronousLayerTreeFrameSink::StubDisplayClient::
+    GetPreferredFrameIntervalForFrameSinkId(const viz::FrameSinkId& id) {
+  return viz::BeginFrameArgs::MinInterval();
+}
 
 SynchronousLayerTreeFrameSink::SynchronousLayerTreeFrameSink(
     scoped_refptr<viz::ContextProvider> context_provider,
@@ -387,8 +398,8 @@ void SynchronousLayerTreeFrameSink::Invalidate(bool needs_draw) {
 
   if (!fallback_tick_pending_) {
     fallback_tick_.Reset(
-        base::Bind(&SynchronousLayerTreeFrameSink::FallbackTickFired,
-                   base::Unretained(this)));
+        base::BindOnce(&SynchronousLayerTreeFrameSink::FallbackTickFired,
+                       base::Unretained(this)));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, fallback_tick_.callback(),
         base::TimeDelta::FromMilliseconds(kFallbackTickTimeoutInMilliseconds));

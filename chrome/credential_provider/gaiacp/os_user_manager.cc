@@ -8,8 +8,6 @@
 
 #include <lm.h>
 
-#include <Shellapi.h>  // For <Shlobj.h>
-#include <Shlobj.h>    // For SHFileOperation()
 #include <sddl.h>      // For ConvertSidToStringSid()
 #include <userenv.h>   // For GetUserProfileDirectory()
 #include <wincrypt.h>  // For CryptXXX()
@@ -24,6 +22,7 @@
 #include <memory>
 
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/scoped_native_library.h"
 #include "base/stl_util.h"
@@ -235,6 +234,18 @@ HRESULT OSUserManager::AddUser(const wchar_t* username,
                                DWORD* error) {
   DCHECK(sid);
 
+  base::string16 local_users_group_name;
+  // If adding to the local users group, make sure we can get the localized
+  // name for the group before proceeding.
+  if (add_to_users_group) {
+    HRESULT hr = LookupLocalizedNameForWellKnownSid(WinBuiltinUsersSid,
+                                                    &local_users_group_name);
+    if (FAILED(hr)) {
+      LOGFN(ERROR) << "LookupLocalizedNameForWellKnownSid hr=" << putHR(hr);
+      return hr;
+    }
+  }
+
   USER_INFO_1 info;
   memset(&info, 0, sizeof(info));
   info.usri1_comment = _wcsdup(comment);
@@ -280,12 +291,14 @@ HRESULT OSUserManager::AddUser(const wchar_t* username,
     }
 
     if (nsts == NERR_Success && add_to_users_group) {
-      // Add to the "Users" group so that it appears on login screen.
+      // Add to the well known local users group so that it appears on login
+      // screen.
       LOCALGROUP_MEMBERS_INFO_0 member_info;
       memset(&member_info, 0, sizeof(member_info));
       member_info.lgrmi0_sid = user_info->usri4_user_sid;
-      nsts = ::NetLocalGroupAddMembers(
-          nullptr, L"Users", 0, reinterpret_cast<LPBYTE>(&member_info), 1);
+      nsts =
+          ::NetLocalGroupAddMembers(nullptr, local_users_group_name.c_str(), 0,
+                                    reinterpret_cast<LPBYTE>(&member_info), 1);
       if (nsts != NERR_Success && nsts != ERROR_MEMBER_IN_ALIAS) {
         LOGFN(ERROR) << "NetLocalGroupAddMembers nsts=" << nsts;
       } else {
@@ -565,9 +578,6 @@ HRESULT OSUserManager::RemoveUser(const wchar_t* username,
       if (hr != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
         LOGFN(ERROR) << "GetUserProfileDirectory hr=" << putHR(hr);
       profiledir[0] = 0;
-    } else {
-      // Double null terminate the profile directory for SHFileOperation().
-      profiledir[length] = 0;
     }
   } else {
     LOGFN(ERROR) << "CreateLogonToken hr=" << putHR(hr);
@@ -579,17 +589,8 @@ HRESULT OSUserManager::RemoveUser(const wchar_t* username,
     LOGFN(ERROR) << "NetUserDel nsts=" << nsts;
 
   // Force delete the user's profile directory.
-  if (profiledir[0] != 0) {
-    SHFILEOPSTRUCT op;
-    memset(&op, 0, sizeof(op));
-    op.wFunc = FO_DELETE;
-    op.pFrom = profiledir;  // Double null terminated above.
-    op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NO_UI | FOF_SILENT;
-
-    int ret = ::SHFileOperation(&op);
-    if (ret != 0)
-      LOGFN(ERROR) << "SHFileOperation ret=" << ret;
-  }
+  if (*profiledir && !base::DeleteFile(base::FilePath(profiledir), true))
+    LOGFN(ERROR) << "base::DeleteFile";
 
   return S_OK;
 }

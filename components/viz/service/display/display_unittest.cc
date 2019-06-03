@@ -104,6 +104,11 @@ class StubDisplayClient : public DisplayClient {
   void DisplayDidReceiveCALayerParams(
       const gfx::CALayerParams& ca_layer_params) override {}
   void DisplayDidCompleteSwapWithSize(const gfx::Size& pixel_size) override {}
+  void SetPreferredFrameInterval(base::TimeDelta interval) override {}
+  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
+      const FrameSinkId& id) override {
+    return BeginFrameArgs::MinInterval();
+  }
 };
 
 void CopyCallback(bool* called, std::unique_ptr<CopyOutputResult> result) {
@@ -3359,8 +3364,8 @@ TEST_F(DisplayTest, CompositorFrameWithPresentationToken) {
 
     // Both frames with frame-tokens 1 and 2 requested presentation-feedback.
     ASSERT_EQ(2u, sub_support->presentation_feedbacks().size());
-    EXPECT_TRUE(sub_support->presentation_feedbacks().count(frame_token_1));
-    EXPECT_TRUE(sub_support->presentation_feedbacks().count(frame_token_2));
+    EXPECT_EQ(sub_support->presentation_feedbacks().count(frame_token_1), 1u);
+    EXPECT_EQ(sub_support->presentation_feedbacks().count(frame_token_2), 1u);
   }
 
   {

@@ -9,8 +9,10 @@
 
 #include "base/values.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
+#include "chrome/browser/chromeos/login/app_launch_controller.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
 #include "chrome/browser/chromeos/login/screens/network_error.h"
+#include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/chromium_strings.h"
@@ -38,6 +40,8 @@ std::string GetNetworkName(const std::string& service_path) {
 
 namespace chromeos {
 
+constexpr StaticOobeScreenId AppLaunchSplashScreenView::kScreenId;
+
 AppLaunchSplashScreenHandler::AppLaunchSplashScreenHandler(
     JSCallsContainer* js_calls_container,
     const scoped_refptr<NetworkStateInformer>& network_state_informer,
@@ -50,8 +54,8 @@ AppLaunchSplashScreenHandler::AppLaunchSplashScreenHandler(
 
 AppLaunchSplashScreenHandler::~AppLaunchSplashScreenHandler() {
   network_state_informer_->RemoveObserver(this);
-  if (delegate_)
-    delegate_->OnDeletingSplashScreenView();
+  if (controller_)
+    controller_->OnDeletingSplashScreenView();
 }
 
 void AppLaunchSplashScreenHandler::DeclareLocalizedValues(
@@ -128,8 +132,8 @@ void AppLaunchSplashScreenHandler::UpdateAppLaunchState(AppLaunchState state) {
 }
 
 void AppLaunchSplashScreenHandler::SetDelegate(
-    AppLaunchSplashScreenHandler::Delegate* delegate) {
-  delegate_ = delegate;
+    AppLaunchController* controller) {
+  controller_ = controller;
 }
 
 void AppLaunchSplashScreenHandler::ShowNetworkConfigureUI() {
@@ -137,7 +141,7 @@ void AppLaunchSplashScreenHandler::ShowNetworkConfigureUI() {
   if (state == NetworkStateInformer::ONLINE) {
     online_state_ = true;
     if (!network_config_requested_) {
-      delegate_->OnNetworkStateChanged(true);
+      controller_->OnNetworkStateChanged(true);
       return;
     }
   }
@@ -179,7 +183,7 @@ void AppLaunchSplashScreenHandler::ShowNetworkConfigureUI() {
       break;
   }
 
-  if (GetCurrentScreen() != OobeScreen::SCREEN_ERROR_MESSAGE)
+  if (GetCurrentScreen() != ErrorScreenView::kScreenId)
     error_screen_->SetParentScreen(kScreenId);
   error_screen_->Show();
 }
@@ -195,15 +199,14 @@ void AppLaunchSplashScreenHandler::OnNetworkReady() {
 
 void AppLaunchSplashScreenHandler::UpdateState(
     NetworkError::ErrorReason reason) {
-  if (!delegate_ ||
-      (state_ != APP_LAUNCH_STATE_PREPARING_NETWORK &&
-       state_ != APP_LAUNCH_STATE_NETWORK_WAIT_TIMEOUT)) {
+  if (!controller_ || (state_ != APP_LAUNCH_STATE_PREPARING_NETWORK &&
+                       state_ != APP_LAUNCH_STATE_NETWORK_WAIT_TIMEOUT)) {
     return;
   }
 
   bool new_online_state =
       network_state_informer_->state() == NetworkStateInformer::ONLINE;
-  delegate_->OnNetworkStateChanged(new_online_state);
+  controller_->OnNetworkStateChanged(new_online_state);
 
   online_state_ = new_online_state;
 }
@@ -247,33 +250,33 @@ int AppLaunchSplashScreenHandler::GetProgressMessageFromState(
 }
 
 void AppLaunchSplashScreenHandler::HandleConfigureNetwork() {
-  if (delegate_)
-    delegate_->OnConfigureNetwork();
+  if (controller_)
+    controller_->OnConfigureNetwork();
   else
     LOG(WARNING) << "No delegate set to handle network configuration.";
 }
 
 void AppLaunchSplashScreenHandler::HandleCancelAppLaunch() {
-  if (delegate_)
-    delegate_->OnCancelAppLaunch();
+  if (controller_)
+    controller_->OnCancelAppLaunch();
   else
     LOG(WARNING) << "No delegate set to handle cancel app launch";
 }
 
 void AppLaunchSplashScreenHandler::HandleNetworkConfigRequested() {
-  if (!delegate_ || network_config_done_)
+  if (!controller_ || network_config_done_)
     return;
 
   network_config_requested_ = true;
-  delegate_->OnNetworkConfigRequested(true);
+  controller_->OnNetworkConfigRequested(true);
 }
 
 void AppLaunchSplashScreenHandler::HandleContinueAppLaunch() {
   DCHECK(online_state_);
-  if (delegate_ && online_state_) {
+  if (controller_ && online_state_) {
     network_config_requested_ = false;
     network_config_done_ = true;
-    delegate_->OnNetworkConfigRequested(false);
+    controller_->OnNetworkConfigRequested(false);
     Show(app_id_);
   }
 }

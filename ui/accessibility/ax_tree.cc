@@ -6,8 +6,10 @@
 
 #include <stddef.h>
 
+#include <numeric>
 #include <set>
 
+#include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -23,12 +25,13 @@ namespace ui {
 
 namespace {
 
-std::string TreeToStringHelper(AXNode* node, int indent) {
-  std::string result = std::string(2 * indent, ' ');
-  result += node->data().ToString() + "\n";
-  for (int i = 0; i < node->child_count(); ++i)
-    result += TreeToStringHelper(node->ChildAtIndex(i), indent + 1);
-  return result;
+std::string TreeToStringHelper(const AXNode* node, int indent) {
+  return std::accumulate(
+      node->children().cbegin(), node->children().cend(),
+      std::string(2 * indent, ' ') + node->data().ToString() + "\n",
+      [indent](const std::string& str, const auto* child) {
+        return str + TreeToStringHelper(child, indent + 1);
+      });
 }
 
 template <typename K, typename V>
@@ -370,6 +373,11 @@ const std::set<AXTreeID> AXTree::GetAllChildTreeIds() const {
 }
 
 bool AXTree::Unserialize(const AXTreeUpdate& update) {
+  // Set update state to true.
+  // tree_update_in_progress_ gets set back to false whenever this function
+  // exits.
+  base::AutoReset<bool> update_state_resetter(&tree_update_in_progress_, true);
+
   AXTreeUpdateState update_state;
   int32_t old_root_id = root_ ? root_->id() : 0;
 
@@ -404,8 +412,8 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     // If the root has simply been updated, we treat it like an update to any
     // other node.
     if (node && root_ && (node != root_ || root_updated)) {
-      for (int i = 0; i < node->child_count(); ++i)
-        DestroySubtree(node->ChildAtIndex(i), &update_state);
+      for (auto* child : node->children())
+        DestroySubtree(child, &update_state);
       std::vector<AXNode*> children;
       node->SwapChildren(children);
       update_state.pending_nodes.insert(node);
@@ -450,6 +458,9 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     }
   }
 
+  // Clear list_info_map_
+  ordered_set_info_map_.clear();
+
   std::set<const AXNode*>& new_nodes = update_state.new_nodes;
   std::vector<AXTreeObserver::Change> changes;
   changes.reserve(update.nodes.size());
@@ -488,12 +499,13 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     }
     changes.push_back(AXTreeObserver::Change(node, change));
   }
+
+  // Tree is no longer updating.
+  SetTreeUpdateInProgressState(false);
+
   for (AXTreeObserver& observer : observers_) {
     observer.OnAtomicUpdateFinished(this, root_->id() != old_root_id, changes);
   }
-
-  // Clear list_info_map_
-  ordered_set_info_map_.clear();
 
   return true;
 }
@@ -545,7 +557,7 @@ std::string AXTree::ToString() const {
 
 AXNode* AXTree::CreateNode(AXNode* parent,
                            int32_t id,
-                           int32_t index_in_parent,
+                           size_t index_in_parent,
                            AXTreeUpdateState* update_state) {
   AXNode* new_node = new AXNode(this, parent, id, index_in_parent);
   id_map_[new_node->id()] = new_node;
@@ -838,8 +850,8 @@ void AXTree::DestroyNodeAndSubtree(AXNode* node,
       observer.OnNodeWillBeReparented(this, node);
   }
   id_map_.erase(node->id());
-  for (int i = 0; i < node->child_count(); ++i)
-    DestroyNodeAndSubtree(node->ChildAtIndex(i), update_state);
+  for (auto* child : node->children())
+    DestroyNodeAndSubtree(child, update_state);
   if (update_state) {
     update_state->pending_nodes.erase(node);
     update_state->removed_node_ids.insert(node->id());
@@ -885,7 +897,6 @@ bool AXTree::CreateNewChildVector(AXNode* node,
   bool success = true;
   for (size_t i = 0; i < new_child_ids.size(); ++i) {
     int32_t child_id = new_child_ids[i];
-    int32_t index_in_parent = static_cast<int32_t>(i);
     AXNode* child = GetFromId(child_id);
     if (child) {
       if (child->parent() != node) {
@@ -900,9 +911,9 @@ bool AXTree::CreateNewChildVector(AXNode* node,
         success = false;
         continue;
       }
-      child->SetIndexInParent(index_in_parent);
+      child->SetIndexInParent(i);
     } else {
-      child = CreateNode(node, child_id, index_in_parent, update_state);
+      child = CreateNode(node, child_id, i, update_state);
       update_state->pending_nodes.insert(child);
       update_state->new_nodes.insert(child);
     }
@@ -946,20 +957,23 @@ void AXTree::PopulateOrderedSetItems(const AXNode* ordered_set,
   int original_level = original_node.GetIntAttribute(
       ax::mojom::IntAttribute::kHierarchicalLevel);
   // If original node is ordered set, then set its hierarchical level equal to
-  // its first child to ensure the items vector gets populated.
-  // This is due to ordered sets having a hierarchical level of 0, while their
-  // nodes have non-zero hierarchical values.
-  if ((ordered_set == &original_node) &&
-      ordered_set->GetUnignoredChildAtIndex(0)) {
-    original_level = ordered_set->GetUnignoredChildAtIndex(0)->GetIntAttribute(
-        ax::mojom::IntAttribute::kHierarchicalLevel);
+  // its first child that sets a hierarchical level, if any.
+  if (ordered_set == &original_node) {
+    for (size_t i = 0; i < original_node.GetUnignoredChildCount(); ++i) {
+      int32_t level =
+          original_node.GetUnignoredChildAtIndex(i)->GetIntAttribute(
+              ax::mojom::IntAttribute::kHierarchicalLevel);
+      if (level)
+        original_level =
+            original_level ? std::min(level, original_level) : level;
+    }
   }
-  int original_node_index = original_node.GetUnignoredIndexInParent();
+  size_t original_node_index = original_node.GetUnignoredIndexInParent();
   bool node_is_radio_button =
       (original_node.data().role == ax::mojom::Role::kRadioButton);
 
-  for (int i = 0; i < local_parent->child_count(); ++i) {
-    const AXNode* child = local_parent->ChildAtIndex(i);
+  for (size_t i = 0; i < local_parent->children().size(); ++i) {
+    const AXNode* child = local_parent->children()[i];
 
     // Invisible children should not be counted.
     // However, in the collapsed container case (e.g. a combobox), items can
@@ -980,6 +994,7 @@ void AXTree::PopulateOrderedSetItems(const AXNode* ordered_set,
       // examined, stop adding to this set.
       if (original_node_index < i)
         break;
+
       // If a decrease in level has been detected before the original node
       // has been examined, then everything previously added to items actually
       // belongs to a different set. Clear items vector.
@@ -1078,11 +1093,20 @@ void AXTree::ComputeSetSizePosInSetAndCache(const AXNode& node,
   // 1. Node role matches ordered set role.
   // 2. The node that calculations were called on is the ordered_set.
   if (node.SetRoleMatchesItemRole(ordered_set) || ordered_set == &node) {
+    auto ordered_set_info_result =
+        ordered_set_info_map_.find(ordered_set->id());
     // If ordered_set is not in the cache, assign it a new set_size.
-    if (ordered_set_info_map_.find(ordered_set->id()) ==
-        ordered_set_info_map_.end()) {
+    if (ordered_set_info_result == ordered_set_info_map_.end()) {
       ordered_set_info_map_[ordered_set->id()] = OrderedSetInfo();
       ordered_set_info_map_[ordered_set->id()].set_size = set_size_value;
+      ordered_set_info_map_[ordered_set->id()].lowest_hierarchical_level =
+          hierarchical_level;
+    } else {
+      OrderedSetInfo ordered_set_info = ordered_set_info_result->second;
+      if (ordered_set_info.lowest_hierarchical_level > hierarchical_level) {
+        ordered_set_info.set_size = set_size_value;
+        ordered_set_info.lowest_hierarchical_level = hierarchical_level;
+      }
     }
   }
 
@@ -1122,6 +1146,14 @@ int32_t AXTree::GetSetSize(const AXNode& node, const AXNode* ordered_set) {
   if (ordered_set_info_map_.find(node.id()) == ordered_set_info_map_.end())
     ComputeSetSizePosInSetAndCache(node, ordered_set);
   return ordered_set_info_map_[node.id()].set_size;
+}
+
+bool AXTree::GetTreeUpdateInProgressState() const {
+  return tree_update_in_progress_;
+}
+
+void AXTree::SetTreeUpdateInProgressState(bool set_tree_update_value) {
+  tree_update_in_progress_ = set_tree_update_value;
 }
 
 }  // namespace ui

@@ -856,17 +856,18 @@ TEST_F(DisplayPrefsTest, DontSaveTabletModeControllerRotations) {
 
   // Open up 270 degrees to trigger tablet mode
   scoped_refptr<AccelerometerUpdate> update(new AccelerometerUpdate());
-  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, 0.0f, 0.0f, kMeanGravity);
-  update->Set(ACCELEROMETER_SOURCE_SCREEN, 0.0f, -kMeanGravity, 0.0f);
+  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, false,
+              0.0f, 0.0f, kMeanGravity);
+  update->Set(ACCELEROMETER_SOURCE_SCREEN, false, 0.0f, -kMeanGravity, 0.0f);
   ash::TabletModeController* controller =
       ash::Shell::Get()->tablet_mode_controller();
   controller->OnAccelerometerUpdated(update);
   EXPECT_TRUE(controller->IsTabletModeWindowManagerEnabled());
 
   // Trigger 90 degree rotation
-  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, -kMeanGravity, 0.0f,
-              0.0f);
-  update->Set(ACCELEROMETER_SOURCE_SCREEN, -kMeanGravity, 0.0f, 0.0f);
+  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, false,
+              -kMeanGravity, 0.0f, 0.0f);
+  update->Set(ACCELEROMETER_SOURCE_SCREEN, false, -kMeanGravity, 0.0f, 0.0f);
   controller->OnAccelerometerUpdated(update);
   shell->screen_orientation_controller()->OnAccelerometerUpdated(update);
   EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
@@ -1004,8 +1005,9 @@ TEST_F(DisplayPrefsTest, LoadRotationNoLogin) {
 
   // Open up 270 degrees to trigger tablet mode
   scoped_refptr<AccelerometerUpdate> update(new AccelerometerUpdate());
-  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, 0.0f, 0.0f, kMeanGravity);
-  update->Set(ACCELEROMETER_SOURCE_SCREEN, 0.0f, -kMeanGravity, 0.0f);
+  update->Set(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, false,
+              0.0f, 0.0f, kMeanGravity);
+  update->Set(ACCELEROMETER_SOURCE_SCREEN, false, 0.0f, -kMeanGravity, 0.0f);
   ash::TabletModeController* tablet_mode_controller =
       ash::Shell::Get()->tablet_mode_controller();
   tablet_mode_controller->OnAccelerometerUpdated(update);
@@ -1402,6 +1404,13 @@ TEST_F(DisplayPrefsTest, ExternalDisplayConnectedBeforeLoadingPrefs) {
   // Load the preferences and simulate a native display reconfiguration. Expect
   // that we are mirroring now.
   LoadDisplayPreferences();
+
+  // Simulate a change in display configuration between loading the prefs, and
+  // reconfiguring after the prefs have been loaded. Make sure that the external
+  // display mirror configs are not overwritten, and the loaded prefs will be
+  // applied.
+  display_manager()->SetMirrorMode(display::MirrorMode::kOff, base::nullopt);
+
   display_manager()->OnNativeDisplaysChanged(display_info_list);
   EXPECT_TRUE(display_manager()->IsInMirrorMode());
 }

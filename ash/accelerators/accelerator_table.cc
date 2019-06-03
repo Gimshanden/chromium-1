@@ -324,8 +324,6 @@ const size_t kActionsAllowedInPinnedModeLength =
     base::size(kActionsAllowedInPinnedMode);
 
 const AcceleratorAction kActionsNeedingWindow[] = {
-    CYCLE_BACKWARD_MRU,
-    CYCLE_FORWARD_MRU,
     MOVE_ACTIVE_WINDOW_BETWEEN_DISPLAYS,
     ROTATE_WINDOW,
     TOGGLE_FULLSCREEN,
@@ -385,6 +383,9 @@ const AcceleratorAction kActionsAllowedForKioskNextShell[] = {
     MEDIA_PREV_TRACK,
     POWER_PRESSED,
     POWER_RELEASED,
+    TAKE_PARTIAL_SCREENSHOT,
+    TAKE_SCREENSHOT,
+    TAKE_WINDOW_SCREENSHOT,
     TOGGLE_CAPS_LOCK,
     TOGGLE_DICTATION,
     TOGGLE_DOCKED_MAGNIFIER,

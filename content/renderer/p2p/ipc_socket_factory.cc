@@ -601,12 +601,8 @@ void IpcPacketSocket::OnSendComplete(
   in_flight_packet_records_.pop_front();
   TraceSendThrottlingState();
 
-  int64_t send_time_ms = -1;
-  if (send_metrics.rtc_packet_id >= 0) {
-    send_time_ms = send_metrics.send_time.since_origin().InMilliseconds();
-  }
   SignalSentPacket(this, rtc::SentPacket(send_metrics.rtc_packet_id,
-                                         send_time_ms));
+                                         send_metrics.send_time_ms));
 
   if (writable_signal_expected_ && send_bytes_available_ > 0) {
     WebRtcLogMessage(base::StringPrintf(
@@ -667,9 +663,9 @@ void AsyncAddressResolverImpl::Start(const rtc::SocketAddress& addr) {
   // GetResolvedAddress.
   addr_ = addr;
 
-  resolver_->Start(addr, base::Bind(
-      &AsyncAddressResolverImpl::OnAddressResolved,
-      base::Unretained(this)));
+  resolver_->Start(addr,
+                   base::BindOnce(&AsyncAddressResolverImpl::OnAddressResolved,
+                                  base::Unretained(this)));
 }
 
 bool AsyncAddressResolverImpl::GetResolvedAddress(

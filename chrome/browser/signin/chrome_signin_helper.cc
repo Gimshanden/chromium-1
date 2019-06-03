@@ -29,8 +29,6 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/process_dice_header_delegate_impl.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
@@ -54,6 +52,8 @@
 #include "ui/android/view_android.h"
 #else
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #endif  // defined(OS_ANDROID)
 
@@ -63,6 +63,9 @@
 #endif
 
 namespace signin {
+
+const void* const kManageAccountsHeaderReceivedUserDataKey =
+    &kManageAccountsHeaderReceivedUserDataKey;
 
 namespace {
 
@@ -139,10 +142,10 @@ void DestroyLockWrapperAfterDelay(
 bool ShouldBlockReconcilorForRequest(ChromeRequestAdapter* request) {
   content::ResourceType resource_type = request->GetResourceType();
 
-  if (resource_type == content::RESOURCE_TYPE_MAIN_FRAME)
+  if (resource_type == content::ResourceType::kMainFrame)
     return true;
 
-  return (resource_type == content::RESOURCE_TYPE_XHR) &&
+  return (resource_type == content::ResourceType::kXhr) &&
          gaia::IsGaiaSignonRealm(request->GetReferrerOrigin());
 }
 
@@ -160,6 +163,12 @@ class RequestDestructionObserverUserData : public base::SupportsUserData::Data {
 
   DISALLOW_COPY_AND_ASSIGN(RequestDestructionObserverUserData);
 };
+
+// This user data is used as a marker that a Mirror header was found on the
+// redirect chain. It does not contain any data, its presence is enough to
+// indicate that a header has already be found on the request.
+class ManageAccountsHeaderReceivedUserData
+    : public base::SupportsUserData::Data {};
 
 // Processes the mirror response header on the UI thread. Currently depending
 // on the value of |header_value|, it either shows the profile avatar menu, or
@@ -201,8 +210,14 @@ void ProcessMirrorHeaderUIThread(
     //
     // - Going Incognito (already handled in above switch-case).
     // - Displaying the Account Manager for managing accounts.
-    chrome::SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-        profile, GURL("chrome://settings/accountManager"));
+
+    // Do not display Account Manager if the navigation happened in the
+    // "background".
+    if (!chrome::FindBrowserWithWebContents(web_contents))
+      return;
+
+    chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+        profile, chrome::kAccountManagerSubPage);
     return;
   }
 
@@ -327,11 +342,9 @@ void ProcessDiceHeaderUIThread(
 void ProcessMirrorResponseHeaderIfExists(ResponseAdapter* response,
                                          bool is_off_the_record) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  DCHECK(gaia::IsGaiaSignonRealm(response->GetOrigin()));
 
   if (!response->IsMainFrame())
-    return;
-
-  if (!gaia::IsGaiaSignonRealm(response->GetOrigin()))
     return;
 
   const net::HttpResponseHeaders* response_headers = response->GetHeaders();
@@ -356,6 +369,18 @@ void ProcessMirrorResponseHeaderIfExists(ResponseAdapter* response,
   if (params.service_type == GAIA_SERVICE_TYPE_NONE)
     return;
 
+  // Only process one mirror header per request (multiple headers on the same
+  // redirect chain are ignored).
+  if (response->GetUserData(kManageAccountsHeaderReceivedUserDataKey)) {
+    LOG(ERROR) << "Multiple X-Chrome-Manage-Accounts headers on a redirect "
+               << "chain, ignoring";
+    return;
+  }
+
+  response->SetUserData(
+      kManageAccountsHeaderReceivedUserDataKey,
+      std::make_unique<ManageAccountsHeaderReceivedUserData>());
+
   base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
                            base::BindOnce(ProcessMirrorHeaderUIThread, params,
                                           response->GetWebContentsGetter()));
@@ -365,11 +390,9 @@ void ProcessMirrorResponseHeaderIfExists(ResponseAdapter* response,
 void ProcessDiceResponseHeaderIfExists(ResponseAdapter* response,
                                        bool is_off_the_record) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  DCHECK(gaia::IsGaiaSignonRealm(response->GetOrigin()));
 
   if (is_off_the_record)
-    return;
-
-  if (!gaia::IsGaiaSignonRealm(response->GetOrigin()))
     return;
 
   const net::HttpResponseHeaders* response_headers = response->GetHeaders();
@@ -436,7 +459,7 @@ void ChromeRequestAdapter::SetDestructionCallback(base::OnceClosure closure) {
       std::make_unique<RequestDestructionObserverUserData>(std::move(closure)));
 }
 
-ResponseAdapter::ResponseAdapter(const net::URLRequest* request)
+ResponseAdapter::ResponseAdapter(net::URLRequest* request)
     : request_(request) {}
 
 ResponseAdapter::~ResponseAdapter() = default;
@@ -449,7 +472,7 @@ ResponseAdapter::GetWebContentsGetter() const {
 
 bool ResponseAdapter::IsMainFrame() const {
   auto* info = content::ResourceRequestInfo::ForRequest(request_);
-  return info && (info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME);
+  return info && (info->GetResourceType() == content::ResourceType::kMainFrame);
 }
 
 GURL ResponseAdapter::GetOrigin() const {
@@ -462,6 +485,17 @@ const net::HttpResponseHeaders* ResponseAdapter::GetHeaders() const {
 
 void ResponseAdapter::RemoveHeader(const std::string& name) {
   request_->response_headers()->RemoveHeader(name);
+}
+
+base::SupportsUserData::Data* ResponseAdapter::GetUserData(
+    const void* key) const {
+  return request_->GetUserData(key);
+}
+
+void ResponseAdapter::SetUserData(
+    const void* key,
+    std::unique_ptr<base::SupportsUserData::Data> data) {
+  request_->SetUserData(key, std::move(data));
 }
 
 void SetDiceAccountReconcilorBlockDelayForTesting(int delay_ms) {
@@ -538,14 +572,13 @@ void FixAccountConsistencyRequestHeader(ChromeRequestAdapter* request,
 void ProcessAccountConsistencyResponseHeaders(ResponseAdapter* response,
                                               const GURL& redirect_url,
                                               bool is_off_the_record) {
-  if (redirect_url.is_empty()) {
-    // This is not a redirect.
+  if (!gaia::IsGaiaSignonRealm(response->GetOrigin()))
+    return;
 
-    // See if the response contains the X-Chrome-Manage-Accounts header. If so
-    // show the profile avatar bubble so that user can complete signin/out
-    // action the native UI.
-    ProcessMirrorResponseHeaderIfExists(response, is_off_the_record);
-  }
+  // See if the response contains the X-Chrome-Manage-Accounts header. If so
+  // show the profile avatar bubble so that user can complete signin/out
+  // action the native UI.
+  ProcessMirrorResponseHeaderIfExists(response, is_off_the_record);
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   // Process the Dice header: on sign-in, exchange the authorization code for a

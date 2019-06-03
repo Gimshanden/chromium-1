@@ -564,7 +564,7 @@ bool FrameSelection::ComputeAbsoluteBounds(IntRect& anchor,
 }
 
 void FrameSelection::PaintCaret(GraphicsContext& context,
-                                const LayoutPoint& paint_offset) {
+                                const PhysicalOffset& paint_offset) {
   frame_caret_->PaintCaret(context, paint_offset);
 }
 
@@ -791,13 +791,16 @@ void FrameSelection::SelectSubString(const Element& element,
 }
 
 void FrameSelection::NotifyAccessibilityForSelectionChange() {
-  if (GetSelectionInDOMTree().IsNone())
-    return;
   AXObjectCache* cache = GetDocument().ExistingAXObjectCache();
   if (!cache)
     return;
-  const Position& start = GetSelectionInDOMTree().ComputeStartPosition();
-  cache->SelectionChanged(start.ComputeContainerNode());
+  const Position& extent = GetSelectionInDOMTree().Extent();
+  Node* anchor = extent.ComputeContainerNode();
+  if (anchor) {
+    cache->SelectionChanged(anchor);
+  } else {
+    cache->SelectionChanged(RootEditableElementOrDocumentElement());
+  }
 }
 
 void FrameSelection::NotifyCompositorForSelectionChange() {
@@ -1055,7 +1058,7 @@ void FrameSelection::SetShouldShowBlockCursor(bool should_show_block_cursor) {
   frame_caret_->SetShouldShowBlockCursor(should_show_block_cursor);
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void FrameSelection::ShowTreeForThis() const {
   ComputeVisibleSelectionInDOMTreeDeprecated().ShowTreeForThis();
@@ -1242,7 +1245,7 @@ bool FrameSelection::IsDirectional() const {
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void showTree(const blink::FrameSelection& sel) {
   sel.ShowTreeForThis();

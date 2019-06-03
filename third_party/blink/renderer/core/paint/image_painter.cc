@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/core/layout/layout_image.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/text_run_constructor.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/image_element_timing.h"
@@ -27,6 +26,7 @@
 #include "third_party/blink/renderer/platform/graphics/path.h"
 #include "third_party/blink/renderer/platform/graphics/placeholder_image.h"
 #include "third_party/blink/renderer/platform/graphics/scoped_interpolation_quality.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 namespace {
@@ -37,24 +37,25 @@ namespace {
 bool CheckForOversizedImagesPolicy(const LayoutImage& layout_image,
                                    scoped_refptr<Image> image) {
   DCHECK(image);
-  if (RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled()) {
-    DoubleSize layout_size(layout_image.ContentSize());
-    IntSize image_size = image->Size();
-    if (!layout_size.IsEmpty() && !image_size.IsEmpty()) {
-      double dpr = layout_image.GetDocument().GetFrame()->DevicePixelRatio();
-      double downscale_ratio_width =
-          image_size.Width() / (dpr * layout_size.Width());
-      double downscale_ratio_height =
-          image_size.Height() / (dpr * layout_size.Height());
-      return !layout_image.GetDocument().IsFeatureEnabled(
-          mojom::FeaturePolicyFeature::kOversizedImages,
-          blink::PolicyValue(
-              std::max(downscale_ratio_width, downscale_ratio_height),
-              blink::mojom::PolicyValueType::kDecDouble),
-          ReportOptions::kReportOnFailure);
-      }
-  }
-  return false;
+  if (!RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled())
+    return false;
+
+  DoubleSize layout_size(layout_image.ContentSize());
+  IntSize image_size = image->Size();
+  if (layout_size.IsEmpty() || image_size.IsEmpty())
+    return false;
+
+  double dpr = layout_image.GetDocument().GetFrame()->DevicePixelRatio();
+  double downscale_ratio_width =
+      image_size.Width() / (dpr * layout_size.Width());
+  double downscale_ratio_height =
+      image_size.Height() / (dpr * layout_size.Height());
+  return !layout_image.GetDocument().IsFeatureEnabled(
+      mojom::FeaturePolicyFeature::kOversizedImages,
+      blink::PolicyValue(
+          std::max(downscale_ratio_width, downscale_ratio_height),
+          blink::mojom::PolicyValueType::kDecDouble),
+      ReportOptions::kReportOnFailure);
 }
 
 }  // namespace
@@ -99,7 +100,7 @@ void ImagePainter::PaintAreaElementFocusRing(const PaintInfo& paint_info) {
 
   ScopedPaintState paint_state(layout_image_, paint_info);
   auto paint_offset = paint_state.PaintOffset();
-  path.Translate(FloatSize(paint_offset.X(), paint_offset.Y()));
+  path.Translate(FloatSize(paint_offset));
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(
           paint_info.context, layout_image_, DisplayItem::kImageAreaFocusRing))
@@ -112,8 +113,8 @@ void ImagePainter::PaintAreaElementFocusRing(const PaintInfo& paint_info) {
   // https://crbug.com/251206
 
   paint_info.context.Save();
-  LayoutRect focus_rect = layout_image_.PhysicalContentBoxRect();
-  focus_rect.MoveBy(paint_offset);
+  PhysicalRect focus_rect = layout_image_.PhysicalContentBoxRect();
+  focus_rect.Move(paint_offset);
   paint_info.context.Clip(PixelSnappedIntRect(focus_rect));
   paint_info.context.DrawFocusRing(
       path, area_element_style.GetOutlineStrokeWidthForFocusRing(),
@@ -124,7 +125,7 @@ void ImagePainter::PaintAreaElementFocusRing(const PaintInfo& paint_info) {
 }
 
 void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
-                                 const LayoutPoint& paint_offset) {
+                                 const PhysicalOffset& paint_offset) {
   LayoutSize content_size = layout_image_.ContentSize();
   bool has_image = layout_image_.ImageResource()->HasImage();
 
@@ -151,8 +152,9 @@ void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
       layout_image_.ImageResource()->MaybeAnimated())
     cache_skipper.emplace(context);
 
-  LayoutRect content_rect(
-      paint_offset + layout_image_.PhysicalContentBoxOffset(), content_size);
+  PhysicalRect content_rect(
+      paint_offset + layout_image_.PhysicalContentBoxOffset(),
+      PhysicalSizeToBeNoop(content_size));
 
   if (!has_image) {
     // Draw an outline rect where the image should be.
@@ -165,8 +167,8 @@ void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
     return;
   }
 
-  LayoutRect paint_rect = layout_image_.ReplacedContentRect();
-  paint_rect.MoveBy(paint_offset);
+  PhysicalRect paint_rect = layout_image_.ReplacedContentRect();
+  paint_rect.offset += paint_offset;
 
   DrawingRecorder recorder(context, layout_image_, paint_info.phase);
   DCHECK(paint_info.PaintContainer());
@@ -174,8 +176,8 @@ void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
 }
 
 void ImagePainter::PaintIntoRect(GraphicsContext& context,
-                                 const LayoutRect& dest_rect,
-                                 const LayoutRect& content_rect) {
+                                 const PhysicalRect& dest_rect,
+                                 const PhysicalRect& content_rect) {
   if (!layout_image_.ImageResource()->HasImage() ||
       layout_image_.ImageResource()->ErrorOccurred())
     return;  // FIXME: should we just ASSERT these conditions? (audit all
@@ -237,7 +239,8 @@ void ImagePainter::PaintIntoRect(GraphicsContext& context,
       image.get(), decode_mode, FloatRect(pixel_snapped_dest_rect), &src_rect,
       SkBlendMode::kSrcOver,
       LayoutObject::ShouldRespectImageOrientation(&layout_image_));
-  if (origin_trials::ElementTimingEnabled(&layout_image_.GetDocument()) &&
+  if (RuntimeEnabledFeatures::ElementTimingEnabled(
+          &layout_image_.GetDocument()) &&
       (IsHTMLImageElement(node) || IsHTMLVideoElement(node)) &&
       !context.ContextDisabled() && layout_image_.CachedImage() &&
       layout_image_.CachedImage()->IsLoaded()) {

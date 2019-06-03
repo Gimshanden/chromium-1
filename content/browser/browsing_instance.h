@@ -161,6 +161,11 @@ class CONTENT_EXPORT BrowsingInstance final
 
   bool IsDefaultSiteInstance(const SiteInstanceImpl* site_instance) const;
 
+  // Helper function used by other methods in this class to ensure consistent
+  // mapping between |url| and site URL.
+  // Note: This should not be used by code outside this class.
+  GURL GetSiteForURL(const GURL& url) const;
+
   // Map of site to SiteInstance, to ensure we only have one SiteInstance per
   // site.
   typedef std::unordered_map<std::string, SiteInstanceImpl*> SiteInstanceMap;
@@ -198,8 +203,9 @@ class CONTENT_EXPORT BrowsingInstance final
   // |site_instance_map_| and it does not require a dedicated process.
   // This field and |default_process_| are mutually exclusive and this field
   // should only be set if kProcessSharingWithStrictSiteInstances is not
-  // enabled.
-  scoped_refptr<SiteInstanceImpl> default_site_instance_;
+  // enabled. This is a raw pointer to avoid a reference cycle between the
+  // BrowsingInstance and the SiteInstanceImpl.
+  SiteInstanceImpl* default_site_instance_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingInstance);
 };

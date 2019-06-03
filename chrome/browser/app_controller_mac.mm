@@ -179,8 +179,14 @@ void RecordLastRunAppBundlePath() {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
 
-  base::FilePath app_bundle_path =
-      chrome::GetVersionedDirectory().DirName().DirName().DirName();
+  // Go up five levels from the versioned sub-directory of the framework, which
+  // is at C.app/Contents/Frameworks/C.framework/Versions/V.
+  base::FilePath app_bundle_path = chrome::GetFrameworkBundlePath()
+                                       .DirName()
+                                       .DirName()
+                                       .DirName()
+                                       .DirName()
+                                       .DirName();
   base::ScopedCFTypeRef<CFStringRef> app_bundle_path_cfstring(
       base::SysUTF8ToCFStringRef(app_bundle_path.value()));
   CFPreferencesSetAppValue(
@@ -1702,7 +1708,7 @@ static base::mac::ScopedObjCClassSwizzler* g_swizzle_imk_input_session;
 
   // Handoff is not allowed from an incognito profile. To err on the safe side,
   // also disallow Handoff from a guest profile.
-  if (profile->GetProfileType() != Profile::REGULAR_PROFILE)
+  if (!profile->IsRegularProfile())
     return GURL();
 
   if (!webContents)

@@ -12,7 +12,6 @@ import android.os.RemoteException;
 import android.util.SparseArray;
 import android.view.Surface;
 
-import org.chromium.base.CommandLine;
 import org.chromium.base.JNIUtils;
 import org.chromium.base.Log;
 import org.chromium.base.UnguessableToken;
@@ -31,7 +30,6 @@ import org.chromium.content.common.IGpuProcessCallback;
 import org.chromium.content.common.SurfaceWrapper;
 import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.content_public.common.ContentProcessInfo;
-import org.chromium.content_public.common.ContentSwitches;
 
 import java.util.List;
 
@@ -83,7 +81,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
         mCpuFeatures = connectionBundle.getLong(ContentChildProcessConstants.EXTRA_CPU_FEATURES);
         assert mCpuCount > 0;
 
-        if (LibraryLoader.useCrazyLinker()) {
+        if (LibraryLoader.useCrazyLinker() && !LibraryLoader.getInstance().isLoadedByZygote()) {
             Bundle sharedRelros = connectionBundle.getBundle(Linker.EXTRA_LINKER_SHARED_RELROS);
             if (sharedRelros != null) {
                 getLinker().useSharedRelros(sharedRelros);
@@ -101,12 +99,11 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
 
     @Override
     public boolean loadNativeLibrary(Context hostContext) {
-        String processType =
-                CommandLine.getInstance().getSwitchValue(ContentSwitches.SWITCH_PROCESS_TYPE);
-        // Enable selective JNI registration when the process is not the browser process.
-        if (processType != null) {
-            JNIUtils.enableSelectiveJniRegistration();
+        if (LibraryLoader.getInstance().isLoadedByZygote()) {
+            return initializeLibrary();
         }
+
+        JNIUtils.enableSelectiveJniRegistration();
 
         Linker linker = null;
         boolean requestedSharedRelro = false;
@@ -149,6 +146,11 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
         }
         LibraryLoader.getInstance().registerRendererProcessHistogram(
                 requestedSharedRelro, loadAtFixedAddressFailed);
+
+        return initializeLibrary();
+    }
+
+    private boolean initializeLibrary() {
         try {
             LibraryLoader.getInstance().initialize(mLibraryProcessType);
         } catch (ProcessInitException e) {
@@ -223,7 +225,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private Surface getViewSurface(int surfaceId) {
+    private SurfaceWrapper getViewSurface(int surfaceId) {
         if (mGpuCallback == null) {
             Log.e(TAG, "No callback interface has been provided.");
             return null;
@@ -231,7 +233,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
 
         try {
             SurfaceWrapper wrapper = mGpuCallback.getViewSurface(surfaceId);
-            return wrapper != null ? wrapper.getSurface() : null;
+            return wrapper;
         } catch (RemoteException e) {
             Log.e(TAG, "Unable to call getViewSurface: %s", e);
             return null;

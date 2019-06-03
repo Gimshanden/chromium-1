@@ -25,12 +25,19 @@ import java.lang.annotation.RetentionPolicy;
  * Fragment to manage the theme user settings.
  */
 public class ThemePreferences extends PreferenceFragment {
+    /**
+     * Theme preference variations. This is also used for histograms and should therefore be treated
+     * as append-only. See DarkThemePreferences in tools/metrics/histograms/enums.xml.
+     */
     @IntDef({ThemeSetting.SYSTEM_DEFAULT, ThemeSetting.LIGHT, ThemeSetting.DARK})
     @Retention(RetentionPolicy.SOURCE)
     public @interface ThemeSetting {
+        // Values are used for indexing tables - should start from 0 and can't have gaps.
         int SYSTEM_DEFAULT = 0;
         int LIGHT = 1;
         int DARK = 2;
+
+        int NUM_ENTRIES = 3;
     }
 
     static final String PREF_UI_THEME_PREF = "ui_theme_pref";

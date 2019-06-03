@@ -21,17 +21,15 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/synchronization/lock.h"
-#include "base/test/gtest_util.h"
-#include "base/thread_annotations.h"
 #include "media/base/test_data_util.h"
 #include "media/base/video_types.h"
-#include "media/filters/jpeg_parser.h"
 #include "media/gpu/vaapi/vaapi_jpeg_decoder.h"
 #include "media/gpu/vaapi/vaapi_utils.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
+#include "media/parsers/jpeg_parser.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
@@ -64,12 +62,6 @@ constexpr double kMinSsim = 0.997;
 // This file is not supported by the VAAPI, so we don't define expectations on
 // the decode result.
 constexpr const char* kUnsupportedFilename = "pixel-1280x720-grayscale.jpg";
-
-constexpr VAImageFormat kImageFormatI420 = {
-    .fourcc = VA_FOURCC_I420,
-    .byte_order = VA_LSB_FIRST,
-    .bits_per_pixel = 12,
-};
 
 // The size of the minimum coded unit for a YUV 4:2:0 image (both the width and
 // the height of the MCU are the same for 4:2:0).
@@ -120,13 +112,22 @@ bool CompareImages(base::span<const uint8_t> encoded_image,
   }
 
   const uint32_t va_fourcc = decoded_image->image()->format.fourcc;
-  if (!(va_fourcc == VA_FOURCC_I420 || va_fourcc == VA_FOURCC_YUY2 ||
-        va_fourcc == VA_FOURCC('Y', 'U', 'Y', 'V'))) {
-    DLOG(ERROR) << "Not supported FourCC: " << FourccToString(va_fourcc);
-    return false;
+  uint32_t libyuv_fourcc = 0;
+  switch (va_fourcc) {
+    case VA_FOURCC_I420:
+      libyuv_fourcc = libyuv::FOURCC_I420;
+      break;
+    case VA_FOURCC_NV12:
+      libyuv_fourcc = libyuv::FOURCC_NV12;
+      break;
+    case VA_FOURCC_YUY2:
+    case VA_FOURCC('Y', 'U', 'Y', 'V'):
+      libyuv_fourcc = libyuv::FOURCC_YUY2;
+      break;
+    default:
+      DLOG(ERROR) << "Not supported FourCC: " << FourccToString(va_fourcc);
+      return false;
   }
-  const uint32_t libyuv_fourcc =
-      (va_fourcc == VA_FOURCC_I420) ? libyuv::FOURCC_I420 : libyuv::FOURCC_YUY2;
 
   if (libyuv_fourcc == libyuv::FOURCC_I420) {
     const auto* decoded_data_y =
@@ -148,6 +149,38 @@ bool CompareImages(base::span<const uint8_t> encoded_image,
         decoded_data_v,
         base::checked_cast<int>(decoded_image->image()->pitches[2]), width,
         height);
+    if (ssim < kMinSsim) {
+      DLOG(ERROR) << "Too low SSIM: " << ssim << " < " << kMinSsim;
+      return false;
+    }
+  } else if (libyuv_fourcc == libyuv::FOURCC_NV12) {
+    const auto* decoded_data_y =
+        static_cast<const uint8_t*>(decoded_image->va_buffer()->data()) +
+        decoded_image->image()->offsets[0];
+    const auto* decoded_data_uv =
+        static_cast<const uint8_t*>(decoded_image->va_buffer()->data()) +
+        decoded_image->image()->offsets[1];
+
+    auto temp_y = std::make_unique<uint8_t[]>(width * height);
+    auto temp_u = std::make_unique<uint8_t[]>(even_width * even_height);
+    auto temp_v = std::make_unique<uint8_t[]>(even_width * even_height);
+
+    const int conversion_result = libyuv::NV12ToI420(
+        decoded_data_y,
+        base::checked_cast<int>(decoded_image->image()->pitches[0]),
+        decoded_data_uv,
+        base::checked_cast<int>(decoded_image->image()->pitches[1]),
+        temp_y.get(), width, temp_u.get(), even_width, temp_v.get(), even_width,
+        width, height);
+    if (conversion_result != 0) {
+      DLOG(ERROR) << "libyuv conversion error";
+      return false;
+    }
+
+    const double ssim = libyuv::I420Ssim(
+        ref_y.get(), width, ref_u.get(), even_width, ref_v.get(), even_width,
+        temp_y.get(), width, temp_u.get(), even_width, temp_v.get(), even_width,
+        width, height);
     if (ssim < kMinSsim) {
       DLOG(ERROR) << "Too low SSIM: " << ssim << " < " << kMinSsim;
       return false;
@@ -301,6 +334,8 @@ int GetMaxSupportedDimension(int max_surface_supported) {
 
 }  // namespace
 
+class VASurface;
+
 class VaapiJpegDecoderTest : public testing::TestWithParam<TestParam> {
  protected:
   VaapiJpegDecoderTest() {
@@ -325,16 +360,6 @@ class VaapiJpegDecoderTest : public testing::TestWithParam<TestParam> {
       base::span<const uint8_t> encoded_image,
       VaapiJpegDecodeStatus* status = nullptr);
 
-  base::Lock* GetVaapiWrapperLock() const
-      LOCK_RETURNED(decoder_.vaapi_wrapper_->va_lock_) {
-    return decoder_.vaapi_wrapper_->va_lock_;
-  }
-
-  VADisplay GetVaapiWrapperVaDisplay() const
-      EXCLUSIVE_LOCKS_REQUIRED(decoder_.vaapi_wrapper_->va_lock_) {
-    return decoder_.vaapi_wrapper_->va_display_;
-  }
-
  protected:
   std::string test_data_path_;
   VaapiJpegDecoder decoder_;
@@ -358,12 +383,22 @@ std::unique_ptr<ScopedVAImage> VaapiJpegDecoderTest::Decode(
     base::span<const uint8_t> encoded_image,
     uint32_t preferred_fourcc,
     VaapiJpegDecodeStatus* status) {
-  VaapiJpegDecodeStatus tmp_status;
-  std::unique_ptr<ScopedVAImage> scoped_image =
-      decoder_.DoDecode(encoded_image, preferred_fourcc, &tmp_status);
-  EXPECT_EQ(!!scoped_image, tmp_status == VaapiJpegDecodeStatus::kSuccess);
-  if (status)
-    *status = tmp_status;
+  VaapiJpegDecodeStatus decode_status;
+  scoped_refptr<VASurface> surface =
+      decoder_.Decode(encoded_image, &decode_status);
+  EXPECT_EQ(!!surface, decode_status == VaapiJpegDecodeStatus::kSuccess);
+
+  // Still try to get image when decode fails.
+  VaapiJpegDecodeStatus image_status;
+  std::unique_ptr<ScopedVAImage> scoped_image;
+  scoped_image = decoder_.GetImage(preferred_fourcc, &image_status);
+  EXPECT_EQ(!!scoped_image, image_status == VaapiJpegDecodeStatus::kSuccess);
+
+  // Record the first fail status.
+  if (status) {
+    *status = decode_status != VaapiJpegDecodeStatus::kSuccess ? decode_status
+                                                               : image_status;
+  }
   return scoped_image;
 }
 
@@ -373,17 +408,29 @@ std::unique_ptr<ScopedVAImage> VaapiJpegDecoderTest::Decode(
   return Decode(encoded_image, VA_FOURCC_I420, status);
 }
 
+// The intention of this test is to ensure that the workarounds added in
+// VaapiWrapper::GetJpegDecodeSuitableImageFourCC() don't result in an
+// unsupported image format.
 TEST_F(VaapiJpegDecoderTest, MinimalImageFormatSupport) {
   // All drivers should support at least I420.
-  ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported({.fourcc = VA_FOURCC_I420}));
+  VAImageFormat i420_format{};
+  i420_format.fourcc = VA_FOURCC_I420;
+  ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported(i420_format));
 
-  // Additionally, the mesa VAAPI driver should support YV12 and YUYV.
+  // Additionally, the mesa VAAPI driver should support YV12, NV12 and YUYV.
   if (base::StartsWith(VaapiWrapper::GetVendorStringForTesting(),
                        "Mesa Gallium driver", base::CompareCase::SENSITIVE)) {
-    ASSERT_TRUE(
-        VaapiWrapper::IsImageFormatSupported({.fourcc = VA_FOURCC_YV12}));
-    ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported(
-        {.fourcc = VA_FOURCC('Y', 'U', 'Y', 'V')}));
+    VAImageFormat yv12_format{};
+    yv12_format.fourcc = VA_FOURCC_YV12;
+    ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported(yv12_format));
+
+    VAImageFormat nv12_format{};
+    nv12_format.fourcc = VA_FOURCC_NV12;
+    ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported(nv12_format));
+
+    VAImageFormat yuyv_format{};
+    yuyv_format.fourcc = VA_FOURCC('Y', 'U', 'Y', 'V');
+    ASSERT_TRUE(VaapiWrapper::IsImageFormatSupported(yuyv_format));
   }
 }
 
@@ -419,17 +466,31 @@ TEST_P(VaapiJpegDecoderTest, DecodeSucceeds) {
   //
   // 2) The FOURCC returned by VaapiWrapper::GetJpegDecodeSuitableImageFourCC()
   //    corresponds to a supported image format.
+  //
+  // Note that we expect VA_FOURCC_I420 and VA_FOURCC_NV12 support in all
+  // drivers.
   const std::vector<VAImageFormat>& supported_image_formats =
       VaapiWrapper::GetSupportedImageFormatsForTesting();
-  ASSERT_GE(supported_image_formats.size(), 1u);
+  EXPECT_GE(supported_image_formats.size(), 2u);
+
+  VAImageFormat i420_format{};
+  i420_format.fourcc = VA_FOURCC_I420;
+  EXPECT_TRUE(VaapiWrapper::IsImageFormatSupported(i420_format));
+
+  VAImageFormat nv12_format{};
+  nv12_format.fourcc = VA_FOURCC_NV12;
+  EXPECT_TRUE(VaapiWrapper::IsImageFormatSupported(nv12_format));
+
   for (const auto& image_format : supported_image_formats) {
     std::unique_ptr<ScopedVAImage> scoped_image =
         Decode(encoded_image, image_format.fourcc);
     ASSERT_TRUE(scoped_image);
     const uint32_t actual_fourcc = scoped_image->image()->format.fourcc;
-    // TODO(andrescj): CompareImages() only supports I420, YUY2, and YUYV. Make
-    // it support all the image formats we expect and call it unconditionally.
-    if (actual_fourcc == VA_FOURCC_I420 || actual_fourcc == VA_FOURCC_YUY2 ||
+    // TODO(andrescj): CompareImages() only supports I420, NV12, YUY2, and YUYV.
+    // Make it support all the image formats we expect and call it
+    // unconditionally.
+    if (actual_fourcc == VA_FOURCC_I420 || actual_fourcc == VA_FOURCC_NV12 ||
+        actual_fourcc == VA_FOURCC_YUY2 ||
         actual_fourcc == VA_FOURCC('Y', 'U', 'Y', 'V')) {
       ASSERT_TRUE(CompareImages(encoded_image, scoped_image.get()));
     }
@@ -593,79 +654,6 @@ TEST_F(VaapiJpegDecoderTest, DecodeFails) {
           reinterpret_cast<const uint8_t*>(jpeg_data.data()), jpeg_data.size()),
       &status));
   EXPECT_EQ(VaapiJpegDecodeStatus::kUnsupportedSubsampling, status);
-}
-
-// This test exercises the usual ScopedVAImage lifetime.
-//
-// TODO(andrescj): move ScopedVAImage and ScopedVABufferMapping to a separate
-// file so that we don't have to use |decoder_.vaapi_wrapper_|. See
-// https://crbug.com/924310.
-TEST_F(VaapiJpegDecoderTest, ScopedVAImage) {
-  std::vector<VASurfaceID> va_surfaces;
-  const gfx::Size coded_size(64, 64);
-  ASSERT_TRUE(decoder_.vaapi_wrapper_->CreateContextAndSurfaces(
-      VA_RT_FORMAT_YUV420, coded_size, 1, &va_surfaces));
-  ASSERT_EQ(va_surfaces.size(), 1u);
-
-  std::unique_ptr<ScopedVAImage> scoped_image;
-  {
-    // On Stoney-Ridge devices the output image format is dependent on the
-    // surface format. However when DoDecode() is not called the output image
-    // format seems to default to I420. https://crbug.com/828119
-    VAImageFormat va_image_format = kImageFormatI420;
-    base::AutoLock auto_lock(*GetVaapiWrapperLock());
-    scoped_image = std::make_unique<ScopedVAImage>(
-        GetVaapiWrapperLock(), GetVaapiWrapperVaDisplay(), va_surfaces[0],
-        &va_image_format, coded_size);
-
-    EXPECT_TRUE(scoped_image->image());
-    ASSERT_TRUE(scoped_image->IsValid());
-    EXPECT_TRUE(scoped_image->va_buffer()->IsValid());
-    EXPECT_TRUE(scoped_image->va_buffer()->data());
-  }
-}
-
-// This test exercises creation of a ScopedVAImage with a bad VASurfaceID.
-TEST_F(VaapiJpegDecoderTest, BadScopedVAImage) {
-#if DCHECK_IS_ON()
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-#endif
-
-  const std::vector<VASurfaceID> va_surfaces = {VA_INVALID_ID};
-  const gfx::Size coded_size(64, 64);
-
-  std::unique_ptr<ScopedVAImage> scoped_image;
-  {
-    VAImageFormat va_image_format = kImageFormatI420;
-    base::AutoLock auto_lock(*GetVaapiWrapperLock());
-    scoped_image = std::make_unique<ScopedVAImage>(
-        GetVaapiWrapperLock(), GetVaapiWrapperVaDisplay(), va_surfaces[0],
-        &va_image_format, coded_size);
-
-    EXPECT_TRUE(scoped_image->image());
-    EXPECT_FALSE(scoped_image->IsValid());
-#if DCHECK_IS_ON()
-    EXPECT_DCHECK_DEATH(scoped_image->va_buffer());
-#else
-    EXPECT_FALSE(scoped_image->va_buffer());
-#endif
-  }
-}
-
-// This test exercises creation of a ScopedVABufferMapping with bad VABufferIDs.
-TEST_F(VaapiJpegDecoderTest, BadScopedVABufferMapping) {
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-  base::AutoLock auto_lock(*GetVaapiWrapperLock());
-
-  // A ScopedVABufferMapping with a VA_INVALID_ID VABufferID is DCHECK()ed.
-  EXPECT_DCHECK_DEATH(std::make_unique<ScopedVABufferMapping>(
-      GetVaapiWrapperLock(), GetVaapiWrapperVaDisplay(), VA_INVALID_ID));
-
-  // This should not hit any DCHECK() but will create an invalid
-  // ScopedVABufferMapping.
-  auto scoped_buffer = std::make_unique<ScopedVABufferMapping>(
-      GetVaapiWrapperLock(), GetVaapiWrapperVaDisplay(), VA_INVALID_ID - 1);
-  EXPECT_FALSE(scoped_buffer->IsValid());
 }
 
 std::string TestParamToString(

@@ -64,13 +64,13 @@ Polymer({
 
   /** @private */
   hideRipple_: function() {
-    this.getRipple().holdDown = false;
+    this.getRipple().clear();
   },
 
   /** @private */
   showRipple_: function() {
     if (!this.noink && !this.disabled) {
-      this.getRipple().holdDown = true;
+      this.getRipple().showAndHoldDown();
     }
   },
 

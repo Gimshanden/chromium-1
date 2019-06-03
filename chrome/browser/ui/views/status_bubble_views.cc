@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/status_bubble_views.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/i18n/rtl.h"
@@ -43,6 +44,11 @@
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/window_properties.h"
+#include "ui/aura/window.h"
+#endif
+
 namespace {
 
 // The alpha and color of the bubble's shadow.
@@ -57,11 +63,11 @@ const int kMousePadding = 20;
 
 // The horizontal offset of the text within the status bubble, not including the
 // outer shadow ring.
-const int kTextPositionX = 3;
+const int kTextPositionX = 5;
 
 // The minimum horizontal space between the (right) end of the text and the edge
 // of the status bubble, not including the outer shadow ring.
-const int kTextHorizPadding = 1;
+const int kTextHorizPadding = 5;
 
 // Delays before we start hiding or showing the bubble after we receive a
 // show or hide request.
@@ -149,6 +155,7 @@ class StatusBubbleViews::StatusView : public views::View {
 
   // views::View:
   void Layout() override;
+  void OnThemeChanged() override;
 
   // Set the bubble text, or hide the bubble if |text| is an empty string.
   // Triggers an animation sequence to display if |should_animate_open| is true.
@@ -195,6 +202,9 @@ class StatusBubbleViews::StatusView : public views::View {
   void StartHiding();
   void StartShowing();
 
+  // Set the text label's colors according to the theme.
+  void SetTextLabelColors(views::Label* label);
+
   // views::View:
   const char* GetClassName() const override;
   void OnPaint(gfx::Canvas* canvas) override;
@@ -227,16 +237,10 @@ StatusBubbleViews::StatusView::StatusView(StatusBubbleViews* status_bubble,
     : status_bubble_(status_bubble), popup_size_(popup_size) {
   animation_ = std::make_unique<StatusViewAnimation>(this, 0, 0);
 
-  // Text color is the foreground tab text color at 60% alpha.
   std::unique_ptr<views::Label> text = std::make_unique<views::Label>();
-  const auto* theme_provider = status_bubble_->base_view()->GetThemeProvider();
-  SkColor bubble_color =
-      theme_provider->GetColor(ThemeProperties::COLOR_STATUS_BUBBLE);
-  SkColor blended_text_color = color_utils::AlphaBlend(
-      theme_provider->GetColor(ThemeProperties::COLOR_TAB_TEXT), bubble_color,
-      0.6f);
-  text->SetEnabledColor(color_utils::GetColorWithMinimumContrast(
-      blended_text_color, bubble_color));
+  // Don't move this after AddChildView() since this function would trigger
+  // repaint which should not happen in the constructor.
+  SetTextLabelColors(text.get());
   text->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   text_ = AddChildView(std::move(text));
 }
@@ -248,12 +252,16 @@ StatusBubbleViews::StatusView::~StatusView() {
 
 void StatusBubbleViews::StatusView::Layout() {
   gfx::Rect text_rect(kTextPositionX, 0,
-                      popup_size_.width() - kTextHorizPadding,
+                      popup_size_.width() - kTextHorizPadding - kTextPositionX,
                       popup_size_.height());
   text_rect.Inset(kShadowThickness, kShadowThickness);
   // Make sure the text is aligned to the right on RTL UIs.
   text_rect = GetMirroredRect(text_rect);
   text_->SetBoundsRect(text_rect);
+}
+
+void StatusBubbleViews::StatusView::OnThemeChanged() {
+  SetTextLabelColors(text_);
 }
 
 void StatusBubbleViews::StatusView::SetText(const base::string16& text,
@@ -419,6 +427,17 @@ void StatusBubbleViews::StatusView::SetWidth(int new_width) {
   Layout();
 }
 
+void StatusBubbleViews::StatusView::SetTextLabelColors(views::Label* text) {
+  const auto* theme_provider = status_bubble_->base_view()->GetThemeProvider();
+  SkColor bubble_color =
+      theme_provider->GetColor(ThemeProperties::COLOR_STATUS_BUBBLE);
+  text->SetBackgroundColor(bubble_color);
+  // Text color is the foreground tab text color at 60% alpha.
+  text->SetEnabledColor(color_utils::AlphaBlend(
+      theme_provider->GetColor(ThemeProperties::COLOR_TAB_TEXT), bubble_color,
+      0.6f));
+}
+
 const char* StatusBubbleViews::StatusView::GetClassName() const {
   return "StatusBubbleViews::StatusView";
 }
@@ -472,9 +491,11 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
   // The shadow will overlap the window frame. Clip it off when the bubble is
   // docked. Otherwise when the bubble is floating preserve the full shadow so
   // the bubble looks complete.
-  const int clip_left = style_ == STYLE_STANDARD ? shadow_thickness_pixels : 0;
-  const int clip_right =
-      style_ == STYLE_STANDARD_RIGHT ? shadow_thickness_pixels : 0;
+  int clip_left = style_ == STYLE_STANDARD ? shadow_thickness_pixels : 0;
+  int clip_right = style_ == STYLE_STANDARD_RIGHT ? shadow_thickness_pixels : 0;
+  if (base::i18n::IsRTL())
+    std::swap(clip_left, clip_right);
+
   const int clip_bottom = clip_left || clip_right ? shadow_thickness_pixels : 0;
   gfx::Rect clip_rect(clip_left, 0, width - clip_right, height - clip_bottom);
   canvas->ClipRect(clip_rect);
@@ -671,6 +692,9 @@ void StatusBubbleViews::InitPopup() {
     popup_->SetVisibilityChangedAnimationsEnabled(false);
     popup_->SetOpacity(0.f);
     popup_->SetContentsView(view_);
+#if defined(OS_CHROMEOS)
+    popup_->GetNativeWindow()->SetProperty(ash::kHideInOverviewKey, true);
+#endif
     RepositionPopup();
   }
 }
@@ -727,6 +751,11 @@ int StatusBubbleViews::GetWidthForURL(const base::string16& url_string) {
   // Add proper paddings
   return elided_url_width + (kShadowThickness * 2) + kTextPositionX +
          kTextHorizPadding + 1;
+}
+
+void StatusBubbleViews::OnThemeChanged() {
+  if (popup_)
+    popup_->ThemeChanged();
 }
 
 void StatusBubbleViews::SetStatus(const base::string16& status_text) {

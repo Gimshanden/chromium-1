@@ -7,7 +7,8 @@
 // NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.automation.FooType'.
 // Please run the closure compiler before committing changes.
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
+// See
+// https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
 
 /** @fileoverview Externs generated from namespace: automation */
 
@@ -305,6 +306,7 @@ chrome.automation.ActionType = {
   HIDE_TOOLTIP: 'hideTooltip',
   HIT_TEST: 'hitTest',
   INCREMENT: 'increment',
+  INTERNAL_INVALIDATE_TREE: 'internalInvalidateTree',
   LOAD_INLINE_TEXT_BOXES: 'loadInlineTextBoxes',
   REPLACE_SELECTED_TEXT: 'replaceSelectedText',
   SCROLL_BACKWARD: 'scrollBackward',
@@ -900,6 +902,14 @@ chrome.automation.AutomationNode.prototype.markerEnds;
 chrome.automation.AutomationNode.prototype.markerTypes;
 
 /**
+ * If a selection is present, whether the anchor of the selection comes after
+ * its focus in the accessibility tree.
+ * @type {(boolean|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-isSelectionBackward
+ */
+chrome.automation.AutomationNode.prototype.isSelectionBackward;
+
+/**
  * The anchor node of the tree selection, if any.
  * @type {(!chrome.automation.AutomationNode|undefined)}
  * @see https://developer.chrome.com/extensions/automation#type-anchorObject
@@ -940,6 +950,48 @@ chrome.automation.AutomationNode.prototype.focusOffset;
  * @see https://developer.chrome.com/extensions/automation#type-focusAffinity
  */
 chrome.automation.AutomationNode.prototype.focusAffinity;
+
+/**
+ * The selection start node of the tree selection, if any.
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartObject
+ */
+chrome.automation.AutomationNode.prototype.selectionStartObject;
+
+/**
+ * The selection start offset of the tree selection, if any.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartOffset
+ */
+chrome.automation.AutomationNode.prototype.selectionStartOffset;
+
+/**
+ * The affinity of the tree selection start, if any.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionStartAffinity
+ */
+chrome.automation.AutomationNode.prototype.selectionStartAffinity;
+
+/**
+ * The selection end node of the tree selection, if any.
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndObject
+ */
+chrome.automation.AutomationNode.prototype.selectionEndObject;
+
+/**
+ * The selection end offset of the tree selection, if any.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndOffset
+ */
+chrome.automation.AutomationNode.prototype.selectionEndOffset;
+
+/**
+ * The affinity of the tree selection end, if any.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-selectionEndAffinity
+ */
+chrome.automation.AutomationNode.prototype.selectionEndAffinity;
 
 /**
  * The current value for this range.
@@ -1299,23 +1351,25 @@ chrome.automation.AutomationNode.prototype.underline;
 chrome.automation.AutomationNode.prototype.lineThrough;
 
 /**
- * The font family of this node.
- * @type {string|undefined}
- */
-chrome.automation.AutomationNode.prototype.fontFamily;
-
-/**
- * The font size of this node.
- * @type {number|undefined}
- */
-chrome.automation.AutomationNode.prototype.fontSize;
-
-/**
  * Indicates whether this node is selected, unselected, or neither.
  * @type {(boolean|undefined)}
  * @see https://developer.chrome.com/extensions/automation#type-selected
  */
 chrome.automation.AutomationNode.prototype.selected;
+
+/**
+ * Indicates the font size of this node.
+ * @type {(number|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-fontSize
+ */
+chrome.automation.AutomationNode.prototype.fontSize;
+
+/**
+ * Indicates the font family.
+ * @type {string}
+ * @see https://developer.chrome.com/extensions/automation#type-fontFamily
+ */
+chrome.automation.AutomationNode.prototype.fontFamily;
 
 /**
  * Walking the tree.

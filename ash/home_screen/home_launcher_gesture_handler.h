@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ash/ash_export.h"
+#include "ash/home_screen/home_screen_delegate.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
@@ -67,8 +68,8 @@ class ASH_EXPORT HomeLauncherGestureHandler
                                  aura::Window* window);
 
   // Returns the windows being tracked. May be null.
-  aura::Window* GetWindow1();
-  aura::Window* GetWindow2();
+  aura::Window* GetActiveWindow();
+  aura::Window* GetSecondaryWindow();
 
   bool IsDragInProgress() const { return last_event_location_.has_value(); }
 
@@ -97,6 +98,8 @@ class ASH_EXPORT HomeLauncherGestureHandler
   FRIEND_TEST_ALL_PREFIXES(HomeLauncherModeGestureHandlerTest,
                            AnimatingToEndResetsState);
 
+  using AnimationTrigger = HomeScreenDelegate::AnimationTrigger;
+
   // Stores the initial and target opacities and transforms of window.
   struct WindowValues {
     float initial_opacity;
@@ -105,12 +108,12 @@ class ASH_EXPORT HomeLauncherGestureHandler
     gfx::Transform target_transform;
   };
 
-  // Animates the items based on IsFinalStateShow().
-  void AnimateToFinalState();
+  // Animates the items based on IsFinalStateShow(). |trigger| is what triggered
+  // the animation.
+  void AnimateToFinalState(AnimationTrigger trigger);
 
-  // Updates |settings| based on what we want for this class. This will listen
-  // for animation complete call if |observe| is true.
-  void UpdateSettings(ui::ScopedLayerAnimationSettings* settings, bool observe);
+  // Updates |settings| based on what we want for this class.
+  void UpdateSettings(ui::ScopedLayerAnimationSettings* settings);
 
   // Updates the opacity and transform |window_| and its transient children base
   // on the values in |window_values_| and |transient_descendants_values_|.
@@ -141,10 +144,10 @@ class ASH_EXPORT HomeLauncherGestureHandler
   Mode mode_ = Mode::kNone;
 
   // The windows we are tracking. They are null if a drag is not underway, or if
-  // overview without splitview is active. |window2_| is the secondary window
-  // for splitview and is always null if |window1_| is null.
-  std::unique_ptr<ScopedWindowModifier> window1_;
-  std::unique_ptr<ScopedWindowModifier> window2_;
+  // overview without splitview is active. |secondary_window_| is the secondary
+  // window for splitview and is always null if |active_window_| is null.
+  std::unique_ptr<ScopedWindowModifier> active_window_;
+  std::unique_ptr<ScopedWindowModifier> secondary_window_;
 
   // Original and target transform and opacity of the backdrop window. Empty if
   // there is no backdrop on mouse pressed.
@@ -172,6 +175,11 @@ class ASH_EXPORT HomeLauncherGestureHandler
   // launcher animation is running, overview will be active, but we do not want
   // to toggle overview again in that case.
   bool overview_active_on_gesture_start_ = false;
+
+  // Marked as true if overview is currently animating to a close state, and
+  // will be exited at the end of the animation. Prevents us form starting
+  // another operation while this is true.
+  bool animating_to_close_overview_ = false;
 
   ScopedObserver<TabletModeController, TabletModeObserver>
       tablet_mode_observer_{this};

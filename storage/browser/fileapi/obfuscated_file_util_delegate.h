@@ -20,6 +20,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) ObfuscatedFileUtilDelegate {
   virtual ~ObfuscatedFileUtilDelegate() = default;
 
   virtual bool DirectoryExists(const base::FilePath& path) = 0;
+  virtual size_t ComputeDirectorySize(const base::FilePath& path) = 0;
   virtual bool DeleteFileOrDirectory(const base::FilePath& path,
                                      bool recursive) = 0;
   virtual bool IsLink(const base::FilePath& file_path) = 0;
@@ -43,6 +44,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) ObfuscatedFileUtilDelegate {
   virtual base::File::Error Truncate(const base::FilePath& path,
                                      int64_t length) = 0;
   virtual base::File::Error CopyOrMoveFile(
+      const base::FilePath& src_path,
+      const base::FilePath& dest_path,
+      FileSystemOperation::CopyOrMoveOption option,
+      NativeFileUtil::CopyOrMoveMode mode) = 0;
+  virtual base::File::Error CopyInForeignFile(
       const base::FilePath& src_path,
       const base::FilePath& dest_path,
       FileSystemOperation::CopyOrMoveOption option,

@@ -17,11 +17,14 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
-class LayoutThemeTest : public PageTestBase {
+class LayoutThemeTest : public PageTestBase,
+                        private ScopedCSSColorSchemeForTest {
  protected:
+  LayoutThemeTest() : ScopedCSSColorSchemeForTest(true) {}
   void SetHtmlInnerHTML(const char* html_content);
 };
 
@@ -83,6 +86,7 @@ TEST_F(LayoutThemeTest, RootElementColor) {
 TEST_F(LayoutThemeTest, RootElementColorChange) {
   SetHtmlInnerHTML(R"HTML(
     <style>
+      :root { color-scheme: light dark }
       #initial { color: initial }
     </style>
     <div id="initial"></div>
@@ -90,9 +94,6 @@ TEST_F(LayoutThemeTest, RootElementColorChange) {
 
   Element* initial = GetDocument().getElementById("initial");
   ASSERT_TRUE(initial);
-  EXPECT_EQ(ColorScheme::kLight,
-            GetDocument().GetStyleEngine().GetColorScheme());
-
   ASSERT_TRUE(GetDocument().documentElement());
   const ComputedStyle* document_element_style =
       GetDocument().documentElement()->GetComputedStyle();
@@ -108,9 +109,6 @@ TEST_F(LayoutThemeTest, RootElementColorChange) {
   // Change color scheme to dark.
   GetDocument().GetSettings()->SetPreferredColorScheme(
       PreferredColorScheme::kDark);
-  ColorSchemeSet supported_schemes;
-  supported_schemes.Set(ColorScheme::kDark);
-  GetDocument().GetStyleEngine().SetSupportedColorSchemes(supported_schemes);
   UpdateAllLifecyclePhasesForTest();
 
   document_element_style = GetDocument().documentElement()->GetComputedStyle();

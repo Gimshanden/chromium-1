@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "components/url_pattern_index/flat/url_pattern_index_generated.h"
 #include "components/version_info/version_info.h"
+#include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/browser/api/declarative_net_request/test_utils.h"
 #include "extensions/browser/api/declarative_net_request/utils.h"
@@ -94,6 +95,27 @@ TEST_F(RulesetMatcherTest, RedirectRule) {
   EXPECT_FALSE(should_redirect_request(params, &redirect_url));
 }
 
+// Test that a URL cannot redirect to itself, as filed in crbug.com/954646.
+TEST_F(RulesetMatcherTest, PreventSelfRedirect) {
+  TestRule rule = CreateGenericRule();
+  rule.condition->url_filter = std::string("go*");
+  rule.priority = kMinValidPriority;
+  rule.action->type = std::string("redirect");
+  rule.action->redirect_url = std::string("http://google.com");
+
+  std::unique_ptr<RulesetMatcher> matcher;
+  ASSERT_TRUE(CreateVerifiedMatcher({rule}, CreateTemporarySource(), &matcher));
+
+  GURL url("http://google.com");
+  RequestParams params;
+  params.url = &url;
+  params.element_type = url_pattern_index::flat::ElementType_SUBDOCUMENT;
+  params.is_third_party = true;
+
+  GURL redirect_url;
+  EXPECT_FALSE(matcher->HasMatchingRedirectRule(params, &redirect_url));
+}
+
 // Tests that a modified ruleset file fails verification.
 TEST_F(RulesetMatcherTest, FailedVerification) {
   RulesetSource source = CreateTemporarySource();
@@ -119,6 +141,41 @@ TEST_F(RulesetMatcherTest, FailedVerification) {
   EXPECT_EQ(RulesetMatcher::kLoadErrorChecksumMismatch,
             RulesetMatcher::CreateVerifiedMatcher(source, expected_checksum,
                                                   &matcher));
+}
+
+// Tests IsExtraHeadersMatcher and GetRemoveHeadersMask.
+TEST_F(RulesetMatcherTest, RemoveHeaders) {
+  TestRule rule = CreateGenericRule();
+  rule.condition->url_filter = std::string("example.com");
+
+  std::unique_ptr<RulesetMatcher> matcher;
+  ASSERT_TRUE(CreateVerifiedMatcher({rule}, CreateTemporarySource(), &matcher));
+  EXPECT_FALSE(matcher->IsExtraHeadersMatcher());
+
+  GURL example_url("http://example.com");
+  RequestParams params;
+  params.url = &example_url;
+  params.element_type = url_pattern_index::flat::ElementType_SUBDOCUMENT;
+  params.is_third_party = true;
+  EXPECT_EQ(0u, matcher->GetRemoveHeadersMask(params, 0u /* current_mask */));
+
+  rule.action->type = std::string("removeHeaders");
+  rule.action->remove_headers_list =
+      std::vector<std::string>({"referer", "setCookie"});
+  ASSERT_TRUE(CreateVerifiedMatcher({rule}, CreateTemporarySource(), &matcher));
+  EXPECT_TRUE(matcher->IsExtraHeadersMatcher());
+  EXPECT_EQ(kRemoveHeadersMask_Referer | kRemoveHeadersMask_SetCookie,
+            matcher->GetRemoveHeadersMask(params, 0u /* current_mask */));
+
+  GURL google_url("http://google.com");
+  params.url = &google_url;
+  EXPECT_EQ(0u, matcher->GetRemoveHeadersMask(params, 0u /* current_mask */));
+
+  // The current mask is ignored while matching and returned as part of the
+  // result.
+  uint8_t current_mask =
+      kRemoveHeadersMask_Referer | kRemoveHeadersMask_SetCookie;
+  EXPECT_EQ(current_mask, matcher->GetRemoveHeadersMask(params, current_mask));
 }
 
 }  // namespace

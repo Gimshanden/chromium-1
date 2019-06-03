@@ -14,6 +14,7 @@
 #include "net/http/http_response_info.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
+#include "net/quic/address_utils.h"
 #include "net/quic/quic_chromium_alarm_factory.h"
 #include "net/quic/quic_chromium_connection_helper.h"
 #include "net/quic/quic_chromium_packet_reader.h"
@@ -60,7 +61,7 @@ bool QuicClientMessageLooplNetworkHelper::CreateUDPSocketAndBind(
         quic::QuicSocketAddress(quic::QuicIpAddress::Any6(), bind_to_port);
   }
 
-  int rc = socket->Connect(server_address.impl().socket_address());
+  int rc = socket->Connect(ToIPEndPoint(server_address));
   if (rc != OK) {
     LOG(ERROR) << "Connect failed: " << ErrorToShortString(rc);
     return false;
@@ -84,8 +85,7 @@ bool QuicClientMessageLooplNetworkHelper::CreateUDPSocketAndBind(
     LOG(ERROR) << "GetLocalAddress failed: " << ErrorToShortString(rc);
     return false;
   }
-  client_address_ =
-      quic::QuicSocketAddress(quic::QuicSocketAddressImpl(address));
+  client_address_ = ToQuicSocketAddress(address);
 
   socket_.swap(socket);
   packet_reader_.reset(new QuicChromiumPacketReader(

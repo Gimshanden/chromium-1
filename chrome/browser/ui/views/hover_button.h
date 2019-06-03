@@ -111,12 +111,15 @@ class HoverButton : public views::MenuButton, public views::MenuButtonListener {
   views::StyledLabel* title() const { return title_; }
   views::Label* subtitle() const { return subtitle_; }
   views::View* icon_view() const { return icon_view_; }
+  views::View* secondary_view() const { return secondary_view_; }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(media_router::CastDialogSinkButtonTest,
                            SetTitleLabel);
   FRIEND_TEST_ALL_PREFIXES(media_router::CastDialogSinkButtonTest,
                            SetStatusLabel);
+  FRIEND_TEST_ALL_PREFIXES(ExtensionsMenuButtonTest,
+                           UpdatesToDisplayCorrectActionTitle);
 
   views::StyledLabel* title_;
   views::Label* subtitle_;

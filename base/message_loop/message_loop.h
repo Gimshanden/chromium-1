@@ -34,8 +34,7 @@ namespace sequence_manager {
 class TaskQueue;
 namespace internal {
 class SequenceManagerImpl;
-class ThreadControllerImpl;
-}
+}  // namespace internal
 }  // namespace sequence_manager
 
 // A MessageLoop is used to process events for a particular thread.  There is
@@ -80,171 +79,29 @@ class ThreadControllerImpl;
 //
 // Please be SURE your task is reentrant (nestable) and all global variables
 // are stable and accessible before calling SetNestableTasksAllowed(true).
-
-class BASE_EXPORT MessageLoopBase {
- public:
-  MessageLoopBase() = default;
-  virtual ~MessageLoopBase() = default;
-
-  // A MessageLoop has a particular type, which indicates the set of
-  // asynchronous events it may process in addition to tasks and timers.
-  //
-  // TYPE_DEFAULT
-  //   This type of ML only supports tasks and timers.
-  //
-  // TYPE_UI
-  //   This type of ML also supports native UI events (e.g., Windows messages).
-  //   See also MessageLoopForUI.
-  //
-  // TYPE_IO
-  //   This type of ML also supports asynchronous IO.  See also
-  //   MessageLoopForIO.
-  //
-  // TYPE_JAVA
-  //   This type of ML is backed by a Java message handler which is responsible
-  //   for running the tasks added to the ML. This is only for use on Android.
-  //   TYPE_JAVA behaves in essence like TYPE_UI, except during construction
-  //   where it does not use the main thread specific pump factory.
-  //
-  // TYPE_CUSTOM
-  //   MessagePump was supplied to constructor.
-  //
-  enum Type {
-    TYPE_DEFAULT,
-    TYPE_UI,
-    TYPE_CUSTOM,
-    TYPE_IO,
-#if defined(OS_ANDROID)
-    TYPE_JAVA,
-#endif  // defined(OS_ANDROID)
-  };
-
-  // Returns true if this loop is |type|. This allows subclasses (especially
-  // those in tests) to specialize how they are identified.
-  virtual bool IsType(Type type) const = 0;
-
-  // Returns the name of the thread this message loop is bound to. This function
-  // is only valid when this message loop is running, BindToCurrentThread has
-  // already been called and has an "happens-before" relationship with this call
-  // (this relationship is obtained implicitly by the MessageLoop's task posting
-  // system unless calling this very early).
-  virtual std::string GetThreadName() const = 0;
-
-  using DestructionObserver = MessageLoopCurrent::DestructionObserver;
-
-  // Add a DestructionObserver, which will start receiving notifications
-  // immediately.
-  virtual void AddDestructionObserver(
-      DestructionObserver* destruction_observer) = 0;
-
-  // Remove a DestructionObserver.  It is safe to call this method while a
-  // DestructionObserver is receiving a notification callback.
-  virtual void RemoveDestructionObserver(
-      DestructionObserver* destruction_observer) = 0;
-
-  // TODO(altimin,yutak): Replace with base::TaskObserver.
-  using TaskObserver = MessageLoopCurrent::TaskObserver;
-
-  // These functions can only be called on the same thread that |this| is
-  // running on.
-  // These functions must not be called from a TaskObserver callback.
-  virtual void AddTaskObserver(TaskObserver* task_observer) = 0;
-  virtual void RemoveTaskObserver(TaskObserver* task_observer) = 0;
-
-  // When this functionality is enabled, the queue time will be recorded for
-  // posted tasks.
-  virtual void SetAddQueueTimeToTasks(bool enable) = 0;
-
-  // Returns true if this is the active MessageLoop for the current thread.
-  virtual bool IsBoundToCurrentThread() const = 0;
-
-  // Returns true if the message loop is idle (ignoring delayed tasks). This is
-  // the same condition which triggers DoWork() to return false: i.e.
-  // out of tasks which can be processed at the current run-level -- there might
-  // be deferred non-nestable tasks remaining if currently in a nested run
-  // level.
-  virtual bool IsIdleForTesting() = 0;
-
-  // Returns the MessagePump owned by this MessageLoop if any.
-  virtual MessagePump* GetMessagePump() const = 0;
-
-  // Sets a new TaskRunner for this message loop. If the message loop was
-  // already bound, this must be called on the thread to which it is bound.
-  // TODO(alexclarke): Remove this as part of https://crbug.com/825327.
-  virtual void SetTaskRunner(
-      scoped_refptr<SingleThreadTaskRunner> task_runner) = 0;
-
-  // Gets the TaskRunner associated with this message loop.
-  // TODO(alexclarke): Remove this as part of https://crbug.com/825327.
-  virtual scoped_refptr<SingleThreadTaskRunner> GetTaskRunner() = 0;
-
-  // Binds the MessageLoop to the current thread using |pump|.
-  virtual void BindToCurrentThread(std::unique_ptr<MessagePump> pump) = 0;
-
-  // Returns true if the MessageLoop retains any tasks inside it.
-  virtual bool HasTasks() = 0;
-
-  // Deletes all tasks associated with this MessageLoop. Note that the tasks
-  // can post other tasks when destructed.
-  virtual void DeletePendingTasks() = 0;
-
- protected:
-  friend class MessageLoop;
-  friend class MessageLoopForUI;
-  friend class MessageLoopCurrent;
-  friend class MessageLoopCurrentForIO;
-  friend class MessageLoopCurrentForUI;
-  friend class Thread;
-  friend class sequence_manager::internal::ThreadControllerImpl;
-
-  // Explicitly allow or disallow task execution. Task execution is disallowed
-  // implicitly when we enter a nested runloop.
-  virtual void SetTaskExecutionAllowed(bool allowed) = 0;
-
-  // Whether task execution is allowed at the moment.
-  virtual bool IsTaskExecutionAllowed() const = 0;
-
-#if defined(OS_IOS)
-  virtual void AttachToMessagePump() = 0;
-#endif
-
-  virtual Type GetType() const = 0;
-
-  // Set the timer slack for this message loop.
-  // TODO(alexclarke): Remove this as part of https://crbug.com/891670.
-  virtual void SetTimerSlack(TimerSlack timer_slack) = 0;
-};
-
+//
+// DEPRECATED: Use a SingleThreadTaskExecutor instead or ScopedTaskEnvironment
+// for tests. TODO(https://crbug.com/891670/) remove this class.
 class BASE_EXPORT MessageLoop {
  public:
-  // For migration convenience we define the Type enum.
-  using Type = MessageLoopBase::Type;
-  static constexpr Type TYPE_DEFAULT = Type::TYPE_DEFAULT;
-  static constexpr Type TYPE_UI = Type::TYPE_UI;
-  static constexpr Type TYPE_CUSTOM = Type::TYPE_CUSTOM;
-  static constexpr Type TYPE_IO = Type::TYPE_IO;
+  using Type = MessagePump::Type;
+
+  static constexpr Type TYPE_DEFAULT = Type::DEFAULT;
+  static constexpr Type TYPE_UI = Type::UI;
+  static constexpr Type TYPE_CUSTOM = Type::CUSTOM;
+  static constexpr Type TYPE_IO = Type::IO;
 #if defined(OS_ANDROID)
-  static constexpr Type TYPE_JAVA = Type::TYPE_JAVA;
+  static constexpr Type TYPE_JAVA = Type::JAVA;
 #endif  // defined(OS_ANDROID)
 
   // Normally, it is not necessary to instantiate a MessageLoop.  Instead, it
   // is typical to make use of the current thread's MessageLoop instance.
-  explicit MessageLoop(Type type = TYPE_DEFAULT);
+  explicit MessageLoop(Type type = Type::DEFAULT);
   // Creates a TYPE_CUSTOM MessageLoop with the supplied MessagePump, which must
   // be non-NULL.
   explicit MessageLoop(std::unique_ptr<MessagePump> custom_pump);
 
   virtual ~MessageLoop();
-
-  using MessagePumpFactory = std::unique_ptr<MessagePump>();
-  // Uses the given base::MessagePumpForUIFactory to override the default
-  // MessagePump implementation for 'TYPE_UI'. Returns true if the factory
-  // was successfully registered.
-  static bool InitMessagePumpForUIFactory(MessagePumpFactory* factory);
-
-  // Creates the default MessagePump based on |type|. Caller owns return
-  // value.
-  static std::unique_ptr<MessagePump> CreateMessagePumpForType(Type type);
 
   // Set the timer slack for this message loop.
   void SetTimerSlack(TimerSlack timer_slack);
@@ -255,13 +112,6 @@ class BASE_EXPORT MessageLoop {
 
   // Returns the type passed to the constructor.
   Type type() const { return type_; }
-
-  // Returns the name of the thread this message loop is bound to. This function
-  // is only valid when this message loop is running, BindToCurrentThread has
-  // already been called and has an "happens-before" relationship with this call
-  // (this relationship is obtained implicitly by the MessageLoop's task posting
-  // system unless calling this very early).
-  std::string GetThreadName() const;
 
   // Sets a new TaskRunner for this message loop. If the message loop was
   // already bound, this must be called on the thread to which it is bound.
@@ -279,9 +129,6 @@ class BASE_EXPORT MessageLoop {
   void AddTaskObserver(TaskObserver* task_observer);
   void RemoveTaskObserver(TaskObserver* task_observer);
 
-  // Returns true if this is the active MessageLoop for the current thread.
-  bool IsBoundToCurrentThread() const;
-
   // Returns true if the message loop is idle (ignoring delayed tasks). This is
   // the same condition which triggers DoWork() to return false: i.e.
   // out of tasks which can be processed at the current run-level -- there might
@@ -290,10 +137,11 @@ class BASE_EXPORT MessageLoop {
   // TODO(alexclarke): Make this const when MessageLoopImpl goes away.
   bool IsIdleForTesting();
 
-  MessageLoopBase* GetMessageLoopBase();
-
   //----------------------------------------------------------------------------
  protected:
+  // Returns true if this is the active MessageLoop for the current thread.
+  bool IsBoundToCurrentThread() const;
+
   using MessagePumpFactoryCallback =
       OnceCallback<std::unique_ptr<MessagePump>()>;
 
@@ -308,17 +156,16 @@ class BASE_EXPORT MessageLoop {
   // Configure various members and bind this message loop to the current thread.
   void BindToCurrentThread();
 
-  // A raw pointer to the MessagePump handed-off to |backend_|.
-  // Valid for the lifetime of |backend_|.
+  // A raw pointer to the MessagePump handed-off to |sequence_manager_|.
+  // Valid for the lifetime of |sequence_manager_|.
   MessagePump* pump_ = nullptr;
 
-  // The SequenceManager-based implementation of the MessageLoop.
-  // TODO(crbug.com/891670): MessageLoopBase is now always a
-  // SequenceManagerImpl, this can be simplified but we also shouldn't publicly
-  // expose all of SequenceManagerImpl either.
-  const std::unique_ptr<MessageLoopBase> backend_;
-  // SequenceManager-based backend requires an explicit initialisation of the
-  // default task queue.
+  // TODO(crbug.com/891670): We shouldn't publicly expose all of
+  // SequenceManagerImpl.
+  const std::unique_ptr<sequence_manager::internal::SequenceManagerImpl>
+      sequence_manager_;
+  // SequenceManager requires an explicit initialisation of the default task
+  // queue.
   const scoped_refptr<sequence_manager::TaskQueue> default_task_queue_;
 
  private:
@@ -344,6 +191,11 @@ class BASE_EXPORT MessageLoop {
   scoped_refptr<sequence_manager::TaskQueue> CreateDefaultTaskQueue();
 
   std::unique_ptr<MessagePump> CreateMessagePump();
+
+  sequence_manager::internal::SequenceManagerImpl* GetSequenceManagerImpl()
+      const {
+    return sequence_manager_.get();
+  }
 
   const Type type_;
 

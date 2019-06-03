@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
@@ -105,7 +106,7 @@ TestRenderWidgetHostView::~TestRenderWidgetHostView() {
     manager->InvalidateFrameSinkId(frame_sink_id_);
 }
 
-gfx::NativeView TestRenderWidgetHostView::GetNativeView() const {
+gfx::NativeView TestRenderWidgetHostView::GetNativeView() {
 #if defined(USE_AURA)
   return window_.get();
 #else
@@ -121,7 +122,7 @@ ui::TextInputClient* TestRenderWidgetHostView::GetTextInputClient() {
   return &text_input_client_;
 }
 
-bool TestRenderWidgetHostView::HasFocus() const {
+bool TestRenderWidgetHostView::HasFocus() {
   return true;
 }
 
@@ -146,14 +147,13 @@ void TestRenderWidgetHostView::WasOccluded() {
   is_occluded_ = true;
 }
 
-void TestRenderWidgetHostView::RenderProcessGone(base::TerminationStatus status,
-                                                 int error_code) {
+void TestRenderWidgetHostView::RenderProcessGone() {
   delete this;
 }
 
 void TestRenderWidgetHostView::Destroy() { delete this; }
 
-gfx::Rect TestRenderWidgetHostView::GetViewBounds() const {
+gfx::Rect TestRenderWidgetHostView::GetViewBounds() {
   return gfx::Rect();
 }
 
@@ -292,7 +292,7 @@ bool TestRenderViewHost::CreateRenderView(
   return true;
 }
 
-MockRenderProcessHost* TestRenderViewHost::GetProcess() const {
+MockRenderProcessHost* TestRenderViewHost::GetProcess() {
   return static_cast<MockRenderProcessHost*>(RenderViewHostImpl::GetProcess());
 }
 
@@ -301,7 +301,7 @@ void TestRenderViewHost::SimulateWasHidden() {
 }
 
 void TestRenderViewHost::SimulateWasShown() {
-  GetWidget()->WasShown(false /* record_presentation_time */);
+  GetWidget()->WasShown(base::nullopt /* record_tab_switch_time_request */);
 }
 
 WebPreferences TestRenderViewHost::TestComputeWebPreferences() {

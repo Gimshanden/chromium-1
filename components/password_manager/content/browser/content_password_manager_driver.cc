@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/callback.h"
+#include "base/metrics/histogram_macros.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_form.h"
@@ -27,6 +28,8 @@
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/base/page_transition_types.h"
 
+using autofill::mojom::FocusedFieldType;
+
 namespace {
 
 gfx::RectF TransformToRootCoordinates(
@@ -38,6 +41,13 @@ gfx::RectF TransformToRootCoordinates(
   return gfx::RectF(rwhv->TransformPointToRootCoordSpaceF(
                         bounds_in_frame_coordinates.origin()),
                     bounds_in_frame_coordinates.size());
+}
+
+void LogSiteIsolationMetricsForSubmittedForm(
+    content::RenderFrameHost* render_frame_host) {
+  UMA_HISTOGRAM_BOOLEAN(
+      "SiteIsolation.IsPasswordFormSubmittedInDedicatedProcess",
+      render_frame_host->GetSiteInstance()->RequiresDedicatedProcess());
 }
 
 }  // namespace
@@ -236,6 +246,8 @@ void ContentPasswordManagerDriver::PasswordFormSubmitted(
           BadMessageReason::CPMD_BAD_ORIGIN_FORM_SUBMITTED))
     return;
   GetPasswordManager()->OnPasswordFormSubmitted(this, password_form);
+
+  LogSiteIsolationMetricsForSubmittedForm(render_frame_host_);
 }
 
 void ContentPasswordManagerDriver::ShowManualFallbackForSaving(
@@ -268,6 +280,8 @@ void ContentPasswordManagerDriver::SameDocumentNavigation(
           BadMessageReason::CPMD_BAD_ORIGIN_IN_PAGE_NAVIGATION))
     return;
   GetPasswordManager()->OnPasswordFormSubmittedNoChecks(this, password_form);
+
+  LogSiteIsolationMetricsForSubmittedForm(render_frame_host_);
 }
 
 void ContentPasswordManagerDriver::ShowPasswordSuggestions(
@@ -298,10 +312,9 @@ void ContentPasswordManagerDriver::CheckSafeBrowsingReputation(
 #endif
 }
 
-void ContentPasswordManagerDriver::FocusedInputChanged(bool is_fillable,
-                                                       bool is_password_field) {
-  client_->FocusedInputChanged(render_frame_host_->GetLastCommittedOrigin(),
-                               is_fillable, is_password_field);
+void ContentPasswordManagerDriver::FocusedInputChanged(
+    FocusedFieldType focused_field_type) {
+  client_->FocusedInputChanged(this, focused_field_type);
 }
 
 void ContentPasswordManagerDriver::LogFirstFillingResult(

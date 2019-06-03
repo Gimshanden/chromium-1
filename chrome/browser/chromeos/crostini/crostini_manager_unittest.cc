@@ -20,7 +20,7 @@
 #include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "device/usb/public/cpp/fake_usb_device_manager.h"
+#include "services/device/public/cpp/test/fake_usb_device_manager.h"
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -278,8 +278,7 @@ TEST_F(CrostiniManagerTest, CreateDiskImageSuccess) {
   const base::FilePath& disk_path = base::FilePath(kVmName);
 
   crostini_manager()->CreateDiskImage(
-      disk_path, vm_tools::concierge::STORAGE_CRYPTOHOME_DOWNLOADS,
-      kDiskSizeBytes,
+      disk_path, vm_tools::concierge::STORAGE_CRYPTOHOME_ROOT, kDiskSizeBytes,
       base::BindOnce(&CrostiniManagerTest::CreateDiskImageSuccessCallback,
                      base::Unretained(this), run_loop()->QuitClosure()));
   run_loop()->Run();
@@ -289,18 +288,7 @@ TEST_F(CrostiniManagerTest, DestroyDiskImageNameError) {
   const base::FilePath& disk_path = base::FilePath("");
 
   crostini_manager()->DestroyDiskImage(
-      disk_path, vm_tools::concierge::STORAGE_CRYPTOHOME_ROOT,
-      base::BindOnce(&CrostiniManagerTest::DestroyDiskImageClientErrorCallback,
-                     base::Unretained(this), run_loop()->QuitClosure()));
-  run_loop()->Run();
-}
-
-TEST_F(CrostiniManagerTest, DestroyDiskImageStorageLocationError) {
-  const base::FilePath& disk_path = base::FilePath(kVmName);
-
-  crostini_manager()->DestroyDiskImage(
       disk_path,
-      vm_tools::concierge::StorageLocation_INT_MIN_SENTINEL_DO_NOT_USE_,
       base::BindOnce(&CrostiniManagerTest::DestroyDiskImageClientErrorCallback,
                      base::Unretained(this), run_loop()->QuitClosure()));
   run_loop()->Run();
@@ -310,7 +298,7 @@ TEST_F(CrostiniManagerTest, DestroyDiskImageSuccess) {
   const base::FilePath& disk_path = base::FilePath(kVmName);
 
   crostini_manager()->DestroyDiskImage(
-      disk_path, vm_tools::concierge::STORAGE_CRYPTOHOME_DOWNLOADS,
+      disk_path,
       base::BindOnce(&CrostiniManagerTest::DestroyDiskImageSuccessCallback,
                      base::Unretained(this), run_loop()->QuitClosure()));
   run_loop()->Run();
@@ -1222,6 +1210,29 @@ TEST_F(CrostiniManagerTest, ImportContainerFailInProgress) {
   signal.set_container_name(kContainerName);
   signal.set_status(
       vm_tools::cicerone::ImportLxdContainerProgressSignal_Status_DONE);
+  fake_cicerone_client_->NotifyImportLxdContainerProgress(signal);
+
+  run_loop()->Run();
+}
+
+TEST_F(CrostiniManagerTest, ImportContainerFailArchitecture) {
+  crostini_manager()->ImportLxdContainer(
+      kVmName, kContainerName, base::FilePath("import_path"),
+      base::BindOnce(
+          &CrostiniManagerTest::CrostiniResultCallback, base::Unretained(this),
+          run_loop()->QuitClosure(),
+          CrostiniResult::CONTAINER_EXPORT_IMPORT_FAILED_ARCHITECTURE));
+
+  // Send signal with FAILED_ARCHITECTURE.
+  vm_tools::cicerone::ImportLxdContainerProgressSignal signal;
+  signal.set_owner_id(CryptohomeIdForProfile(profile()));
+  signal.set_vm_name(kVmName);
+  signal.set_container_name(kContainerName);
+  signal.set_status(
+      vm_tools::cicerone::
+          ImportLxdContainerProgressSignal_Status_FAILED_ARCHITECTURE);
+  signal.set_architecture_device("archdev");
+  signal.set_architecture_container("archcont");
   fake_cicerone_client_->NotifyImportLxdContainerProgress(signal);
 
   run_loop()->Run();

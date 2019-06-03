@@ -32,12 +32,10 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLFrameElement::HTMLFrameElement(Document& document)
+HTMLFrameElement::HTMLFrameElement(Document& document)
     : HTMLFrameElementBase(kFrameTag, document),
       frame_border_(true),
       frame_border_set_(false) {}
-
-DEFINE_NODE_FACTORY(HTMLFrameElement)
 
 const AttrNameToTrustedType& HTMLFrameElement::GetCheckedAttributeTypes()
     const {

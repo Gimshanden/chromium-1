@@ -11,6 +11,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
+#include "chrome/browser/android/autofill_assistant/assistant_form_delegate.h"
 #include "chrome/browser/android/autofill_assistant/assistant_header_delegate.h"
 #include "chrome/browser/android/autofill_assistant/assistant_overlay_delegate.h"
 #include "chrome/browser/android/autofill_assistant/assistant_payment_request_delegate.h"
@@ -53,8 +54,10 @@ class UiControllerAndroid : public UiController {
               UiDelegate* ui_delegate);
 
   // Called by ClientAndroid.
-  void ShowOnboarding(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& on_accept);
+  void ShowOnboarding(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& jexperiment_ids,
+      const base::android::JavaParamRef<jobject>& on_accept);
 
   // Overrides UiController:
   void OnStateChanged(AutofillAssistantState new_state) override;
@@ -62,12 +65,20 @@ class UiControllerAndroid : public UiController {
   void WillShutdown(Metrics::DropOutReason reason) override;
   void OnSuggestionsChanged(const std::vector<Chip>& suggestions) override;
   void OnActionsChanged(const std::vector<Chip>& actions) override;
-  void OnPaymentRequestChanged(const PaymentRequestOptions* options) override;
+  void OnPaymentRequestOptionsChanged(
+      const PaymentRequestOptions* options) override;
+  void OnPaymentRequestInformationChanged(
+      const PaymentInformation* state) override;
   void OnDetailsChanged(const Details* details) override;
   void OnInfoBoxChanged(const InfoBox* info_box) override;
   void OnProgressChanged(int progress) override;
   void OnProgressVisibilityChanged(bool visible) override;
   void OnTouchableAreaChanged(const std::vector<RectF>& areas) override;
+  void OnResizeViewportChanged(bool resize_viewport) override;
+  void OnPeekModeChanged(
+      ConfigureBottomSheetProto::PeekMode peek_mode) override;
+  void OnOverlayColorsChanged(const UiDelegate::OverlayColors& colors) override;
+  void OnFormChanged(const FormProto* form) override;
 
   // Called by AssistantOverlayDelegate:
   void OnUnexpectedTaps();
@@ -87,6 +98,12 @@ class UiControllerAndroid : public UiController {
                             std::string email);
   void OnCreditCardChanged(std::unique_ptr<autofill::CreditCard> card);
   void OnTermsAndConditionsChanged(TermsAndConditionsState state);
+
+  // Called by AssistantFormDelegate:
+  void OnCounterChanged(int input_index, int counter_index, int value);
+  void OnChoiceSelectionChanged(int input_index,
+                                int choice_index,
+                                bool selected);
 
   // Called by Java.
   void SnackbarResult(JNIEnv* env,
@@ -128,6 +145,7 @@ class UiControllerAndroid : public UiController {
   AssistantOverlayDelegate overlay_delegate_;
   AssistantHeaderDelegate header_delegate_;
   AssistantPaymentRequestDelegate payment_request_delegate_;
+  AssistantFormDelegate form_delegate_;
 
   // What to do if undo is not pressed on the current snackbar.
   base::OnceCallback<void()> snackbar_action_;
@@ -138,12 +156,12 @@ class UiControllerAndroid : public UiController {
   base::android::ScopedJavaLocalRef<jobject> GetDetailsModel();
   base::android::ScopedJavaLocalRef<jobject> GetInfoBoxModel();
   base::android::ScopedJavaLocalRef<jobject> GetPaymentRequestModel();
+  base::android::ScopedJavaLocalRef<jobject> GetFormModel();
 
   void SetOverlayState(OverlayState state);
   void AllowShowingSoftKeyboard(bool enabled);
   void ExpandBottomSheet();
   void SetSpinPoodle(bool enabled);
-  void SetAllowSwipingSheet(bool allow);
   std::string GetDebugContext();
   void DestroySelf();
   void Shutdown(Metrics::DropOutReason reason);

@@ -29,7 +29,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -427,6 +427,8 @@ int main(int argc, char *argv[]) {
         "whitelisted-ips",
             "comma-separated whitelist of remote IP addresses "
             "which are allowed to connect to ChromeDriver",
+        "readable-timestamp",
+            "add readable timestamps to log",
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
         "disable-dev-shm-usage",
             "do not use /dev/shm "
@@ -529,11 +531,11 @@ int main(int argc, char *argv[]) {
 
   mojo::core::Init();
 
-  base::TaskScheduler::CreateAndStartWithDefaultParams("ChromeDriver");
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("ChromeDriver");
 
   RunServer(port, allow_remote, whitelisted_ips, url_base, adb_port);
 
   // clean up
-  base::TaskScheduler::GetInstance()->Shutdown();
+  base::ThreadPoolInstance::Get()->Shutdown();
   return 0;
 }

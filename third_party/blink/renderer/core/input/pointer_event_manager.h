@@ -96,8 +96,6 @@ class CORE_EXPORT PointerEventManager
   // |m_touchIdsForCanceledPointerdowns|.
   bool PrimaryPointerdownCanceled(uint32_t unique_touch_event_id);
 
-  void ProcessPendingPointerCaptureForPointerLock(const WebMouseEvent&);
-
   void RemoveLastMousePosition();
 
   Element* GetMouseCaptureTarget();
@@ -170,7 +168,8 @@ class CORE_EXPORT PointerEventManager
       const AtomicString& mouse_event_name,
       const WebMouseEvent&,
       const Vector<WebMouseEvent>& coalesced_events,
-      const Vector<WebMouseEvent>& predicted_events);
+      const Vector<WebMouseEvent>& predicted_events,
+      const String& canvas_region_id);
 
   // Returns PointerEventTarget for a WebTouchPoint, hit-testing as necessary.
   event_handling_util::PointerEventTarget ComputePointerEventTarget(
@@ -228,6 +227,10 @@ class CORE_EXPORT PointerEventManager
   // Adjust coordinates so it can be used to find the best clickable target.
   void AdjustTouchPointerEvent(WebPointerEvent&);
 
+  // Check if the SkipTouchEventFilter experiment is configured to skip
+  // filtering on the given event.
+  bool ShouldFilterEvent(PointerEvent* pointer_event);
+
   // NOTE: If adding a new field to this class please ensure that it is
   // cleared in |PointerEventManager::clear()|.
 
@@ -270,6 +273,12 @@ class CORE_EXPORT PointerEventManager
   // The pointerId of the PointerEvent currently being dispatched within this
   // frame or 0 if none.
   PointerId dispatching_pointer_id_;
+
+  // These flags are set for the SkipTouchEventFilter experiment. The
+  // experiment either skips filtering discrete (touch start/end) events to the
+  // main thread, or all events (touch start/end/move).
+  bool skip_touch_filter_discrete_ = false;
+  bool skip_touch_filter_all_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PointerEventManager);
 };

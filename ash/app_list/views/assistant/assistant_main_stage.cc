@@ -132,9 +132,9 @@ void AssistantMainStage::InitLayout() {
   views::BoxLayout* layout =
       SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kVertical));
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // The children of AssistantMainStage will be animated on their own layers and
   // we want them to be clipped by their parent layer.
@@ -279,7 +279,7 @@ void AssistantMainStage::UpdateFooter() {
 
   // The footer is only visible when the progress indicator is not.
   // When it is not visible, it should not process events.
-  bool visible = !progress_indicator_->visible();
+  bool visible = !progress_indicator_->GetVisible();
 
   // Reset visibility to enable animation.
   footer_->SetVisible(true);
@@ -335,7 +335,7 @@ bool AssistantMainStage::OnFooterAnimationEnded(
     const ui::CallbackLayerAnimationObserver& observer) {
   // The footer should only process events when visible. It is only visible when
   // the progress indicator is not visible.
-  bool visible = !progress_indicator_->visible();
+  bool visible = !progress_indicator_->GetVisible();
   footer_->set_can_process_events_within_subtree(visible);
   footer_->SetVisible(visible);
 

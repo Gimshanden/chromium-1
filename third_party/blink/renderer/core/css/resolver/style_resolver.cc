@@ -30,8 +30,7 @@
 
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 
-#include "third_party/blink/renderer/core/animation/animatable/animatable_value.h"
-#include "third_party/blink/renderer/core/animation/css/css_animatable_value_factory.h"
+#include "third_party/blink/renderer/core/animation/css/compositor_keyframe_value_factory.h"
 #include "third_party/blink/renderer/core/animation/css/css_animations.h"
 #include "third_party/blink/renderer/core/animation/css_interpolation_environment.h"
 #include "third_party/blink/renderer/core/animation/css_interpolation_types_map.h"
@@ -62,7 +61,6 @@
 #include "third_party/blink/renderer/core/css/part_names.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
-#include "third_party/blink/renderer/core/css/resolver/animated_style_builder.h"
 #include "third_party/blink/renderer/core/css/resolver/css_variable_animator.h"
 #include "third_party/blink/renderer/core/css/resolver/css_variable_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/match_result.h"
@@ -95,6 +93,7 @@
 #include "third_party/blink/renderer/core/style/style_initial_data.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -125,9 +124,9 @@ bool HasAnimationsOrTransitions(const StyleResolverState& state,
 using namespace html_names;
 
 static CSSPropertyValueSet* LeftToRightDeclaration() {
-  DEFINE_STATIC_LOCAL(Persistent<MutableCSSPropertyValueSet>,
-                      left_to_right_decl,
-                      (MutableCSSPropertyValueSet::Create(kHTMLQuirksMode)));
+  DEFINE_STATIC_LOCAL(
+      Persistent<MutableCSSPropertyValueSet>, left_to_right_decl,
+      (MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLQuirksMode)));
   if (left_to_right_decl->IsEmpty()) {
     left_to_right_decl->SetProperty(CSSPropertyID::kDirection,
                                     CSSValueID::kLtr);
@@ -136,9 +135,9 @@ static CSSPropertyValueSet* LeftToRightDeclaration() {
 }
 
 static CSSPropertyValueSet* RightToLeftDeclaration() {
-  DEFINE_STATIC_LOCAL(Persistent<MutableCSSPropertyValueSet>,
-                      right_to_left_decl,
-                      (MutableCSSPropertyValueSet::Create(kHTMLQuirksMode)));
+  DEFINE_STATIC_LOCAL(
+      Persistent<MutableCSSPropertyValueSet>, right_to_left_decl,
+      (MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLQuirksMode)));
   if (right_to_left_decl->IsEmpty()) {
     right_to_left_decl->SetProperty(CSSPropertyID::kDirection,
                                     CSSValueID::kRtl);
@@ -568,11 +567,10 @@ void StyleResolver::MatchAllRules(StyleResolverState& state,
     collector.AddElementStyleProperties(
         state.GetElement()->AdditionalPresentationAttributeStyle());
 
-    if (state.GetElement()->IsHTMLElement()) {
+    if (auto* html_element = DynamicTo<HTMLElement>(state.GetElement())) {
       bool is_auto;
       TextDirection text_direction =
-          ToHTMLElement(state.GetElement())
-              ->DirectionalityIfhasDirAutoAttribute(is_auto);
+          html_element->DirectionalityIfhasDirAutoAttribute(is_auto);
       if (is_auto) {
         state.SetHasDirAutoAttribute(true);
         collector.AddElementStyleProperties(
@@ -598,10 +596,11 @@ void StyleResolver::MatchAllRules(StyleResolverState& state,
     }
 
     // Now check SMIL animation override style.
-    if (include_smil_properties && state.GetElement()->IsSVGElement())
+    auto* svg_element = DynamicTo<SVGElement>(state.GetElement());
+    if (include_smil_properties && svg_element) {
       collector.AddElementStyleProperties(
-          ToSVGElement(state.GetElement())->AnimatedSMILStyleProperties(),
-          false /* isCacheable */);
+          svg_element->AnimatedSMILStyleProperties(), false /* isCacheable */);
+    }
   }
 
   collector.FinishAddingAuthorRulesForTreeScope();
@@ -853,9 +852,7 @@ scoped_refptr<ComputedStyle> StyleResolver::StyleForElement(
   return state.TakeStyle();
 }
 
-// TODO(alancutter): Create compositor keyframe values directly instead of
-// intermediate AnimatableValues.
-AnimatableValue* StyleResolver::CreateAnimatableValueSnapshot(
+CompositorKeyframeValue* StyleResolver::CreateCompositorKeyframeValueSnapshot(
     Element& element,
     const ComputedStyle& base_style,
     const ComputedStyle* parent_style,
@@ -873,7 +870,7 @@ AnimatableValue* StyleResolver::CreateAnimatableValueSnapshot(
         state.StyleRef());
     CSSVariableResolver(state).ResolveVariableDefinitions();
   }
-  return CSSAnimatableValueFactory::Create(property, *state.Style());
+  return CompositorKeyframeValueFactory::Create(property, *state.Style());
 }
 
 bool StyleResolver::PseudoStyleForElementInternal(
@@ -1036,9 +1033,6 @@ scoped_refptr<ComputedStyle> StyleResolver::InitialStyleForElement(
   initial_style->SetZoom(frame && !document.Printing() ? frame->PageZoomFactor()
                                                        : 1);
   initial_style->SetEffectiveZoom(initial_style->Zoom());
-
-  if (document.GetStyleEngine().GetColorScheme() == ColorScheme::kDark)
-    initial_style->SetDarkColorScheme();
 
   FontDescription document_font_description =
       initial_style->GetFontDescription();
@@ -1433,20 +1427,18 @@ static bool ShouldIgnoreTextTrackAuthorStyle(const Document& document) {
   return false;
 }
 
-static inline bool IsPropertyInWhitelist(
-    PropertyWhitelistType property_whitelist_type,
-    CSSPropertyID property,
-    const Document& document) {
-  if (property_whitelist_type == kPropertyWhitelistNone)
-    return true;  // Early bail for the by far most common case.
-
-  if (property_whitelist_type == kPropertyWhitelistFirstLetter)
-    return IsValidFirstLetterStyleProperty(property);
-
-  if (property_whitelist_type == kPropertyWhitelistCue)
-    return IsValidCueStyleProperty(property) &&
-           !ShouldIgnoreTextTrackAuthorStyle(document);
-
+static bool PassesPropertyFilter(ValidPropertyFilter valid_property_filter,
+                                 CSSPropertyID property,
+                                 const Document& document) {
+  switch (valid_property_filter) {
+    case ValidPropertyFilter::kNoFilter:
+      return true;
+    case ValidPropertyFilter::kFirstLetter:
+      return IsValidFirstLetterStyleProperty(property);
+    case ValidPropertyFilter::kCue:
+      return IsValidCueStyleProperty(property) &&
+             !ShouldIgnoreTextTrackAuthorStyle(document);
+  }
   NOTREACHED();
   return true;
 }
@@ -1458,7 +1450,7 @@ void StyleResolver::ApplyAllProperty(
     StyleResolverState& state,
     const CSSValue& all_value,
     bool inherited_only,
-    PropertyWhitelistType property_whitelist_type) {
+    ValidPropertyFilter valid_property_filter) {
   // The 'all' property doesn't apply to variables:
   // https://drafts.csswg.org/css-variables/#defining-variables
   if (priority == kResolveVariables)
@@ -1487,8 +1479,8 @@ void StyleResolver::ApplyAllProperty(
     if (!property_class.IsAffectedByAll())
       continue;
 
-    if (!IsPropertyInWhitelist(property_whitelist_type, property_id,
-                               GetDocument()))
+    if (!PassesPropertyFilter(valid_property_filter, property_id,
+                              GetDocument()))
       continue;
 
     // When hitting matched properties' cache, only inherited properties will be
@@ -1521,13 +1513,12 @@ inline void ApplyProperty<kResolveVariables>(
 
 template <CSSPropertyPriority priority,
           StyleResolver::ShouldUpdateNeedsApplyPass shouldUpdateNeedsApplyPass>
-void StyleResolver::ApplyProperties(
-    StyleResolverState& state,
-    const CSSPropertyValueSet* properties,
-    bool is_important,
-    bool inherited_only,
-    NeedsApplyPass& needs_apply_pass,
-    PropertyWhitelistType property_whitelist_type) {
+void StyleResolver::ApplyProperties(StyleResolverState& state,
+                                    const CSSPropertyValueSet* properties,
+                                    bool is_important,
+                                    bool inherited_only,
+                                    NeedsApplyPass& needs_apply_pass,
+                                    ValidPropertyFilter valid_property_filter) {
   unsigned property_count = properties->PropertyCount();
   for (unsigned i = 0; i < property_count; ++i) {
     CSSPropertyValueSet::PropertyReference current = properties->PropertyAt(i);
@@ -1541,7 +1532,7 @@ void StyleResolver::ApplyProperties(
         needs_apply_pass.Set(kLowPropertyPriority, is_important);
       }
       ApplyAllProperty<priority>(state, current.Value(), inherited_only,
-                                 property_whitelist_type);
+                                 valid_property_filter);
       continue;
     }
 
@@ -1552,8 +1543,8 @@ void StyleResolver::ApplyProperties(
     if (is_important != current.IsImportant())
       continue;
 
-    if (!IsPropertyInWhitelist(property_whitelist_type, property_id,
-                               GetDocument()))
+    if (!PassesPropertyFilter(valid_property_filter, property_id,
+                              GetDocument()))
       continue;
 
     if (inherited_only && !current.IsInherited()) {
@@ -1602,8 +1593,8 @@ void StyleResolver::ApplyMatchedProperties(StyleResolverState& state,
       ApplyProperties<priority, shouldUpdateNeedsApplyPass>(
           state, matched_properties.properties.Get(), is_important,
           inherited_only, needs_apply_pass,
-          static_cast<PropertyWhitelistType>(
-              matched_properties.types_.whitelist_type));
+          static_cast<ValidPropertyFilter>(
+              matched_properties.types_.valid_property_filter));
     }
     state.SetApplyPropertyToRegularStyle(true);
     state.SetApplyPropertyToVisitedLinkStyle(false);
@@ -1613,8 +1604,8 @@ void StyleResolver::ApplyMatchedProperties(StyleResolverState& state,
     ApplyProperties<priority, shouldUpdateNeedsApplyPass>(
         state, matched_properties.properties.Get(), is_important,
         inherited_only, needs_apply_pass,
-        static_cast<PropertyWhitelistType>(
-            matched_properties.types_.whitelist_type));
+        static_cast<ValidPropertyFilter>(
+            matched_properties.types_.valid_property_filter));
   }
 }
 

@@ -8,6 +8,7 @@
 #include <elf.h>
 
 #include "base/debug/elf_reader.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -64,6 +65,7 @@ class PosixModule : public ModuleCache::Module {
   std::string GetId() const override { return id_; }
   FilePath GetDebugBasename() const override { return debug_basename_; }
   size_t GetSize() const override { return size_; }
+  bool IsNative() const override { return true; }
 
  private:
   uintptr_t base_address_;
@@ -83,11 +85,19 @@ PosixModule::PosixModule(const Dl_info& dl_info)
 // static
 std::unique_ptr<ModuleCache::Module> ModuleCache::CreateModuleForAddress(
     uintptr_t address) {
+#if defined(ARCH_CPU_ARM64)
+  // arm64 has execute-only memory (XOM) protecting code pages from being read.
+  // PosixModule reads executable pages in order to extract module info. This
+  // may result in a crash if the module is mapped as XOM
+  // (https://crbug.com/957801).
+  return nullptr;
+#else
   Dl_info info;
   if (!dladdr(reinterpret_cast<const void*>(address), &info))
     return nullptr;
 
   return std::make_unique<PosixModule>(info);
+#endif
 }
 
 }  // namespace base

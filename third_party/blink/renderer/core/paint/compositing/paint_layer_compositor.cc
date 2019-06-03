@@ -183,7 +183,7 @@ void PaintLayerCompositor::UpdateIfNeededRecursive(
       compositing_reasons_stats.assumed_overlap_layers, 1, 1000, 5);
   UMA_HISTOGRAM_CUSTOM_COUNTS(
       "Blink.Compositing.LayerPromotionCount.IndirectComposited",
-      compositing_reasons_stats.indirect_composited_layers, 1, 1000, 5);
+      compositing_reasons_stats.indirect_composited_layers, 1, 10000, 10);
   UMA_HISTOGRAM_CUSTOM_COUNTS(
       "Blink.Compositing.LayerPromotionCount.TotalComposited",
       compositing_reasons_stats.total_composited_layers, 1, 1000, 10);
@@ -262,10 +262,9 @@ void PaintLayerCompositor::UpdateIfNeededRecursiveInternal(
     // composited elements (see LocalFrameView::UpdateLifecyclePhasesInternal,
     // during kPaintClean).
     if (!RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled()) {
-      base::Optional<CompositorElementIdSet> composited_element_ids;
       DocumentAnimations::UpdateAnimations(layout_view_.GetDocument(),
                                            DocumentLifecycle::kCompositingClean,
-                                           composited_element_ids);
+                                           nullptr);
     }
 
     layout_view_.GetFrameView()

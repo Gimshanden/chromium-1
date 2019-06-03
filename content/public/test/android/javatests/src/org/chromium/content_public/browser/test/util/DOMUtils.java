@@ -82,7 +82,7 @@ public class DOMUtils {
      * @param id The element's id to check.
      * @return whether the media has ended.
      */
-    private static boolean isMediaEnded(final WebContents webContents, final String id)
+    public static boolean isMediaEnded(final WebContents webContents, final String id)
             throws InterruptedException, TimeoutException {
         return getNodeField("ended", webContents, id, Boolean.class);
     }
@@ -483,8 +483,8 @@ public class DOMUtils {
      * @param valueType The type of the value to read.
      * @return the field's value.
      */
-    private static <T> T getNodeField(String fieldName, final WebContents webContents,
-            String nodeId, Class<T> valueType) throws InterruptedException, TimeoutException {
+    public static <T> T getNodeField(String fieldName, final WebContents webContents, String nodeId,
+            Class<T> valueType) throws InterruptedException, TimeoutException {
         StringBuilder sb = new StringBuilder();
         sb.append("(function() {");
         sb.append("  var node = document.getElementById('" + nodeId + "');");

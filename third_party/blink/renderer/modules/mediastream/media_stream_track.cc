@@ -34,7 +34,6 @@
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/modules/imagecapture/image_capture.h"
 #include "third_party/blink/renderer/modules/mediastream/apply_constraints_request.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
@@ -48,6 +47,7 @@
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_center.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -92,8 +92,7 @@ bool ConstraintSetHasNonImageCapture(
          constraint_set->hasFrameRate() || constraint_set->hasGroupId() ||
          constraint_set->hasHeight() || constraint_set->hasLatency() ||
          constraint_set->hasSampleRate() || constraint_set->hasSampleSize() ||
-         constraint_set->hasVideoKind() || constraint_set->hasVolume() ||
-         constraint_set->hasWidth();
+         constraint_set->hasVideoKind() || constraint_set->hasWidth();
 }
 
 bool ConstraintSetHasImageAndNonImageCapture(
@@ -347,7 +346,6 @@ MediaTrackCapabilities* MediaStreamTrack::getCapabilities() const {
     Vector<String> echo_cancellation_type;
     for (String value : platform_capabilities.echo_cancellation_type)
       echo_cancellation_type.push_back(value);
-    capabilities->setEchoCancellationType(echo_cancellation_type);
     // Sample size.
     if (platform_capabilities.sample_size.size() == 2) {
       LongRange* sample_size = LongRange::Create();
@@ -509,11 +507,6 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
     settings->setAutoGainControl(*platform_settings.auto_gain_control);
   if (platform_settings.noise_supression)
     settings->setNoiseSuppression(*platform_settings.noise_supression);
-  if (origin_trials::ExperimentalHardwareEchoCancellationEnabled(
-          GetExecutionContext()) &&
-      !platform_settings.echo_cancellation_type.IsNull()) {
-    settings->setEchoCancellationType(platform_settings.echo_cancellation_type);
-  }
 
   if (platform_settings.HasSampleRate())
     settings->setSampleRate(platform_settings.sample_rate);
@@ -523,8 +516,6 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
     settings->setChannelCount(platform_settings.channel_count);
   if (platform_settings.HasLatency())
     settings->setLatency(platform_settings.latency);
-  if (platform_settings.HasVolume())
-    settings->setVolume(platform_settings.volume);
 
   if (image_capture_)
     image_capture_->GetMediaTrackSettings(settings);
@@ -624,8 +615,8 @@ ScriptPromise MediaStreamTrack::applyConstraints(
     return promise;
   }
 
-  user_media->ApplyConstraints(
-      ApplyConstraintsRequest::Create(Component(), web_constraints, resolver));
+  user_media->ApplyConstraints(MakeGarbageCollected<ApplyConstraintsRequest>(
+      Component(), web_constraints, resolver));
   return promise;
 }
 

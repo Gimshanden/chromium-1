@@ -14,8 +14,8 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_client.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/metrics/form_events.h"
@@ -116,6 +116,9 @@ class AutofillMetrics {
     UPLOAD_OFFERED_FROM_NON_FOCUSABLE_FIELD = 1 << 15,
     // The card does not satisfy any of the ranges of supported BIN ranges.
     UPLOAD_NOT_OFFERED_UNSUPPORTED_BIN_RANGE = 1 << 16,
+    // All the required conditions were satisfied even though the form is
+    // dynamic changed.
+    UPLOAD_OFFERED_FROM_DYNAMIC_CHANGE_FORM = 1 << 17,
     // Update |kNumCardUploadDecisionMetrics| when adding new enum here.
   };
 
@@ -473,6 +476,31 @@ class AutofillMetrics {
     NUM_SCAN_CREDIT_CARD_PROMPT_METRICS,
   };
 
+  // Metrics to record the decision on whether to offer local card migration.
+  enum class LocalCardMigrationDecisionMetric {
+    // All the required conditions are satisfied and main prompt is shown.
+    OFFERED = 0,
+    // Migration not offered because user uses new card.
+    NOT_OFFERED_USE_NEW_CARD = 1,
+    // Migration not offered because failed migration prerequisites.
+    NOT_OFFERED_FAILED_PREREQUISITES = 2,
+    // The Autofill StrikeDatabase decided not to allow offering migration
+    // because max strike count was reached.
+    NOT_OFFERED_REACHED_MAX_STRIKE_COUNT = 3,
+    // Migration not offered because no migratable cards.
+    NOT_OFFERED_NO_MIGRATABLE_CARDS = 4,
+    // Met the migration requirements but the request to Payments for upload
+    // details failed.
+    NOT_OFFERED_GET_UPLOAD_DETAILS_FAILED = 5,
+    // Abandoned the migration because no supported local cards were left after
+    // filtering out unsupported cards.
+    NOT_OFFERED_NO_SUPPORTED_CARDS = 6,
+    // User used a local card and they only have a single migratable local card
+    // on file, we will offer Upstream instead.
+    NOT_OFFERED_SINGLE_LOCAL_CARD = 7,
+    kMaxValue = NOT_OFFERED_SINGLE_LOCAL_CARD,
+  };
+
   // Metrics to track events when local credit card migration is offered.
   enum LocalCardMigrationBubbleOfferMetric {
     // The bubble is requested due to a credit card being used or
@@ -746,7 +774,7 @@ class AutofillMetrics {
     NUM_WALLET_REQUIRED_ACTIONS
   };
 
-  // For mesuring how wallet addresses are converted to local profiles.
+  // For measuring how wallet addresses are converted to local profiles.
   enum WalletAddressConversionType : int {
     // The converted wallet address was merged into an existing local profile.
     CONVERTED_ADDRESS_MERGED,
@@ -755,8 +783,26 @@ class AutofillMetrics {
     NUM_CONVERTED_ADDRESS_CONVERSION_TYPES
   };
 
-  // To record whether or not the upload event was sent,
+  // To record whether the upload event was sent.
   enum class UploadEventStatus { kNotSent, kSent, kMaxValue = kSent };
+
+  // Log all the scenarios that contribute to the decision of whether card
+  // upload is enabled or not.
+  enum class CardUploadEnabledMetric {
+    SYNC_SERVICE_NULL = 0,
+    SYNC_SERVICE_PERSISTENT_AUTH_ERROR = 1,
+    SYNC_SERVICE_MISSING_AUTOFILL_WALLET_DATA_ACTIVE_TYPE = 2,
+    SYNC_SERVICE_MISSING_AUTOFILL_PROFILE_ACTIVE_TYPE = 3,
+    ACCOUNT_WALLET_STORAGE_UPLOAD_DISABLED = 4,
+    USING_SECONDARY_SYNC_PASSPHRASE = 5,
+    LOCAL_SYNC_ENABLED = 6,
+    PAYMENTS_INTEGRATION_DISABLED = 7,
+    EMAIL_EMPTY = 8,
+    EMAIL_DOMAIN_NOT_SUPPORTED = 9,
+    AUTOFILL_UPSTREAM_DISABLED = 10,
+    CARD_UPLOAD_ENABLED = 11,
+    kMaxValue = CARD_UPLOAD_ENABLED,
+  };
 
   // Utility to log URL keyed form interaction events.
   class FormInteractionsUkmLogger {
@@ -846,6 +892,11 @@ class AutofillMetrics {
     DISALLOW_IMPLICIT_CONSTRUCTORS(UkmTimestampPin);
   };
 
+  // When the autofill-use-improved-label-disambiguation experiment is enabled
+  // and suggestions are available, records if a LabelFormatter successfully
+  // created the suggestions.
+  static void LogProfileSuggestionsMadeWithFormatter(bool made_with_formatter);
+
   static void LogSubmittedCardStateMetric(SubmittedCardStateMetric metric);
 
   // If a credit card that matches a server card (unmasked or not) was submitted
@@ -919,6 +970,8 @@ class AutofillMetrics {
   static void LogManageCardsPromptMetric(ManageCardsPromptMetric metric,
                                          bool is_uploading);
   static void LogScanCreditCardPromptMetric(ScanCreditCardPromptMetric metric);
+  static void LogLocalCardMigrationDecisionMetric(
+      LocalCardMigrationDecisionMetric metric);
   static void LogLocalCardMigrationBubbleOfferMetric(
       LocalCardMigrationBubbleOfferMetric metric,
       bool is_reshow);
@@ -946,7 +999,6 @@ class AutofillMetrics {
 
   static void LogSaveCardWithFirstAndLastNameOffered(bool is_local);
   static void LogSaveCardWithFirstAndLastNameComplete(bool is_local);
-  static void LogSaveCardReachedPersonalDataManager(bool is_local);
 
   static void LogDeveloperEngagementMetric(DeveloperEngagementMetric metric);
 
@@ -1234,13 +1286,18 @@ class AutofillMetrics {
   // server cards to be shown.
   static void LogWalletSyncTransportCardsOptIn(bool is_opted_in);
 
+  // Records the reason for why (or why not) card upload was enabled for the
+  // user.
+  static void LogCardUploadEnabledMetric(CardUploadEnabledMetric metric,
+                                         AutofillSyncSigninState sync_state);
+
   static const char* GetMetricsSyncStateSuffix(
       AutofillSyncSigninState sync_state);
 
  private:
   static void Log(AutocompleteEvent event);
 
-  static const int kNumCardUploadDecisionMetrics = 17;
+  static const int kNumCardUploadDecisionMetrics = 18;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(AutofillMetrics);
 };

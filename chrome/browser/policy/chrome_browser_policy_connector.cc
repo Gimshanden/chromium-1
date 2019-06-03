@@ -104,11 +104,6 @@ void ChromeBrowserPolicyConnector::Init(
       kServiceInitializationStartupDelay);
 
   InitInternal(local_state, std::move(device_management_service));
-
-#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-  machine_level_user_cloud_policy_controller_->Init(local_state,
-                                                    url_loader_factory);
-#endif
 }
 
 bool ChromeBrowserPolicyConnector::IsEnterpriseManaged() const {
@@ -158,7 +153,8 @@ ChromeBrowserPolicyConnector::CreatePolicyProviders() {
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   std::unique_ptr<MachineLevelUserCloudPolicyManager>
       machine_level_user_cloud_policy_manager =
-          MachineLevelUserCloudPolicyController::CreatePolicyManager();
+          MachineLevelUserCloudPolicyController::CreatePolicyManager(
+              platform_provider_);
   if (machine_level_user_cloud_policy_manager) {
     AddMigrators(machine_level_user_cloud_policy_manager.get());
     machine_level_user_cloud_policy_manager_ =

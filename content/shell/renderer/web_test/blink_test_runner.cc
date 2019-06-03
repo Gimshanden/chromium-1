@@ -36,7 +36,6 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/public/common/web_preferences.h"
-#include "content/public/renderer/media_stream_utils.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/render_view.h"
@@ -170,8 +169,7 @@ BlinkTestRunner::BlinkTestRunner(RenderView* render_view)
     : RenderViewObserver(render_view),
       RenderViewObserverTracker<BlinkTestRunner>(render_view),
       test_config_(mojom::ShellTestConfiguration::New()),
-      is_main_window_(false),
-      focus_on_next_commit_(false) {}
+      is_main_window_(false) {}
 
 BlinkTestRunner::~BlinkTestRunner() {}
 
@@ -450,40 +448,54 @@ void BlinkTestRunner::TestFinished() {
   // below.
   dump_result_ = mojom::WebTestDump::New();
 
-  CaptureLocalAudioDump();
-  // TODO(vmpstr): Sometimes the web isn't stable, which means that if we
-  // just ask the browser to ask us to do a dump, the layout would be different
-  // compared to if we do it now. This probably needs to be rebaselined. But for
-  // now, just capture a local web first.
-  CaptureLocalLayoutDump();
-  // TODO(vmpstr): This code should move to the browser, but since again some
-  // tests seem to be timing dependent, capture a local pixels dump first. Note
-  // that this returns a value indicating if we should defer the pixel dump to
-  // the browser instead. We want to switch all tests to use this for pixel
-  // dumps.
-  bool browser_should_capture_pixels = CaptureLocalPixelsDump();
+  bool browser_should_dump_back_forward_list =
+      interfaces->TestRunner()->ShouldDumpBackForwardList();
 
-  // Add the current selection rect to the dump result, if requested.
-  if (browser_should_capture_pixels &&
-      interfaces->TestRunner()->ShouldDumpSelectionRect()) {
-    dump_result_->selection_rect =
-        web_frame->GetSelectionBoundsRectForTesting();
+  if (interfaces->TestRunner()->ShouldDumpAsAudio()) {
+    CaptureLocalAudioDump();
+
+    Send(new WebTestHostMsg_InitiateCaptureDump(
+        routing_id(), browser_should_dump_back_forward_list,
+        /*browser_should_capture_pixels=*/false));
+    return;
   }
 
-  // Request the browser to send us a callback through which we will return the
-  // results.
+  // TODO(vmpstr): Sometimes the web isn't stable, which means that if we
+  // just ask the browser to ask us to do a dump, the layout would be
+  // different compared to if we do it now. This probably needs to be
+  // rebaselined. But for now, just capture a local web first.
+  CaptureLocalLayoutDump();
+
+  if (!interfaces->TestRunner()->ShouldGeneratePixelResults()) {
+    Send(new WebTestHostMsg_InitiateCaptureDump(
+        routing_id(), browser_should_dump_back_forward_list,
+        /*browser_should_capture_pixels=*/false));
+    return;
+  }
+
+  if (interfaces->TestRunner()->CanDumpPixelsFromRenderer()) {
+    // This does the capture in the renderer when possible, otherwise
+    // we will ask the browser to initiate it.
+    CaptureLocalPixelsDump();
+  } else {
+    // If the browser should capture pixels, then we shouldn't be waiting
+    // for layout dump results. Any test can only require the browser to
+    // dump one or the other at this time.
+    DCHECK(!waiting_for_layout_dump_results_);
+    if (interfaces->TestRunner()->ShouldDumpSelectionRect()) {
+      dump_result_->selection_rect =
+          web_frame->GetSelectionBoundsRectForTesting();
+    }
+  }
   Send(new WebTestHostMsg_InitiateCaptureDump(
-      routing_id(), interfaces->TestRunner()->ShouldDumpBackForwardList(),
-      browser_should_capture_pixels));
+      routing_id(), browser_should_dump_back_forward_list,
+      !interfaces->TestRunner()->CanDumpPixelsFromRenderer()));
 }
 
 void BlinkTestRunner::CaptureLocalAudioDump() {
   TRACE_EVENT0("shell", "BlinkTestRunner::CaptureLocalAudioDump");
   test_runner::WebTestInterfaces* interfaces =
       WebTestRenderThreadObserver::GetInstance()->test_interfaces();
-  if (!interfaces->TestRunner()->ShouldDumpAsAudio())
-    return;
-
   dump_result_->audio.emplace();
   interfaces->TestRunner()->GetAudioData(&*dump_result_->audio);
 }
@@ -492,10 +504,6 @@ void BlinkTestRunner::CaptureLocalLayoutDump() {
   TRACE_EVENT0("shell", "BlinkTestRunner::CaptureLocalLayoutDump");
   test_runner::WebTestInterfaces* interfaces =
       WebTestRenderThreadObserver::GetInstance()->test_interfaces();
-
-  if (interfaces->TestRunner()->ShouldDumpAsAudio())
-    return;
-
   std::string layout;
   if (interfaces->TestRunner()->HasCustomTextDump(&layout)) {
     dump_result_->layout.emplace(layout + "\n");
@@ -510,30 +518,20 @@ void BlinkTestRunner::CaptureLocalLayoutDump() {
   }
 }
 
-bool BlinkTestRunner::CaptureLocalPixelsDump() {
+void BlinkTestRunner::CaptureLocalPixelsDump() {
   TRACE_EVENT0("shell", "BlinkTestRunner::CaptureLocalPixelsDump");
-  test_runner::WebTestInterfaces* interfaces =
-      WebTestRenderThreadObserver::GetInstance()->test_interfaces();
-  if (!interfaces->TestRunner()->ShouldGeneratePixelResults() ||
-      interfaces->TestRunner()->ShouldDumpAsAudio()) {
-    return false;
-  }
 
   // Test finish should only be processed in the BlinkTestRunner associated
   // with the current, non-swapped-out RenderView.
   DCHECK(render_view()->GetWebView()->MainFrame()->IsWebLocalFrame());
 
   waiting_for_pixels_dump_result_ = true;
-  bool browser_should_capture_pixels =
-      interfaces->TestRunner()->DumpPixelsAsync(
-          render_view()->GetWebView()->MainFrame()->ToWebLocalFrame(),
-          base::BindOnce(&BlinkTestRunner::OnPixelsDumpCompleted,
-                         base::Unretained(this)));
 
-  // If the browser should capture pixels, then we shouldn't be waiting for dump
-  // results.
-  DCHECK(!browser_should_capture_pixels || !waiting_for_layout_dump_results_);
-  return browser_should_capture_pixels;
+  test_runner::WebTestInterfaces* interfaces =
+      WebTestRenderThreadObserver::GetInstance()->test_interfaces();
+  interfaces->TestRunner()->DumpPixelsAsync(
+      render_view(), base::BindOnce(&BlinkTestRunner::OnPixelsDumpCompleted,
+                                    base::Unretained(this)));
 }
 
 void BlinkTestRunner::OnLayoutDumpCompleted(std::string completed_layout_dump) {
@@ -607,7 +605,8 @@ bool BlinkTestRunner::AllowExternalPages() {
 
 void BlinkTestRunner::FetchManifest(
     blink::WebView* view,
-    base::OnceCallback<void(const GURL&, const blink::Manifest&)> callback) {
+    base::OnceCallback<void(const blink::WebURL&, const blink::Manifest&)>
+        callback) {
   ::content::FetchManifest(view, std::move(callback));
 }
 
@@ -698,28 +697,6 @@ bool BlinkTestRunner::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void BlinkTestRunner::Navigate(const GURL& url) {
-  focus_on_next_commit_ = true;
-}
-
-void BlinkTestRunner::DidCommitProvisionalLoad(WebLocalFrame* frame,
-                                               bool is_new_navigation) {
-  if (waiting_for_reset_ && frame == render_view()->GetWebView()->MainFrame() &&
-      GURL(frame->GetDocumentLoader()->GetUrl()).IsAboutBlank()) {
-    waiting_for_reset_ = false;
-    Send(new BlinkTestHostMsg_ResetDone(routing_id()));
-  }
-  if (!focus_on_next_commit_)
-    return;
-  focus_on_next_commit_ = false;
-  render_view()->GetWebView()->SetFocusedFrame(frame);
-}
-
-void BlinkTestRunner::DidFailProvisionalLoad(WebLocalFrame* frame,
-                                             const WebURLError& error) {
-  focus_on_next_commit_ = false;
-}
-
 // Public methods - -----------------------------------------------------------
 
 void BlinkTestRunner::Reset(bool for_new_test) {
@@ -755,6 +732,17 @@ void BlinkTestRunner::CaptureDump(
 
   dump_callback_ = std::move(callback);
   CaptureDumpComplete();
+}
+
+void BlinkTestRunner::DidCommitNavigationInMainFrame() {
+  WebFrame* main_frame = render_view()->GetWebView()->MainFrame();
+  if (!waiting_for_reset_ || !main_frame->IsWebLocalFrame())
+    return;
+  GURL url = main_frame->ToWebLocalFrame()->GetDocumentLoader()->GetUrl();
+  if (!url.IsAboutBlank())
+    return;
+  waiting_for_reset_ = false;
+  Send(new BlinkTestHostMsg_ResetDone(routing_id()));
 }
 
 // Private methods  -----------------------------------------------------------
@@ -827,7 +815,13 @@ void BlinkTestRunner::OnReset() {
   // Navigating to about:blank will make sure that no new loads are initiated
   // by the renderer.
   waiting_for_reset_ = true;
-  main_frame->StartNavigation(WebURLRequest(GURL(url::kAboutBlankURL)));
+
+  auto request = blink::WebURLRequest(GURL(url::kAboutBlankURL));
+  request.SetFetchRequestMode(network::mojom::FetchRequestMode::kNavigate);
+  request.SetFetchRedirectMode(network::mojom::FetchRedirectMode::kManual);
+  request.SetRequestContext(blink::mojom::RequestContextType::INTERNAL);
+  request.SetRequestorOrigin(blink::WebSecurityOrigin::CreateUniqueOpaque());
+  main_frame->StartNavigation(request);
 }
 
 void BlinkTestRunner::OnTestFinishedInSecondaryRenderer() {

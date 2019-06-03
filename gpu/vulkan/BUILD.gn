@@ -37,6 +37,8 @@ if (enable_vulkan) {
       "vulkan_device_queue.cc",
       "vulkan_device_queue.h",
       "vulkan_export.h",
+      "vulkan_fence_helper.cc",
+      "vulkan_fence_helper.h",
       "vulkan_function_pointers.cc",
       "vulkan_function_pointers.h",
       "vulkan_implementation.cc",
@@ -91,31 +93,53 @@ if (enable_vulkan) {
     }
   }
 
+  jumbo_static_library("test_support") {
+    testonly = true
+    sources = [
+      "tests/native_window.h",
+    ]
+
+    # Vulkan Swiftshader can only be built on Linux.
+    # TODO(samans): Support more platforms. https://crbug.com/963988
+    if (use_x11) {
+      data_deps = [
+        "//third_party/swiftshader/src/Vulkan:swiftshader_libvulkan",
+      ]
+    }
+    deps = [
+      "//ui/gfx",
+      "//ui/gfx:native_widget_types",
+    ]
+    if (use_x11) {
+      sources += [ "tests/native_window_x11.cc" ]
+      deps += [ "//ui/gfx/x" ]
+      configs += [ "//build/config/linux:x11" ]
+    }
+  }
+
   # TODO(cblume): These tests should run on each platform -- crbug.com/858614
   if (use_x11) {
     test("vulkan_tests") {
       sources = [
         "tests/basic_vulkan_test.cc",
         "tests/basic_vulkan_test.h",
-        "tests/native_window.h",
         "tests/vulkan_test.cc",
         "tests/vulkan_tests_main.cc",
+        "vulkan_fence_helper_unittest.cc",
       ]
 
       deps = [
+        ":test_support",
+        "//base:base",
         "//base/test:test_support",
+        "//components/viz/common:vulkan_context_provider",
         "//gpu/vulkan/init",
         "//testing/gmock",
         "//testing/gtest",
+        "//ui/gfx",
         "//ui/gfx:native_widget_types",
         "//ui/gfx/geometry",
       ]
-
-      if (use_x11) {
-        sources += [ "tests/native_window_x11.cc" ]
-        deps += [ "//ui/gfx/x" ]
-        configs += [ "//build/config/linux:x11" ]
-      }
     }
   }
 }

@@ -179,7 +179,6 @@ if (!is_android && !is_mac) {
       if (is_win) {
         sources += [
           "app/chrome_exe.rc",
-          "app/chrome_exe_load_config_win.cc",
           "app/chrome_exe_main_win.cc",
           "app/chrome_watcher_client_win.cc",
           "app/chrome_watcher_client_win.h",
@@ -201,13 +200,13 @@ if (!is_android && !is_mac) {
           "//chrome/app/version_assembly:chrome_exe_manifest",
           "//chrome/browser:active_use_util",
           "//chrome/browser:chrome_process_finder",
+          "//chrome/chrome_elf",
           "//chrome/chrome_watcher",
           "//chrome/chrome_watcher:client",
           "//chrome/common:constants",
           "//chrome/common:metrics_constants_util_win",
           "//chrome/install_static:secondary_module",
           "//chrome/installer/util:with_no_strings",
-          "//chrome_elf",
           "//components/browser_watcher:browser_watcher_client",
           "//components/crash/content/app:run_as_crashpad_handler",
           "//components/crash/core/common",
@@ -237,12 +236,27 @@ if (!is_android && !is_mac) {
         }
 
         ldflags = [
+          "/DELAYLOAD:advapi32.dll",
+          "/DELAYLOAD:comdlg32.dll",
           "/DELAYLOAD:dbghelp.dll",
           "/DELAYLOAD:dwmapi.dll",
-          "/DELAYLOAD:uxtheme.dll",
+          "/DELAYLOAD:imm32.dll",
+          "/DELAYLOAD:iphlpapi.dll",
           "/DELAYLOAD:ole32.dll",
           "/DELAYLOAD:oleaut32.dll",
+          "/DELAYLOAD:propsys.dll",
+          "/DELAYLOAD:psapi.dll",
+          "/DELAYLOAD:shell32.dll",
+          "/DELAYLOAD:shlwapi.dll",
+          "/DELAYLOAD:user32.dll",
+          "/DELAYLOAD:userenv.dll",
+          "/DELAYLOAD:uxtheme.dll",
+          "/DELAYLOAD:wer.dll",
+          "/DELAYLOAD:wevtapi.dll",
           "/DELAYLOAD:winhttp.dll",
+          "/DELAYLOAD:wininet.dll",
+          "/DELAYLOAD:winmm.dll",
+          "/DELAYLOAD:wintrust.dll",
         ]
 
         if (current_cpu == "x64") {
@@ -403,10 +417,10 @@ if (is_win) {
       "//chrome/app:chrome_dll_resources",
       "//chrome/app:command_ids",
       "//chrome/app/theme:chrome_unscaled_resources",
+      "//chrome/chrome_elf",
       "//chrome/common:buildflags",
       "//chrome/install_static:install_static_util",
       "//chrome/install_static:secondary_module",
-      "//chrome_elf",
       "//components/crash/content/app",
       "//components/policy:generated",
       "//content/app/resources",
@@ -422,22 +436,54 @@ if (is_win) {
     ]
 
     ldflags = [
+      "/DELAYLOAD:advapi32.dll",
+      "/DELAYLOAD:comctl32.dll",
       "/DELAYLOAD:comdlg32.dll",
+      "/DELAYLOAD:credui.dll",
       "/DELAYLOAD:crypt32.dll",
       "/DELAYLOAD:cryptui.dll",
+      "/DELAYLOAD:d3d11.dll",
+      "/DELAYLOAD:d3d9.dll",
       "/DELAYLOAD:dbghelp.dll",
       "/DELAYLOAD:dhcpcsvc.dll",
       "/DELAYLOAD:dwmapi.dll",
+      "/DELAYLOAD:dwrite.dll",
+      "/DELAYLOAD:dxgi.dll",
+      "/DELAYLOAD:esent.dll",
+      "/DELAYLOAD:gdi32.dll",
+      "/DELAYLOAD:hid.dll",
       "/DELAYLOAD:imagehlp.dll",
       "/DELAYLOAD:imm32.dll",
       "/DELAYLOAD:iphlpapi.dll",
+      "/DELAYLOAD:msi.dll",
+      "/DELAYLOAD:netapi32.dll",
+      "/DELAYLOAD:ole32.dll",
+      "/DELAYLOAD:oleacc.dll",
+      "/DELAYLOAD:oleaut32.dll",
+      "/DELAYLOAD:ncrypt.dll",
+      "/DELAYLOAD:propsys.dll",
+      "/DELAYLOAD:psapi.dll",
+      "/DELAYLOAD:secur32.dll",
       "/DELAYLOAD:setupapi.dll",
+      "/DELAYLOAD:shell32.dll",
+      "/DELAYLOAD:shlwapi.dll",
+      "/DELAYLOAD:uiautomationcore.dll",
       "/DELAYLOAD:urlmon.dll",
+      "/DELAYLOAD:user32.dll",
+      "/DELAYLOAD:userenv.dll",
+      "/DELAYLOAD:usp10.dll",
+      "/DELAYLOAD:wer.dll",
+      "/DELAYLOAD:wevtapi.dll",
       "/DELAYLOAD:winhttp.dll",
       "/DELAYLOAD:wininet.dll",
+      "/DELAYLOAD:winmm.dll",
       "/DELAYLOAD:winspool.drv",
+      "/DELAYLOAD:wintrust.dll",
+      "/DELAYLOAD:winusb.dll",
       "/DELAYLOAD:ws2_32.dll",
       "/DELAYLOAD:wsock32.dll",
+      "/DELAYLOAD:wtsapi32.dll",
+      "/DELAYLOAD:api-ms-win-core-winrt-string-l1-1-0.dll",
     ]
 
     if (!is_component_build) {
@@ -460,6 +506,9 @@ if (is_win) {
         "//third_party/blink/public:blink",
         "//gin",
         "//v8",
+
+        # Ditto for PDFium.
+        "//third_party/pdfium",
       ]
     } else {
       deps += [
@@ -508,10 +557,10 @@ if (is_win) {
         ":chrome_child_manifest",
         ":chrome_dll_version",
         "//chrome/browser/policy:path_parser",
+        "//chrome/chrome_elf",
         "//chrome/common:buildflags",
         "//chrome/install_static:install_static_util",
         "//chrome/install_static:secondary_module",
-        "//chrome_elf",
         "//components/browser_watcher:browser_watcher_client",
         "//components/crash/content/app",
         "//content/public/app:child",
@@ -521,11 +570,25 @@ if (is_win) {
       ]
 
       ldflags = [
+        "/DELAYLOAD:comctl32.dll",
+        "/DELAYLOAD:comdlg32.dll",
         "/DELAYLOAD:d3d11.dll",
         "/DELAYLOAD:d3d9.dll",
         "/DELAYLOAD:dwmapi.dll",
+        "/DELAYLOAD:dxgi.dll",
         "/DELAYLOAD:dxva2.dll",
         "/DELAYLOAD:esent.dll",
+        "/DELAYLOAD:gdi32.dll",
+        "/DELAYLOAD:imm32.dll",
+        "/DELAYLOAD:ole32.dll",
+        "/DELAYLOAD:oleacc.dll",
+        "/DELAYLOAD:propsys.dll",
+        "/DELAYLOAD:rstrtmgr.dll",
+        "/DELAYLOAD:shell32.dll",
+        "/DELAYLOAD:shlwapi.dll",
+        "/DELAYLOAD:urlmon.dll",
+        "/DELAYLOAD:user32.dll",
+        "/DELAYLOAD:usp10.dll",
         "/DELAYLOAD:wininet.dll",
       ]
 
@@ -566,7 +629,7 @@ if (is_win) {
 } else if (is_mac) {
   chrome_helper_name = chrome_product_full_name + " Helper"
   chrome_framework_name = chrome_product_full_name + " Framework"
-  chrome_framework_version = "A"
+  chrome_framework_version = chrome_version_full
 
   group("chrome") {
     deps = [
@@ -637,6 +700,7 @@ if (is_win) {
       ":chrome_app_strings_bundle_data",
       ":chrome_resources",
       ":chrome_versioned_bundle_data",
+      "//chrome/common:buildflags",
       "//chrome/common:version_header",
     ]
 
@@ -739,22 +803,14 @@ if (is_win) {
   bundle_data("chrome_versioned_bundle_data") {
     sources = [
       "$root_out_dir/$chrome_framework_name.framework",
-      "$root_out_dir/$chrome_helper_name.app",
     ]
     outputs = [
-      "{{bundle_contents_dir}}/Versions/$chrome_version_full/{{source_file_part}}",
+      "{{bundle_contents_dir}}/Frameworks/{{source_file_part}}",
     ]
     public_deps = [
-      ":chrome_helper_app",
-
       # Before bundling the versioned app components, delete any existing
       # versions.
       ":clean_up_old_versions",
-
-      # keystone_registration_framework copies the framework into the framework
-      # bundle via a script that performs additional actions, rather than
-      # relying on a bundle_data to copy it.
-      ":keystone_registration_framework",
 
       # verify_chrome_framework_order depends on :chrome_framework and, for
       # non-component builds, will ensure the export symbol table is correct.
@@ -762,21 +818,40 @@ if (is_win) {
     ]
 
     if (enable_widevine_cdm_host_verification) {
-      sources += [ "$root_out_dir/Widevine Resources.bundle" ]
-      public_deps += [ ":widevine_resources_bundle" ]
+      # The :chrome_framework_widevine_signature target copies into the
+      # :chrome_framework bundle. But because the signing file depends on the
+      # framework itself, that would cause a cyclical dependency. Instead,
+      # this dependency directly copies the file into the framework's
+      # resources directory.
+      public_deps += [ ":chrome_framework_widevine_signature" ]
     }
   }
 
   action("clean_up_old_versions") {
     script = "//chrome/tools/build/mac/clean_up_old_versions.py"
+
+    _stamp_file = "$root_gen_dir/run_$target_name.stamp"
+
     outputs = [
-      "$root_gen_dir/run_$target_name.stamp",
+      _stamp_file,
     ]
+
+    _old_versions_dir =
+        "$root_out_dir/$chrome_product_full_name.app/Contents/Versions"
+    _versions_dir = "$root_out_dir/$chrome_product_full_name.app/Contents/Frameworks/$chrome_framework_name.framework/Versions"
+
     args = [
-             rebase_path("$root_out_dir/$chrome_product_full_name.app",
-                         root_build_dir),
-             "$chrome_version_full",
-           ] + rebase_path(outputs, root_build_dir)
+      "--versions-dir",
+      rebase_path(_versions_dir, root_build_dir),
+      "--stamp",
+      rebase_path(_stamp_file, root_build_dir),
+      "--keep",
+      chrome_version_full,
+      "--keep",
+      "Current",
+      "--delete",
+      rebase_path(_old_versions_dir, root_build_dir),
+    ]
   }
 
   tweak_info_plist("chrome_helper_plist") {
@@ -816,6 +891,7 @@ if (is_win) {
     defines = [ "HELPER_EXECUTABLE" ]
 
     deps = [
+      "//chrome/common:buildflags",
       "//chrome/common:version_header",
       "//sandbox/mac:seatbelt",
     ]
@@ -824,10 +900,10 @@ if (is_win) {
 
     if (is_component_build) {
       ldflags += [
-        # The helper is in Chromium.app/Contents/Versions/X/Chromium Helper.app/Contents/MacOS/
+        # The helper is in Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/X/Helpers/Chromium Helper.app/Contents/MacOS
         # so set rpath up to the base.
         "-rpath",
-        "@loader_path/../../../../../../..",
+        "@loader_path/../../../../../../../../../..",
       ]
     }
 
@@ -843,6 +919,8 @@ if (is_win) {
 
   bundle_data("chrome_framework_helpers") {
     sources = [
+      "$root_out_dir/$chrome_helper_name.app",
+      "$root_out_dir/app_mode_loader",
       "$root_out_dir/chrome_crashpad_handler",
     ]
 
@@ -851,10 +929,12 @@ if (is_win) {
     ]
 
     public_deps = [
+      ":chrome_helper_app",
+      "//chrome/app_shim:app_mode_loader",
       "//components/crash/content/app:chrome_crashpad_handler",
     ]
 
-    if (using_sanitizer) {
+    if (is_asan) {
       # crashpad_handler requires the ASan runtime at its @executable_path.
       sources += [ "$root_out_dir/libclang_rt.asan_osx_dynamic.dylib" ]
       public_deps += [ "//build/config/sanitizers:copy_asan_runtime" ]
@@ -863,8 +943,6 @@ if (is_win) {
 
   bundle_data("chrome_framework_resources") {
     sources = [
-      "$root_out_dir/app_mode_loader.app",
-
       # This image is used to badge the lock icon in the
       # authentication dialogs, such as those used for installation
       # from disk image and Keystone promotion (if so enabled).  It
@@ -882,7 +960,7 @@ if (is_win) {
 
     public_deps = [
       ":packed_resources",
-      "//chrome/app_shim:app_mode_loader",
+      "//chrome/app_shim:app_mode_loader_plist_bundle_data",
     ]
 
     if (is_chrome_branded) {
@@ -923,6 +1001,7 @@ if (is_win) {
       ]
 
       script = "//build/symlink.py"
+
       args = [
         "-f",
         "--touch",
@@ -932,7 +1011,7 @@ if (is_win) {
         # makes symlinking easier (now pwd manipulation).
         rebase_path("$root_out_dir/resources/inspector"),
         rebase_path(
-            "$root_out_dir/$chrome_product_full_name.app/Contents/Versions/$chrome_version_full/$chrome_framework_name.framework/Resources/inspector"),
+            "$root_out_dir/$chrome_product_full_name.app/Contents/Frameworks/$chrome_framework_name.framework/Versions/$chrome_version_full/Resources/inspector"),
       ]
 
       deps = [
@@ -1068,79 +1147,26 @@ if (is_win) {
       ]
     }
 
-    mac_info_plist("widevine_resources_plist") {
-      info_plist = "//third_party/widevine/cdm/widevine_resources.plist"
-      extra_substitutions = [
-        "CHROMIUM_BUNDLE_ID=$chrome_mac_bundle_id",
-        "BUNDLE_ID=widevine-resources",
+    copy("chrome_framework_widevine_signature") {
+      deps = [
+        ":sign_chrome_framework_for_widevine",
       ]
-      executable_name = "Widevine Resources"
-    }
 
-    bundle_data("widevine_resources_plist_bundle_data") {
-      sources = get_target_outputs(":widevine_resources_plist")
-      outputs = [
-        "{{bundle_contents_dir}}/Info.plist",
-      ]
-      public_deps = [
-        ":widevine_resources_plist",
-      ]
-    }
-
-    bundle_data("framework_widevine_signature") {
       sources = [
         "$root_out_dir/$chrome_framework_name.sig",
       ]
 
       outputs = [
-        "{{bundle_resources_dir}}/{{source_file_part}}",
-      ]
-
-      public_deps = [
-        ":sign_chrome_framework_for_widevine",
-      ]
-    }
-
-    create_bundle("widevine_resources_bundle") {
-      output_name = "Widevine Resources.bundle"
-      bundle_root_dir = "$root_build_dir/$output_name"
-      bundle_contents_dir = "$bundle_root_dir/Contents"
-      bundle_resources_dir = "$bundle_contents_dir/Resources"
-
-      deps = [
-        ":framework_widevine_signature",
-        ":widevine_resources_plist_bundle_data",
+        "$root_out_dir/$chrome_framework_name.framework/Resources/{{source_file_part}}",
       ]
     }
   }
 
-  if (is_chrome_branded && enable_keystone_registration_framework) {
-    action("keystone_registration_framework") {
-      script = "//chrome/tools/build/mac/copy_keystone_framework.py"
-
-      framework_path = "//third_party/googlemac/Releases/Keystone/KeystoneRegistration.framework"
-      output_path = "$root_out_dir/$chrome_framework_name.framework/Versions/$chrome_framework_version/Frameworks/"
-
-      sources = [
-        framework_path,
-        script,
+  group("keystone_registration_framework") {
+    if (is_chrome_branded && enable_keystone_registration_framework) {
+      deps = [
+        "//third_party/googlemac/Releases/Keystone:keystone_registration",
       ]
-
-      args = [
-        rebase_path(framework_path, root_out_dir),
-        rebase_path(output_path, root_out_dir),
-      ]
-
-      if (!use_system_xcode) {
-        args += [ hermetic_xcode_path ]
-      }
-
-      outputs = [
-        "$output_path/KeystoneRegistration.framework",
-      ]
-    }
-  } else {
-    group("keystone_registration_framework") {
     }
   }
 
@@ -1250,6 +1276,7 @@ if (is_win) {
       ":chrome_framework_plugins",
       ":chrome_framework_resources",
       ":chrome_framework_services",
+      ":keystone_registration_framework",
       ":packed_resources",
       ":swiftshader_library",
       ":widevine_cdm_library",
@@ -1260,8 +1287,9 @@ if (is_win) {
       deps += [ ":default_apps" ]
     }
 
-    ldflags = [
-      "-Wl,-install_name,@executable_path/../Versions/$chrome_version_full/$chrome_framework_name.framework/$chrome_framework_name",
+    ldflags = [ "-Wl,-install_name,@executable_path/../Frameworks/$chrome_framework_name.framework/Versions/$chrome_version_full/$chrome_framework_name" ]
+
+    ldflags += [
       "-compatibility_version",
       chrome_dylib_version,
       "-current_version",
@@ -1272,7 +1300,7 @@ if (is_win) {
     if (is_component_build) {
       ldflags += [
         "-rpath",
-        "@loader_path/../../../../../../..",
+        "@loader_path/../../../../../../../..",
         "-Wl,-reexport_library,libchrome_dll.dylib",
       ]
 
@@ -1435,7 +1463,7 @@ group("browser_dependencies") {
     }
   }
 
-  if (enable_gwp_asan) {
+  if (enable_gwp_asan_malloc || enable_gwp_asan_partitionalloc) {
     public_deps += [ "//components/gwp_asan/client" ]
   }
 
@@ -1453,6 +1481,9 @@ group("browser_dependencies") {
         # V8/Gin should not be used in the browser DLL on Windows.
         "//gin",
         "//v8",
+
+        # Ditto for PDFium.
+        "//third_party/pdfium",
       ]
     }
   }
@@ -1460,7 +1491,6 @@ group("browser_dependencies") {
 
 group("child_dependencies") {
   public_deps = [
-    "//chrome/browser/devtools",
     "//chrome/child",
     "//chrome/common",
     "//chrome/gpu",
@@ -1479,8 +1509,16 @@ group("child_dependencies") {
     public_deps += [ "//components/nacl/renderer/plugin:nacl_trusted_plugin" ]
   }
 
-  if (enable_gwp_asan) {
+  if (enable_gwp_asan_malloc || enable_gwp_asan_partitionalloc) {
     public_deps += [ "//components/gwp_asan/client" ]
+  }
+
+  if (!is_component_build) {
+    assert_no_deps = [
+      # Browser code should not be used in child processes. In component builds,
+      # this is OK because all of content is linked into one library.
+      "//content/browser",
+    ]
   }
 }
 
@@ -1575,6 +1613,7 @@ group("extra_resources") {
   if (!is_android) {
     public_deps += [
       "//chrome/browser/resources:component_extension_resources",
+      "//chrome/browser/resources:downloads_resources",
       "//chrome/browser/resources:local_ntp_resources",
       "//chrome/browser/resources:settings_resources",
     ]
@@ -1582,6 +1621,8 @@ group("extra_resources") {
 
   if (is_chromeos) {
     public_deps += [
+      "//chrome/browser/resources:os_settings_resources",
+      "//chrome/browser/resources/chromeos:cellular_setup_resources",
       "//chrome/browser/resources/chromeos:multidevice_setup_resources",
       "//chrome/browser/resources/chromeos/chromevox",
       "//chrome/browser/resources/chromeos/select_to_speak:build",
@@ -1703,7 +1744,7 @@ if (is_android) {
 
   java_cpp_enum("credit_card_javagen") {
     sources = [
-      "../components/autofill/core/browser/credit_card.h",
+      "../components/autofill/core/browser/data_model/credit_card.h",
     ]
   }
 
@@ -1823,7 +1864,7 @@ if (is_android) {
       deps += [ "//third_party/gvr-android-sdk:gvr_shim" ]
     }
 
-    if (enable_gwp_asan) {
+    if (enable_gwp_asan_malloc || enable_gwp_asan_partitionalloc) {
       deps += [ "//components/gwp_asan/client" ]
     }
   }

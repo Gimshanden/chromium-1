@@ -111,14 +111,6 @@ Polymer({
     },
 
     /** @private */
-    enableClipboardContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableClipboardContentSetting');
-      }
-    },
-
-    /** @private */
     enablePaymentHandlerContentSetting_: {
       type: Boolean,
       value: function() {
@@ -152,6 +144,14 @@ Polymer({
       }
     },
 
+    /** @private */
+    enableBluetoothScanningContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableBluetoothScanningContentSetting');
+      }
+    },
+
     /** @private {!Map<string, string>} */
     focusConfig_: {
       type: Object,
@@ -171,7 +171,7 @@ Polymer({
         if (settings.routes.SITE_SETTINGS_SITE_DATA) {
           map.set(
               settings.routes.SITE_SETTINGS_SITE_DATA.path,
-              '#site-data-trigger .subpage-arrow button');
+              '#site-data-trigger');
         }
 
         if (settings.routes.SECURITY_KEYS) {

@@ -4,10 +4,18 @@
 
 package org.chromium.chrome.browser.autofill_assistant.header;
 
+import android.content.Context;
+import android.support.annotation.Nullable;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import org.chromium.chrome.autofill_assistant.R;
+import org.chromium.chrome.browser.autofill_assistant.carousel.AssistantChip;
+import org.chromium.chrome.browser.autofill_assistant.carousel.AssistantChipViewHolder;
+import org.chromium.chrome.browser.preferences.PreferencesLauncher;
+import org.chromium.chrome.browser.preferences.autofill_assistant.AutofillAssistantPreferences;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
@@ -24,42 +32,116 @@ class AssistantHeaderViewBinder
      */
     static class ViewHolder {
         final AnimatedPoodle mPoodle;
+        final ViewGroup mHeader;
         final TextView mStatusMessage;
         final AnimatedProgressBar mProgressBar;
-        final View mFeedbackButton;
+        final View mProfileIconView;
+        final PopupMenu mProfileIconMenu;
+        @Nullable
+        AssistantChipViewHolder mChip;
 
-        public ViewHolder(View headerView, AnimatedPoodle poodle) {
+        public ViewHolder(Context context, View bottomBarView, AnimatedPoodle poodle) {
             mPoodle = poodle;
-            mStatusMessage = headerView.findViewById(R.id.status_message);
-            mProgressBar = new AnimatedProgressBar(headerView.findViewById(R.id.progress_bar));
-            mFeedbackButton = headerView.findViewById(R.id.feedback_button);
+            mHeader = bottomBarView.findViewById(R.id.header);
+            mStatusMessage = bottomBarView.findViewById(R.id.status_message);
+            mProgressBar = new AnimatedProgressBar(bottomBarView.findViewById(R.id.progress_bar));
+            mProfileIconView = bottomBarView.findViewById(R.id.profile_image);
+            mProfileIconMenu = new PopupMenu(context, mProfileIconView);
+            mProfileIconMenu.inflate(R.menu.profile_icon_menu);
+            mProfileIconView.setOnClickListener(unusedView -> mProfileIconMenu.show());
         }
     }
 
     @Override
     public void bind(AssistantHeaderModel model, ViewHolder view, PropertyKey propertyKey) {
-        if (AssistantHeaderModel.STATUS_MESSAGE == propertyKey) {
+        if (AssistantHeaderModel.VISIBLE == propertyKey) {
+            view.mHeader.setVisibility(
+                    model.get(AssistantHeaderModel.VISIBLE) ? View.VISIBLE : View.GONE);
+            setProgressBarVisibility(view, model);
+        } else if (AssistantHeaderModel.STATUS_MESSAGE == propertyKey) {
             String message = model.get(AssistantHeaderModel.STATUS_MESSAGE);
             view.mStatusMessage.setText(message);
             view.mStatusMessage.announceForAccessibility(message);
-        } else if (AssistantHeaderModel.FEEDBACK_VISIBLE == propertyKey) {
-            view.mFeedbackButton.setVisibility(
-                    model.get(AssistantHeaderModel.FEEDBACK_VISIBLE) ? View.VISIBLE : View.GONE);
         } else if (AssistantHeaderModel.PROGRESS == propertyKey) {
             view.mProgressBar.setProgress(model.get(AssistantHeaderModel.PROGRESS));
         } else if (AssistantHeaderModel.PROGRESS_VISIBLE == propertyKey) {
-            if (model.get(AssistantHeaderModel.PROGRESS_VISIBLE)) {
-                view.mProgressBar.show();
-            } else {
-                view.mProgressBar.hide();
-            }
+            setProgressBarVisibility(view, model);
         } else if (AssistantHeaderModel.SPIN_POODLE == propertyKey) {
             view.mPoodle.setSpinEnabled(model.get(AssistantHeaderModel.SPIN_POODLE));
         } else if (AssistantHeaderModel.FEEDBACK_BUTTON_CALLBACK == propertyKey) {
-            Runnable listener = model.get(AssistantHeaderModel.FEEDBACK_BUTTON_CALLBACK);
-            view.mFeedbackButton.setOnClickListener(unusedView -> listener.run());
+            setProfileMenuListener(view, model.get(AssistantHeaderModel.FEEDBACK_BUTTON_CALLBACK));
+        } else if (AssistantHeaderModel.CHIP == propertyKey) {
+            bindChip(view, model.get(AssistantHeaderModel.CHIP));
+            maybeShowChip(model, view);
+        } else if (AssistantHeaderModel.CHIP_VISIBLE == propertyKey) {
+            maybeShowChip(model, view);
         } else {
             assert false : "Unhandled property detected in AssistantHeaderViewBinder!";
         }
+    }
+
+    private void maybeShowChip(AssistantHeaderModel model, ViewHolder view) {
+        if (model.get(AssistantHeaderModel.CHIP_VISIBLE)
+                && model.get(AssistantHeaderModel.CHIP) != null) {
+            view.mChip.getView().setVisibility(View.VISIBLE);
+            view.mProfileIconView.setVisibility(View.GONE);
+        } else {
+            if (view.mChip != null) {
+                view.mChip.getView().setVisibility(View.GONE);
+            }
+
+            view.mProfileIconView.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void bindChip(ViewHolder view, @Nullable AssistantChip chip) {
+        if (chip == null) {
+            return;
+        }
+
+        int viewType = AssistantChipViewHolder.getViewType(chip);
+
+        // If there is already a chip in the header but with incompatible type, remove it.
+        if (view.mChip != null && view.mChip.getType() != viewType) {
+            view.mHeader.removeView(view.mChip.getView());
+            view.mChip = null;
+        }
+
+        // If there is no chip already in the header, create one and add it at the end of the
+        // header.
+        if (view.mChip == null) {
+            view.mChip = AssistantChipViewHolder.create(view.mHeader, viewType);
+            view.mHeader.addView(view.mChip.getView());
+        }
+
+        // Bind the chip to the view.
+        view.mChip.bind(chip);
+    }
+
+    private void setProgressBarVisibility(ViewHolder view, AssistantHeaderModel model) {
+        if (model.get(AssistantHeaderModel.VISIBLE)
+                && model.get(AssistantHeaderModel.PROGRESS_VISIBLE)) {
+            view.mProgressBar.show();
+        } else {
+            view.mProgressBar.hide();
+        }
+    }
+
+    private void setProfileMenuListener(ViewHolder view, @Nullable Runnable feedbackCallback) {
+        view.mProfileIconMenu.setOnMenuItemClickListener(item -> {
+            int itemId = item.getItemId();
+            if (itemId == R.id.settings) {
+                PreferencesLauncher.launchSettingsPage(
+                        view.mHeader.getContext(), AutofillAssistantPreferences.class);
+                return true;
+            } else if (itemId == R.id.send_feedback) {
+                if (feedbackCallback != null) {
+                    feedbackCallback.run();
+                }
+                return true;
+            }
+
+            return false;
+        });
     }
 }

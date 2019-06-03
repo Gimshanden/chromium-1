@@ -45,6 +45,10 @@
 #include "ui/base/ui_base_switches.h"
 #include "ui/gl/gl_switches.h"
 
+#if defined(OS_MACOSX)
+#include "components/os_crypt/os_crypt_switches.h"
+#endif
+
 #if defined(OS_WIN)
 #include "sandbox/win/src/sandbox_policy.h"
 #include "sandbox/win/src/sandbox_types.h"
@@ -372,11 +376,13 @@ bool UtilityProcessHost::StartProcess() {
       network::switches::kIgnoreCertificateErrorsSPKIList,
       network::switches::kIgnoreUrlFetcherCertRequests,
       network::switches::kLogNetLog,
+      network::switches::kNetLogCaptureMode,
       network::switches::kNoReferrers,
       network::switches::kExplicitlyAllowedPorts,
       service_manager::switches::kNoSandbox,
 #if defined(OS_MACOSX)
       service_manager::switches::kEnableSandboxLogging,
+      os_crypt::switches::kUseMockKeychain,
 #endif
       switches::kDisableTestCerts,
       switches::kEnableLogging,
@@ -392,13 +398,13 @@ bool UtilityProcessHost::StartProcess() {
       switches::kUseFakeMjpegDecodeAccelerator,
       switches::kUseFileForFakeVideoCapture,
       switches::kUseMockCertVerifierForTesting,
+      switches::kMockCertVerifierDefaultResultForTesting,
       switches::kUtilityStartupDialog,
       switches::kUseGL,
       switches::kV,
       switches::kVModule,
 #if defined(OS_ANDROID)
       switches::kEnableReachedCodeProfiler,
-      switches::kOrderfileMemoryOptimization,
 #endif
       // These flags are used by the audio service:
       switches::kAudioBufferSize,

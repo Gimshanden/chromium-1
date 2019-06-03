@@ -66,8 +66,6 @@ bool IsArcProvisioned(const Profile* profile);
 
 // Returns true if the profile is unmanaged or if the policy
 // EcryptfsMigrationStrategy for the user doesn't disable the migration.
-// Specifically if the policy states to ask the user, it is also considered that
-// migration is allowed, so return true.
 bool IsArcMigrationAllowedByPolicyForProfile(const Profile* profile);
 
 // Returns true if the profile is temporarily blocked to run ARC in the current
@@ -170,6 +168,13 @@ ArcSupervisionTransition GetSupervisionTransition(const Profile* profile);
 // Returns true if Play Store package is present and can be launched in this
 // session.
 bool IsPlayStoreAvailable();
+
+// Skip to show OOBE/in sesion UI asking users to set up ARC OptIn preferences,
+// iff all of them are managed by the admin policy.
+// Skips in session play terms of service for managed user and starts ARC
+// directly. Leaves B&R/GLS off if not set by admin since users don't see
+// the Tos page.
+bool ShouldStartArcSilentlyForManagedProfile(const Profile* profile);
 
 }  // namespace arc
 

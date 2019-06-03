@@ -41,6 +41,19 @@ in [src/chromeos/dbus/kerberos].
     (Many existing clients provide additional test functionality in the fake
     implementation, however this complicates tests and the fake implementation).
 
+*   These clients do not have any dependency on FeatureList, and care should be
+    taken regarding initialization order if such dependencies are added (see
+    BluezDBusManager for an example of such client).
+
+## Shill clients
+
+Shill clients will eventually only be available to Chrome. As such, the
+DBusThreadManager::GetShill*Client() methods have been left intact for now.
+However, the clients are no longer owned by DBusThreadManager so that they can
+be initialized independently.
+
+New code should prefer Shill*Client::Get() over the DBusThreadManager accessors.
+
 ## Older clients that have been removed:
 
 *   Amplifier (`amplifier_client.cc`)

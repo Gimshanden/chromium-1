@@ -44,11 +44,11 @@
 #include "ui/display/display_layout_builder.h"
 #include "ui/display/display_observer.h"
 #include "ui/display/display_switches.h"
+#include "ui/display/fake/fake_display_snapshot.h"
 #include "ui/display/manager/display_change_observer.h"
 #include "ui/display/manager/display_layout_store.h"
 #include "ui/display/manager/display_manager_utilities.h"
 #include "ui/display/manager/display_util.h"
-#include "ui/display/manager/fake_display_snapshot.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/display/manager/test/touch_device_manager_test_api.h"
 #include "ui/display/screen.h"
@@ -2072,7 +2072,7 @@ TEST_F(DisplayManagerTest, UpdateMouseCursorAfterRotateZoom) {
   // Make sure just rotating will not change native location.
   UpdateDisplay("300x200,200x150");
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  aura::Env* env = Shell::Get()->aura_env();
+  aura::Env* env = aura::Env::GetInstance();
 
   ui::test::EventGenerator generator1(root_windows[0]);
   ui::test::EventGenerator generator2(root_windows[1]);
@@ -3529,10 +3529,12 @@ class DisplayManagerOrientationTest : public DisplayManagerTest {
   void SetUp() override {
     DisplayManagerTest::SetUp();
     const float kMeanGravity = 9.8066f;
-    portrait_primary->Set(ACCELEROMETER_SOURCE_SCREEN, -kMeanGravity, 0.f, 0.f);
-    portrait_secondary->Set(ACCELEROMETER_SOURCE_SCREEN, kMeanGravity, 0.f,
-                            0.f);
-    landscape_primary->Set(ACCELEROMETER_SOURCE_SCREEN, 0, -kMeanGravity, 0.f);
+    portrait_primary->Set(ACCELEROMETER_SOURCE_SCREEN, false,
+                          -kMeanGravity, 0.f, 0.f);
+    portrait_secondary->Set(ACCELEROMETER_SOURCE_SCREEN, false,
+                            kMeanGravity, 0.f, 0.f);
+    landscape_primary->Set(ACCELEROMETER_SOURCE_SCREEN, false,
+                           0, -kMeanGravity, 0.f);
   }
 
  protected:

@@ -50,7 +50,7 @@ SingleThreadProxy::SingleThreadProxy(LayerTreeHost* layer_tree_host,
 #endif
       inside_draw_(false),
       defer_main_frame_update_(false),
-      defer_commits_(false),
+      defer_commits_(true),
       animate_requested_(false),
       commit_requested_(false),
       inside_synchronous_composite_(false),
@@ -72,6 +72,7 @@ void SingleThreadProxy::Start() {
   DCHECK(settings.single_thread_proxy_scheduler ||
          !settings.enable_checker_imaging)
       << "Checker-imaging is not supported in synchronous single threaded mode";
+  host_impl_ = layer_tree_host_->CreateLayerTreeHostImpl(this);
   if (settings.single_thread_proxy_scheduler && !scheduler_on_impl_thread_) {
     SchedulerSettings scheduler_settings(settings.ToSchedulerSettings());
     scheduler_settings.commit_to_active_tree = CommitToActiveTree();
@@ -80,14 +81,13 @@ void SingleThreadProxy::Start() {
         new CompositorTimingHistory(
             scheduler_settings.using_synchronous_renderer_compositor,
             CompositorTimingHistory::BROWSER_UMA,
-            layer_tree_host_->rendering_stats_instrumentation()));
+            layer_tree_host_->rendering_stats_instrumentation(),
+            host_impl_->compositor_frame_reporting_controller()));
     scheduler_on_impl_thread_.reset(
         new Scheduler(this, scheduler_settings, layer_tree_host_->GetId(),
                       task_runner_provider_->MainThreadTaskRunner(),
                       std::move(compositor_timing_history)));
   }
-
-  host_impl_ = layer_tree_host_->CreateLayerTreeHostImpl(this);
 }
 
 SingleThreadProxy::~SingleThreadProxy() {
@@ -231,8 +231,8 @@ void SingleThreadProxy::CommitComplete() {
       << "Activation is expected to have synchronously occurred by now.";
 
   DebugScopedSetMainThread main(task_runner_provider_);
-  layer_tree_host_->DidBeginMainFrame();
   layer_tree_host_->CommitComplete();
+  layer_tree_host_->DidBeginMainFrame();
 
   next_frame_is_newly_committed_frame_ = true;
 }
@@ -300,11 +300,13 @@ void SingleThreadProxy::StartDeferringCommits(base::TimeDelta timeout) {
   commits_restart_time_ = base::TimeTicks::Now() + timeout;
 }
 
-void SingleThreadProxy::StopDeferringCommits() {
+void SingleThreadProxy::StopDeferringCommits(
+    PaintHoldingCommitTrigger trigger) {
   if (!defer_commits_)
     return;
   defer_commits_ = false;
   commits_restart_time_ = base::TimeTicks();
+  UMA_HISTOGRAM_ENUMERATION("PaintHolding.CommitTrigger", trigger);
   TRACE_EVENT_ASYNC_END0("cc", "SingleThreadProxy::SetDeferCommits", this);
 }
 
@@ -525,21 +527,10 @@ void SingleThreadProxy::DidPresentCompositorFrameOnImplThread(
                                               feedback);
 }
 
-void SingleThreadProxy::DidGenerateLocalSurfaceIdAllocationOnImplThread(
-    const viz::LocalSurfaceIdAllocation& allocation) {
-  DebugScopedSetMainThread main(task_runner_provider_);
-  layer_tree_host_->DidGenerateLocalSurfaceIdAllocation(allocation);
-}
-
 void SingleThreadProxy::NotifyAnimationWorkletStateChange(
     AnimationWorkletMutationState state,
     ElementListType element_list_type) {
   layer_tree_host_->NotifyAnimationWorkletStateChange(state, element_list_type);
-}
-
-uint32_t SingleThreadProxy::GenerateChildSurfaceSequenceNumberSync() {
-  DebugScopedSetImplThread impl(task_runner_provider_);
-  return host_impl_->GenerateChildSurfaceSequenceNumberSync();
 }
 
 void SingleThreadProxy::RequestBeginMainFrameNotExpected(bool new_state) {
@@ -813,7 +804,7 @@ void SingleThreadProxy::BeginMainFrame(
 
   // Check now if we should stop deferring commits
   if (defer_commits_ && base::TimeTicks::Now() > commits_restart_time_) {
-    StopDeferringCommits();
+    StopDeferringCommits(PaintHoldingCommitTrigger::kTimeout);
   }
 
   // At this point the main frame may have deferred commits to avoid committing

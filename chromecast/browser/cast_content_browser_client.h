@@ -15,8 +15,8 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "chromecast/browser/metrics/cast_metrics_service_client.h"
 #include "chromecast/chromecast_buildflags.h"
+#include "chromecast/metrics/cast_metrics_service_client.h"
 #include "content/public/browser/certificate_request_result_type.h"
 #include "content/public/browser/content_browser_client.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
@@ -50,6 +50,7 @@ namespace chromecast {
 class CastService;
 class CastWindowManager;
 class CastFeatureListCreator;
+class GeneralAudienceBrowsingService;
 class MemoryPressureControllerImpl;
 
 namespace media {
@@ -90,6 +91,8 @@ class CastContentBrowserClient
       CastWindowManager* window_manager);
 
   virtual media::VideoModeSwitcher* GetVideoModeSwitcher();
+
+  virtual void InitializeURLLoaderThrottleDelegate();
 
   // Returns the task runner that must be used for media IO.
   scoped_refptr<base::SingleThreadTaskRunner> GetMediaTaskRunner();
@@ -132,7 +135,7 @@ class CastContentBrowserClient
 
   // content::ContentBrowserClient implementation:
   std::vector<std::string> GetStartupServices() override;
-  content::BrowserMainParts* CreateBrowserMainParts(
+  std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       const content::MainFunctionParams& parameters) override;
   void RenderProcessWillLaunch(
       content::RenderProcessHost* host,
@@ -142,11 +145,13 @@ class CastContentBrowserClient
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
   std::string GetAcceptLangs(content::BrowserContext* context) override;
+  network::mojom::NetworkContext* GetSystemNetworkContext() override;
   void OverrideWebkitPrefs(content::RenderViewHost* render_view_host,
                            content::WebPreferences* prefs) override;
   void ResourceDispatcherHostCreated() override;
   std::string GetApplicationLocale() override;
-  content::QuotaPermissionContext* CreateQuotaPermissionContext() override;
+  scoped_refptr<content::QuotaPermissionContext> CreateQuotaPermissionContext()
+      override;
   void GetQuotaSettings(
       content::BrowserContext* context,
       content::StoragePartition* partition,
@@ -156,7 +161,7 @@ class CastContentBrowserClient
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      content::ResourceType resource_type,
+      bool is_main_frame_request,
       bool strict_enforcement,
       bool expired_previous_decision,
       const base::Callback<void(content::CertificateRequestResultType)>&
@@ -186,11 +191,17 @@ class CastContentBrowserClient
   void ExposeInterfacesToMediaService(
       service_manager::BinderRegistry* registry,
       content::RenderFrameHost* render_frame_host) override;
-  void HandleServiceRequest(
-      const std::string& service_name,
-      service_manager::mojom::ServiceRequest request) override;
+  void RunServiceInstance(
+      const service_manager::Identity& identity,
+      mojo::PendingReceiver<service_manager::mojom::Service>* receiver)
+      override;
+  void RunServiceInstanceOnIOThread(
+      const service_manager::Identity& identity,
+      mojo::PendingReceiver<service_manager::mojom::Service>* receiver)
+      override;
   base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece service_name) override;
+  std::vector<service_manager::Manifest> GetExtraServiceManifests() override;
   void GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
@@ -217,15 +228,14 @@ class CastContentBrowserClient
       bool in_memory,
       const base::FilePath& relative_partition_path) override;
   std::string GetUserAgent() const override;
-  void RegisterOutOfProcessServices(OutOfProcessServiceMap* services) override;
-  void RegisterIOThreadServiceHandlers(
-      content::ServiceManagerConnection* connection) override;
   bool DoesSiteRequireDedicatedProcess(
       content::BrowserOrResourceContext browser_or_resource_context,
       const GURL& effective_site_url) override;
   CastFeatureListCreator* GetCastFeatureListCreator() {
     return cast_feature_list_creator_;
   }
+
+  void CreateGeneralAudienceBrowsingService();
 
 #if BUILDFLAG(USE_CHROMECAST_CDMS)
   virtual std::unique_ptr<::media::CdmFactory> CreateCdmFactory(
@@ -243,6 +253,12 @@ class CastContentBrowserClient
   URLRequestContextFactory* url_request_context_factory() const {
     return url_request_context_factory_.get();
   }
+
+  // Internal implementation overwrites this function to inject real values.
+  virtual void GetApplicationMediaInfo(
+      std::string* application_session_id,
+      bool* mixer_audio_enabled,
+      content::RenderFrameHost* render_frame_host);
 
  private:
   // Create device cert/key
@@ -295,6 +311,8 @@ class CastContentBrowserClient
   std::unique_ptr<CastResourceDispatcherHostDelegate>
       resource_dispatcher_host_delegate_;
   std::unique_ptr<media::CmaBackendFactory> cma_backend_factory_;
+  std::unique_ptr<GeneralAudienceBrowsingService>
+      general_audience_browsing_service_;
 
   CastFeatureListCreator* cast_feature_list_creator_;
 

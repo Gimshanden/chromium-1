@@ -174,7 +174,8 @@ ServiceWorkerPaymentInstrument::CreateCanMakePaymentEventData() {
   event_data->top_origin = top_origin_;
   event_data->payment_request_origin = frame_origin_;
 
-  for (const auto& modifier : spec_->details().modifiers) {
+  DCHECK(spec_->details().modifiers);
+  for (const auto& modifier : *spec_->details().modifiers) {
     if (base::ContainsKey(supported_url_methods,
                           modifier->method_data->supported_method)) {
       event_data->modifiers.emplace_back(modifier.Clone());
@@ -243,6 +244,12 @@ void ServiceWorkerPaymentInstrument::InvokePaymentApp(Delegate* delegate) {
   payment_request_delegate_->ShowProcessingSpinner();
 }
 
+void ServiceWorkerPaymentInstrument::OnPaymentAppWindowClosed() {
+  delegate_ = nullptr;
+  content::PaymentAppProvider::GetInstance()->OnClosingOpenedWindow(
+      browser_context_);
+}
+
 mojom::PaymentRequestEventDataPtr
 ServiceWorkerPaymentInstrument::CreatePaymentRequestEventData() {
   mojom::PaymentRequestEventDataPtr event_data =
@@ -263,7 +270,8 @@ ServiceWorkerPaymentInstrument::CreatePaymentRequestEventData() {
     supported_methods.insert(stored_payment_app_info_->enabled_methods.begin(),
                              stored_payment_app_info_->enabled_methods.end());
   }
-  for (const auto& modifier : spec_->details().modifiers) {
+  DCHECK(spec_->details().modifiers);
+  for (const auto& modifier : *spec_->details().modifiers) {
     if (base::ContainsKey(supported_methods,
                           modifier->method_data->supported_method)) {
       event_data->modifiers.emplace_back(modifier.Clone());
@@ -276,13 +284,13 @@ ServiceWorkerPaymentInstrument::CreatePaymentRequestEventData() {
     }
   }
 
+  event_data->payment_handler_host = std::move(payment_handler_host_);
+
   return event_data;
 }
 
 void ServiceWorkerPaymentInstrument::OnPaymentAppInvoked(
     mojom::PaymentHandlerResponsePtr response) {
-  DCHECK(delegate_);
-
   if (delegate_ != nullptr) {
     delegate_->OnInstrumentDetailsReady(response->method_name,
                                         response->stringified_details);
@@ -345,7 +353,7 @@ bool ServiceWorkerPaymentInstrument::IsValidForModifier(
   if (needs_installation_)
     return installable_enabled_method_ == method;
 
-  if (!base::ContainsValue(stored_payment_app_info_->enabled_methods, method))
+  if (!IsValidForPaymentMethodIdentifier(method))
     return false;
 
   // Return true if 'basic-card' is not the only matched payment method. This
@@ -403,8 +411,15 @@ bool ServiceWorkerPaymentInstrument::IsValidForModifier(
   return i < stored_payment_app_info_->capabilities.size();
 }
 
-const gfx::ImageSkia* ServiceWorkerPaymentInstrument::icon_image_skia() const {
-  return icon_image_.get();
+bool ServiceWorkerPaymentInstrument::IsValidForPaymentMethodIdentifier(
+    const std::string& payment_method_identifier) const {
+  DCHECK(!needs_installation_);
+  return base::ContainsValue(stored_payment_app_info_->enabled_methods,
+                             payment_method_identifier);
+}
+
+gfx::ImageSkia ServiceWorkerPaymentInstrument::icon_image_skia() const {
+  return icon_image_;
 }
 
 }  // namespace payments

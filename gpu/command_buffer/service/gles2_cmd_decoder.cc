@@ -1536,10 +1536,12 @@ class GLES2DecoderImpl : public GLES2Decoder, public ErrorStateClient {
   // location is not -1.
   bool CheckCurrentProgramForUniform(GLint location, const char* function_name);
 
-  // Checks if the current program samples a texture that is also the color
-  // image of the current bound framebuffer, i.e., the source and destination
-  // of the draw operation are the same.
-  bool CheckDrawingFeedbackLoops();
+  // Helper for CheckDrawingFeedbackLoops. Returns true if the attachment is
+  // the same one where it samples from during drawing.
+  bool CheckDrawingFeedbackLoopsHelper(
+      const Framebuffer::Attachment* attachment,
+      TextureRef* texture_ref,
+      const char* function_name);
 
   bool SupportsDrawBuffers() const;
 
@@ -1757,12 +1759,12 @@ class GLES2DecoderImpl : public GLES2Decoder, public ErrorStateClient {
       GLint layer);
 
   // Wrapper for glFramebufferTextureLayer.
-  void DoFramebufferTextureMultiviewLayeredANGLE(GLenum target,
-                                                 GLenum attachment,
-                                                 GLuint texture,
-                                                 GLint level,
-                                                 GLint base_view_index,
-                                                 GLsizei num_views);
+  void DoFramebufferTextureMultiviewOVR(GLenum target,
+                                        GLenum attachment,
+                                        GLuint texture,
+                                        GLint level,
+                                        GLint base_view_index,
+                                        GLsizei num_views);
 
   // Wrapper for glGenerateMipmap
   void DoGenerateMipmap(GLenum target);
@@ -4240,6 +4242,7 @@ Capabilities GLES2DecoderImpl::GetCapabilities() {
   caps.dc_layers = supports_dc_layers_;
   caps.use_dc_overlays_for_video = surface_->UseOverlaysForVideo();
   caps.protected_video_swap_chain = surface_->SupportsProtectedVideo();
+  caps.gpu_vsync = surface_->SupportsGpuVSync();
 
   caps.blend_equation_advanced =
       feature_info_->feature_flags().blend_equation_advanced;
@@ -5819,6 +5822,9 @@ error::Error GLES2DecoderImpl::HandleResizeCHROMIUM(
     case GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM:
       surface_color_space = gl::GLSurface::ColorSpace::SCRGB_LINEAR;
       break;
+    case GL_COLOR_SPACE_HDR10_CHROMIUM:
+      surface_color_space = gl::GLSurface::ColorSpace::HDR10;
+      break;
     case GL_COLOR_SPACE_SRGB_CHROMIUM:
       surface_color_space = gl::GLSurface::ColorSpace::SRGB;
       break;
@@ -7174,6 +7180,18 @@ bool GLES2DecoderImpl::GetHelper(
       *num_written = 1;
       if (params) {
         params[0] = texture_manager()->MaxSizeForTarget(GL_TEXTURE_CUBE_MAP);
+      }
+      return true;
+    case GL_MAX_3D_TEXTURE_SIZE:
+      *num_written = 1;
+      if (params) {
+        params[0] = texture_manager()->MaxSizeForTarget(GL_TEXTURE_3D);
+      }
+      return true;
+    case GL_MAX_ARRAY_TEXTURE_LAYERS:
+      *num_written = 1;
+      if (params) {
+        params[0] = texture_manager()->max_array_texture_layers();
       }
       return true;
     case GL_MAX_COLOR_ATTACHMENTS_EXT:
@@ -8608,7 +8626,7 @@ void GLES2DecoderImpl::DoFramebufferTextureLayer(
   }
 }
 
-void GLES2DecoderImpl::DoFramebufferTextureMultiviewLayeredANGLE(
+void GLES2DecoderImpl::DoFramebufferTextureMultiviewOVR(
     GLenum target,
     GLenum attachment,
     GLuint client_texture_id,
@@ -9935,32 +9953,15 @@ bool GLES2DecoderImpl::CheckCurrentProgramForUniform(
       location);
 }
 
-bool GLES2DecoderImpl::CheckDrawingFeedbackLoops() {
-  Framebuffer* framebuffer = GetFramebufferInfoForTarget(GL_FRAMEBUFFER);
-  if (!framebuffer)
-    return false;
-  const Framebuffer::Attachment* attachment =
-      framebuffer->GetAttachment(GL_COLOR_ATTACHMENT0);
-  if (!attachment)
-    return false;
-
-  DCHECK(state_.current_program.get());
-  const Program::SamplerIndices& sampler_indices =
-      state_.current_program->sampler_indices();
-  for (size_t ii = 0; ii < sampler_indices.size(); ++ii) {
-    const Program::UniformInfo* uniform_info =
-        state_.current_program->GetUniformInfo(sampler_indices[ii]);
-    DCHECK(uniform_info);
-    for (size_t jj = 0; jj < uniform_info->texture_units.size(); ++jj) {
-      GLuint texture_unit_index = uniform_info->texture_units[jj];
-      if (texture_unit_index >= state_.texture_units.size())
-        continue;
-      TextureUnit& texture_unit = state_.texture_units[texture_unit_index];
-      TextureRef* texture_ref =
-          texture_unit.GetInfoForSamplerType(uniform_info->type);
-      if (attachment->IsTexture(texture_ref))
-        return true;
-    }
+bool GLES2DecoderImpl::CheckDrawingFeedbackLoopsHelper(
+    const Framebuffer::Attachment* attachment,
+    TextureRef* texture_ref,
+    const char* function_name) {
+  if (attachment && attachment->IsTexture(texture_ref)) {
+    LOCAL_SET_GL_ERROR(
+        GL_INVALID_OPERATION, function_name,
+        "Source and destination textures of the draw are the same.");
+    return true;
   }
   return false;
 }
@@ -9971,11 +9972,18 @@ bool GLES2DecoderImpl::SupportsDrawBuffers() const {
 }
 
 bool GLES2DecoderImpl::ValidateAndAdjustDrawBuffers(const char* func_name) {
+  if (state_.GetEnabled(GL_RASTERIZER_DISCARD)) {
+    return true;
+  }
   if (!SupportsDrawBuffers()) {
     return true;
   }
   Framebuffer* framebuffer = framebuffer_state_.bound_draw_framebuffer.get();
   if (!state_.current_program.get() || !framebuffer) {
+    return true;
+  }
+  if (!state_.color_mask_red && !state_.color_mask_green &&
+      !state_.color_mask_blue && !state_.color_mask_alpha) {
     return true;
   }
   uint32_t fragment_output_type_mask =
@@ -10691,6 +10699,27 @@ bool GLES2DecoderImpl::PrepareTexturesForRender(bool* textures_set,
         TextureUnit& texture_unit = state_.texture_units[texture_unit_index];
         TextureRef* texture_ref =
             texture_unit.GetInfoForSamplerType(uniform_info->type);
+
+        // Find if the texture is also a depth or stencil attachment
+        // Regardless of whether depth/stencil writes and masks are enabled
+        // If so, there's a drawing feedback loop.
+
+        Framebuffer* framebuffer =
+            GetFramebufferInfoForTarget(GL_DRAW_FRAMEBUFFER);
+        if (framebuffer) {
+          if (CheckDrawingFeedbackLoopsHelper(
+                  framebuffer->GetAttachment(GL_DEPTH_ATTACHMENT), texture_ref,
+                  function_name)) {
+            return false;
+          }
+
+          if (CheckDrawingFeedbackLoopsHelper(
+                  framebuffer->GetAttachment(GL_STENCIL_ATTACHMENT),
+                  texture_ref, function_name)) {
+            return false;
+          }
+        }
+
         GLenum textarget = GetBindTargetForSamplerType(uniform_info->type);
         const SamplerState& sampler_state = GetSamplerStateForTextureUnit(
             uniform_info->type, texture_unit_index);
@@ -10726,6 +10755,21 @@ bool GLES2DecoderImpl::PrepareTexturesForRender(bool* textures_set,
                GLES2Util::GetStringEnum(uniform_info->type))
                   .c_str());
           return false;
+        }
+
+        // Find if the texture is also a color attachment
+        // If so, there's a drawing feedback loop.
+
+        if (framebuffer) {
+          for (GLsizei kk = 0; kk <= framebuffer->last_color_attachment_id();
+               ++kk) {
+            GLenum attachment = static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + kk);
+            if (CheckDrawingFeedbackLoopsHelper(
+                    framebuffer->GetAttachment(attachment), texture_ref,
+                    function_name)) {
+              return false;
+            }
+          }
         }
 
         if (textarget != GL_TEXTURE_CUBE_MAP) {
@@ -10863,13 +10907,6 @@ bool GLES2DecoderImpl::IsDrawValid(
     if (!ValidateStencilStateForDraw(function_name)) {
       return false;
     }
-  }
-
-  if (CheckDrawingFeedbackLoops()) {
-    LOCAL_SET_GL_ERROR(
-        GL_INVALID_OPERATION, function_name,
-        "Source and destination textures of the draw are the same.");
-    return false;
   }
 
   if (!state_.vertex_attrib_manager->ValidateBindings(
@@ -14470,8 +14507,7 @@ bool GLES2DecoderImpl::ValidateCompressedTexDimensions(
     GLsizei width, GLsizei height, GLsizei depth, GLenum format) {
   const char* error_message = "";
   if (!::gpu::gles2::ValidateCompressedTexDimensions(
-          target, level, width, height, depth, format,
-          feature_info_->IsWebGLContext(), &error_message)) {
+          target, level, width, height, depth, format, &error_message)) {
     LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, function_name, error_message);
     return false;
   }
@@ -14486,7 +14522,7 @@ bool GLES2DecoderImpl::ValidateCompressedTexSubDimensions(
   const char* error_message = "";
   if (!::gpu::gles2::ValidateCompressedTexSubDimensions(
           target, level, xoffset, yoffset, zoffset, width, height, depth,
-          format, texture, feature_info_->IsWebGLContext(), &error_message)) {
+          format, texture, &error_message)) {
     LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, function_name, error_message);
     return false;
   }
@@ -17174,6 +17210,13 @@ error::Error GLES2DecoderImpl::HandleBeginQueryEXT(
         LOCAL_SET_GL_ERROR(
             GL_INVALID_OPERATION, "glBeginQueryEXT",
             "not enabled for commands completed queries");
+        return error::kNoError;
+      }
+      break;
+    case GL_PROGRAM_COMPLETION_QUERY_CHROMIUM:
+      if (!features().chromium_completion_query) {
+        LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glBeginQueryEXT",
+                           "not enabled for program completion queries");
         return error::kNoError;
       }
       break;

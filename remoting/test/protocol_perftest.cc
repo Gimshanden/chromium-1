@@ -14,7 +14,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/task_runner_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -318,8 +318,8 @@ class ProtocolPerfTest
         protocol::GetSharedSecretHash(kHostId, kHostPin);
     std::unique_ptr<protocol::AuthenticatorFactory> auth_factory =
         protocol::Me2MeHostAuthenticatorFactory::CreateWithPin(
-            true, kHostOwner, host_cert, key_pair, std::vector<std::string>(),
-            host_pin_hash, nullptr);
+            true, kHostOwner, kHostOwner, host_cert, key_pair,
+            std::vector<std::string>(), host_pin_hash, nullptr);
     host_->SetAuthenticatorFactory(std::move(auth_factory));
 
     host_->status_monitor()->AddStatusObserver(this);

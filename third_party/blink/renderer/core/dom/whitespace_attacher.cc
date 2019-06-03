@@ -118,10 +118,10 @@ void WhitespaceAttacher::ReattachWhitespaceSiblings(
   for (Node* sibling = last_text_node_; sibling;
        sibling = LayoutTreeBuilderTraversal::NextLayoutSibling(*sibling)) {
     LayoutObject* sibling_layout_object = sibling->GetLayoutObject();
-    if (sibling->IsTextNode() &&
-        ToText(sibling)->ContainsOnlyWhitespaceOrEmpty()) {
+    auto* text_node = DynamicTo<Text>(sibling);
+    if (text_node && text_node->ContainsOnlyWhitespaceOrEmpty()) {
       bool had_layout_object = !!sibling_layout_object;
-      ToText(sibling)->ReattachLayoutTreeIfNeeded(context);
+      text_node->ReattachLayoutTreeIfNeeded(context);
       sibling_layout_object = sibling->GetLayoutObject();
       // If sibling's layout object status didn't change we don't need to
       // continue checking other siblings since their layout object status
@@ -165,18 +165,16 @@ void WhitespaceAttacher::UpdateLastTextNodeFromDisplayContents() {
     return;
   }
 
-  DCHECK(!sibling->IsElementNode() ||
-         !ToElement(sibling)->HasDisplayContentsStyle());
+  auto* sibling_element = DynamicTo<Element>(sibling);
+  DCHECK(!sibling_element || !sibling_element->HasDisplayContentsStyle());
 
   for (; sibling && sibling != last_text_node_;
        sibling = LayoutTreeBuilderTraversal::NextLayoutSibling(*sibling)) {
     LayoutObject* layout_object = sibling->GetLayoutObject();
-    if (sibling->IsTextNode()) {
-      Text* text = ToText(sibling);
-      if (text->ContainsOnlyWhitespaceOrEmpty()) {
-        last_text_node_ = text;
-        return;
-      }
+    auto* text = DynamicTo<Text>(sibling);
+    if (text && text->ContainsOnlyWhitespaceOrEmpty()) {
+      last_text_node_ = text;
+      return;
     }
     if (layout_object && !layout_object->IsFloatingOrOutOfFlowPositioned()) {
       last_text_node_ = nullptr;

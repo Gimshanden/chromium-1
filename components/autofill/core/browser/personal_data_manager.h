@@ -19,16 +19,16 @@
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_profile_validator.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/test_data_creator.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/payments/account_info_getter.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
-#include "components/autofill/core/browser/suggestion.h"
 #include "components/autofill/core/browser/sync_utils.h"
-#include "components/autofill/core/browser/test_data_creator.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service_observer.h"
@@ -111,7 +111,8 @@ class PersonalDataManager : public KeyedService,
       std::unique_ptr<WDTypedResult> result) override;
 
   // AutofillWebDataServiceObserverOnUISequence:
-  void AutofillMultipleChanged() override;
+  void AutofillMultipleChangedBySync() override;
+  void AutofillAddressConversionCompleted() override;
   void SyncStarted(syncer::ModelType model_type) override;
 
   // SyncServiceObserver:
@@ -796,9 +797,6 @@ class PersonalDataManager : public KeyedService,
 
   // True if autofill profile cleanup needs to be performed.
   bool is_autofill_profile_cleanup_pending_ = false;
-
-  // Whether new information was received from the sync server.
-  bool has_synced_new_data_ = false;
 
   // Used to create test data. If the AutofillCreateDataForTest feature is
   // enabled, this helper creates autofill profiles and credit card data that

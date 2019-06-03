@@ -5,8 +5,8 @@
 #include "content/test/test_navigation_url_loader_delegate.h"
 
 #include "base/run_loop.h"
+#include "content/browser/navigation_subresource_loader_params.h"
 #include "content/common/navigation_params.h"
-#include "content/common/navigation_subresource_loader_params.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_data.h"
 #include "services/network/public/cpp/resource_response.h"
@@ -63,7 +63,6 @@ void TestNavigationURLLoaderDelegate::OnResponseStarted(
     const GlobalRequestID& request_id,
     bool is_download,
     NavigationDownloadPolicy download_policy,
-    bool is_stream,
     base::Optional<SubresourceLoaderParams> subresource_loader_params) {
   response_ = response;
   url_loader_client_endpoints_ = std::move(url_loader_client_endpoints);

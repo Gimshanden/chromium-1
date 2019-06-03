@@ -66,7 +66,7 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/skia_util.h"
 
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 #include "third_party/blink/public/platform/web_font_render_style.h"
 #endif
 
@@ -178,7 +178,6 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   void DumpPermissionClientCallbacks();
   void DumpPingLoaderCallbacks();
   void DumpResourceLoadCallbacks();
-  void DumpResourceResponseMIMETypes();
   void DumpSelectionRect();
   void DumpSpellCheckCallbacks();
   void DumpTitleChanges();
@@ -440,8 +439,6 @@ gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
                  &TestRunnerBindings::DumpPingLoaderCallbacks)
       .SetMethod("dumpResourceLoadCallbacks",
                  &TestRunnerBindings::DumpResourceLoadCallbacks)
-      .SetMethod("dumpResourceResponseMIMETypes",
-                 &TestRunnerBindings::DumpResourceResponseMIMETypes)
       .SetMethod("dumpSelectionRect", &TestRunnerBindings::DumpSelectionRect)
       .SetMethod("dumpSpellCheckCallbacks",
                  &TestRunnerBindings::DumpSpellCheckCallbacks)
@@ -1062,11 +1059,6 @@ void TestRunnerBindings::DumpResourceLoadCallbacks() {
     runner_->DumpResourceLoadCallbacks();
 }
 
-void TestRunnerBindings::DumpResourceResponseMIMETypes() {
-  if (runner_)
-    runner_->DumpResourceResponseMIMETypes();
-}
-
 void TestRunnerBindings::SetImagesAllowed(bool allowed) {
   if (runner_)
     runner_->SetImagesAllowed(allowed);
@@ -1546,7 +1538,7 @@ void TestRunner::Reset() {
   drag_image_.reset();
 
   blink::WebSecurityPolicy::ClearOriginAccessList();
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
   blink::WebFontRenderStyle::SetSubpixelPositioning(false);
 #endif
 
@@ -1662,49 +1654,43 @@ std::string TestRunner::DumpLayout(blink::WebLocalFrame* frame) {
   return ::test_runner::DumpLayout(frame, web_test_runtime_flags_);
 }
 
-bool TestRunner::DumpPixelsAsync(
-    blink::WebLocalFrame* frame,
+bool TestRunner::CanDumpPixelsFromRenderer() const {
+  return web_test_runtime_flags_.dump_drag_image() ||
+         web_test_runtime_flags_.is_printing();
+}
+
+void TestRunner::DumpPixelsAsync(
+    content::RenderView* render_view,
     base::OnceCallback<void(const SkBitmap&)> callback) {
+  auto* view_proxy = static_cast<WebViewTestProxy*>(render_view);
+  DCHECK(view_proxy->GetWebView()->MainFrame());
+  DCHECK(CanDumpPixelsFromRenderer());
+
   if (web_test_runtime_flags_.dump_drag_image()) {
-    if (drag_image_.isNull()) {
+    if (!drag_image_.isNull()) {
+      std::move(callback).Run(drag_image_);
+    } else {
       // This means the test called dumpDragImage but did not initiate a drag.
       // Return a blank image so that the test fails.
       SkBitmap bitmap;
       bitmap.allocN32Pixels(1, 1);
       bitmap.eraseColor(0);
       std::move(callback).Run(bitmap);
-      return false;
     }
-
-    std::move(callback).Run(drag_image_);
-    return false;
+    return;
   }
 
-  // If we need to do a display compositor pixel dump, then delegate that to the
-  // browser by returning true. Note that printing case can be handled here.
-  if (!web_test_runtime_flags_.is_printing()) {
-    frame->View()->MainFrameWidget()->RequestPresentationCallbackForTesting(
-        base::BindOnce(
-            [](base::OnceCallback<void(const SkBitmap&)> callback) {
-              SkBitmap bitmap;
-              bitmap.allocN32Pixels(1, 1);
-              bitmap.eraseColor(0);
-              std::move(callback).Run(bitmap);
-            },
-            std::move(callback)));
-    return true;
-  }
-
-  auto* target_frame = frame;
+  blink::WebLocalFrame* frame =
+      view_proxy->GetWebView()->MainFrame()->ToWebLocalFrame();
+  blink::WebLocalFrame* target_frame = frame;
   std::string frame_name = web_test_runtime_flags_.printing_frame();
   if (!frame_name.empty()) {
-    auto* frame_to_print =
+    blink::WebFrame* frame_to_print =
         frame->FindFrameByName(blink::WebString::FromUTF8(frame_name));
     if (frame_to_print && frame_to_print->IsWebLocalFrame())
       target_frame = frame_to_print->ToWebLocalFrame();
   }
   test_runner::PrintFrameAsync(target_frame, std::move(callback));
-  return false;
 }
 
 void TestRunner::ReplicateWebTestRuntimeFlagsChanges(
@@ -1780,11 +1766,6 @@ bool TestRunner::canOpenWindows() const {
 bool TestRunner::shouldDumpResourceLoadCallbacks() const {
   return test_is_running_ &&
          web_test_runtime_flags_.dump_resource_load_callbacks();
-}
-
-bool TestRunner::shouldDumpResourceResponseMIMETypes() const {
-  return test_is_running_ &&
-         web_test_runtime_flags_.dump_resource_response_mime_types();
 }
 
 blink::WebContentSettingsClient* TestRunner::GetWebContentSettings() const {
@@ -2075,13 +2056,16 @@ void TestRunner::AddOriginAccessAllowListEntry(
 
   blink::WebSecurityPolicy::AddOriginAccessAllowListEntry(
       url, blink::WebString::FromUTF8(destination_protocol),
-      blink::WebString::FromUTF8(destination_host),
-      allow_destination_subdomains,
+      blink::WebString::FromUTF8(destination_host), /*destination_port=*/0,
+      allow_destination_subdomains
+          ? network::mojom::CorsDomainMatchMode::kAllowSubdomains
+          : network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 }
 
 void TestRunner::SetTextSubpixelPositioning(bool value) {
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
   // Since FontConfig doesn't provide a variable to control subpixel
   // positioning, we'll fall back to setting it globally for all fonts.
   blink::WebFontRenderStyle::SetSubpixelPositioning(value);
@@ -2323,11 +2307,6 @@ void TestRunner::SetCanOpenWindows() {
 
 void TestRunner::DumpResourceLoadCallbacks() {
   web_test_runtime_flags_.set_dump_resource_load_callbacks(true);
-  OnWebTestRuntimeFlagsChanged();
-}
-
-void TestRunner::DumpResourceResponseMIMETypes() {
-  web_test_runtime_flags_.set_dump_resource_response_mime_types(true);
   OnWebTestRuntimeFlagsChanged();
 }
 

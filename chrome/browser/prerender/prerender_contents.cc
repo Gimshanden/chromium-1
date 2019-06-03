@@ -63,9 +63,10 @@ class PrerenderContentsFactoryImpl : public PrerenderContents::Factory {
       Profile* profile,
       const GURL& url,
       const content::Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       Origin origin) override {
     return new PrerenderContents(prerender_manager, profile, url, referrer,
-                                 origin);
+                                 initiator_origin, origin);
   }
 };
 
@@ -169,20 +170,23 @@ class PrerenderContents::WebContentsDelegateImpl
 
 PrerenderContents::Observer::~Observer() {}
 
-PrerenderContents::PrerenderContents(PrerenderManager* prerender_manager,
-                                     Profile* profile,
-                                     const GURL& url,
-                                     const content::Referrer& referrer,
-                                     Origin origin)
+PrerenderContents::PrerenderContents(
+    PrerenderManager* prerender_manager,
+    Profile* profile,
+    const GURL& url,
+    const content::Referrer& referrer,
+    const base::Optional<url::Origin>& initiator_origin,
+    Origin origin)
     : prerender_mode_(DEPRECATED_FULL_PRERENDER),
       prerendering_has_started_(false),
       prerender_canceler_binding_(this),
       prerender_manager_(prerender_manager),
       prerender_url_(url),
       referrer_(referrer),
+      initiator_origin_(initiator_origin),
       profile_(profile),
       has_finished_loading_(false),
-      final_status_(FINAL_STATUS_MAX),
+      final_status_(FINAL_STATUS_UNKNOWN),
       prerendering_has_been_cancelled_(false),
       process_pid_(base::kNullProcessId),
       child_id_(-1),
@@ -190,6 +194,24 @@ PrerenderContents::PrerenderContents(PrerenderManager* prerender_manager,
       origin_(origin),
       network_bytes_(0),
       weak_factory_(this) {
+  switch (origin) {
+    case ORIGIN_OMNIBOX:
+    case ORIGIN_EXTERNAL_REQUEST:
+    case ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER:
+      DCHECK(!initiator_origin_.has_value());
+      break;
+
+    case ORIGIN_GWS_PRERENDER:
+    case ORIGIN_LINK_REL_PRERENDER_SAMEDOMAIN:
+    case ORIGIN_LINK_REL_PRERENDER_CROSSDOMAIN:
+    case ORIGIN_LINK_REL_NEXT:
+      DCHECK(initiator_origin_.has_value());
+      break;
+    case ORIGIN_NONE:
+    case ORIGIN_MAX:
+      NOTREACHED();
+  }
+
   DCHECK(prerender_manager);
   registry_.AddInterface(base::Bind(
       &PrerenderContents::OnPrerenderCancelerRequest, base::Unretained(this)));
@@ -281,6 +303,7 @@ void PrerenderContents::StartPrerendering(
   content::NavigationController::LoadURLParams load_url_params(
       prerender_url_);
   load_url_params.referrer = referrer_;
+  load_url_params.initiator_origin = initiator_origin_;
   load_url_params.transition_type = ui::PAGE_TRANSITION_LINK;
   if (origin_ == ORIGIN_OMNIBOX) {
     load_url_params.transition_type = ui::PageTransitionFromInt(
@@ -312,13 +335,13 @@ void PrerenderContents::SetFinalStatus(FinalStatus final_status) {
   DCHECK_GE(final_status, FINAL_STATUS_USED);
   DCHECK_LT(final_status, FINAL_STATUS_MAX);
 
-  DCHECK_EQ(FINAL_STATUS_MAX, final_status_);
+  DCHECK_EQ(FINAL_STATUS_UNKNOWN, final_status_);
 
   final_status_ = final_status;
 }
 
 PrerenderContents::~PrerenderContents() {
-  DCHECK_NE(FINAL_STATUS_MAX, final_status());
+  DCHECK_NE(FINAL_STATUS_UNKNOWN, final_status());
   DCHECK(
       prerendering_has_been_cancelled() || final_status() == FINAL_STATUS_USED);
   DCHECK_NE(ORIGIN_MAX, origin());
@@ -351,7 +374,7 @@ PrerenderContents::~PrerenderContents() {
 }
 
 void PrerenderContents::AddObserver(Observer* observer) {
-  DCHECK_EQ(FINAL_STATUS_MAX, final_status_);
+  DCHECK_EQ(FINAL_STATUS_UNKNOWN, final_status_);
   observer_list_.AddObserver(observer);
 }
 
@@ -410,7 +433,7 @@ std::unique_ptr<WebContents> PrerenderContents::CreateWebContents(
 }
 
 void PrerenderContents::NotifyPrerenderStart() {
-  DCHECK_EQ(FINAL_STATUS_MAX, final_status_);
+  DCHECK_EQ(FINAL_STATUS_UNKNOWN, final_status_);
   for (Observer& observer : observer_list_)
     observer.OnPrerenderStart(this);
 }
@@ -426,7 +449,7 @@ void PrerenderContents::NotifyPrerenderDomContentLoaded() {
 }
 
 void PrerenderContents::NotifyPrerenderStop() {
-  DCHECK_NE(FINAL_STATUS_MAX, final_status_);
+  DCHECK_NE(FINAL_STATUS_UNKNOWN, final_status_);
   for (Observer& observer : observer_list_)
     observer.OnPrerenderStop(this);
   observer_list_.Clear();
@@ -470,7 +493,7 @@ bool PrerenderContents::AddAliasURL(const GURL& url) {
 
 bool PrerenderContents::Matches(
     const GURL& url,
-    const SessionStorageNamespace* session_storage_namespace) const {
+    SessionStorageNamespace* session_storage_namespace) const {
   // TODO(davidben): Remove any consumers that pass in a NULL
   // session_storage_namespace and only test with matches.
   if (session_storage_namespace &&
@@ -620,7 +643,7 @@ void PrerenderContents::Destroy(FinalStatus final_status) {
 
 void PrerenderContents::DestroyWhenUsingTooManyResources() {
   if (process_pid_ == base::kNullProcessId) {
-    const RenderViewHost* rvh = GetRenderViewHost();
+    RenderViewHost* rvh = GetRenderViewHost();
     if (!rvh)
       return;
 
@@ -680,11 +703,7 @@ std::unique_ptr<WebContents> PrerenderContents::ReleasePrerenderContents() {
   return std::move(prerender_contents_);
 }
 
-RenderViewHost* PrerenderContents::GetRenderViewHostMutable() {
-  return const_cast<RenderViewHost*>(GetRenderViewHost());
-}
-
-const RenderViewHost* PrerenderContents::GetRenderViewHost() const {
+RenderViewHost* PrerenderContents::GetRenderViewHost() {
   return prerender_contents_ ? prerender_contents_->GetRenderViewHost()
                              : nullptr;
 }

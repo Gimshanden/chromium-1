@@ -11,6 +11,8 @@
 #include "base/feature_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
+#include "base/trace_event/memory_usage_estimator.h"
+#include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
@@ -33,6 +35,47 @@
 namespace sync_bookmarks {
 
 namespace {
+
+// Metrics: "Sync.MissingBookmarkPermanentNodes"
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class MissingPermanentNodes {
+  kBookmarkBar = 0,
+  kOtherBookmarks = 1,
+  kMobileBookmarks = 2,
+  kBookmarkBarAndOtherBookmarks = 3,
+  kBookmarkBarAndMobileBookmarks = 4,
+  kOtherBookmarksAndMobileBookmarks = 5,
+  kBookmarkBarAndOtherBookmarksAndMobileBookmarks = 6,
+
+  kMaxValue = kBookmarkBarAndOtherBookmarksAndMobileBookmarks,
+};
+
+void LogMissingPermanentNodes(
+    const SyncedBookmarkTracker::Entity* bookmark_bar,
+    const SyncedBookmarkTracker::Entity* other_bookmarks,
+    const SyncedBookmarkTracker::Entity* mobile_bookmarks) {
+  MissingPermanentNodes missing_nodes;
+  if (!bookmark_bar && other_bookmarks && mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kBookmarkBar;
+  } else if (bookmark_bar && !other_bookmarks && mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kOtherBookmarks;
+  } else if (bookmark_bar && other_bookmarks && !mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kMobileBookmarks;
+  } else if (!bookmark_bar && !other_bookmarks && mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kBookmarkBarAndOtherBookmarks;
+  } else if (!bookmark_bar && other_bookmarks && !mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kBookmarkBarAndMobileBookmarks;
+  } else if (bookmark_bar && !other_bookmarks && !mobile_bookmarks) {
+    missing_nodes = MissingPermanentNodes::kOtherBookmarksAndMobileBookmarks;
+  } else {
+    // All must be missing.
+    missing_nodes =
+        MissingPermanentNodes::kBookmarkBarAndOtherBookmarksAndMobileBookmarks;
+  }
+  UMA_HISTOGRAM_ENUMERATION("Sync.MissingBookmarkPermanentNodes",
+                            missing_nodes);
+}
 
 // Enables scheduling bookmark model saving only upon changes in entity sync
 // metadata. This would stop persisting changes to the model type state that
@@ -102,7 +145,9 @@ std::string ComputeServerDefinedUniqueTagForDebugging(
 
 BookmarkModelTypeProcessor::BookmarkModelTypeProcessor(
     BookmarkUndoService* bookmark_undo_service)
-    : bookmark_undo_service_(bookmark_undo_service), weak_ptr_factory_(this) {}
+    : bookmark_undo_service_(bookmark_undo_service),
+      weak_ptr_factory_for_controller_(this),
+      weak_ptr_factory_for_worker_(this) {}
 
 BookmarkModelTypeProcessor::~BookmarkModelTypeProcessor() {
   if (bookmark_model_ && bookmark_model_observer_) {
@@ -127,6 +172,7 @@ void BookmarkModelTypeProcessor::ConnectSync(
 void BookmarkModelTypeProcessor::DisconnectSync() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  weak_ptr_factory_for_worker_.InvalidateWeakPtrs();
   if (!worker_) {
     return;
   }
@@ -140,8 +186,12 @@ void BookmarkModelTypeProcessor::GetLocalChanges(
     GetLocalChangesCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   BookmarkLocalChangesBuilder builder(bookmark_tracker_.get(), bookmark_model_);
-  std::vector<syncer::CommitRequestData> local_changes =
+  syncer::CommitRequestDataList local_changes =
       builder.BuildCommitRequests(max_entries);
+  for (const std::unique_ptr<syncer::CommitRequestData>& local_change :
+       local_changes) {
+    bookmark_tracker_->MarkCommitMayHaveStarted(local_change->entity->id);
+  }
   std::move(callback).Run(std::move(local_changes));
 }
 
@@ -167,7 +217,7 @@ void BookmarkModelTypeProcessor::OnCommitCompleted(
 
 void BookmarkModelTypeProcessor::OnUpdateReceived(
     const sync_pb::ModelTypeState& model_type_state,
-    const syncer::UpdateResponseDataList& updates) {
+    syncer::UpdateResponseDataList updates) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!model_type_state.cache_guid().empty());
   DCHECK_EQ(model_type_state.cache_guid(), cache_guid_);
@@ -197,6 +247,12 @@ void BookmarkModelTypeProcessor::OnUpdateReceived(
             bookmark_model_->other_node()) ||
         !bookmark_tracker_->GetEntityForBookmarkNode(
             bookmark_model_->mobile_node())) {
+      LogMissingPermanentNodes(bookmark_tracker_->GetEntityForBookmarkNode(
+                                   bookmark_model_->bookmark_bar_node()),
+                               bookmark_tracker_->GetEntityForBookmarkNode(
+                                   bookmark_model_->other_node()),
+                               bookmark_tracker_->GetEntityForBookmarkNode(
+                                   bookmark_model_->mobile_node()));
       StopTrackingMetadata();
       bookmark_tracker_.reset();
       error_handler_.Run(
@@ -258,6 +314,9 @@ void BookmarkModelTypeProcessor::ModelReadyToSync(
   DCHECK(!bookmark_tracker_);
   DCHECK(!bookmark_model_observer_);
 
+  // TODO(crbug.com/950869): Remove after investigations are completed.
+  TRACE_EVENT0("browser", "BookmarkModelTypeProcessor::ModelReadyToSync");
+
   bookmark_model_ = model;
   schedule_save_closure_ = schedule_save_closure;
 
@@ -314,7 +373,7 @@ size_t BookmarkModelTypeProcessor::EstimateMemoryUsage() const {
 base::WeakPtr<syncer::ModelTypeControllerDelegate>
 BookmarkModelTypeProcessor::GetWeakPtr() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return weak_ptr_factory_.GetWeakPtr();
+  return weak_ptr_factory_for_controller_.GetWeakPtr();
 }
 
 void BookmarkModelTypeProcessor::OnSyncStarting(
@@ -371,7 +430,7 @@ void BookmarkModelTypeProcessor::ConnectIfReady() {
   }
   activation_context->type_processor =
       std::make_unique<syncer::ModelTypeProcessorProxy>(
-          weak_ptr_factory_.GetWeakPtr(),
+          weak_ptr_factory_for_worker_.GetWeakPtr(),
           base::SequencedTaskRunnerHandle::Get());
   std::move(start_callback_).Run(std::move(activation_context));
 }
@@ -408,7 +467,8 @@ void BookmarkModelTypeProcessor::OnSyncStopping(
   }
 
   // Do not let any delayed callbacks to be called.
-  weak_ptr_factory_.InvalidateWeakPtrs();
+  weak_ptr_factory_for_controller_.InvalidateWeakPtrs();
+  weak_ptr_factory_for_worker_.InvalidateWeakPtrs();
 }
 
 void BookmarkModelTypeProcessor::NudgeForCommitIfNeeded() {

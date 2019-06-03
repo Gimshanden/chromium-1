@@ -4,6 +4,7 @@
 <link rel="import" href="chrome://resources/cr_elements/cr_scrollable_behavior.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_searchable_drop_down/cr_searchable_drop_down.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
+<link rel="import" href="../i18n_setup.html">
 <link rel="import" href="cups_add_printer_dialog_elements.html">
 <link rel="import" href="cups_printer_dialog_util.html">
 <link rel="import" href="cups_printer_shared_css.html">
@@ -18,7 +19,7 @@
         <div class="settings-box first two-line">
           <cr-input class="printer-name-input" autofocus
               id="printerName"
-              value="{{activePrinter.printerName}}"
+              value="{{pendingPrinter_.printerName}}"
               on-input="onPrinterInfoChange_"
               label="$i18n{printerName}"
               maxlength=64>
@@ -27,10 +28,10 @@
         <div class="settings-box two-line">
           <cr-input label="$i18n{printerAddress}"
               id="printerAddress"
-              value="{{activePrinter.printerAddress}}"
               on-input="onPrinterInfoChange_"
+              value="{{pendingPrinter_.printerAddress}}"
               disabled="[[!networkProtocolActive_]]"
-              maxlength=128>
+              maxlength=63>
           </cr-input>
         </div>
         <div class="settings-box two-line">
@@ -38,7 +39,7 @@
             <div id="printerProtocol" class="label">$i18n{printerProtocol}</div>
             <div class="secondary">
               <select class="md-select" aria-labelledby="printerProtocol"
-                  value="[[activePrinter.printerProtocol]]"
+                  value="[[pendingPrinter_.printerProtocol]]"
                   on-change="onProtocolChange_"
                   disabled="[[!networkProtocolActive_]]">
                 <option value="ipp" disabled="[[!networkProtocolActive_]]">
@@ -71,7 +72,7 @@
         </div>
         <div class="settings-box two-line">
           <cr-input id="printerQueue" label="$i18n{printerQueue}"
-              value="{{activePrinter.printerQueue}}"
+              value="{{pendingPrinter_.printerQueue}}"
               on-input="onPrinterInfoChange_"
               disabled="[[!networkProtocolActive_]]"
               maxlength=64>
@@ -79,21 +80,21 @@
         </div>
         <div class="settings-box two-line">
           <cr-input label="$i18n{printerURI}" readonly
-              value="[[getPrinterURI_(activePrinter)]]">
+              value="[[getPrinterURI_(pendingPrinter_)]]">
           </cr-input>
         </div>
         <div class="settings-box two-line">
           <cr-searchable-drop-down items="[[manufacturerList]]"
               id="printerPPDManufacturer"
               label="$i18n{printerManufacturer}"
-              value="{{activePrinter.ppdManufacturer}}">
+              value="{{pendingPrinter_.ppdManufacturer}}">
           </cr-searchable-drop-down>
         </div>
         <div class="settings-box two-line">
           <cr-searchable-drop-down items="[[modelList]]"
               id="printerPPDModel"
               label="$i18n{printerModel}"
-              value="{{activePrinter.ppdModel}}">
+              value="{{pendingPrinter_.ppdModel}}">
           </cr-searchable-drop-down>
         </div>
         <div class="settings-box two-line">
@@ -106,6 +107,9 @@
             $i18n{selectDriverButtonText}
           </paper-button>
         </div>
+        <div class="eula" id="eulaUrl" hidden="[[!eulaUrl_]]">
+          <a href="[[eulaUrl_]]" target="_blank">$i18n{printerEulaNotice}</a>
+        </div>
       </div>
       <div slot="dialog-buttons">
         <paper-button class="cancel-button secondary-button"
@@ -113,8 +117,8 @@
           $i18n{cancel}
         </paper-button>
         <paper-button class="action-button" on-click="onSaveTap_"
-            disabled="[[!canSavePrinter_(activePrinter.*,
-                        printerInfoChanged_)]]">
+            disabled="[[!canSavePrinter_(pendingPrinter_.*,
+                                         printerInfoChanged_)]]">
           $i18n{editPrinterButtonText}
         </paper-button>
       </div>

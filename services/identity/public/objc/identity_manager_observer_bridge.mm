@@ -35,13 +35,6 @@ void IdentityManagerObserverBridge::OnPrimaryAccountCleared(
   }
 }
 
-void IdentityManagerObserverBridge::OnPrimaryAccountSigninFailed(
-    const GoogleServiceAuthError& error) {
-  if ([delegate_ respondsToSelector:@selector(onPrimaryAccountSigninFailed:)]) {
-    [delegate_ onPrimaryAccountSigninFailed:error];
-  }
-}
-
 void IdentityManagerObserverBridge::OnRefreshTokenUpdatedForAccount(
     const CoreAccountInfo& account_info) {
   if ([delegate_
@@ -51,10 +44,10 @@ void IdentityManagerObserverBridge::OnRefreshTokenUpdatedForAccount(
 }
 
 void IdentityManagerObserverBridge::OnRefreshTokenRemovedForAccount(
-    const std::string& account_id) {
+    const CoreAccountId& account_id) {
   if ([delegate_
           respondsToSelector:@selector(onRefreshTokenRemovedForAccount:)]) {
-    [delegate_ onRefreshTokenRemovedForAccount:account_id];
+    [delegate_ onRefreshTokenRemovedForAccount:account_id.id];
   }
 }
 

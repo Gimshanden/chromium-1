@@ -8,8 +8,8 @@
 
 #include "base/path_service.h"
 #include "build/build_config.h"
+#include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -39,6 +39,7 @@
 #endif
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/first_run/first_run.h"
 #include "content/public/browser/host_zoom_map.h"
 #endif
 
@@ -232,7 +233,7 @@ bool Profile::IsRegularProfile() const {
   return GetProfileType() == REGULAR_PROFILE;
 }
 
-bool Profile::IsIncognito() const {
+bool Profile::IsIncognitoProfile() const {
   return GetProfileType() == INCOGNITO_PROFILE;
 }
 
@@ -267,12 +268,16 @@ network::mojom::NetworkContextPtr Profile::CreateNetworkContext(
 }
 
 bool Profile::IsNewProfile() {
-  // The profile has been shut down if the prefs were loaded from disk, unless
-  // first-run autoimport wrote them and reloaded the pref service.
-  // TODO(crbug.com/660346): revisit this when crbug.com/22142 (unifying the
-  // profile import code) is fixed.
+#if !defined(OS_ANDROID)
+  // The profile is new if the preference files has just been created, except on
+  // first run, because the installer may create a preference file. See
+  // https://crbug.com/728402
+  if (first_run::IsChromeFirstRun())
+    return true;
+#endif
+
   return GetOriginalProfile()->GetPrefs()->GetInitializationStatus() ==
-      PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
+         PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
 }
 
 bool Profile::IsSyncAllowed() {
@@ -328,3 +333,10 @@ double Profile::GetDefaultZoomLevelForProfile() {
       ->GetDefaultZoomLevel();
 }
 #endif  // !defined(OS_ANDROID)
+
+void Profile::Wipe() {
+  content::BrowserContext::GetBrowsingDataRemover(this)->Remove(
+      base::Time(), base::Time::Max(),
+      ChromeBrowsingDataRemoverDelegate::WIPE_PROFILE,
+      ChromeBrowsingDataRemoverDelegate::ALL_ORIGIN_TYPES);
+}

@@ -34,6 +34,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_loader_throttle.h"
+#include "crypto/sha2.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/system/string_data_pipe_producer.h"
 #include "net/base/io_buffer.h"
@@ -502,7 +503,7 @@ void SignedExchangeHandler::OnCertReceived(
   DCHECK(version_.has_value());
   const SignedExchangeSignatureVerifier::Result verify_result =
       SignedExchangeSignatureVerifier::Verify(
-          *version_, *envelope_, unverified_cert_chain_->cert(),
+          *version_, *envelope_, unverified_cert_chain_.get(),
           GetVerificationTime(), devtools_proxy_.get());
   UMA_HISTOGRAM_ENUMERATION(kHistogramSignatureVerificationResult,
                             verify_result);
@@ -542,17 +543,65 @@ void SignedExchangeHandler::OnCertReceived(
                                     weak_factory_.GetWeakPtr())));
 }
 
-bool SignedExchangeHandler::CheckCertExtension(
+// https://wicg.github.io/webpackage/draft-yasskin-http-origin-signed-responses.html#cross-origin-cert-req
+SignedExchangeLoadResult SignedExchangeHandler::CheckCertRequirements(
     const net::X509Certificate* verified_cert) {
-  if (base::FeatureList::IsEnabled(
-          features::kAllowSignedHTTPExchangeCertsWithoutExtension))
-    return true;
-
   // https://wicg.github.io/webpackage/draft-yasskin-http-origin-signed-responses.html#cross-origin-trust
   // Step 6.2. Validate that main-certificate has the CanSignHttpExchanges
   // extension (Section 4.2). [spec text]
-  return net::asn1::HasCanSignHttpExchangesDraftExtension(
-      net::x509_util::CryptoBufferAsStringPiece(verified_cert->cert_buffer()));
+  if (!net::asn1::HasCanSignHttpExchangesDraftExtension(
+          net::x509_util::CryptoBufferAsStringPiece(
+              verified_cert->cert_buffer())) &&
+      !base::FeatureList::IsEnabled(
+          features::kAllowSignedHTTPExchangeCertsWithoutExtension) &&
+      !unverified_cert_chain_->ShouldIgnoreErrors()) {
+    signed_exchange_utils::ReportErrorAndTraceEvent(
+        devtools_proxy_.get(),
+        "Certificate must have CanSignHttpExchangesDraft extension. To ignore "
+        "this error for testing, enable "
+        "chrome://flags/#allow-sxg-certs-without-extension.",
+        std::make_pair(0 /* signature_index */,
+                       SignedExchangeError::Field::kSignatureCertUrl));
+    return SignedExchangeLoadResult::kCertRequirementsNotMet;
+  }
+
+  // - Clients MUST reject certificates with this extension that were issued
+  // after 2019-05-01 and have a Validity Period longer than 90 days. [spec
+  // text]
+  // - After 2019-08-01, clients MUST reject all certificates with this
+  // extension that have a Validity Period longer than 90 days. [spec text]
+  // TODO(crbug.com/953165): Simplify this logic after 2019-08-01.
+  base::TimeDelta validity_period =
+      verified_cert->valid_expiry() - verified_cert->valid_start();
+  if (validity_period > base::TimeDelta::FromDays(90)) {
+    // 2019-05-01 00:00:00 UTC.
+    const base::Time kRequirementStartDateForIssuance =
+        base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(1556668800);
+    if (verified_cert->valid_start() >= kRequirementStartDateForIssuance &&
+        !unverified_cert_chain_->ShouldIgnoreErrors()) {
+      signed_exchange_utils::ReportErrorAndTraceEvent(
+          devtools_proxy_.get(),
+          "Signed Exchange's certificate issued after 2019-05-01 must not have "
+          "a validity period longer than 90 days.",
+          std::make_pair(0 /* signature_index */,
+                         SignedExchangeError::Field::kSignatureCertUrl));
+      return SignedExchangeLoadResult::kCertValidityPeriodTooLong;
+    }
+    // 2019-08-01 00:00:00 UTC.
+    const base::Time kRequirementStartDateForVerification =
+        base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(1564617600);
+    if (GetVerificationTime() >= kRequirementStartDateForVerification &&
+        !unverified_cert_chain_->ShouldIgnoreErrors()) {
+      signed_exchange_utils::ReportErrorAndTraceEvent(
+          devtools_proxy_.get(),
+          "After 2019-08-01, Signed Exchange's certificate must not have a "
+          "validity period longer than 90 days.",
+          std::make_pair(0 /* signature_index */,
+                         SignedExchangeError::Field::kSignatureCertUrl));
+      return SignedExchangeLoadResult::kCertValidityPeriodTooLong;
+    }
+  }
+  return SignedExchangeLoadResult::kSuccess;
 }
 
 bool SignedExchangeHandler::CheckOCSPStatus(
@@ -616,16 +665,10 @@ void SignedExchangeHandler::OnVerifyCert(
     return;
   }
 
-  if (!CheckCertExtension(cv_result.verified_cert.get())) {
-    signed_exchange_utils::ReportErrorAndTraceEvent(
-        devtools_proxy_.get(),
-        "Certificate must have CanSignHttpExchangesDraft extension. To ignore "
-        "this error for testing, enable "
-        "chrome://flags/#allow-sxg-certs-without-extension.",
-        std::make_pair(0 /* signature_index */,
-                       SignedExchangeError::Field::kSignatureCertUrl));
-    RunErrorCallback(SignedExchangeLoadResult::kCertRequirementsNotMet,
-                     net::ERR_INVALID_SIGNED_EXCHANGE);
+  SignedExchangeLoadResult result =
+      CheckCertRequirements(cv_result.verified_cert.get());
+  if (result != SignedExchangeLoadResult::kSuccess) {
+    RunErrorCallback(result, net::ERR_INVALID_SIGNED_EXCHANGE);
     return;
   }
 
@@ -665,6 +708,7 @@ void SignedExchangeHandler::OnVerifyCert(
   response_head.load_timing.send_start = now;
   response_head.load_timing.send_end = now;
   response_head.load_timing.receive_headers_end = now;
+  response_head.content_length = response_head.headers->GetContentLength();
 
   auto body_stream = CreateResponseBodyStream();
   if (!body_stream) {
@@ -737,6 +781,13 @@ SignedExchangeHandler::CreateResponseBodyStream() {
 
   return std::make_unique<MerkleIntegritySourceStream>(digest_iter->second,
                                                        std::move(source_));
+}
+
+base::Optional<net::SHA256HashValue>
+SignedExchangeHandler::ComputeHeaderIntegrity() const {
+  if (!envelope_)
+    return base::nullopt;
+  return envelope_->ComputeHeaderIntegrity();
 }
 
 }  // namespace content

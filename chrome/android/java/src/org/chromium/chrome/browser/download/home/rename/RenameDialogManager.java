@@ -3,14 +3,21 @@
 // found in the LICENSE file.
 package org.chromium.chrome.browser.download.home.rename;
 
+import static org.chromium.chrome.browser.download.home.metrics.UmaUtils.recordRenameAction;
+import static org.chromium.chrome.browser.download.home.metrics.UmaUtils.recordRenameResult;
+
 import android.content.Context;
+import android.support.annotation.IntDef;
 import android.text.TextUtils;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FileUtils;
+import org.chromium.chrome.browser.download.home.metrics.UmaUtils;
 import org.chromium.components.offline_items_collection.RenameResult;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * A class to manage Rename Dialog and Rename Extension Dialog display sequence.
@@ -35,32 +42,38 @@ public class RenameDialogManager {
     private @RenameResult int mLastRenameAttemptResult;
 
     private RenameCallback mRenameCallback;
-    private RenameDialogState mCurState;
+    private @RenameDialogState int mCurState;
 
-    private enum RenameDialogState {
+    @IntDef({RenameDialogState.NO_DIALOG, RenameDialogState.RENAME_DIALOG_DEFAULT,
+            RenameDialogState.RENAME_DIALOG_CANCEL, RenameDialogState.RENAME_DIALOG_COMMIT_ERROR,
+            RenameDialogState.RENAME_EXTENSION_DIALOG_DEFAULT,
+            RenameDialogState.RENAME_EXTENSION_DIALOG_CANCEL,
+            RenameDialogState.RENAME_EXTENSION_DIALOG_COMMIT_ERROR})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface RenameDialogState {
         /** Initial State, should not show any dialog. */
-        NO_DIALOG,
+        int NO_DIALOG = 0;
         /** Should show the rename dialog, asking user to input. */
-        RENAME_DIALOG_DEFAULT,
+        int RENAME_DIALOG_DEFAULT = 1;
         /** Rename dialog intent is aborted. */
-        RENAME_DIALOG_CANCEL,
+        int RENAME_DIALOG_CANCEL = 2;
         /**
            Get error message after rename attempt, should show the rename dialog with error
            message.
          */
-        RENAME_DIALOG_COMMIT_ERROR,
+        int RENAME_DIALOG_COMMIT_ERROR = 3;
         /**
            Should show the rename extension dialog, asking user to confirm the intent of changing
            extension.
          */
-        RENAME_EXTENSION_DIALOG_DEFAULT,
+        int RENAME_EXTENSION_DIALOG_DEFAULT = 4;
         /** Cancel the intent of changing the extension. */
-        RENAME_EXTENSION_DIALOG_CANCEL,
+        int RENAME_EXTENSION_DIALOG_CANCEL = 5;
         /**
          * Get error message after rename attempt after confirming the change of extension,
          * should show the rename dialog with error message.
          */
-        RENAME_EXTENSION_DIALOG_COMMIT_ERROR
+        int RENAME_EXTENSION_DIALOG_COMMIT_ERROR = 6;
     }
 
     public RenameDialogManager(Context context, ModalDialogManager modalDialogManager) {
@@ -99,34 +112,34 @@ public class RenameDialogManager {
      * Decider to telling the right order to dialog coordinators depending on the state transition
      * update.
      */
-    private void processDialogState(RenameDialogState nextState, int dismissalCause) {
+    private void processDialogState(@RenameDialogState int nextState, int dismissalCause) {
         switch (nextState) {
-            case NO_DIALOG:
+            case RenameDialogState.NO_DIALOG:
                 if (mCurState == RenameDialogState.RENAME_EXTENSION_DIALOG_DEFAULT) {
                     mRenameExtensionDialogCoordinator.dismissDialog(dismissalCause);
                 } else if (mCurState == RenameDialogState.RENAME_DIALOG_DEFAULT) {
                     mRenameDialogCoordinator.dismissDialog(dismissalCause);
                 }
                 break;
-            case RENAME_DIALOG_DEFAULT:
+            case RenameDialogState.RENAME_DIALOG_DEFAULT:
                 mRenameDialogCoordinator.showDialog(mOriginalName);
                 break;
-            case RENAME_DIALOG_COMMIT_ERROR:
+            case RenameDialogState.RENAME_DIALOG_COMMIT_ERROR:
                 mRenameDialogCoordinator.showDialogWithErrorMessage(
                         mLastAttemptedName, mLastRenameAttemptResult);
                 break;
-            case RENAME_DIALOG_CANCEL:
+            case RenameDialogState.RENAME_DIALOG_CANCEL:
                 mRenameDialogCoordinator.dismissDialog(dismissalCause);
                 break;
-            case RENAME_EXTENSION_DIALOG_DEFAULT:
+            case RenameDialogState.RENAME_EXTENSION_DIALOG_DEFAULT:
                 mRenameExtensionDialogCoordinator.showDialog();
                 mRenameDialogCoordinator.dismissDialog(dismissalCause);
                 break;
-            case RENAME_EXTENSION_DIALOG_CANCEL:
+            case RenameDialogState.RENAME_EXTENSION_DIALOG_CANCEL:
                 mRenameExtensionDialogCoordinator.dismissDialog(dismissalCause);
                 mRenameDialogCoordinator.showDialog(mLastAttemptedName);
                 break;
-            case RENAME_EXTENSION_DIALOG_COMMIT_ERROR:
+            case RenameDialogState.RENAME_EXTENSION_DIALOG_COMMIT_ERROR:
                 mRenameExtensionDialogCoordinator.dismissDialog(dismissalCause);
                 mRenameDialogCoordinator.showDialogWithErrorMessage(
                         mLastAttemptedName, mLastRenameAttemptResult);
@@ -150,10 +163,13 @@ public class RenameDialogManager {
                                 : RenameDialogState.RENAME_DIALOG_COMMIT_ERROR,
                         DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
             }
+            recordRenameResult(result);
         });
     }
 
-    private void onRenameDialogDismiss(int dismissalCause) {}
+    private void onRenameDialogDismiss(int dismissalCause) {
+        recordRenameAction(getRenameAction(false, dismissalCause));
+    }
 
     private void onRenameDialogClick(boolean isPositiveButton) {
         if (isPositiveButton) {
@@ -165,17 +181,12 @@ public class RenameDialogManager {
                 return;
             }
 
-            // TODO(hesen): Have a TextWatcher on the input, and disable OK button if it's empty.
-            if (TextUtils.isEmpty(mRenameDialogCoordinator.getCurSuggestedName())) return;
-
-            // TODO(hesen): Use backend getExtension instead.
-            if (!TextUtils.equals(FileUtils.getExtension(mLastAttemptedName),
-                        FileUtils.getExtension(mOriginalName))) {
+            if (!RenameUtils.getFileExtension(mLastAttemptedName)
+                            .equalsIgnoreCase(RenameUtils.getFileExtension(mOriginalName))) {
                 processDialogState(RenameDialogState.RENAME_EXTENSION_DIALOG_DEFAULT,
                         DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
                 return;
             }
-
             runRenameCallback();
         } else {
             mRenameDialogCoordinator.dismissDialog(DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
@@ -194,6 +205,24 @@ public class RenameDialogManager {
     private void onRenameExtensionDialogDismiss(int dismissalCause) {
         if (dismissalCause == DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE) {
             processDialogState(RenameDialogState.RENAME_EXTENSION_DIALOG_CANCEL, dismissalCause);
+        }
+        recordRenameAction(getRenameAction(true, dismissalCause));
+    }
+
+    private @UmaUtils.RenameDialogAction int getRenameAction(
+            boolean isExtensionDialog, int dismissalCause) {
+        switch (dismissalCause) {
+            case DialogDismissalCause.POSITIVE_BUTTON_CLICKED:
+                return isExtensionDialog
+                        ? UmaUtils.RenameDialogAction.RENAME_EXTENSION_DIALOG_CONFIRM
+                        : UmaUtils.RenameDialogAction.RENAME_DIALOG_CONFIRM;
+            case DialogDismissalCause.NEGATIVE_BUTTON_CLICKED:
+                return isExtensionDialog
+                        ? UmaUtils.RenameDialogAction.RENAME_EXTENSION_DIALOG_CANCEL
+                        : UmaUtils.RenameDialogAction.RENAME_DIALOG_CANCEL;
+            default:
+                return isExtensionDialog ? UmaUtils.RenameDialogAction.RENAME_EXTENSION_DIALOG_OTHER
+                                         : UmaUtils.RenameDialogAction.RENAME_DIALOG_OTHER;
         }
     }
 }

@@ -13,11 +13,14 @@ import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.LevelListDrawable;
+import android.support.annotation.StringRes;
 import android.support.v4.view.ViewCompat;
 import android.support.v7.content.res.AppCompatResources;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.ViewStub;
 import android.widget.ImageButton;
 
 import org.chromium.base.ApiCompatibilityUtils;
@@ -31,6 +34,7 @@ import org.chromium.chrome.browser.omnibox.LocationBarTablet;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.toolbar.HomeButton;
 import org.chromium.chrome.browser.toolbar.KeyboardNavigationListener;
 import org.chromium.chrome.browser.toolbar.TabCountProvider;
 import org.chromium.chrome.browser.toolbar.TabCountProvider.TabCountObserver;
@@ -52,7 +56,7 @@ public class ToolbarTablet extends ToolbarLayout
     // The number of toolbar buttons that can be hidden at small widths (reload, back, forward).
     public static final int HIDEABLE_BUTTON_COUNT = 3;
 
-    private ImageButton mHomeButton;
+    private HomeButton mHomeButton;
     private ImageButton mBackButton;
     private ImageButton mForwardButton;
     private ImageButton mReloadButton;
@@ -67,6 +71,7 @@ public class ToolbarTablet extends ToolbarLayout
     private boolean mShowTabStack;
     private boolean mToolbarButtonsVisible;
     private ImageButton[] mToolbarButtons;
+    private ImageButton mExperimentalButton;
 
     private NavigationPopup mNavigationPopup;
 
@@ -104,8 +109,18 @@ public class ToolbarTablet extends ToolbarLayout
         mReloadButton = findViewById(R.id.refresh_button);
         // ImageView tinting doesn't work with LevelListDrawable, use Drawable tinting instead.
         // See https://crbug.com/891593 for details.
-        Drawable reloadIcon = UiUtils.getTintedDrawable(
-                getContext(), R.drawable.btn_reload_stop, R.color.standard_mode_tint);
+        // Also, using Drawable tinting doesn't work correctly with LevelListDrawable on Android L
+        // and M. As a workaround, we are constructing the LevelListDrawable programmatically. See
+        // https://crbug.com/958031 for details.
+        final LevelListDrawable reloadIcon = new LevelListDrawable();
+        final int reloadLevel = getResources().getInteger(R.integer.reload_button_level_reload);
+        final int stopLevel = getResources().getInteger(R.integer.reload_button_level_stop);
+        final Drawable reloadLevelDrawable = UiUtils.getTintedDrawable(
+                getContext(), R.drawable.btn_toolbar_reload, R.color.standard_mode_tint);
+        reloadIcon.addLevel(reloadLevel, reloadLevel, reloadLevelDrawable);
+        final Drawable stopLevelDrawable = UiUtils.getTintedDrawable(
+                getContext(), R.drawable.btn_close, R.color.standard_mode_tint);
+        reloadIcon.addLevel(stopLevel, stopLevel, stopLevelDrawable);
         mReloadButton.setImageDrawable(reloadIcon);
         mShowTabStack = AccessibilityUtil.isAccessibilityEnabled()
                 && isAccessibilityTabSwitcherPreferenceEnabled();
@@ -131,6 +146,12 @@ public class ToolbarTablet extends ToolbarLayout
         mShouldAnimateButtonVisibilityChange = false;
         mToolbarButtonsVisible = true;
         mToolbarButtons = new ImageButton[] {mBackButton, mForwardButton, mReloadButton};
+    }
+
+    @Override
+    void destroy() {
+        super.destroy();
+        mHomeButton.destroy();
     }
 
     /**
@@ -364,8 +385,8 @@ public class ToolbarTablet extends ToolbarLayout
     @Override
     public void onThemeColorChanged(int color, boolean shouldAnimate) {
         setBackgroundColor(color);
-        final int textBoxColor =
-                ColorUtils.getTextBoxColorForToolbarBackground(getResources(), false, color);
+        final int textBoxColor = ColorUtils.getTextBoxColorForToolbarBackground(
+                getResources(), false, color, isIncognito());
         mLocationBar.getBackground().setColorFilter(textBoxColor, PorterDuff.Mode.SRC_IN);
 
         mLocationBar.updateVisualsForState();
@@ -537,6 +558,35 @@ public class ToolbarTablet extends ToolbarLayout
                 >= DeviceFormFactor.getNonMultiDisplayMinimumTabletWidthPx(getContext()));
 
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    @Override
+    void enableExperimentalButton(OnClickListener onClickListener, Drawable image,
+            @StringRes int contentDescriptionResId) {
+        if (mExperimentalButton == null) {
+            ViewStub viewStub = findViewById(R.id.experimental_button_stub);
+            mExperimentalButton = (ImageButton) viewStub.inflate();
+        }
+        mExperimentalButton.setOnClickListener(onClickListener);
+        mExperimentalButton.setImageDrawable(image);
+        mExperimentalButton.setContentDescription(
+                getContext().getResources().getString(contentDescriptionResId));
+        mExperimentalButton.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    void updateExperimentalButtonImage(Drawable image) {
+        assert mExperimentalButton != null;
+        mExperimentalButton.setImageDrawable(image);
+    }
+
+    @Override
+    void disableExperimentalButton() {
+        if (mExperimentalButton == null || mExperimentalButton.getVisibility() == View.GONE) {
+            return;
+        }
+
+        mExperimentalButton.setVisibility(View.GONE);
     }
 
     private void setToolbarButtonsVisible(boolean visible) {

@@ -36,6 +36,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/ntp_tiles/constants.h"
+#include "components/ntp_tiles/features.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/interstitial_page.h"
@@ -49,6 +50,9 @@
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_navigation_throttle_inserter.h"
+#include "net/test/embedded_test_server/default_handlers.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
 #include "ui/native_theme/test_native_theme.h"
@@ -81,6 +85,16 @@ content::RenderFrameHost* GetIframe(content::WebContents* tab,
   return nullptr;
 }
 
+bool ContainsDefaultSearchTile(content::RenderFrameHost* iframe) {
+  int num_search_tiles;
+  EXPECT_TRUE(instant_test_utils::GetIntFromJS(
+      iframe,
+      "document.querySelectorAll(\".md-tile["
+      "href='https://www.google.com/']\").length",
+      &num_search_tiles));
+  return num_search_tiles == 1;
+}
+
 class LocalNTPTest : public InProcessBrowserTest {
  public:
   LocalNTPTest(const std::vector<base::Feature>& enabled_features,
@@ -89,7 +103,7 @@ class LocalNTPTest : public InProcessBrowserTest {
   }
 
   LocalNTPTest()
-      : LocalNTPTest(/*enabled_features=*/{features::kUseGoogleLocalNtp},
+      : LocalNTPTest(/*enabled_features=*/{},
                      /*disabled_features=*/{features::kRemoveNtpFakebox}) {}
 
   void SetUpOnMainThread() override {
@@ -103,7 +117,11 @@ class LocalNTPTest : public InProcessBrowserTest {
     // Make sure the observer knows about the current items. Typically, this
     // gets triggered by navigating to an NTP.
     instant_service->UpdateMostVisitedItemsInfo();
-    mv_observer.WaitForMostVisitedItems(kDefaultMostVisitedItemCount);
+    const int numDefaultMVItems =
+        kDefaultMostVisitedItemCount +
+        (base::FeatureList::IsEnabled(ntp_tiles::kDefaultSearchShortcut) ? 1
+                                                                         : 0);
+    mv_observer.WaitForMostVisitedItems(numDefaultMVItems);
   }
 
  private:
@@ -219,10 +237,6 @@ IN_PROC_BROWSER_TEST_F(LocalNTPTest, EmbeddedSearchAPIExposesStaticFunctions) {
       {"window.chrome.embeddedSearch.searchBox.paste", "\"text\""},
       {"window.chrome.embeddedSearch.searchBox.startCapturingKeyStrokes", ""},
       {"window.chrome.embeddedSearch.searchBox.stopCapturingKeyStrokes", ""},
-      {"window.chrome.embeddedSearch.newTabPage.checkIsUserSignedIntoChromeAs",
-       "\"user@email.com\""},
-      {"window.chrome.embeddedSearch.newTabPage.checkIsUserSyncingHistory",
-       "\"user@email.com\""},
       {"window.chrome.embeddedSearch.newTabPage.deleteMostVisitedItem", "1"},
       {"window.chrome.embeddedSearch.newTabPage.deleteMostVisitedItem",
        "\"1\""},
@@ -679,15 +693,11 @@ IN_PROC_BROWSER_TEST_F(LocalNTPDarkModeTest, ToggleDarkMode) {
   content::RenderFrameHost* cl_iframe =
       GetIframe(active_tab, kEditCustomLinkIframe);
 
-  // Dark mode should not be applied to the main page, iframes, and Most Visited
-  // icons.
+  // Dark mode should not be applied to the main page and iframes.
   ASSERT_FALSE(GetIsDarkModeApplied(active_tab));
   ASSERT_FALSE(GetIsDarkModeApplied(mv_iframe));
   ASSERT_FALSE(GetIsDarkModeApplied(cl_iframe));
   ASSERT_TRUE(GetIsLightChipsApplied(active_tab));
-  for (int i = 0; i < kDefaultMostVisitedItemCount; ++i) {
-    ASSERT_FALSE(GetIsDarkTile(mv_iframe, i));
-  }
 
   // Enable dark mode and wait until the MV tiles have updated.
   content::DOMMessageQueue msg_queue(active_tab);
@@ -701,9 +711,6 @@ IN_PROC_BROWSER_TEST_F(LocalNTPDarkModeTest, ToggleDarkMode) {
   EXPECT_TRUE(GetIsDarkModeApplied(mv_iframe));
   EXPECT_TRUE(GetIsDarkModeApplied(cl_iframe));
   EXPECT_FALSE(GetIsLightChipsApplied(active_tab));
-  for (int i = 0; i < kDefaultMostVisitedItemCount; ++i) {
-    EXPECT_TRUE(GetIsDarkTile(mv_iframe, i));
-  }
 
   // Disable dark mode and wait until the MV tiles have updated.
   msg_queue.ClearQueue();
@@ -717,9 +724,6 @@ IN_PROC_BROWSER_TEST_F(LocalNTPDarkModeTest, ToggleDarkMode) {
   EXPECT_FALSE(GetIsDarkModeApplied(mv_iframe));
   EXPECT_FALSE(GetIsDarkModeApplied(cl_iframe));
   EXPECT_TRUE(GetIsLightChipsApplied(active_tab));
-  for (int i = 0; i < kDefaultMostVisitedItemCount; ++i) {
-    EXPECT_FALSE(GetIsDarkTile(mv_iframe, i));
-  }
 }
 
 // Tests that dark mode styling is properly applied to the local NTP on start-
@@ -755,13 +759,10 @@ IN_PROC_BROWSER_TEST_P(LocalNTPDarkModeStartupTest, DarkModeApplied) {
       GetIframe(active_tab, kEditCustomLinkIframe);
 
   // Check that dark mode, if enabled, has been properly applied to the main
-  // page, iframes, and Most Visited icons.
+  // page and iframes.
   EXPECT_EQ(kDarkModeEnabled, GetIsDarkModeApplied(active_tab));
   EXPECT_EQ(kDarkModeEnabled, GetIsDarkModeApplied(mv_iframe));
   EXPECT_EQ(kDarkModeEnabled, GetIsDarkModeApplied(cl_iframe));
-  for (int i = 0; i < kDefaultMostVisitedItemCount; ++i) {
-    EXPECT_EQ(kDarkModeEnabled, GetIsDarkTile(mv_iframe, i));
-  }
 }
 
 INSTANTIATE_TEST_SUITE_P(, LocalNTPDarkModeStartupTest, testing::Bool());
@@ -859,6 +860,92 @@ IN_PROC_BROWSER_TEST_F(LocalNTPTest, InterstitialsAreNotNTPs) {
   content::WaitForInterstitialDetach(active_tab);
   // Now the page should be an NTP again.
   EXPECT_TRUE(search::IsInstantNTP(active_tab));
+}
+
+class LocalNTPNoSearchShortcutTest : public LocalNTPTest {
+ public:
+  LocalNTPNoSearchShortcutTest()
+      : LocalNTPTest({}, {ntp_tiles::kDefaultSearchShortcut}) {}
+};
+
+IN_PROC_BROWSER_TEST_F(LocalNTPNoSearchShortcutTest, SearchShortcutHidden) {
+  content::WebContents* active_tab =
+      local_ntp_test_utils::OpenNewTab(browser(), GURL("about:blank"));
+
+  local_ntp_test_utils::NavigateToNTPAndWaitUntilLoaded(browser());
+  ASSERT_TRUE(search::IsInstantNTP(active_tab));
+
+  content::RenderFrameHost* iframe = GetIframe(active_tab, "mv-single");
+
+  EXPECT_FALSE(ContainsDefaultSearchTile(iframe));
+}
+
+#if defined(GOOGLE_CHROME_BUILD)
+class LocalNTPSearchShortcutTest : public LocalNTPTest {
+ public:
+  LocalNTPSearchShortcutTest()
+      : LocalNTPTest({ntp_tiles::kDefaultSearchShortcut}, {}) {}
+};
+
+IN_PROC_BROWSER_TEST_F(LocalNTPSearchShortcutTest, SearchShortcutShown) {
+  content::WebContents* active_tab =
+      local_ntp_test_utils::OpenNewTab(browser(), GURL("about:blank"));
+  local_ntp_test_utils::NavigateToNTPAndWaitUntilLoaded(browser());
+  ASSERT_TRUE(search::IsInstantNTP(active_tab));
+
+  content::RenderFrameHost* iframe = GetIframe(active_tab, kMostVisitedIframe);
+
+  EXPECT_TRUE(ContainsDefaultSearchTile(iframe));
+}
+#endif
+
+// This is a regression test for https://crbug.com/946489 and
+// https://crbug.com/963544 which say that clicking a most-visited link from an
+// NTP should 1) have `Sec-Fetch-Site: none` header and 2) have SameSite
+// cookies.  In other words - NTP navigations should be treated as if they were
+// browser-initiated (like following a bookmark through trusted Chrome UI).
+IN_PROC_BROWSER_TEST_F(LocalNTPTest,
+                       NtpNavigationsAreTreatedAsBrowserInitiated) {
+  // Set up a test server for inspecting cookies and headers.
+  net::EmbeddedTestServer test_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  net::test_server::RegisterDefaultHandlers(&test_server);
+  ASSERT_TRUE(test_server.Start());
+
+  // Have the server set a SameSite cookie.
+  GURL cookie_url(test_server.GetURL(
+      "/set-cookie?same-site-cookie=1;SameSite=Strict;httponly"));
+  ui_test_utils::NavigateToURL(browser(), cookie_url);
+
+  // Open an NTP.
+  content::WebContents* ntp_tab = local_ntp_test_utils::OpenNewTab(
+      browser(), GURL(chrome::kChromeUINewTabURL));
+
+  // Inject and click a link to foo.com/echoall and wait for the navigation to
+  // succeed.
+  GURL echo_all_url(test_server.GetURL("/echoall"));
+  const char* kNavScriptTemplate = R"(
+      var a = document.createElement('a');
+      a.href = $1;
+      a.innerText = 'Simulated most-visited link';
+      document.body.appendChild(a);
+      a.click();
+  )";
+  content::TestNavigationObserver nav_observer(ntp_tab);
+  ASSERT_TRUE(content::ExecuteScript(
+      ntp_tab, content::JsReplace(kNavScriptTemplate, echo_all_url)));
+  nav_observer.Wait();
+  ASSERT_TRUE(nav_observer.last_navigation_succeeded());
+  ASSERT_FALSE(search::IsInstantNTP(ntp_tab));
+
+  // Extract request headers reported via /echoall test page.
+  const char* kHeadersExtractionScript =
+      "document.getElementsByTagName('pre')[1].innerText;";
+  std::string request_headers =
+      content::EvalJs(ntp_tab, kHeadersExtractionScript).ExtractString();
+
+  // Verify request headers.
+  EXPECT_THAT(request_headers, ::testing::HasSubstr("Sec-Fetch-Site: none"));
+  EXPECT_THAT(request_headers, ::testing::HasSubstr("same-site-cookie=1"));
 }
 
 }  // namespace

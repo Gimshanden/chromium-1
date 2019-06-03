@@ -350,8 +350,8 @@ bool PoissonAllocationSampler::InstallAllocatorHooks() {
 #endif  // BUILDFLAG(USE_ALLOCATOR_SHIM)
 
 #if BUILDFLAG(USE_PARTITION_ALLOC) && !defined(OS_NACL)
-  PartitionAllocHooks::SetAllocationHook(&PartitionAllocHook);
-  PartitionAllocHooks::SetFreeHook(&PartitionFreeHook);
+  PartitionAllocHooks::SetObserverHooks(&PartitionAllocHook,
+                                        &PartitionFreeHook);
 #endif  // BUILDFLAG(USE_PARTITION_ALLOC) && !defined(OS_NACL)
 
   bool expected = false;
@@ -535,6 +535,8 @@ void PoissonAllocationSampler::SuppressRandomnessForTest(bool suppress) {
 void PoissonAllocationSampler::AddSamplesObserver(SamplesObserver* observer) {
   ScopedMuteThreadSamples no_reentrancy_scope;
   AutoLock lock(mutex_);
+  DCHECK(std::find(observers_.begin(), observers_.end(), observer) ==
+         observers_.end());
   observers_.push_back(observer);
   InstallAllocatorHooksOnce();
   g_running = !observers_.empty();
@@ -545,7 +547,7 @@ void PoissonAllocationSampler::RemoveSamplesObserver(
   ScopedMuteThreadSamples no_reentrancy_scope;
   AutoLock lock(mutex_);
   auto it = std::find(observers_.begin(), observers_.end(), observer);
-  CHECK(it != observers_.end());
+  DCHECK(it != observers_.end());
   observers_.erase(it);
   g_running = !observers_.empty();
 }

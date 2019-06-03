@@ -12,6 +12,8 @@
 
 class SkPath;
 class Tab;
+class TabGroupData;
+class TabGroupId;
 
 namespace gfx {
 class Point;
@@ -33,11 +35,6 @@ class TabController {
 
   // Returns true if multiple selection is supported.
   virtual bool SupportsMultipleSelection() = 0;
-
-  // Returns where the new tab button should be placed. This is needed to
-  // determine which tab separators need to be faded in/out while animating into
-  // position.
-  virtual NewTabButtonPosition GetNewTabButtonPosition() const = 0;
 
   // Returns true if the close button for the given tab is forced to be hidden.
   virtual bool ShouldHideCloseButtonForTab(Tab* tab) const = 0;
@@ -173,6 +170,9 @@ class TabController {
 
   // Returns opacity for use on tab hover radial highlight.
   virtual float GetHoverOpacityForRadialHighlight() const = 0;
+
+  // Returns the TabGroupData instance for the given |group|.
+  virtual const TabGroupData* GetDataForGroup(TabGroupId group) const = 0;
 
  protected:
   virtual ~TabController() {}

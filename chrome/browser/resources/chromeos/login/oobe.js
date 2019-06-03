@@ -32,14 +32,12 @@
 // <include src="screen_arc_kiosk_splash.js">
 // <include src="screen_arc_terms_of_service.js">
 // <include src="screen_error_message.js">
-// <include src="screen_gaia_signin.js">
 // <include src="screen_password_changed.js">
 // <include src="screen_tpm_error.js">
 // <include src="screen_wrong_hwid.js">
 // <include src="screen_confirm_password.js">
 // <include src="screen_fatal_error.js">
 // <include src="screen_device_disabled.js">
-// <include src="screen_unrecoverable_cryptohome_error.js">
 // <include src="screen_active_directory_password_change.js">
 // <include src="screen_encryption_migration.js">
 // <include src="screen_update_required.js">
@@ -83,7 +81,6 @@ cr.define('cr.ui.Oobe', function() {
       login.AutolaunchScreen.register();
       login.KioskEnableScreen.register();
       login.AccountPickerScreen.register();
-      login.GaiaSigninScreen.register();
       login.OAuthEnrollmentScreen.register();
       login.ErrorMessageScreen.register();
       login.TPMErrorMessageScreen.register();

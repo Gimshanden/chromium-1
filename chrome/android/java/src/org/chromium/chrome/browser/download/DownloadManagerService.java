@@ -143,6 +143,9 @@ public class DownloadManagerService
 
     private final Handler mHandler;
 
+    // The first download that is triggered in background mode.
+    private String mFirstBackgroundDownloadId;
+
     /** Generic interface for notifying external UI components about downloads and their states. */
     public interface DownloadObserver extends DownloadSharedPreferenceHelper.Observer {
         /** Called in response to {@link DownloadManagerService#getAllDownloads(boolean)}. */
@@ -797,17 +800,18 @@ public class DownloadManagerService
 
     @Nullable
     static Intent getLaunchIntentForDownload(@Nullable String filePath, long downloadId,
-            boolean isSupportedMimeType, String originalUrl, String referrer) {
+            boolean isSupportedMimeType, String originalUrl, String referrer,
+            @Nullable String mimeType) {
         assert !ThreadUtils.runningOnUiThread();
         if (downloadId == DownloadItem.INVALID_DOWNLOAD_ID) {
             if (!ContentUriUtils.isContentUri(filePath)) return null;
             return getLaunchIntentFromDownloadUri(
-                    filePath, isSupportedMimeType, originalUrl, referrer);
+                    filePath, isSupportedMimeType, originalUrl, referrer, mimeType);
         }
 
         DownloadManagerBridge.DownloadQueryResult queryResult =
                 DownloadManagerBridge.queryDownloadResult(downloadId);
-        String mimeType = queryResult.mimeType;
+        if (mimeType == null) mimeType = queryResult.mimeType;
 
         Uri contentUri = filePath == null
                 ? queryResult.contentUri
@@ -827,23 +831,27 @@ public class DownloadManagerService
      * @param isSupportedMimeType Whether the MIME type is supported by browser.
      * @param originalUrl The original url of the downloaded file
      * @param referrer   Referrer of the downloaded file.
+     * @param mimeType   MIME type of the downloaded file.
      * @return the intent to launch for the given download item.
      */
     @Nullable
-    private static Intent getLaunchIntentFromDownloadUri(
-            String contentUri, boolean isSupportedMimeType, String originalUrl, String referrer) {
+    private static Intent getLaunchIntentFromDownloadUri(String contentUri,
+            boolean isSupportedMimeType, String originalUrl, String referrer,
+            @Nullable String mimeType) {
         assert !ThreadUtils.runningOnUiThread();
         assert ContentUriUtils.isContentUri(contentUri);
 
         Uri uri = Uri.parse(contentUri);
-        try (Cursor cursor = ContextUtils.getApplicationContext().getContentResolver().query(
-                     uri, null, null, null, null)) {
-            if (cursor == null || cursor.getCount() == 0) return null;
-            cursor.moveToNext();
-            String mimeType = cursor.getString(cursor.getColumnIndex(MediaColumns.MIME_TYPE));
-            return createLaunchIntent(
-                    uri, uri, mimeType, isSupportedMimeType, originalUrl, referrer);
+        if (mimeType == null) {
+            try (Cursor cursor = ContextUtils.getApplicationContext().getContentResolver().query(
+                         uri, null, null, null, null)) {
+                if (cursor == null || cursor.getCount() == 0) return null;
+                cursor.moveToNext();
+                mimeType = cursor.getString(cursor.getColumnIndex(MediaColumns.MIME_TYPE));
+                cursor.close();
+            }
         }
+        return createLaunchIntent(uri, uri, mimeType, isSupportedMimeType, originalUrl, referrer);
     }
 
     /**
@@ -878,7 +886,8 @@ public class DownloadManagerService
     static boolean canResolveDownloadItem(DownloadItem download, boolean isSupportedMimeType) {
         assert !ThreadUtils.runningOnUiThread();
         Intent intent = getLaunchIntentForDownload(download.getDownloadInfo().getFilePath(),
-                download.getSystemDownloadId(), isSupportedMimeType, null, null);
+                download.getSystemDownloadId(), isSupportedMimeType, null, null,
+                download.getDownloadInfo().getMimeType());
         return (intent == null) ? false
                                 : ExternalNavigationDelegateImpl.resolveIntent(intent, true);
     }
@@ -896,7 +905,7 @@ public class DownloadManagerService
         if (isOMADownloadDescription(mimeType)) return true;
 
         Intent intent = getLaunchIntentForDownload(filePath, systemDownloadId,
-                DownloadManagerService.isSupportedMimeType(mimeType), null, null);
+                DownloadManagerService.isSupportedMimeType(mimeType), null, null, mimeType);
         return intent != null && ExternalNavigationDelegateImpl.resolveIntent(intent, true);
     }
 
@@ -906,7 +915,7 @@ public class DownloadManagerService
         openDownloadedContent(ContextUtils.getApplicationContext(), downloadInfo.getFilePath(),
                 isSupportedMimeType(downloadInfo.getMimeType()), downloadInfo.isOffTheRecord(),
                 downloadInfo.getDownloadGuid(), downloadId, downloadInfo.getOriginalUrl(),
-                downloadInfo.getReferrer(), source);
+                downloadInfo.getReferrer(), source, downloadInfo.getMimeType());
     }
 
     /**
@@ -915,23 +924,24 @@ public class DownloadManagerService
      *
      * @param context             Context to use.
      * @param filePath            Path to the downloaded item.
-     * @param isSupportedMimeType MIME type of the downloaded item.
+     * @param isSupportedMimeType Whether the MIME type is supported by Chrome.
      * @param isOffTheRecord      Whether the download was for a off the record profile.
      * @param downloadGuid        GUID of the download item in DownloadManager.
      * @param downloadId          ID of the download item in DownloadManager.
      * @param originalUrl         The original url of the downloaded file.
      * @param referrer            Referrer of the downloaded file.
      * @param source              The source that tries to open the download.
+     * @param mimeType            MIME type of the download, could be null.
      */
     protected static void openDownloadedContent(final Context context, final String filePath,
             final boolean isSupportedMimeType, final boolean isOffTheRecord,
             final String downloadGuid, final long downloadId, final String originalUrl,
-            final String referrer, @DownloadOpenSource int source) {
+            final String referrer, @DownloadOpenSource int source, @Nullable String mimeType) {
         new AsyncTask<Intent>() {
             @Override
             public Intent doInBackground() {
                 return getLaunchIntentForDownload(
-                        filePath, downloadId, isSupportedMimeType, originalUrl, referrer);
+                        filePath, downloadId, isSupportedMimeType, originalUrl, referrer, mimeType);
             }
 
             @Override
@@ -1157,6 +1167,8 @@ public class DownloadManagerService
      * @return Whether the file would be openable by the browser.
      */
     public static boolean isSupportedMimeType(String mimeType) {
+        // In NoTouch mode we don't support opening downloaded files in-browser.
+        if (FeatureUtilities.isNoTouchModeEnabled()) return false;
         return nativeIsSupportedMimeType(mimeType);
     }
 
@@ -1967,6 +1979,11 @@ public class DownloadManagerService
         DownloadNotificationUmaHelper.recordBackgroundDownloadHistogram(
                 UmaBackgroundDownload.STARTED);
         sBackgroundDownloadIds.add(downloadGuid);
+        if (mFirstBackgroundDownloadId == null) {
+            mFirstBackgroundDownloadId = downloadGuid;
+            DownloadNotificationUmaHelper.recordFirstBackgroundDownloadHistogram(
+                    UmaBackgroundDownload.STARTED);
+        }
     }
 
     /**
@@ -1976,8 +1993,14 @@ public class DownloadManagerService
      */
     private void maybeRecordBackgroundDownload(
             @UmaBackgroundDownload int event, String downloadGuid) {
-        if (sBackgroundDownloadIds.remove(downloadGuid)) {
+        if (sBackgroundDownloadIds.contains(downloadGuid)) {
+            if (event != UmaBackgroundDownload.INTERRUPTED) {
+                sBackgroundDownloadIds.remove(downloadGuid);
+            }
             DownloadNotificationUmaHelper.recordBackgroundDownloadHistogram(event);
+        }
+        if (downloadGuid.equals(mFirstBackgroundDownloadId)) {
+            DownloadNotificationUmaHelper.recordFirstBackgroundDownloadHistogram(event);
         }
     }
 

@@ -56,7 +56,7 @@ void WakeLockProvider::AddBinding(mojom::WakeLockProviderRequest request) {
 
 void WakeLockProvider::GetWakeLockContextForID(
     int context_id,
-    mojo::InterfaceRequest<mojom::WakeLockContext> request) {
+    mojom::WakeLockContextRequest request) {
   DCHECK_GE(context_id, 0);
   mojo::MakeStrongBinding(
       std::make_unique<WakeLockContext>(context_id, file_task_runner_,
@@ -72,8 +72,7 @@ void WakeLockProvider::GetWakeLockWithoutContext(
   std::unique_ptr<WakeLock> wake_lock =
       std::make_unique<WakeLock>(std::move(request), type, reason, description,
                                  WakeLockContext::WakeLockInvalidContextId,
-                                 native_view_getter_, file_task_runner_);
-  wake_lock->AddObserver(this);
+                                 native_view_getter_, file_task_runner_, this);
   GetWakeLockDataPerType(type).wake_locks[wake_lock.get()] =
       std::move(wake_lock);
 }

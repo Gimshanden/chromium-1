@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -92,8 +93,6 @@ CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
               ? GetOrCreateResourceDispatcher()->GetWeakPtr()
               : nullptr;
 
-      base::WeakPtr<WebGraphicsContext3DProviderWrapper>
-          context_provider_wrapper = SharedGpuContext::ContextProviderWrapper();
       if (Is3d()) {
         CanvasResourceProvider::ResourceUsage usage;
         if (SharedGpuContext::IsGpuCompositingEnabled()) {
@@ -114,9 +113,9 @@ CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
             !SharedGpuContext::IsGpuCompositingEnabled();
 
         ReplaceResourceProvider(CanvasResourceProvider::Create(
-            Size(), usage, context_provider_wrapper, 0 /* msaa_sample_count */,
-            ColorParams(), presentation_mode, std::move(dispatcher),
-            is_origin_top_left));
+            Size(), usage, SharedGpuContext::ContextProviderWrapper(),
+            0 /* msaa_sample_count */, ColorParams(), presentation_mode,
+            std::move(dispatcher), is_origin_top_left));
       } else {
         DCHECK(Is2d());
         const bool want_acceleration =
@@ -133,20 +132,16 @@ CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
         }
 
         const CanvasResourceProvider::PresentationMode presentation_mode =
-            RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled() ||
-                    (LowLatencyEnabled() && want_acceleration)
+            (RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled() ||
+             (LowLatencyEnabled() && want_acceleration))
                 ? CanvasResourceProvider::kAllowImageChromiumPresentationMode
                 : CanvasResourceProvider::kDefaultPresentationMode;
 
         const bool is_origin_top_left =
-            !want_acceleration || LowLatencyEnabled() ||
-            (context_provider_wrapper &&
-             context_provider_wrapper->ContextProvider()
-                 ->GetCapabilities()
-                 .mesa_framebuffer_flip_y);
+            !want_acceleration || LowLatencyEnabled();
 
         ReplaceResourceProvider(CanvasResourceProvider::Create(
-            Size(), usage, context_provider_wrapper,
+            Size(), usage, SharedGpuContext::ContextProviderWrapper(),
             GetMSAASampleCountFor2dContext(), ColorParams(), presentation_mode,
             std::move(dispatcher), is_origin_top_left));
 
@@ -217,7 +212,7 @@ ScriptPromise CanvasRenderingContextHost::convertToBlob(
       function_type =
           CanvasAsyncBlobCreator::kOffscreenCanvasConvertToBlobPromise;
     }
-    CanvasAsyncBlobCreator* async_creator = CanvasAsyncBlobCreator::Create(
+    auto* async_creator = MakeGarbageCollected<CanvasAsyncBlobCreator>(
         image_bitmap, options, function_type, start_time,
         ExecutionContext::From(script_state), resolver);
     async_creator->ScheduleAsyncBlobCreation(options->quality());

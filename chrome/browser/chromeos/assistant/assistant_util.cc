@@ -22,9 +22,8 @@ namespace assistant {
 
 ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
     const Profile* profile) {
-  if (!chromeos::switches::IsAssistantEnabled()) {
+  if (!chromeos::switches::IsAssistantEnabled())
     return ash::mojom::AssistantAllowedState::DISALLOWED_BY_FLAG;
-  }
 
   if (!chromeos::ProfileHelper::IsPrimaryProfile(profile))
     return ash::mojom::AssistantAllowedState::DISALLOWED_BY_NONPRIMARY_USER;
@@ -41,18 +40,32 @@ ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
   if (user_manager::UserManager::Get()->IsLoggedInAsPublicAccount())
     return ash::mojom::AssistantAllowedState::DISALLOWED_BY_PUBLIC_SESSION;
 
+  // TODO(wutao): Add a new type DISALLOWED_BY_KIOSK_MODE.
+  if (user_manager::UserManager::Get()->IsLoggedInAsKioskApp() ||
+      user_manager::UserManager::Get()->IsLoggedInAsArcKioskApp()) {
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_ACCOUNT_TYPE;
+  }
+
   // String literals used in some cases in the array because their
   // constant equivalents don't exist in:
   // third_party/icu/source/common/unicode/uloc.h
   const std::string kAllowedLocales[] = {ULOC_CANADA,
                                          ULOC_CANADA_FRENCH,
+                                         ULOC_FRANCE,
                                          ULOC_FRENCH,
                                          ULOC_UK,
                                          ULOC_US,
-                                         "da_DK",
-                                         "nl_NL",
-                                         "no_NO"
-                                         "sv_SE"};
+                                         "da",
+                                         "de_DE",
+                                         "en_AU",
+                                         "en_NZ",
+                                         "ja",
+                                         "ja_JP",
+                                         "nb",
+                                         "nl",
+                                         "nn",
+                                         "no",
+                                         "sv"};
 
   const PrefService* prefs = profile->GetPrefs();
   std::string pref_locale =
@@ -60,7 +73,9 @@ ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
   // Also accept runtime locale which maybe an approximation of user's pref
   // locale.
   const std::string kRuntimeLocale = icu::Locale::getDefault().getName();
-  if (!pref_locale.empty()) {
+  // Bypass locale check when using fake gaia login. There is no need to enforce
+  // in these test environments.
+  if (!chromeos::switches::IsGaiaServicesDisabled() && !pref_locale.empty()) {
     base::ReplaceChars(pref_locale, "-", "_", &pref_locale);
     bool disallowed = !base::ContainsValue(kAllowedLocales, pref_locale) &&
                       !base::ContainsValue(kAllowedLocales, kRuntimeLocale);

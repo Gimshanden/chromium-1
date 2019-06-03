@@ -47,25 +47,25 @@ void FakeBaseTabStripController::RemoveTab(int index) {
   tab_strip_->RemoveTabAt(nullptr, index, was_active);
 }
 
-TabGroupData* FakeBaseTabStripController::CreateTabGroup() {
-  groups_.push_back(std::make_unique<TabGroupData>());
-  return groups_.back().get();
-}
-
-void FakeBaseTabStripController::MoveTabIntoGroup(int index,
-                                                  TabGroupData* new_group) {
-  TabGroupData* old_group = tab_to_group_[index];
+void FakeBaseTabStripController::MoveTabIntoGroup(
+    int index,
+    base::Optional<TabGroupId> new_group) {
+  const base::Optional<TabGroupId> old_group = tab_to_group_[index];
   tab_to_group_[index] = new_group;
   tab_strip_->ChangeTabGroup(index, old_group, new_group);
 }
 
+const TabGroupData* FakeBaseTabStripController::GetDataForGroup(
+    TabGroupId group) const {
+  return &fake_group_data_;
+}
+
 std::vector<int> FakeBaseTabStripController::ListTabsInGroup(
-    const TabGroupData* group) const {
-  DCHECK(group);
+    TabGroupId group) const {
   std::vector<int> result;
-  for (auto const& tab_header_pair : tab_to_group_) {
-    if (tab_header_pair.second == group)
-      result.push_back(tab_header_pair.first);
+  for (auto const& tab_group_pair : tab_to_group_) {
+    if (tab_group_pair.second == group)
+      result.push_back(tab_group_pair.first);
   }
   return result;
 }
@@ -138,15 +138,6 @@ int FakeBaseTabStripController::HasAvailableDragActions() const {
 
 void FakeBaseTabStripController::OnDropIndexUpdate(int index,
                                                    bool drop_before) {
-}
-
-bool FakeBaseTabStripController::IsCompatibleWith(TabStrip* other) const {
-  return false;
-}
-
-NewTabButtonPosition FakeBaseTabStripController::GetNewTabButtonPosition()
-    const {
-  return AFTER_TABS;
 }
 
 void FakeBaseTabStripController::CreateNewTab() {

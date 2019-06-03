@@ -144,12 +144,12 @@ generated_core_callback_function_files = [
   "$bindings_core_v8_output_dir/v8_custom_element_attribute_changed_callback.h",
   "$bindings_core_v8_output_dir/v8_custom_element_constructor.cc",
   "$bindings_core_v8_output_dir/v8_custom_element_constructor.h",
-  "$bindings_core_v8_output_dir/v8_custom_element_disabled_state_changed_callback.cc",
-  "$bindings_core_v8_output_dir/v8_custom_element_disabled_state_changed_callback.h",
   "$bindings_core_v8_output_dir/v8_custom_element_form_associated_callback.cc",
   "$bindings_core_v8_output_dir/v8_custom_element_form_associated_callback.h",
-  "$bindings_core_v8_output_dir/v8_custom_element_restore_state_callback.cc",
-  "$bindings_core_v8_output_dir/v8_custom_element_restore_state_callback.h",
+  "$bindings_core_v8_output_dir/v8_custom_element_form_disabled_callback.cc",
+  "$bindings_core_v8_output_dir/v8_custom_element_form_disabled_callback.h",
+  "$bindings_core_v8_output_dir/v8_custom_element_form_state_restore_callback.cc",
+  "$bindings_core_v8_output_dir/v8_custom_element_form_state_restore_callback.h",
   "$bindings_core_v8_output_dir/v8_event_handler_non_null.cc",
   "$bindings_core_v8_output_dir/v8_event_handler_non_null.h",
   "$bindings_core_v8_output_dir/v8_for_each_iterator_callback.cc",
@@ -194,7 +194,7 @@ generate_origin_trial_features("bindings_core_origin_trial_features") {
   output_dir = bindings_core_output_dir + "/v8"
   deps = [
     "//third_party/blink/renderer/bindings/core:core_global_constructors_idls",
-    "//third_party/blink/renderer/bindings/core:interfaces_info_individual_core",
+    "//third_party/blink/renderer/bindings/core:interfaces_info_core",
   ]
 }
 
@@ -296,7 +296,6 @@ jumbo_source_set("testing") {
   deps = [
     ":bindings_core_v8_generated",
     "//skia",
-    "//third_party/blink/public:generate_mojo_bindings",
     "//third_party/blink/renderer/core:all_generators",
     "//third_party/blink/renderer/platform",
     "//v8",

@@ -32,12 +32,16 @@ void ResolveTestFilePath(base::FilePath* file_path) {
 
 // Converts the |pixel_format| string into a VideoPixelFormat.
 VideoPixelFormat ConvertStringtoPixelFormat(const std::string& pixel_format) {
-  if (pixel_format == "I420") {
+  if (pixel_format == "BGRA") {
+    return PIXEL_FORMAT_ARGB;
+  } else if (pixel_format == "I420") {
     return PIXEL_FORMAT_I420;
   } else if (pixel_format == "NV12") {
     return PIXEL_FORMAT_NV12;
   } else if (pixel_format == "YV12") {
     return PIXEL_FORMAT_YV12;
+  } else if (pixel_format == "RGBA") {
+    return PIXEL_FORMAT_ABGR;
   } else {
     VLOG(2) << pixel_format << " is not supported.";
     return PIXEL_FORMAT_UNKNOWN;

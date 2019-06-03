@@ -24,13 +24,13 @@
 #include "third_party/blink/renderer/core/css/css_style_rule.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/inspector/add_string_to_digestor.h"
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
 #include "third_party/blink/renderer/core/inspector/inspector_css_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_style_sheet.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/platform/animation/timing_function.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
 
 namespace blink {
@@ -274,7 +274,8 @@ blink::Animation* InspectorAnimationAgent::AnimationClone(
       StringKeyframeVector new_keyframes;
       for (auto& old_keyframe : old_keyframes)
         new_keyframes.push_back(ToStringKeyframe(old_keyframe));
-      new_model = StringKeyframeEffectModel::Create(new_keyframes);
+      new_model =
+          MakeGarbageCollected<StringKeyframeEffectModel>(new_keyframes);
     } else if (old_model->IsTransitionKeyframeEffectModel()) {
       TransitionKeyframeEffectModel* old_transition_keyframe_model =
           ToTransitionKeyframeEffectModel(old_model);
@@ -282,10 +283,11 @@ blink::Animation* InspectorAnimationAgent::AnimationClone(
       TransitionKeyframeVector new_keyframes;
       for (auto& old_keyframe : old_keyframes)
         new_keyframes.push_back(ToTransitionKeyframe(old_keyframe));
-      new_model = TransitionKeyframeEffectModel::Create(new_keyframes);
+      new_model =
+          MakeGarbageCollected<TransitionKeyframeEffectModel>(new_keyframes);
     }
 
-    KeyframeEffect* new_effect = KeyframeEffect::Create(
+    auto* new_effect = MakeGarbageCollected<KeyframeEffect>(
         old_effect->target(), new_model, old_effect->SpecifiedTiming());
     is_cloning_ = true;
     blink::Animation* clone =
@@ -424,10 +426,9 @@ String InspectorAnimationAgent::CreateCSSId(blink::Animation& animation) {
   Element* element = effect->target();
   HeapVector<Member<CSSStyleDeclaration>> styles =
       css_agent_->MatchingStyles(element);
-  std::unique_ptr<WebCryptoDigestor> digestor =
-      CreateDigestor(kHashAlgorithmSha1);
-  AddStringToDigestor(digestor.get(), type);
-  AddStringToDigestor(digestor.get(), animation.id());
+  Digestor digestor(kHashAlgorithmSha1);
+  digestor.UpdateUtf8(type);
+  digestor.UpdateUtf8(animation.id());
   for (const CSSProperty* property : css_properties) {
     CSSStyleDeclaration* style =
         css_agent_->FindEffectiveDeclaration(*property, styles);
@@ -435,14 +436,13 @@ String InspectorAnimationAgent::CreateCSSId(blink::Animation& animation) {
     if (!style || !style->ParentStyleSheet() || !style->parentRule() ||
         style->parentRule()->type() != CSSRule::kStyleRule)
       continue;
-    AddStringToDigestor(digestor.get(), property->GetPropertyNameString());
-    AddStringToDigestor(digestor.get(),
-                        css_agent_->StyleSheetId(style->ParentStyleSheet()));
-    AddStringToDigestor(digestor.get(),
-                        To<CSSStyleRule>(style->parentRule())->selectorText());
+    digestor.UpdateUtf8(property->GetPropertyNameString());
+    digestor.UpdateUtf8(css_agent_->StyleSheetId(style->ParentStyleSheet()));
+    digestor.UpdateUtf8(To<CSSStyleRule>(style->parentRule())->selectorText());
   }
   DigestValue digest_result;
-  FinishDigestor(digestor.get(), digest_result);
+  digestor.Finish(digest_result);
+  DCHECK(!digestor.has_failed());
   return Base64Encode(reinterpret_cast<const char*>(digest_result.data()), 10);
 }
 

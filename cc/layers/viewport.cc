@@ -227,8 +227,17 @@ void Viewport::PinchEnd(const gfx::Point& anchor, bool snap_to_min) {
   pinch_zoom_active_ = false;
 }
 
+bool Viewport::ShouldScroll(const ScrollNode& scroll_node) {
+  return scroll_node.scrolls_inner_viewport ||
+         scroll_node.scrolls_outer_viewport;
+}
+
 LayerImpl* Viewport::MainScrollLayer() const {
   return host_impl_->OuterViewportScrollLayer();
+}
+
+ScrollNode* Viewport::MainScrollNode() const {
+  return host_impl_->OuterViewportScrollNode();
 }
 
 gfx::Vector2dF Viewport::ScrollBrowserControls(const gfx::Vector2dF& delta) {
@@ -277,6 +286,9 @@ gfx::ScrollOffset Viewport::MaxTotalScrollOffset() const {
 
 gfx::ScrollOffset Viewport::TotalScrollOffset() const {
   gfx::ScrollOffset offset;
+
+  if (!InnerScrollNode())
+    return offset;
 
   offset += scroll_tree().current_scroll_offset(InnerScrollNode()->element_id);
 

@@ -8,6 +8,8 @@
 #include <cmath>
 #include <utility>
 
+#include "third_party/blink/renderer/core/geometry/dom_point_init.h"
+#include "third_party/blink/renderer/core/geometry/dom_point_read_only.h"
 #include "third_party/blink/renderer/modules/xr/xr_rigid_transform.h"
 #include "third_party/blink/renderer/modules/xr/xr_utils.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
@@ -16,6 +18,7 @@
 #include "ui/gfx/geometry/vector3d_f.h"
 
 namespace blink {
+
 XRRay::XRRay(std::unique_ptr<TransformationMatrix> matrix) {
   Set(std::move(matrix));
 }
@@ -97,10 +100,10 @@ DOMFloat32Array* XRRay::matrix() {
     // (0,0,0) with direction (0,0,-1) into ray originating at |origin_| with
     // direction |direction_|.
 
-    matrix_ = std::make_unique<TransformationMatrix>();
+    TransformationMatrix matrix;
 
     // Translation from 0 to |origin_| is simply translation by |origin_|.
-    matrix_->Translate3d(origin_->x(), origin_->y(), origin_->z());
+    matrix.Translate3d(origin_->x(), origin_->y(), origin_->z());
 
     const blink::FloatPoint3D initialRayDirection =
         blink::FloatPoint3D{0.f, 0.f, -1.f};
@@ -119,23 +122,32 @@ DOMFloat32Array* XRRay::matrix() {
       blink::FloatPoint3D axis = FloatPoint3D{1, 0, 0};
       cos_angle = -1;
 
-      matrix_->Rotate3d(axis.X(), axis.Y(), axis.Z(),
-                        rad2deg(std::acos(cos_angle)));
+      matrix.Rotate3d(axis.X(), axis.Y(), axis.Z(),
+                      rad2deg(std::acos(cos_angle)));
     } else {
       // Rotation needed - create it from axis-angle.
       blink::FloatPoint3D axis = initialRayDirection.Cross(desiredRayDirection);
 
-      matrix_->Rotate3d(axis.X(), axis.Y(), axis.Z(),
-                        rad2deg(std::acos(cos_angle)));
+      matrix.Rotate3d(axis.X(), axis.Y(), axis.Z(),
+                      rad2deg(std::acos(cos_angle)));
     }
+
+    matrix_ = transformationMatrixToDOMFloat32Array(matrix);
   }
 
-  return transformationMatrixToDOMFloat32Array(*matrix_);
+  if (!matrix_ || !matrix_->View() || !matrix_->View()->Data()) {
+    // A page may take the matrix value and detach it so matrix_ is a detached
+    // array buffer.  This breaks the inspector, so return null instead.
+    return nullptr;
+  }
+
+  return matrix_;
 }
 
 void XRRay::Trace(blink::Visitor* visitor) {
   visitor->Trace(origin_);
   visitor->Trace(direction_);
+  visitor->Trace(matrix_);
   ScriptWrappable::Trace(visitor);
 }
 

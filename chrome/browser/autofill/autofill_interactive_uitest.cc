@@ -49,8 +49,8 @@
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_manager_test_delegate.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -269,11 +269,16 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
 
   // InProcessBrowserTest:
   void SetUp() override {
+    LOG(ERROR) << "crbug/967588: AutofillInteractiveTestBase::SetUp() entered";
     ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
+    LOG(ERROR) << "crbug/967588: embedded_test_server InitializeAndListen";
     InProcessBrowserTest::SetUp();
+    LOG(ERROR) << "crbug/967588: AutofillInteractiveTestBase::SetUp() exited";
   }
 
   void SetUpOnMainThread() override {
+    LOG(ERROR) << "crbug/967588: "
+                  "AutofillInteractiveTestBase::SetUpOnMainThread() entered";
     AutofillUiTest::SetUpOnMainThread();
 
     https_server_.SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
@@ -282,6 +287,7 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
         &AutofillInteractiveTestBase::HandleTestURL, base::Unretained(this)));
     ASSERT_TRUE(https_server_.InitializeAndListen());
     https_server_.StartAcceptingConnections();
+    LOG(ERROR) << "crbug/967588: https_server started accepting connections";
 
     controllable_http_response_ =
         std::make_unique<net::test_server::ControllableHttpResponse>(
@@ -293,10 +299,14 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
     embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
         &AutofillInteractiveTestBase::HandleTestURL, base::Unretained(this)));
     embedded_test_server()->StartAcceptingConnections();
+    LOG(ERROR)
+        << "crbug/967588: embedded_test_server started accepting connections";
 
     // By default, all SSL cert checks are valid. Can be overriden in tests if
     // needed.
     cert_verifier_.mock_cert_verifier()->set_default_result(net::OK);
+    LOG(ERROR) << "crbug/967588: "
+                  "AutofillInteractiveTestBase::SetUpOnMainThread() exited";
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -511,6 +521,7 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
     ExpectFieldValue("zip", "78744");
     ExpectFieldValue("country", "US");
     ExpectFieldValue("phone", "15125551234");
+    LOG(ERROR) << "crbug/967588: Verified form was filled as expected";
   }
 
   void ExpectClearedForm() {
@@ -554,16 +565,21 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
 
   void TryBasicFormFill() {
     FocusFirstNameField();
+    LOG(ERROR) << "crbug/967588: Focussed first name field";
 
     // Start filling the first name field with "M" and wait for the popup to be
     // shown.
     SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
                          ui::VKEY_M, {ObservedUiEvents::kSuggestionShown});
 
+    LOG(ERROR) << "crbug/967588: Sent 'M' and saw suggestion";
+
     // Press the down arrow to select the suggestion and preview the autofilled
     // form.
     SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN,
                           {ObservedUiEvents::kPreviewFormData});
+
+    LOG(ERROR) << "crbug/967588: Sent '<down arrow>' and saw preview";
 
     // The previewed values should not be accessible to JavaScript.
     ExpectFieldValue("firstname", "M");
@@ -578,9 +594,14 @@ class AutofillInteractiveTestBase : public AutofillUiTest {
     // TODO(isherman): It would be nice to test that the previewed values are
     // displayed: http://crbug.com/57220
 
+    LOG(ERROR)
+        << "crbug/967588: Verified field contents remain unfilled for preview";
+
     // Press Enter to accept the autofill suggestions.
     SendKeyToPopupAndWait(ui::DomKey::ENTER,
                           {ObservedUiEvents::kFormDataFilled});
+
+    LOG(ERROR) << "crbug/967588: Form was filled after pressing enter";
 
     // The form should be filled.
     ExpectFilledTestForm();
@@ -707,15 +728,20 @@ class AutofillInteractiveTest : public AutofillInteractiveTestBase {
 
 // Test that basic form fill is working.
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, BasicFormFill) {
+  LOG(ERROR) << "crbug/967588: In case of flakes, report log statements to "
+                "crbug.com/967588";
   CreateTestProfile();
+  LOG(ERROR) << "crbug/967588: Test profile created";
 
   // Load the test page.
   SetTestUrlResponse(kTestShippingFormString);
   ASSERT_NO_FATAL_FAILURE(
       ui_test_utils::NavigateToURL(browser(), GetTestUrl()));
+  LOG(ERROR) << "crbug/967588: Loaded test page";
 
   // Invoke Autofill.
   TryBasicFormFill();
+  LOG(ERROR) << "crbug/967588: Basic form filling completed";
 }
 
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, BasicClear) {

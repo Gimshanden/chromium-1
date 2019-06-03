@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Shift</translation>
 <translation id="1710340000377843106">現在</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{1 分鐘}other{# 分鐘}}</translation>
-<translation id="1756116796893109054">正在傳送分頁...</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> B</translation>
 <translation id="1801827354178857021">句號</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 個月}other{# 個月}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">向下鍵</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{1 天}other{# 天}}</translation>
 <translation id="335581015389089642">語音</translation>
+<translation id="3443810440409579745">已收到分頁。</translation>
 <translation id="3479552764303398839">現在不要</translation>
 <translation id="348799646910989694">自動隱藏檔案櫃</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{還剩 1 天}other{還剩 # 天}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">常用的應用程式</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{還剩 1 個月}other{還剩 # 個月}}</translation>
 <translation id="4841881773802181781">插入</translation>
+<translation id="4881695831933465202">開啟</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{1 秒}other{# 秒}}</translation>
 <translation id="4971687151119236543">上一首媒體曲目</translation>
 <translation id="5046499563572181734">輕觸這裡</translation>
@@ -108,6 +109,7 @@
 <translation id="5137751499640340777">開啟 Google 助理</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> PB</translation>
 <translation id="5266161281976477809">顯示/隱藏三角標記</translation>
+<translation id="5278860589123563674">無法傳送</translation>
 <translation id="528468243742722775">結束</translation>
 <translation id="5329858601952122676">刪除(&amp;D)</translation>
 <translation id="5395308026110844773">「<ph name="DRAGGED_APP_NAME" />」已拖曳到「<ph name="IN_PLACE_APP" />」上方，放開滑鼠即可建立資料夾。</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">Del</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> B/秒</translation>
 <translation id="6156262341071374681">展開並顯示所有應用程式</translation>
+<translation id="6165508094623778733">瞭解詳情</translation>
 <translation id="6264365405983206840">選取全部(&amp;A)</translation>
 <translation id="6351032674660237738">應用程式建議</translation>
 <translation id="6364916375976753737">向左捲動</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{還剩 1 分鐘}other{還剩 # 分鐘}}</translation>
 <translation id="7319740667687257810">啟動器，部分檢視</translation>
+<translation id="732374792807444530">正在傳送至 <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{1 分鐘前}other{# 分鐘前}}</translation>
 <translation id="7389409599945284130">- <ph name="MESSAGE" /></translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{還剩 1 分鐘}other{還剩 # 分鐘}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{超過 1 則未讀通知}other{超過 # 則未讀通知}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{1 分鐘內}other{# 分鐘內}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" /> + <ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">使用 Google 助理進行語音查詢</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{1 小時前}other{# 小時前}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{還剩 1 秒}other{還剩 # 秒}}</translation>
+<translation id="8144660977431427332">你的搜尋結果由 Google 助理提供。<ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />，自動完成</translation>
 <translation id="815598010540052116">向下捲動</translation>
 <translation id="8170087467028567933">如果移除這項建議，你的帳戶會在所有裝置上隱藏該建議。</translation>

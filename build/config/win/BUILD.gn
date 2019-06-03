@@ -82,7 +82,7 @@ config("compiler") {
 
   if (msvc_use_absolute_paths) {
     # Pass /FC flag to the compiler if needed.
-    cflags += "/FC "
+    cflags += [ "/FC" ]
 
     # Print absolute paths in diagnostics. There is no precedent for doing this
     # on Linux/Mac (GCC doesn't support it), but MSVC does this with /FC and
@@ -102,7 +102,7 @@ config("compiler") {
     cflags += [ "/X" ]
 
     # Tell clang which version of MSVC to emulate.
-    cflags += [ "-fmsc-version=1911" ]
+    cflags += [ "-fmsc-version=1916" ]
 
     # Emit table of address-taken functions for Control-Flow Guard (CFG). We
     # don't emit the CFG checks themselves, but this enables the functions to
@@ -138,12 +138,7 @@ config("compiler") {
     }
 
     if (use_clang_diagnostics_format) {
-      cflags += [
-        "-Xclang",
-        "-fdiagnostics-format",
-        "-Xclang",
-        "clang",
-      ]
+      cflags += [ "/clang:-fdiagnostics-format=clang" ]
     }
 
     # Clang runtime libraries, such as the sanitizer runtimes, live here.
@@ -297,7 +292,7 @@ config("runtime_library") {
 config("winver") {
   defines = [
     "NTDDI_VERSION=NTDDI_WIN10_RS2",
-    
+
     # We can't say `=_WIN32_WINNT_WIN10` here because some files do
     # `#if WINVER < 0x0600` without including windows.h before,
     # and then _WIN32_WINNT_WIN10 isn't yet known to be 0x0A00.
@@ -382,9 +377,8 @@ config("cfi_linker") {
   # lots of child processes, so this means things are really slow. Disable CFG
   # for now. https://crbug.com/846966
   if (!is_debug && !is_component_build && !is_asan) {
-    # Turn on CFG in msvc linker, regardless of compiler used. Turn off CFG for
-    # longjmp (new in VS 2017) because it relies on compiler support which we do
-    # not have enabled.
+    # Turn on CFG, except for longjmp because it relies on compiler support
+    # which clang doesn't have yet.
     ldflags = [ "/guard:cf,nolongjmp" ]
   }
 }

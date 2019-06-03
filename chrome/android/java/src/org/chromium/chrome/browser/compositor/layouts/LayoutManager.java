@@ -41,6 +41,7 @@ import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.Tab.TabHidingType;
+import org.chromium.chrome.browser.tab.TabBrowserControlsState;
 import org.chromium.chrome.browser.tab.TabThemeColorHelper;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
@@ -352,7 +353,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
      * @return       Whether or not the {@link LayoutManager} needs more updates.
      */
     @VisibleForTesting
-    public boolean onUpdate(long timeMs, long dtMs) {
+    boolean onUpdate(long timeMs, long dtMs) {
         if (!mUpdateRequested) return false;
         mUpdateRequested = false;
 
@@ -509,8 +510,7 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
     @Override
     public void releaseOverlayPanelContent() {
         if (getTabModelSelector() == null) return;
-        Tab tab = getTabModelSelector().getCurrentTab();
-        if (tab != null) tab.updateFullscreenEnabledState();
+        TabBrowserControlsState.updateEnabledState(getTabModelSelector().getCurrentTab());
     }
 
     /**
@@ -653,8 +653,8 @@ public class LayoutManager implements LayoutUpdateHost, LayoutProvider,
 
         boolean needsUpdate = layoutTab.initFromHost(TabThemeColorHelper.getBackgroundColor(tab),
                 shouldStall(tab), canUseLiveTexture, ColorUtils.getToolbarSceneLayerBackground(tab),
-                ColorUtils.getTextBoxColorForToolbarBackground(
-                        mContext.getResources(), isLocationBarShownInNtp, themeColor),
+                ColorUtils.getTextBoxColorForToolbarBackground(mContext.getResources(),
+                        isLocationBarShownInNtp, themeColor, tab.isIncognito()),
                 ColorUtils.getTextBoxAlphaForToolbarBackground(tab));
         if (needsUpdate) requestUpdate();
 

@@ -18,6 +18,8 @@
 #include "components/send_tab_to_self/send_tab_to_self_entry.h"
 #include "components/send_tab_to_self/send_tab_to_self_sync_service.h"
 #include "components/send_tab_to_self/test_send_tab_to_self_model.h"
+#include "components/sync/base/model_type.h"
+#include "components/sync/model/fake_model_type_controller_delegate.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/image/image.h"
@@ -47,16 +49,24 @@ class SendTabToSelfModelMock : public TestSendTabToSelfModel {
 
   MOCK_METHOD1(DeleteEntry, void(const std::string&));
   MOCK_METHOD1(DismissEntry, void(const std::string&));
+  MOCK_METHOD1(MarkEntryOpened, void(const std::string&));
 };
 
 class TestSendTabToSelfSyncService : public SendTabToSelfSyncService {
  public:
-  TestSendTabToSelfSyncService() = default;
+  TestSendTabToSelfSyncService() : fake_delegate_(syncer::SEND_TAB_TO_SELF) {}
+
   ~TestSendTabToSelfSyncService() override = default;
 
   SendTabToSelfModel* GetSendTabToSelfModel() override { return &model_mock_; }
 
+  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate()
+      override {
+    return fake_delegate_.GetWeakPtr();
+  }
+
  protected:
+  syncer::FakeModelTypeControllerDelegate fake_delegate_;
   SendTabToSelfModelMock model_mock_;
 };
 
@@ -122,7 +132,6 @@ class DesktopNotificationHandlerTest : public BrowserWithTestWindowTest {
   }
 
  protected:
-  Profile* profile_;
   SendTabToSelfModelMock* model_mock_;
   NotificationDisplayServiceMock* display_service_mock_;
 };
@@ -189,7 +198,7 @@ TEST_F(DesktopNotificationHandlerTest, ClickHandler) {
               Close(NotificationHandler::Type::SEND_TAB_TO_SELF,
                     kDesktopNotificationId))
       .WillOnce(::testing::Return());
-  EXPECT_CALL(*model_mock_, DeleteEntry(kDesktopNotificationId))
+  EXPECT_CALL(*model_mock_, MarkEntryOpened(kDesktopNotificationId))
       .WillOnce(::testing::Return());
 
   handler.OnClick(profile(), GURL(kDesktopNotificationOrigin),

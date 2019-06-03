@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "base/containers/mru_cache.h"
 #include "base/macros.h"
 #include "base/sequence_checker.h"
 #include "media/base/video_decoder.h"
@@ -36,22 +37,22 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
   TestVDAVideoDecoder(AllocationMode allocation_mode,
                       const gfx::ColorSpace& target_color_space,
                       FrameRenderer* const frame_renderer);
+  ~TestVDAVideoDecoder() override;
 
   // media::VideoDecoder implementation
-  std::string GetDisplayName() const override { return "TestVDAVideoDecoder"; }
-  bool IsPlatformDecoder() const override { return true; }
+  std::string GetDisplayName() const override;
+  bool IsPlatformDecoder() const override;
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
+                  InitCB init_cb,
                   const OutputCB& output_cb,
                   const WaitingCB& waiting_cb) override;
-  void Decode(scoped_refptr<DecoderBuffer> buffer,
-              const DecodeCB& decode_cb) override;
-  void Reset(const base::RepeatingClosure& reset_cb) override;
-  bool NeedsBitstreamConversion() const override { return false; }
-  bool CanReadWithoutStalling() const override { return true; }
-  int GetMaxDecodeRequests() const override { return 4; }
+  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
+  void Reset(base::OnceClosure reset_cb) override;
+  bool NeedsBitstreamConversion() const override;
+  bool CanReadWithoutStalling() const override;
+  int GetMaxDecodeRequests() const override;
 
  private:
   void Destroy() override;
@@ -80,7 +81,7 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
   // Called when the decoder finished flushing.
   DecodeCB flush_cb_;
   // Called when the decoder finished resetting.
-  base::RepeatingClosure reset_cb_;
+  base::OnceClosure reset_cb_;
 
   // Video decode accelerator output mode.
   const VideoDecodeAccelerator::Config::OutputMode output_mode_;
@@ -93,8 +94,10 @@ class TestVDAVideoDecoder : public media::VideoDecoder,
 
   // Map of video frames the decoder uses as output, keyed on picture buffer id.
   std::map<int32_t, scoped_refptr<VideoFrame>> video_frames_;
-  // Map of video frame decoded callbacks, keyed on picture buffer id.
+  // Map of video frame decoded callbacks, keyed on bitstream buffer id.
   std::map<int32_t, DecodeCB> decode_cbs_;
+  // Records the time at which each bitstream buffer decode operation started.
+  base::MRUCache<int32_t, base::TimeDelta> decode_start_timestamps_;
 
   int32_t next_bitstream_buffer_id_ = 0;
   int32_t next_picture_buffer_id_ = 0;

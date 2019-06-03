@@ -5,7 +5,7 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_DELEGATE_H_
 #define UI_BASE_IME_INPUT_METHOD_DELEGATE_H_
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
 #include "base/component_export.h"
 
 namespace ui {

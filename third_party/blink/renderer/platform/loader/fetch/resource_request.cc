@@ -65,7 +65,6 @@ ResourceRequest::ResourceRequest(const KURL& url)
       intra_priority_value_(0),
       requestor_id_(0),
       plugin_child_id_(-1),
-      app_cache_host_id_(0),
       previews_state_(WebURLRequest::kPreviewsUnspecified),
       request_context_(mojom::RequestContextType::UNSPECIFIED),
       fetch_request_mode_(network::mojom::FetchRequestMode::kNoCors),
@@ -97,7 +96,7 @@ std::unique_ptr<ResourceRequest> ResourceRequest::CreateRedirectRequest(
   std::unique_ptr<ResourceRequest> request =
       std::make_unique<ResourceRequest>(new_url);
   request->SetRequestorOrigin(RequestorOrigin());
-  request->SetHTTPMethod(new_method);
+  request->SetHttpMethod(new_method);
   request->SetSiteForCookies(new_site_for_cookies);
   request->SetTopFrameOrigin(std::move(new_top_frame_origin));
   String referrer =
@@ -127,6 +126,7 @@ std::unique_ptr<ResourceRequest> ResourceRequest::CreateRedirectRequest(
   request->SetIsAutomaticUpgrade(IsAutomaticUpgrade());
   request->SetRequestedWithHeader(GetRequestedWithHeader());
   request->SetClientDataHeader(GetClientDataHeader());
+  request->SetPurposeHeader(GetPurposeHeader());
   request->SetUkmSourceId(GetUkmSourceId());
   request->SetInspectorId(InspectorId());
 
@@ -141,7 +141,7 @@ const KURL& ResourceRequest::Url() const {
   return url_;
 }
 
-void ResourceRequest::SetURL(const KURL& url) {
+void ResourceRequest::SetUrl(const KURL& url) {
   url_ = url;
 }
 
@@ -199,7 +199,7 @@ const AtomicString& ResourceRequest::HttpMethod() const {
   return http_method_;
 }
 
-void ResourceRequest::SetHTTPMethod(const AtomicString& http_method) {
+void ResourceRequest::SetHttpMethod(const AtomicString& http_method) {
   http_method_ = http_method;
 }
 

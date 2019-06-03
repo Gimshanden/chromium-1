@@ -345,7 +345,6 @@ class TestSocketFactory : public net::ClientSocketFactory {
       bool using_spdy,
       net::NextProto negotiated_protocol,
       net::ProxyDelegate* proxy_delegate,
-      bool is_https_proxy,
       const net::NetworkTrafficAnnotationTag& traffic_annotation) override {
     NOTIMPLEMENTED();
     return nullptr;
@@ -389,7 +388,8 @@ class CastSocketTestBase : public testing::Test {
     url_request_context_.Init();
     network_context_ = std::make_unique<network::NetworkContext>(
         nullptr, mojo::MakeRequest(&network_context_ptr_),
-        &url_request_context_);
+        &url_request_context_,
+        /*cors_exempt_header_list=*/std::vector<std::string>());
   }
 
   // Runs all pending tasks in the message loop.

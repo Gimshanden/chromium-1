@@ -82,6 +82,7 @@ LinkHighlightImpl::LinkHighlightImpl(Node* node)
     : node_(node),
       current_graphics_layer_(nullptr),
       is_scrolling_graphics_layer_(false),
+      offset_from_transform_node_(FloatPoint()),
       geometry_needs_update_(false),
       is_animating_(false),
       start_time_(CurrentTimeTicks()),
@@ -235,16 +236,17 @@ bool LinkHighlightImpl::ComputeHighlightLayerPathAndPosition(
     absolute_quad.SetP4(FloatPoint(RoundedIntPoint(absolute_quad.P4())));
     FloatQuad transformed_quad =
         paint_invalidation_container.AbsoluteToLocalQuad(
-            absolute_quad, kUseTransforms | kTraverseDocumentBoundaries);
-    FloatPoint offset_to_backing;
+            absolute_quad, kTraverseDocumentBoundaries);
+    PhysicalOffset offset_to_backing;
 
     PaintLayer::MapPointInPaintInvalidationContainerToBacking(
         paint_invalidation_container, offset_to_backing);
 
     // Adjust for offset from LayoutObject.
-    offset_to_backing.Move(-current_graphics_layer_->OffsetFromLayoutObject());
+    offset_to_backing -=
+        PhysicalOffset(current_graphics_layer_->OffsetFromLayoutObject());
 
-    transformed_quad.Move(ToFloatSize(offset_to_backing));
+    transformed_quad.Move(FloatSize(offset_to_backing));
 
     // FIXME: for now, we'll only use rounded paths if we have a single node
     // quad. The reason for this is that we may sometimes get a chain of
@@ -281,9 +283,9 @@ bool LinkHighlightImpl::ComputeHighlightLayerPathAndPosition(
   layer->SetPosition(bounding_rect.Location());
 
   if (RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled()) {
-    FloatPoint offset(current_graphics_layer_->GetOffsetFromTransformNode());
-    offset.MoveBy(bounding_rect.Location());
-    layer->SetOffsetToTransformParent(gfx::Vector2dF(offset.X(), offset.Y()));
+    offset_from_transform_node_ =
+        FloatPoint(current_graphics_layer_->GetOffsetFromTransformNode());
+    offset_from_transform_node_.MoveBy(bounding_rect.Location());
     SetPaintArtifactCompositorNeedsUpdate();
   }
 
@@ -463,7 +465,7 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
   size_t index = 0;
   for (const auto* fragment = &object->FirstFragment(); fragment;
        fragment = fragment->NextFragment(), ++index) {
-    auto rects = object->PhysicalOutlineRects(
+    auto rects = object->OutlineRects(
         fragment->PaintOffset(), NGOutlineType::kIncludeBlockVisualOverflow);
     if (rects.size() > 1)
       use_rounded_rects = false;
@@ -496,14 +498,11 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
       layer->SetBounds(gfx::Size(EnclosingIntRect(bounding_rect).Size()));
       layer->SetNeedsDisplay();
     }
-    // Always set offset because it is excluded from the above equality check.
-    layer->SetOffsetToTransformParent(
-        gfx::Vector2dF(bounding_rect.X(), bounding_rect.Y()));
 
     auto property_tree_state = fragment->LocalBorderBoxProperties();
     property_tree_state.SetEffect(Effect());
     RecordForeignLayer(context, DisplayItem::kForeignLayerLinkHighlight, layer,
-                       property_tree_state);
+                       bounding_rect.Location(), property_tree_state);
   }
 
   if (index < fragments_.size()) {
@@ -516,8 +515,12 @@ void LinkHighlightImpl::Paint(GraphicsContext& context) {
 
 void LinkHighlightImpl::SetPaintArtifactCompositorNeedsUpdate() {
   DCHECK(node_);
-  if (auto* frame_view = node_->GetDocument().View())
-    frame_view->SetPaintArtifactCompositorNeedsUpdate();
+  if (auto* frame_view = node_->GetDocument().View()) {
+    if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+      frame_view->SetPaintArtifactCompositorNeedsUpdate();
+    else
+      frame_view->GraphicsLayersDidChange();
+  }
 }
 
 }  // namespace blink

@@ -24,7 +24,7 @@
 #include "chromeos/dbus/concierge/service.pb.h"
 #include "chromeos/dbus/concierge_client.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "device/usb/public/mojom/device_manager.mojom.h"
+#include "services/device/public/mojom/usb_manager.mojom.h"
 
 class Profile;
 
@@ -70,6 +70,7 @@ enum class CrostiniResult {
   CONTAINER_EXPORT_IMPORT_FAILED,
   CONTAINER_EXPORT_IMPORT_FAILED_VM_STOPPED,
   CONTAINER_EXPORT_IMPORT_FAILED_VM_STARTED,
+  CONTAINER_EXPORT_IMPORT_FAILED_ARCHITECTURE,
   NOT_ALLOWED,
 };
 
@@ -100,6 +101,7 @@ enum class ExportContainerProgressStatus {
 enum class ImportContainerProgressStatus {
   UPLOAD,
   UNPACK,
+  FAILURE_ARCHITECTURE,
 };
 
 struct VmInfo {
@@ -165,6 +167,14 @@ class LinuxPackageOperationProgressObserver {
                                           int progress_percent) = 0;
 };
 
+class PendingAppListUpdatesObserver : public base::CheckedObserver {
+ public:
+  // Called whenever the kPendingAppListUpdatesMethod signal is sent.
+  virtual void OnPendingAppListUpdates(const std::string& vm_name,
+                                       const std::string& container_name,
+                                       int count) = 0;
+};
+
 class ExportContainerProgressObserver {
  public:
   // A successfully started container export will continually fire progress
@@ -181,12 +191,15 @@ class ImportContainerProgressObserver {
  public:
   // A successfully started container import will continually fire progress
   // events until the original callback from ImportLxdContainer is invoked with
-  // a status of SUCCESS or CONTAINER_IMPORT_FAILED.
-  virtual void OnImportContainerProgress(const std::string& vm_name,
-                                         const std::string& container_name,
-                                         ImportContainerProgressStatus status,
-                                         int progress_percent,
-                                         uint64_t progress_speed) = 0;
+  // a status of SUCCESS or CONTAINER_IMPORT_FAILED[_*].
+  virtual void OnImportContainerProgress(
+      const std::string& vm_name,
+      const std::string& container_name,
+      ImportContainerProgressStatus status,
+      int progress_percent,
+      uint64_t progress_speed,
+      const std::string& architecture_device,
+      const std::string& architecture_container) = 0;
 };
 
 class InstallerViewStatusObserver : public base::CheckedObserver {
@@ -202,7 +215,7 @@ class InstallerViewStatusObserver : public base::CheckedObserver {
 // possible. The existence of Cicerone is abstracted behind this class and
 // only the Concierge name is exposed outside of here.
 class CrostiniManager : public KeyedService,
-                        public chromeos::ConciergeClient::Observer,
+                        public chromeos::ConciergeClient::ContainerObserver,
                         public chromeos::CiceroneClient::Observer {
  public:
   using CrostiniResultCallback =
@@ -283,8 +296,8 @@ class CrostiniManager : public KeyedService,
     virtual void OnVmStarted(CrostiniResult result) = 0;
     virtual void OnContainerDownloading(int32_t download_percent) = 0;
     virtual void OnContainerCreated(CrostiniResult result) = 0;
-    virtual void OnContainerStarted(CrostiniResult result) = 0;
     virtual void OnContainerSetup(CrostiniResult result) = 0;
+    virtual void OnContainerStarted(CrostiniResult result) = 0;
     virtual void OnSshKeysFetched(CrostiniResult result) = 0;
   };
 
@@ -350,8 +363,6 @@ class CrostiniManager : public KeyedService,
       // The path to the disk image, including the name of
       // the image itself.
       const base::FilePath& disk_path,
-      // The storage location of the disk image
-      vm_tools::concierge::StorageLocation storage_location,
       DestroyDiskImageCallback callback);
 
   void ListVmDisks(ListVmDisksCallback callback);
@@ -563,6 +574,12 @@ class CrostiniManager : public KeyedService,
   void RemoveLinuxPackageOperationProgressObserver(
       LinuxPackageOperationProgressObserver* observer);
 
+  // Add/remove observers for pending app list updates.
+  void AddPendingAppListUpdatesObserver(
+      PendingAppListUpdatesObserver* observer);
+  void RemovePendingAppListUpdatesObserver(
+      PendingAppListUpdatesObserver* observer);
+
   // Add/remove observers for container export/import.
   void AddExportContainerProgressObserver(
       ExportContainerProgressObserver* observer);
@@ -604,6 +621,8 @@ class CrostiniManager : public KeyedService,
   void OnImportLxdContainerProgress(
       const vm_tools::cicerone::ImportLxdContainerProgressSignal& signal)
       override;
+  void OnPendingAppListUpdates(
+      const vm_tools::cicerone::PendingAppListUpdatesSignal& signal) override;
 
   void RemoveCrostini(std::string vm_name, RemoveCrostiniCallback callback);
 
@@ -854,14 +873,8 @@ class CrostiniManager : public KeyedService,
   // Pending DeleteLxdContainer callbacks are keyed by <vm_name, container_name>
   // string pairs. These are used if DeleteLxdContainer indicates we need to
   // wait for an LxdContainerDelete signal.
-  std::multimap<std::pair<std::string, std::string>, CrostiniResultCallback>
-      delete_lxd_container_callbacks_;
-
-  // Pending StartLxdContainer callbacks are keyed by <vm_name, container_name>
-  // string pairs. These are used if StartLxdContainer indicates we need to
-  // wait for an LxdContainerStarting signal.
   std::multimap<ContainerId, CrostiniResultCallback>
-      start_lxd_container_callbacks_;
+      delete_lxd_container_callbacks_;
 
   // Pending ExportLxdContainer callbacks are keyed by <vm_name, container_name>
   // string pairs. They are invoked once ExportLxdContainerProgressSignal signal
@@ -887,6 +900,9 @@ class CrostiniManager : public KeyedService,
 
   base::ObserverList<LinuxPackageOperationProgressObserver>::Unchecked
       linux_package_operation_progress_observers_;
+
+  base::ObserverList<PendingAppListUpdatesObserver>
+      pending_app_list_updates_observers_;
 
   base::ObserverList<ExportContainerProgressObserver>::Unchecked
       export_container_progress_observers_;

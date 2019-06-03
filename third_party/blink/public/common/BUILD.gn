@@ -16,6 +16,7 @@ component("common") {
   public_deps = [
     "//third_party/blink/public/common:headers",
     "//third_party/blink/public/mojom:mojom_modules",
+    "//third_party/blink/public/mojom:web_bluetooth_mojo_bindings",
   ]
   deps = [
     "//third_party/blink/common",
@@ -28,6 +29,7 @@ source_set("headers") {
     "//content/*",
     "//third_party/blink/*",
     "//components/*",
+    "//services/*",
     "//storage/*",
     ":*",
   ]
@@ -36,6 +38,8 @@ source_set("headers") {
     "associated_interfaces/associated_interface_provider.h",
     "associated_interfaces/associated_interface_registry.h",
     "blob/blob_utils.h",
+    "bluetooth/web_bluetooth_device_id.h",
+    "bluetooth/web_bluetooth_device_id_struct_traits.h",
     "cache_storage/cache_storage_utils.h",
     "client_hints/client_hints.h",
     "common_export.h",
@@ -64,6 +68,7 @@ source_set("headers") {
     "indexeddb/web_idb_types.h",
     "loader/url_loader_factory_bundle.h",
     "loader/url_loader_factory_bundle_mojom_traits.h",
+    "logging/logging_utils.h",
     "manifest/manifest.h",
     "manifest/manifest_icon_selector.h",
     "manifest/manifest_util.h",
@@ -93,6 +98,8 @@ source_set("headers") {
     "page/launching_process_state.h",
     "prerender/prerender_rel_type.h",
     "privacy_preferences.h",
+    "push_messaging/web_push_subscription_options.h",
+    "scheduler/web_scheduler_tracked_feature.h",
     "screen_orientation/web_screen_orientation_lock_type.h",
     "screen_orientation/web_screen_orientation_type.h",
     "service_worker/service_worker_status_code.h",
@@ -100,12 +107,14 @@ source_set("headers") {
     "service_worker/service_worker_types.h",
     "service_worker/service_worker_utils.h",
     "user_agent/user_agent_metadata.h",
+    "web_package/signed_exchange_consts.h",
   ]
 
   public_deps = [
     "//services/network/public/cpp:cpp",
     "//skia",
     "//third_party/blink/public/mojom:mojom_modules_headers",
+    "//third_party/blink/public/mojom:web_bluetooth_mojo_bindings_headers",
   ]
 
   deps = [

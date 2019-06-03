@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Maj</translation>
 <translation id="1710340000377843106">maintenant</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{1 minute}one{# minute}other{# minutes}}</translation>
-<translation id="1756116796893109054">Envoi de l'onglet…</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> o</translation>
 <translation id="1801827354178857021">Point</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 mois}one{# mois}other{# mois}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">Bas</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{1 jour}one{# jour}other{# jours}}</translation>
 <translation id="335581015389089642">Voix</translation>
+<translation id="3443810440409579745">Onglet reçu.</translation>
 <translation id="3479552764303398839">Pas maintenant</translation>
 <translation id="348799646910989694">Étagère automatiquement masquée</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{1 jour restant}one{# jour restant}other{# jours restants}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">SOUVENT UTILISÉES</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{1 mois restant}one{# mois restant}other{# mois restants}}</translation>
 <translation id="4841881773802181781">Insertion</translation>
+<translation id="4881695831933465202">Ouvrir</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{1 seconde}one{# seconde}other{# secondes}}</translation>
 <translation id="4971687151119236543">Contenu multimédia : titre précédent</translation>
 <translation id="5046499563572181734">Appuyez ici</translation>
@@ -108,6 +109,7 @@
 <translation id="5137751499640340777">Démarrer l'Assistant Google</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> Po</translation>
 <translation id="5266161281976477809">Triangle d'expansion</translation>
+<translation id="5278860589123563674">Échec de l'envoi</translation>
 <translation id="528468243742722775">Fin</translation>
 <translation id="5329858601952122676">&amp;Supprimer</translation>
 <translation id="5395308026110844773"><ph name="DRAGGED_APP_NAME" /> sur <ph name="IN_PLACE_APP" />. Relâcher pour créer un dossier.</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">Suppr</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> o/s</translation>
 <translation id="6156262341071374681">Développer pour afficher toutes les applications</translation>
+<translation id="6165508094623778733">En savoir plus</translation>
 <translation id="6264365405983206840">Tout &amp;sélectionner</translation>
 <translation id="6351032674660237738">SUGGESTIONS D'APPLICATIONS</translation>
 <translation id="6364916375976753737">Défilement vers la gauche</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{1 min restante}one{# min restante}other{# min restantes}}</translation>
 <translation id="7319740667687257810">Lanceur d'applications, vue partielle</translation>
+<translation id="732374792807444530">Envoi à <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{Il y a 1 min}one{Il y a # min}other{Il y a # min}}</translation>
 <translation id="7389409599945284130">– <ph name="MESSAGE" /></translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{1 minute restante}one{# minute restante}other{# minutes restantes}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{Plus de 1 notification non lue}one{Plus de # notification non lue}other{Plus de # notifications non lues}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{dans 1 m}one{dans # m}other{dans # m}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" />+<ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">Soumettre une requête vocale à l'Assistant Google</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{Il y a 1 heure}one{Il y a # heure}other{Il y a # heures}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{1 s restante}one{# s restante}other{# s restantes}}</translation>
+<translation id="8144660977431427332">Vos recherches sont optimisées par l'Assistant Google. <ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />, saisie semi-automatique</translation>
 <translation id="815598010540052116">Défilement vers le bas</translation>
 <translation id="8170087467028567933">Si vous choisissez de supprimer cette suggestion, elle ne s'affichera plus lorsque vous serez connecté à votre compte, sur tous vos appareils.</translation>

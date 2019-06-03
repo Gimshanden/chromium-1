@@ -11,9 +11,31 @@
 #include "base/stl_util.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/policy/core/common/policy_merger.h"
 #include "components/strings/grit/components_strings.h"
 
 namespace policy {
+
+namespace {
+
+const base::string16 GetLocalizedString(
+    PolicyMap::Entry::L10nLookupFunction lookup,
+    const base::string16& initial_string,
+    const std::set<int>& localized_string_ids) {
+  base::string16 result = initial_string;
+  base::string16 line_feed = base::UTF8ToUTF16("\n");
+  for (int id : localized_string_ids) {
+    result += lookup.Run(id);
+    result += line_feed;
+  }
+  // Remove the trailing newline.
+  if (!result.empty() && result[result.length() - 1] == line_feed[0])
+    result.pop_back();
+  return result;
+}
+
+}  // namespace
+
 PolicyMap::Entry::Entry() = default;
 PolicyMap::Entry::Entry(
     PolicyLevel level,
@@ -41,6 +63,7 @@ PolicyMap::Entry PolicyMap::Entry::DeepCopy() const {
     copy.value = value->CreateDeepCopy();
   copy.error_strings_ = error_strings_;
   copy.error_message_ids_ = error_message_ids_;
+  copy.warning_message_ids_ = warning_message_ids_;
   if (external_data_fetcher) {
     copy.external_data_fetcher.reset(
         new ExternalDataFetcher(*external_data_fetcher));
@@ -67,15 +90,18 @@ bool PolicyMap::Entry::Equals(const PolicyMap::Entry& other) const {
   for (size_t i = 0; conflicts_are_equal && i < conflicts.size(); ++i)
     conflicts_are_equal &= conflicts[i].Equals(other.conflicts[i]);
 
-  return conflicts_are_equal && level == other.level && scope == other.scope &&
-         source == other.source &&  // Necessary for PolicyUIHandler observers.
-                                    // They have to update when sources change.
-         error_strings_ == other.error_strings_ &&
-         error_message_ids_ == other.error_message_ids_ &&
-         ((!value && !other.value) ||
-          (value && other.value && *value == *other.value)) &&
-         ExternalDataFetcher::Equals(external_data_fetcher.get(),
-                                     other.external_data_fetcher.get());
+  const bool equals =
+      conflicts_are_equal && level == other.level && scope == other.scope &&
+      source == other.source &&  // Necessary for PolicyUIHandler observers.
+                                 // They have to update when sources change.
+      error_strings_ == other.error_strings_ &&
+      error_message_ids_ == other.error_message_ids_ &&
+      warning_message_ids_ == other.warning_message_ids_ &&
+      ((!value && !other.value) ||
+       (value && other.value && *value == *other.value)) &&
+      ExternalDataFetcher::Equals(external_data_fetcher.get(),
+                                  other.external_data_fetcher.get());
+  return equals;
 }
 
 void PolicyMap::Entry::AddError(base::StringPiece error) {
@@ -84,6 +110,10 @@ void PolicyMap::Entry::AddError(base::StringPiece error) {
 
 void PolicyMap::Entry::AddError(int message_id) {
   error_message_ids_.insert(message_id);
+}
+
+void PolicyMap::Entry::AddWarning(int message_id) {
+  warning_message_ids_.insert(message_id);
 }
 
 void PolicyMap::Entry::AddConflictingPolicy(const Entry& conflict) {
@@ -96,31 +126,41 @@ void PolicyMap::Entry::AddConflictingPolicy(const Entry& conflict) {
   // Avoid conflict nesting
   conflicted_policy_copy.conflicts.clear();
   conflicted_policy_copy.error_message_ids_.clear();
+  conflicted_policy_copy.warning_message_ids_.clear();
   conflicted_policy_copy.error_strings_.clear();
   conflicts.push_back(std::move(conflicted_policy_copy));
 }
 
-base::string16 PolicyMap::Entry::GetLocalizedErrors(
-    L10nLookupFunction lookup) const {
-  base::string16 error_string = base::UTF8ToUTF16(error_strings_);
-  base::string16 line_feed = base::UTF8ToUTF16("\n");
-  for (int message_id : error_message_ids_) {
-    error_string += lookup.Run(message_id);
-    error_string += line_feed;
-  }
-  // Remove the trailing newline.
-  if (!error_string.empty())
-    error_string.pop_back();
-  return error_string;
+void PolicyMap::Entry::ClearConflicts() {
+  conflicts.clear();
+  error_message_ids_.erase(IDS_POLICY_CONFLICT_SAME_VALUE);
+  error_message_ids_.erase(IDS_POLICY_CONFLICT_DIFF_VALUE);
 }
 
-bool PolicyMap::Entry::IsBlocked() const {
+base::string16 PolicyMap::Entry::GetLocalizedErrors(
+    L10nLookupFunction lookup) const {
+  return GetLocalizedString(lookup, base::UTF8ToUTF16(error_strings_),
+                            error_message_ids_);
+}
+
+base::string16 PolicyMap::Entry::GetLocalizedWarnings(
+    L10nLookupFunction lookup) const {
+  return GetLocalizedString(lookup, base::string16(), warning_message_ids_);
+}
+
+bool PolicyMap::Entry::IsBlockedOrIgnored() const {
   return error_message_ids_.find(IDS_POLICY_BLOCKED) !=
-         error_message_ids_.end();
+             error_message_ids_.end() ||
+         error_message_ids_.find(IDS_POLICY_IGNORED_BY_GROUP_MERGING) !=
+             error_message_ids_.end();
 }
 
 void PolicyMap::Entry::SetBlocked() {
   error_message_ids_.insert(IDS_POLICY_BLOCKED);
+}
+
+void PolicyMap::Entry::SetIgnoredByPolicyAtomicGroup() {
+  error_message_ids_.insert(IDS_POLICY_IGNORED_BY_GROUP_MERGING);
 }
 
 PolicyMap::PolicyMap() {}
@@ -131,56 +171,28 @@ PolicyMap::~PolicyMap() {
 
 const PolicyMap::Entry* PolicyMap::Get(const std::string& policy) const {
   auto entry = map_.find(policy);
-  return entry != map_.end() && !entry->second.IsBlocked() ? &entry->second
-                                                           : nullptr;
+  return entry != map_.end() && !entry->second.IsBlockedOrIgnored()
+             ? &entry->second
+             : nullptr;
 }
 
 PolicyMap::Entry* PolicyMap::GetMutable(const std::string& policy) {
   auto entry = map_.find(policy);
-  return entry != map_.end() && !entry->second.IsBlocked() ? &entry->second
-                                                           : nullptr;
+  return entry != map_.end() && !entry->second.IsBlockedOrIgnored()
+             ? &entry->second
+             : nullptr;
 }
 
 const base::Value* PolicyMap::GetValue(const std::string& policy) const {
   auto entry = map_.find(policy);
-  return entry != map_.end() && !entry->second.IsBlocked()
+  return entry != map_.end() && !entry->second.IsBlockedOrIgnored()
              ? entry->second.value.get()
              : nullptr;
 }
 
-void PolicyMap::MergeListValues(const std::string& policy) {
-  auto entry = map_.find(policy);
-  if (entry == map_.end() || entry->second.conflicts.empty())
-    return;
-  base::ListValue value;
-  DCHECK(entry->second.value->is_list());
-  bool has_valid_sources = !entry->second.IsBlocked();
-  if (!entry->second.IsBlocked()) {
-    for (const auto& i : entry->second.value->GetList())
-      value.GetList().emplace_back(i.Clone());
-  }
-  for (const auto& source : entry->second.conflicts) {
-    if (!source.IsBlocked() && source.level == entry->second.level) {
-      // SKip user cloud policy because it could be from arbitrary domain.
-      if (source.scope == POLICY_SCOPE_USER &&
-          source.source == POLICY_SOURCE_CLOUD) {
-        continue;
-      }
-      for (const auto& i : source.value->GetList())
-        value.GetList().emplace_back(i.Clone());
-      has_valid_sources = true;
-    }
-  }
-  if (has_valid_sources) {
-    Set(policy, entry->second.level, POLICY_SCOPE_MERGED, POLICY_SOURCE_MERGED,
-        base::Value::ToUniquePtrValue(value.Clone()),
-        std::move(entry->second.external_data_fetcher));
-  }
-}
-
 base::Value* PolicyMap::GetMutableValue(const std::string& policy) {
   auto entry = map_.find(policy);
-  return entry != map_.end() && !entry->second.IsBlocked()
+  return entry != map_.end() && !entry->second.IsBlockedOrIgnored()
              ? entry->second.value.get()
              : nullptr;
 }
@@ -277,15 +289,21 @@ void PolicyMap::MergeFrom(const PolicyMap& other) {
         conflict.source == POLICY_SOURCE_ENTERPRISE_DEFAULT;
     if (!overwriting_default_policy) {
       new_policy.AddConflictingPolicy(conflict);
-      new_policy.AddError((current_policy->value &&
-                           it.second.value->Equals(current_policy->value.get()))
-                              ? IDS_POLICY_CONFLICT_SAME_VALUE
-                              : IDS_POLICY_CONFLICT_DIFF_VALUE);
+      new_policy.AddWarning(
+          (current_policy->value &&
+           it.second.value->Equals(current_policy->value.get()))
+              ? IDS_POLICY_CONFLICT_SAME_VALUE
+              : IDS_POLICY_CONFLICT_DIFF_VALUE);
     }
 
     if (current_policy != &new_policy)
       Set(it.first, std::move(new_policy));
   }
+}
+
+void PolicyMap::MergeValues(const std::vector<PolicyMerger*>& mergers) {
+  for (const auto* it : mergers)
+    it->Merge(&map_);
 }
 
 void PolicyMap::LoadFrom(const base::DictionaryValue* policies,

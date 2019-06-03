@@ -5,20 +5,21 @@
 #include "ash/wm/always_on_top_controller.h"
 
 #include "ash/keyboard/ash_keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/wm_event.h"
 #include "ash/wm/workspace/workspace_layout_manager.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "ui/aura/client/aura_constants.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_ui.h"
-#include "ui/keyboard/public/keyboard_switches.h"
-#include "ui/keyboard/test/keyboard_test_util.h"
 
 namespace ash {
 
@@ -130,7 +131,7 @@ TEST_F(AlwaysOnTopControllerTest,
   aura::Window* container =
       always_on_top_controller->GetContainer(window.get());
   ASSERT_TRUE(container);
-  EXPECT_EQ(kShellWindowId_DefaultContainer, container->id());
+  EXPECT_EQ(desks_util::GetActiveDeskContainerId(), container->id());
 }
 
 TEST_F(AlwaysOnTopControllerTest,

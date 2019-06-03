@@ -25,7 +25,6 @@ class Point;
 }
 
 namespace ui {
-class SimpleMenuModel;
 class WindowTreeHost;
 }
 
@@ -40,6 +39,7 @@ class ScopedCaptureClient;
 namespace ash {
 class AccessibilityPanelLayoutManager;
 class AlwaysOnTopController;
+class AppMenuModelAdapter;
 class AshWindowTreeHost;
 class LockScreenActionBackgroundController;
 enum class LoginStatus;
@@ -50,11 +50,11 @@ class StatusAreaWidget;
 class SystemModalContainerLayoutManager;
 class SystemWallpaperController;
 class TouchExplorationManager;
-class TouchObserverHUD;
+class TouchHudDebug;
+class TouchHudProjection;
 class WallpaperWidgetController;
 class WindowManager;
 class WorkAreaInsets;
-class WorkspaceController;
 
 namespace wm {
 class RootWindowLayoutManager;
@@ -103,17 +103,20 @@ class ASH_EXPORT RootWindowController {
   aura::Window* GetRootWindow();
   const aura::Window* GetRootWindow() const;
 
-  WorkspaceController* workspace_controller() {
-    return workspace_controller_.get();
-  }
-
-  wm::WorkspaceWindowState GetWorkspaceWindowState();
-
   Shelf* shelf() const { return shelf_.get(); }
 
-  TouchObserverHUD* touch_observer_hud() const { return touch_observer_hud_; }
-  void set_touch_observer_hud(TouchObserverHUD* hud) {
-    touch_observer_hud_ = hud;
+  TouchHudDebug* touch_hud_debug() const { return touch_hud_debug_; }
+  TouchHudProjection* touch_hud_projection() const {
+    return touch_hud_projection_;
+  }
+
+  // Set touch HUDs for this root window controller. The root window controller
+  // will not own the HUDs; their lifetimes are managed by themselves. Whenever
+  // the widget showing a HUD is being destroyed (e.g. because of detaching a
+  // display), the HUD deletes itself.
+  void set_touch_hud_debug(TouchHudDebug* hud) { touch_hud_debug_ = hud; }
+  void set_touch_hud_projection(TouchHudProjection* hud) {
+    touch_hud_projection_ = hud;
   }
 
   wm::RootWindowLayoutManager* root_window_layout_manager() {
@@ -183,6 +186,10 @@ class ASH_EXPORT RootWindowController {
   void CloseChildWindows();
 
   // Moves child windows to |dest|.
+  // TODO(afakhry): Consider renaming this function to avoid misuse. It is only
+  // called by WindowTreeHostManager::DeleteHost(), and has destructive side
+  // effects like deleting the workspace controllers, so it shouldn't be called
+  // for something else.
   void MoveWindowsTo(aura::Window* dest);
 
   // Force the shelf to query for it's current visibility state.
@@ -252,7 +259,7 @@ class ASH_EXPORT RootWindowController {
   void ResetRootForNewWindowsIfNecessary();
 
   // Callback for MenuRunner.
-  void OnMenuClosed(const base::TimeTicks desktop_context_menu_show_time);
+  void OnMenuClosed();
 
   // Passed as callback to |wallpaper_widget_controller_| - run when the
   // wallpaper widget is first set.
@@ -267,13 +274,11 @@ class ASH_EXPORT RootWindowController {
   wm::RootWindowLayoutManager* root_window_layout_manager_ = nullptr;
 
   std::unique_ptr<WallpaperWidgetController> wallpaper_widget_controller_;
-  std::unique_ptr<WorkspaceController> workspace_controller_;
 
   std::unique_ptr<AlwaysOnTopController> always_on_top_controller_;
 
   // Manages the context menu.
-  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
-  std::unique_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<AppMenuModelAdapter> root_window_menu_model_adapter_;
 
   std::unique_ptr<StackingController> stacking_controller_;
 
@@ -292,10 +297,10 @@ class ASH_EXPORT RootWindowController {
   // feedback is on.
   std::unique_ptr<TouchExplorationManager> touch_exploration_manager_;
 
-  // Heads-up displays for touch events for this root. Not owned. Manages its
-  // own lifetime. Whenever the widget showing a HUD is being destroyed (e.g.
-  // because of detaching a display), the HUD deletes itself.
-  TouchObserverHUD* touch_observer_hud_ = nullptr;
+  // Heads-up displays for touch events. These HUDs are not owned by the root
+  // window controller and manage their own lifetimes.
+  TouchHudDebug* touch_hud_debug_ = nullptr;
+  TouchHudProjection* touch_hud_projection_ = nullptr;
 
   std::unique_ptr<::wm::ScopedCaptureClient> capture_client_;
 

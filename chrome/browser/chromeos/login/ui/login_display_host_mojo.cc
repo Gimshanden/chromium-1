@@ -12,13 +12,13 @@
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/mojo_system_info_dispatcher.h"
 #include "chrome/browser/chromeos/login/screens/chrome_user_selection_screen.h"
-#include "chrome/browser/chromeos/login/screens/gaia_view.h"
 #include "chrome/browser/chromeos/login/ui/login_display.h"
 #include "chrome/browser/chromeos/login/ui/login_display_mojo.h"
 #include "chrome/browser/chromeos/login/user_board_view_mojo.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/ui/ash/login_screen_client.h"
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chromeos/login/auth/user_context.h"
 #include "components/user_manager/user_names.h"
@@ -89,12 +89,6 @@ void LoginDisplayHostMojo::ShowWhitelistCheckFailedError() {
   dialog_->Show();
 }
 
-void LoginDisplayHostMojo::ShowUnrecoverableCrypthomeErrorDialog() {
-  DCHECK(GetOobeUI());
-  GetOobeUI()->signin_screen_handler()->ShowUnrecoverableCrypthomeErrorDialog();
-  dialog_->Show();
-}
-
 void LoginDisplayHostMojo::ShowErrorScreen(LoginDisplay::SigninError error_id) {
   DCHECK(GetOobeUI());
   GetOobeUI()->signin_screen_handler()->ShowErrorScreen(error_id);
@@ -158,7 +152,7 @@ void LoginDisplayHostMojo::SetStatusAreaVisible(bool visible) {
   NOTIMPLEMENTED();
 }
 
-void LoginDisplayHostMojo::StartWizard(OobeScreen first_screen) {
+void LoginDisplayHostMojo::StartWizard(OobeScreenId first_screen) {
   DCHECK(GetOobeUI());
 
   wizard_controller_ = std::make_unique<WizardController>();
@@ -196,7 +190,7 @@ void LoginDisplayHostMojo::OnStartSignInScreen(
     // If we already have a signin screen instance, just reset the state of the
     // oobe dialog.
     HideOobeDialog();
-    GetOobeUI()->GetGaiaScreenView()->ShowGaiaAsync(base::nullopt);
+    GetOobeUI()->GetView<GaiaScreenHandler>()->ShowGaiaAsync(base::nullopt);
     return;
   }
 
@@ -261,7 +255,7 @@ void LoginDisplayHostMojo::HideOobeDialog() {
   // The dialog can not be hidden if there are no users on the login screen.
   // Reload it instead.
   if (!login_display_->IsSigninInProgress() && users_.empty()) {
-    GetOobeUI()->GetGaiaScreenView()->ShowGaiaAsync(base::nullopt);
+    GetOobeUI()->GetView<GaiaScreenHandler>()->ShowGaiaAsync(base::nullopt);
     return;
   }
 
@@ -274,8 +268,7 @@ void LoginDisplayHostMojo::UpdateOobeDialogSize(int width, int height) {
     dialog_->UpdateSizeAndPosition(width, height);
 }
 
-void LoginDisplayHostMojo::UpdateOobeDialogState(
-    ash::mojom::OobeDialogState state) {
+void LoginDisplayHostMojo::UpdateOobeDialogState(ash::OobeDialogState state) {
   if (dialog_)
     dialog_->SetState(state);
 }
@@ -422,6 +415,12 @@ void LoginDisplayHostMojo::OnAuthSuccess(const UserContext& user_context) {
     pending_auth_state_.reset();
   }
 }
+
+void LoginDisplayHostMojo::OnPasswordChangeDetected() {}
+
+void LoginDisplayHostMojo::OnOldEncryptionDetected(
+    const UserContext& user_context,
+    bool has_incomplete_migration) {}
 
 void LoginDisplayHostMojo::LoadOobeDialog() {
   if (dialog_)

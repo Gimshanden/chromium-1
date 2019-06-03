@@ -162,22 +162,22 @@ bool StructTraits<
       !data.ReadReferrer(&out->referrer) ||
       !data.ReadReferrerPolicy(&out->referrer_policy) ||
       !data.ReadHeaders(&out->headers) ||
-      !data.ReadRequestedWithHeader(&out->requested_with_header) ||
-      !data.ReadClientDataHeader(&out->client_data_header) ||
+      !data.ReadCorsExemptHeaders(&out->cors_exempt_headers) ||
       !data.ReadPriority(&out->priority) ||
       !data.ReadCorsPreflightPolicy(&out->cors_preflight_policy) ||
       !data.ReadFetchRequestMode(&out->fetch_request_mode) ||
       !data.ReadFetchCredentialsMode(&out->fetch_credentials_mode) ||
       !data.ReadFetchRedirectMode(&out->fetch_redirect_mode) ||
       !data.ReadFetchIntegrity(&out->fetch_integrity) ||
-      !data.ReadFetchFrameType(&out->fetch_frame_type) ||
       !data.ReadRequestBody(&out->request_body) ||
       !data.ReadThrottlingProfileId(&out->throttling_profile_id) ||
       !data.ReadCustomProxyPreCacheHeaders(
           &out->custom_proxy_pre_cache_headers) ||
       !data.ReadCustomProxyPostCacheHeaders(
           &out->custom_proxy_post_cache_headers) ||
-      !data.ReadFetchWindowId(&out->fetch_window_id)) {
+      !data.ReadFetchWindowId(&out->fetch_window_id) ||
+      !data.ReadDevtoolsRequestId(&out->devtools_request_id) ||
+      !data.ReadAppcacheHostId(&out->appcache_host_id)) {
     return false;
   }
 
@@ -189,12 +189,12 @@ bool StructTraits<
   out->allow_credentials = data.allow_credentials();
   out->plugin_child_id = data.plugin_child_id();
   out->resource_type = data.resource_type();
-  out->appcache_host_id = data.appcache_host_id();
   out->should_reset_appcache = data.should_reset_appcache();
   out->is_external_request = data.is_external_request();
-  out->service_worker_provider_id = data.service_worker_provider_id();
   out->originated_from_service_worker = data.originated_from_service_worker();
   out->skip_service_worker = data.skip_service_worker();
+  out->corb_detachable = data.corb_detachable();
+  out->corb_excluded = data.corb_excluded();
   out->fetch_request_context_type = data.fetch_request_context_type();
   out->keepalive = data.keepalive();
   out->has_user_gesture = data.has_user_gesture();

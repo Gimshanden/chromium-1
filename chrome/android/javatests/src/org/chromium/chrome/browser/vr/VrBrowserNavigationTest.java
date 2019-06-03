@@ -32,6 +32,7 @@ import org.chromium.chrome.browser.history.HistoryPage;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.vr.rules.ChromeTabbedActivityVrTestRule;
 import org.chromium.chrome.browser.vr.util.NativeUiUtils;
 import org.chromium.chrome.browser.vr.util.RenderTestUtils;
@@ -59,7 +60,8 @@ import java.util.concurrent.TimeoutException;
  * "VR Shell".
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr"})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        "enable-features=LogJsConsoleMessages", "enable-webvr"})
 @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM_OR_STANDALONE)
 public class VrBrowserNavigationTest {
     // We explicitly instantiate a rule here instead of using parameterization since this class
@@ -716,7 +718,7 @@ public class VrBrowserNavigationTest {
         VrBrowserTransitionUtils.forceExitVr();
         TestThreadUtils.runOnUiThreadBlocking(() -> {
             // Close the tab that's automatically open at test start.
-            mTestRule.getActivity().getActivityTab().getTabModelSelector().closeAllTabs();
+            TabModelSelector.from(mTestRule.getActivity().getActivityTab()).closeAllTabs();
             // Create an Incognito tab. Closing all tabs automatically goes to overview mode, but
             // appears to take some amount of time to do so. Instead of waiting until then and
             // creating through the menu item, just create an Incognito tab directly.

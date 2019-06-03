@@ -160,13 +160,7 @@ void AudioWorkletHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
 
 double AudioWorkletHandler::TailTime() const {
   DCHECK(Context()->IsAudioThread());
-  return 0;
-}
-
-bool AudioWorkletHandler::PropagatesSilence() const {
-  // Can't assume silent inputs produce silent outputs since the behavior
-  // depends on the user-specified script.
-  return false;
+  return tail_time_;
 }
 
 void AudioWorkletHandler::SetProcessorOnRenderThread(
@@ -182,9 +176,9 @@ void AudioWorkletHandler::SetProcessorOnRenderThread(
   } else {
     PostCrossThreadTask(
         *main_thread_task_runner_, FROM_HERE,
-        CrossThreadBind(&AudioWorkletHandler::NotifyProcessorError,
-                        WrapRefCounted(this),
-                        AudioWorkletProcessorErrorState::kConstructionError));
+        CrossThreadBindOnce(
+            &AudioWorkletHandler::NotifyProcessorError, WrapRefCounted(this),
+            AudioWorkletProcessorErrorState::kConstructionError));
   }
 }
 
@@ -197,15 +191,15 @@ void AudioWorkletHandler::FinishProcessorOnRenderThread() {
   if (error_state == AudioWorkletProcessorErrorState::kProcessError) {
     PostCrossThreadTask(
         *main_thread_task_runner_, FROM_HERE,
-        CrossThreadBind(&AudioWorkletHandler::NotifyProcessorError,
-                        WrapRefCounted(this),
-                        error_state));
+        CrossThreadBindOnce(&AudioWorkletHandler::NotifyProcessorError,
+                            WrapRefCounted(this), error_state));
   }
 
   // TODO(hongchan): After this point, The handler has no more pending activity
   // and ready for GC.
   Context()->NotifySourceNodeFinishedProcessing(this);
   processor_.Clear();
+  tail_time_ = 0;
 }
 
 void AudioWorkletHandler::NotifyProcessorError(

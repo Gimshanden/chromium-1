@@ -29,7 +29,6 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
-#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_container.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom.h"
@@ -45,15 +44,11 @@ namespace service_worker_object_host_unittest {
 class ServiceWorkerObjectHostTest;
 }
 
-namespace storage {
-class BlobStorageContext;
-}
-
 namespace content {
 
+class NavigationLoaderInterceptor;
 class ServiceWorkerContextCore;
 class ServiceWorkerRegistrationObjectHost;
-class ServiceWorkerRequestHandler;
 class ServiceWorkerVersion;
 class WebContents;
 
@@ -119,8 +114,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // ServiceWorkerProviderContext will later be created in the renderer, should
   // the navigation succeed. |are_ancestors_secure| should be true for main
   // frames. Otherwise it is true iff all ancestor frames of this frame have a
-  // secure origin. |web_contents_getter| indicates the tab where the navigation
-  // is occurring.
+  // secure origin. |frame_tree_node_id| is FrameTreeNode
+  // id. |web_contents_getter| indicates the tab where the navigation is
+  // occurring.
   //
   // The returned host stays alive as long as the filled |out_provider_info|
   // stays alive (namely, as long as |out_provider_info->host_ptr_info| stays
@@ -129,7 +125,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   static base::WeakPtr<ServiceWorkerProviderHost> PreCreateNavigationHost(
       base::WeakPtr<ServiceWorkerContextCore> context,
       bool are_ancestors_secure,
-      WebContentsGetter web_contents_getter,
+      int frame_tree_node_id,
       blink::mojom::ServiceWorkerProviderInfoForWindowPtr* out_provider_info);
 
   // Used for starting a service worker. Returns a provider host for the service
@@ -184,17 +180,11 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   blink::mojom::ControllerServiceWorkerMode GetControllerMode() const;
 
   // For service worker clients. Returns this client's controller.
-  ServiceWorkerVersion* controller() const {
-#if DCHECK_IS_ON()
-    CheckControllerConsistency();
-#endif  // DCHECK_IS_ON()
-
-    return controller_.get();
-  }
+  ServiceWorkerVersion* controller() const;
 
   ServiceWorkerRegistration* controller_registration() const {
 #if DCHECK_IS_ON()
-    CheckControllerConsistency();
+    CheckControllerConsistency(false);
 #endif  // DCHECK_IS_ON()
 
     return controller_registration_.get();
@@ -299,9 +289,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
     return allow_set_controller_registration_;
   }
 
-  // Returns a handler for a request. May return nullptr if the request doesn't
-  // require special handling.
-  std::unique_ptr<ServiceWorkerRequestHandler> CreateRequestHandler(
+  // Returns an interceptor for a main resource request. May return nullptr if
+  // the request doesn't require interception.
+  std::unique_ptr<NavigationLoaderInterceptor> CreateLoaderInterceptor(
       network::mojom::FetchRequestMode request_mode,
       network::mojom::FetchCredentialsMode credentials_mode,
       network::mojom::FetchRedirectMode redirect_mode,
@@ -309,8 +299,6 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
       bool keepalive,
       ResourceType resource_type,
       blink::mojom::RequestContextType request_context_type,
-      network::mojom::RequestContextFrameType frame_type,
-      base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
       scoped_refptr<network::ResourceRequestBody> body,
       bool skip_service_worker);
 
@@ -475,6 +463,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   ServiceWorkerProviderHost(
       blink::mojom::ServiceWorkerProviderType type,
       bool is_parent_frame_secure,
+      int frame_tree_node_id,
       blink::mojom::ServiceWorkerContainerHostAssociatedRequest host_request,
       blink::mojom::ServiceWorkerContainerAssociatedPtrInfo client_ptr_info,
       base::WeakPtr<ServiceWorkerContextCore> context);
@@ -520,7 +509,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   bool IsControllerDecided() const;
 
 #if DCHECK_IS_ON()
-  void CheckControllerConsistency() const;
+  void CheckControllerConsistency(bool should_crash) const;
 #endif  // DCHECK_IS_ON()
 
   // Implements blink::mojom::ServiceWorkerContainerHost.
@@ -638,9 +627,13 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // change its value.
   bool is_parent_frame_secure_;
 
+  // FrameTreeNode id if this is a service worker window client.
+  // Otherwise, |FrameTreeNode::kFrameTreeNodeInvalidId|.
+  const int frame_tree_node_id_;
+
   // Only set when this object is pre-created for a navigation. It indicates the
-  // tab where the navigation occurs.
-  WebContentsGetter web_contents_getter_;
+  // tab where the navigation occurs. Otherwise, a null callback.
+  const WebContentsGetter web_contents_getter_;
 
   // For service worker clients. See comments for the getter functions.
   GURL url_;

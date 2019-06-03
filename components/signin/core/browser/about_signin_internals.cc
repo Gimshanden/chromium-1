@@ -33,6 +33,35 @@ namespace {
 // |kMaxRefreshTokenListSize| events are kept in memory.
 const size_t kMaxRefreshTokenListSize = 50;
 
+enum class GaiaCookiesState {
+  kAllowed,
+  kClearOnExit,
+  kBlocked,
+};
+
+GaiaCookiesState GetGaiaCookiesState(SigninClient* signin_client) {
+  bool signin_cookies_allowed = signin_client->AreSigninCookiesAllowed();
+  if (!signin_cookies_allowed)
+    return GaiaCookiesState::kBlocked;
+
+  bool clear_cookies_on_exit = signin_client->AreSigninCookiesDeletedOnExit();
+  if (clear_cookies_on_exit)
+    return GaiaCookiesState::kClearOnExit;
+
+  return GaiaCookiesState::kAllowed;
+}
+
+std::string GetGaiaCookiesStateAsString(const GaiaCookiesState state) {
+  switch (state) {
+    case GaiaCookiesState::kBlocked:
+      return "Not allowed";
+    case GaiaCookiesState::kClearOnExit:
+      return "Cleared on exit";
+    case GaiaCookiesState::kAllowed:
+      return "Allowed";
+  }
+}
+
 std::string GetTimeStr(base::Time time) {
   return base::UTF16ToUTF8(base::TimeFormatShortDateAndTime(time));
 }
@@ -290,15 +319,29 @@ void AboutSigninInternals::Initialize(SigninClient* client) {
 
   RefreshSigninPrefs();
 
+  client_->AddContentSettingsObserver(this);
   signin_error_controller_->AddObserver(this);
   identity_manager_->AddObserver(this);
   identity_manager_->AddDiagnosticsObserver(this);
 }
 
 void AboutSigninInternals::Shutdown() {
+  client_->RemoveContentSettingsObserver(this);
   signin_error_controller_->RemoveObserver(this);
   identity_manager_->RemoveObserver(this);
   identity_manager_->RemoveDiagnosticsObserver(this);
+}
+
+void AboutSigninInternals::OnContentSettingChanged(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsType content_type,
+    const std::string& resource_identifier) {
+  // If this is not a change to cookie settings, just ignore.
+  if (content_type != CONTENT_SETTINGS_TYPE_COOKIES)
+    return;
+
+  NotifyObservers();
 }
 
 void AboutSigninInternals::NotifyObservers() {
@@ -411,11 +454,6 @@ void AboutSigninInternals::OnAuthenticationResultReceived(
 }
 
 void AboutSigninInternals::OnErrorChanged() {
-  NotifyObservers();
-}
-
-void AboutSigninInternals::OnPrimaryAccountSigninFailed(
-    const GoogleServiceAuthError& error) {
   NotifyObservers();
 }
 
@@ -583,32 +621,39 @@ AboutSigninInternals::SigninStatus::ToValue(
           ->GetDetailedStateOfLoadingOfRefreshTokens();
   AddSectionEntry(basic_info, "TokenService Load Status",
                   TokenServiceLoadCredentialsStateToLabel(load_tokens_state));
+  AddSectionEntry(
+      basic_info, "Gaia cookies state",
+      GetGaiaCookiesStateAsString(GetGaiaCookiesState(signin_client)));
 
   if (identity_manager->HasPrimaryAccount()) {
-    std::string account_id = identity_manager->GetPrimaryAccountId();
+    CoreAccountInfo account_info = identity_manager->GetPrimaryAccountInfo();
     AddSectionEntry(basic_info,
                     SigninStatusFieldToLabel(signin_internals_util::ACCOUNT_ID),
-                    account_id);
-    AddSectionEntry(
-        basic_info, SigninStatusFieldToLabel(signin_internals_util::GAIA_ID),
-        identity_manager
-            ->FindAccountInfoForAccountWithRefreshTokenByAccountId(account_id)
-            ->gaia);
+                    account_info.account_id);
+    AddSectionEntry(basic_info,
+                    SigninStatusFieldToLabel(signin_internals_util::GAIA_ID),
+                    account_info.gaia);
     AddSectionEntry(basic_info,
                     SigninStatusFieldToLabel(signin_internals_util::USERNAME),
-                    identity_manager->GetPrimaryAccountInfo().email);
+                    account_info.email);
     if (signin_error_controller->HasError()) {
       const std::string error_account_id =
           signin_error_controller->error_account_id();
-      const std::string error_username =
+      const base::Optional<AccountInfo> error_account_info =
           identity_manager
               ->FindAccountInfoForAccountWithRefreshTokenByAccountId(
-                  error_account_id)
-              ->email;
+                  error_account_id);
       AddSectionEntry(basic_info, "Auth Error",
           signin_error_controller->auth_error().ToString());
       AddSectionEntry(basic_info, "Auth Error Account Id", error_account_id);
-      AddSectionEntry(basic_info, "Auth Error Username", error_username);
+
+      // The error_account_info optional should never be unset when we reach
+      // this line (as we should have a refresh token, even if in an error
+      // state). However, since this is a debug page, make the code resilient
+      // to avoid rendering the page unavailable to debug if a regression is
+      // introduced (and thus making debugging the regression harder).
+      AddSectionEntry(basic_info, "Auth Error Username",
+                      error_account_info ? error_account_info->email : "");
     } else {
       AddSectionEntry(basic_info, "Auth Error", "None");
     }
@@ -682,16 +727,16 @@ AboutSigninInternals::SigninStatus::ToValue(
 
   // Account info section
   auto account_info_section = std::make_unique<base::ListValue>();
-  const std::vector<AccountInfo>& accounts_with_refresh_tokens =
+  const std::vector<CoreAccountInfo>& accounts_with_refresh_tokens =
       identity_manager->GetAccountsWithRefreshTokens();
   if (accounts_with_refresh_tokens.size() == 0) {
     auto no_token_entry = std::make_unique<base::DictionaryValue>();
     no_token_entry->SetString("accountId", "No token in Token Service.");
     account_info_section->Append(std::move(no_token_entry));
   } else {
-    for (const AccountInfo account_info : accounts_with_refresh_tokens) {
+    for (const CoreAccountInfo& account_info : accounts_with_refresh_tokens) {
       auto entry = std::make_unique<base::DictionaryValue>();
-      entry->SetString("accountId", account_info.account_id);
+      entry->SetString("accountId", account_info.account_id.id);
       // TODO(https://crbug.com/919793): Remove this field once the token
       // service is internally consistent on all platforms.
       entry->SetBoolean("hasRefreshToken",

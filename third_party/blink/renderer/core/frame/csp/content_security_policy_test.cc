@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/html/html_script_element.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/crypto.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
@@ -68,15 +69,14 @@ TEST_F(ContentSecurityPolicyTest, ParseInsecureRequestPolicy) {
                           kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_EQ(test.expected_policy, csp->GetInsecureRequestPolicy());
 
-    Document* document = Document::CreateForTest();
+    auto* document = MakeGarbageCollected<Document>();
     document->SetSecurityOrigin(secure_origin);
     document->SetURL(secure_url);
     csp->BindToDelegate(document->GetContentSecurityPolicyDelegate());
     EXPECT_EQ(test.expected_policy, document->GetInsecureRequestPolicy());
     bool expect_upgrade = test.expected_policy & kUpgradeInsecureRequests;
-    EXPECT_EQ(expect_upgrade,
-              document->InsecureNavigationsToUpgrade()->Contains(
-                  document->Url().Host().Impl()->GetHash()));
+    EXPECT_EQ(expect_upgrade, document->InsecureNavigationsToUpgrade().Contains(
+                                  document->Url().Host().Impl()->GetHash()));
   }
 
   // Report-Only
@@ -93,7 +93,7 @@ TEST_F(ContentSecurityPolicyTest, ParseInsecureRequestPolicy) {
     csp->BindToDelegate(execution_context->GetContentSecurityPolicyDelegate());
     EXPECT_EQ(kLeaveInsecureRequestsAlone,
               execution_context->GetInsecureRequestPolicy());
-    EXPECT_FALSE(execution_context->InsecureNavigationsToUpgrade()->Contains(
+    EXPECT_FALSE(execution_context->InsecureNavigationsToUpgrade().Contains(
         secure_origin->Host().Impl()->GetHash()));
   }
 }
@@ -720,7 +720,7 @@ TEST_F(ContentSecurityPolicyTest, NonceInline) {
   WTF::OrdinalNumber context_line;
 
   // We need document for HTMLScriptElement tests.
-  Document* document = Document::CreateForTest();
+  auto* document = MakeGarbageCollected<Document>();
   document->SetSecurityOrigin(secure_origin);
 
   for (const auto& test : cases) {
@@ -728,8 +728,8 @@ TEST_F(ContentSecurityPolicyTest, NonceInline) {
                                     << "`, Nonce: `" << test.nonce << "`");
 
     unsigned expected_reports = test.allowed ? 0u : 1u;
-    auto* element =
-        HTMLScriptElement::Create(*document, CreateElementFlags::ByParser());
+    auto* element = MakeGarbageCollected<HTMLScriptElement>(
+        *document, CreateElementFlags::ByParser());
 
     // Enforce 'script-src'
     Persistent<ContentSecurityPolicy> policy =
@@ -1518,13 +1518,13 @@ TEST_F(ContentSecurityPolicyTest, EmptyCSPIsNoOp) {
   csp->BindToDelegate(execution_context->GetContentSecurityPolicyDelegate());
 
   const KURL example_url("http://example.com");
-  Document* document = Document::CreateForTest();
+  auto* document = MakeGarbageCollected<Document>();
   String source;
   String context_url;
   String nonce;
   OrdinalNumber ordinal_number;
-  Element* element =
-      HTMLScriptElement::Create(*document, CreateElementFlags::ByParser());
+  auto* element = MakeGarbageCollected<HTMLScriptElement>(
+      *document, CreateElementFlags::ByParser());
 
   EXPECT_TRUE(csp->Headers().IsEmpty());
   EXPECT_TRUE(csp->AllowInline(ContentSecurityPolicy::InlineType::kNavigation,
@@ -1593,7 +1593,7 @@ TEST_F(ContentSecurityPolicyTest, EmptyCSPIsNoOp) {
   EXPECT_EQ(kLeaveInsecureRequestsAlone, csp->GetInsecureRequestPolicy());
   EXPECT_FALSE(csp->HasHeaderDeliveredPolicy());
   EXPECT_FALSE(csp->SupportsWasmEval());
-  EXPECT_EQ(kSandboxNone, csp->GetSandboxMask());
+  EXPECT_EQ(WebSandboxFlags::kNone, csp->GetSandboxMask());
   EXPECT_FALSE(
       csp->HasPolicyFromSource(kContentSecurityPolicyHeaderSourceHTTP));
 }

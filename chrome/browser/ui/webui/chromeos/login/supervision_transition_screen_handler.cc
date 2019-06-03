@@ -27,6 +27,8 @@ constexpr base::TimeDelta kWaitingTimeout = base::TimeDelta::FromMinutes(2);
 
 namespace chromeos {
 
+constexpr StaticOobeScreenId SupervisionTransitionScreenView::kScreenId;
+
 SupervisionTransitionScreenHandler::SupervisionTransitionScreenHandler(
     JSCallsContainer* js_calls_container)
     : BaseScreenHandler(kScreenId, js_calls_container) {
@@ -109,6 +111,10 @@ void SupervisionTransitionScreenHandler::Show() {
 }
 
 void SupervisionTransitionScreenHandler::Hide() {}
+
+base::OneShotTimer* SupervisionTransitionScreenHandler::GetTimerForTesting() {
+  return &timer_;
+}
 
 void SupervisionTransitionScreenHandler::Initialize() {
   profile_ = ProfileManager::GetPrimaryUserProfile();

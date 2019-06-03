@@ -269,7 +269,6 @@ VISIT_PROTO_FIELDS(const sync_pb::CommitResponse::EntryResponse& proto) {
   VISIT_ENUM(response_type);
   VISIT(id_string);
   VISIT(parent_id_string);
-  VISIT(position_in_parent);
   VISIT(version);
   VISIT(name);
   VISIT(error_message);
@@ -336,6 +335,11 @@ VISIT_PROTO_FIELDS(const sync_pb::DeviceInfoSpecifics& proto) {
   VISIT(chrome_version);
   VISIT(signin_scoped_device_id);
   VISIT(last_updated_timestamp);
+  VISIT(feature_fields);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::FeatureSpecificFields& proto) {
+  VISIT(send_tab_to_self_receiving_enabled);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::DictionarySpecifics& proto) {
@@ -367,7 +371,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntityMetadata& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
-  static_assert(44 == ModelType::NUM_ENTRIES,
+  static_assert(45 == ModelType::NUM_ENTRIES,
                 "When adding a new protocol type, you will likely need to add "
                 "it here as well.");
   VISIT(encrypted);
@@ -411,6 +415,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
   VISIT(user_consent);
   VISIT(user_event);
   VISIT(wallet_metadata);
+  VISIT(wifi_configuration);
   VISIT(wifi_credential);
 }
 
@@ -1078,6 +1083,30 @@ VISIT_PROTO_FIELDS(const sync_pb::WifiCredentialSpecifics& proto) {
   VISIT_BYTES(ssid);
   VISIT_ENUM(security_class);
   VISIT_BYTES(passphrase);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::WifiConfigurationSpecifics& proto) {
+  VISIT(encrypted);
+  VISIT(client_only_encrypted_data);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration& proto) {
+  VISIT_ENUM(proxy_option);
+  VISIT(proxy_url);
+  VISIT(proxy_port);
+  VISIT_REP(whitelisted_domains);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::WifiConfigurationSpecificsData& proto) {
+  VISIT_BYTES(ssid);
+  VISIT_ENUM(security_type);
+  VISIT_BYTES(passphrase);
+  VISIT_ENUM(automatically_connect);
+  VISIT_ENUM(is_preferred);
+  VISIT(proxy_configuration);
+  VISIT_REP(custom_dns);
+  VISIT(last_update_timestamp);
 }
 
 }  // namespace syncer

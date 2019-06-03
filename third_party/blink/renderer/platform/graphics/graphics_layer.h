@@ -171,8 +171,6 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   void SetScrollParent(cc::Layer*);
   void SetClipParent(cc::Layer*);
 
-  void SetPaintArtifactCompositorNeedsUpdate() const;
-
   // For special cases, e.g. drawing missing tiles on Android.
   // The compositor should never paint this color in normal cases because the
   // Layer will paint the background by itself.
@@ -194,10 +192,8 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   bool IsRootForIsolatedGroup() const;
   void SetIsRootForIsolatedGroup(bool);
 
-  void SetHitTestableWithoutDrawsContent(bool);
-  bool GetHitTestableWithoutDrawsContent() const {
-    return hit_testable_without_draws_content_;
-  }
+  void SetHitTestable(bool);
+  bool GetHitTestable() const { return hit_testable_; }
 
   void SetFilters(CompositorFilterOperations);
   void SetBackdropFilters(CompositorFilterOperations, const gfx::RRectF&);
@@ -229,8 +225,12 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
                             bool prevent_contents_opaque_changes) {
     SetContentsTo(layer, prevent_contents_opaque_changes);
   }
-  bool HasContentsLayer() const { return contents_layer_; }
-  cc::Layer* ContentsLayer() const { return contents_layer_; }
+  bool HasContentsLayer() const { return ContentsLayer(); }
+  cc::Layer* ContentsLayer() const {
+    return const_cast<GraphicsLayer*>(this)->ContentsLayerIfRegistered();
+  }
+
+  const IntRect& ContentsRect() const { return contents_rect_; }
 
   // For hosting this GraphicsLayer in a native layer hierarchy.
   cc::PictureLayer* CcLayer() const;
@@ -266,7 +266,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   // cc::LayerClient implementation.
   std::unique_ptr<base::trace_event::TracedValue> TakeDebugInfo(
-      cc::Layer*) override;
+      const cc::Layer*) override;
   void DidChangeScrollbarsHiddenIfOverlay(bool) override;
 
   PaintController& GetPaintController() const;
@@ -276,7 +276,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   // DisplayItemClient methods
   String DebugName() const final { return client_.DebugName(this); }
-  LayoutRect VisualRect() const override;
+  IntRect VisualRect() const override;
 
   void SetHasWillChangeTransformHint(bool);
 
@@ -294,16 +294,15 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   }
   IntPoint GetOffsetFromTransformNode() const { return layer_state_->offset; }
 
-  void SetContentsPropertyTreeState(const PropertyTreeState&);
+  void SetContentsLayerState(const PropertyTreeState&,
+                             const IntPoint& layer_offset);
   const PropertyTreeState& GetContentsPropertyTreeState() const {
-    return contents_property_tree_state_ ? *contents_property_tree_state_
-                                         : GetPropertyTreeState();
+    return contents_layer_state_ ? contents_layer_state_->state
+                                 : GetPropertyTreeState();
   }
   IntPoint GetContentsOffsetFromTransformNode() const {
-    auto offset = contents_rect_.Location();
-    if (layer_state_)
-      offset = offset + GetOffsetFromTransformNode();
-    return offset;
+    return contents_layer_state_ ? contents_layer_state_->offset
+                                 : GetOffsetFromTransformNode();
   }
 
   // Capture the last painted result into a PaintRecord. This GraphicsLayer
@@ -321,7 +320,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
       const base::Optional<IntRect>& interest_rect = base::nullopt);
 
  protected:
-  String DebugName(cc::Layer*) const;
+  String DebugName(const cc::Layer*) const;
 
  private:
   friend class CompositedLayerMappingTest;
@@ -335,6 +334,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   size_t GetApproximateUnsharedMemoryUsage() const final;
 
   void PaintRecursivelyInternal(Vector<GraphicsLayer*>& repainted_layers);
+  void UpdateSafeOpaqueBackgroundColor();
 
   // Returns true if PaintController::PaintArtifact() changed and needs commit.
   bool PaintWithoutCommit(
@@ -376,7 +376,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   bool draws_content_ : 1;
   bool paints_hit_test_ : 1;
   bool contents_visible_ : 1;
-  bool hit_testable_without_draws_content_ : 1;
+  bool hit_testable_ : 1;
   bool needs_check_raster_invalidation_ : 1;
 
   bool has_scroll_parent_ : 1;
@@ -423,7 +423,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
     IntPoint offset;
   };
   std::unique_ptr<LayerState> layer_state_;
-  std::unique_ptr<PropertyTreeState> contents_property_tree_state_;
+  std::unique_ptr<LayerState> contents_layer_state_;
 
   std::unique_ptr<RasterInvalidator> raster_invalidator_;
 

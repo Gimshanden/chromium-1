@@ -11,6 +11,7 @@
 #include "cc/paint/paint_record.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/tabs/tab_group_data.h"
 #include "chrome/browser/ui/views/tabs/glow_hover_controller.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_close_button.h"
@@ -28,46 +29,6 @@ namespace {
 
 // Opacity of the active tab background painted over inactive selected tabs.
 constexpr float kSelectedTabOpacity = 0.75f;
-
-// Cache of pre-painted backgrounds for tabs.
-class BackgroundCache {
- public:
-  BackgroundCache() = default;
-  ~BackgroundCache() = default;
-
-  // Updates the cache key with the new values.
-  // Returns true if any of the values changed.
-  bool UpdateCacheKey(float scale,
-                      const gfx::Size& size,
-                      SkColor active_color,
-                      SkColor inactive_color,
-                      SkColor stroke_color,
-                      float stroke_thickness);
-
-  const sk_sp<cc::PaintRecord>& fill_record() const { return fill_record_; }
-  void set_fill_record(sk_sp<cc::PaintRecord>&& record) {
-    fill_record_ = record;
-  }
-
-  const sk_sp<cc::PaintRecord>& stroke_record() const { return stroke_record_; }
-  void set_stroke_record(sk_sp<cc::PaintRecord>&& record) {
-    stroke_record_ = record;
-  }
-
- private:
-  // Parameters used to construct the PaintRecords.
-  float scale_ = 0.f;
-  gfx::Size size_;
-  SkColor active_color_ = 0;
-  SkColor inactive_color_ = 0;
-  SkColor stroke_color_ = 0;
-  float stroke_thickness_ = 0.f;
-
-  sk_sp<cc::PaintRecord> fill_record_;
-  sk_sp<cc::PaintRecord> stroke_record_;
-
-  DISALLOW_COPY_AND_ASSIGN(BackgroundCache);
-};
 
 // Tab style implementation for the GM2 refresh (Chrome 69).
 class GM2TabStyle : public TabStyleViews {
@@ -120,23 +81,25 @@ class GM2TabStyle : public TabStyleViews {
   // treated as an active tab regardless of its true current state.
   int GetStrokeThickness(bool should_paint_as_active = false) const;
 
+  bool ShouldPaintTabBackgroundColor(TabState active_state, int fill_id) const;
+
+  SkColor GetTabBackgroundColor(TabState active_state) const;
+
   // Painting helper functions:
   void PaintInactiveTabBackground(gfx::Canvas* canvas,
                                   const SkPath& clip) const;
   void PaintTabBackground(gfx::Canvas* canvas,
-                          bool active,
+                          TabState active_state,
                           int fill_id,
                           int y_inset,
                           const SkPath* clip) const;
   void PaintTabBackgroundFill(gfx::Canvas* canvas,
-                              bool active,
+                              TabState active_state,
                               bool paint_hover_effect,
-                              SkColor active_color,
-                              SkColor inactive_color,
                               int fill_id,
                               int y_inset) const;
   void PaintBackgroundStroke(gfx::Canvas* canvas,
-                             bool active,
+                             TabState active_state,
                              SkColor stroke_color) const;
   void PaintSeparators(gfx::Canvas* canvas) const;
 
@@ -152,10 +115,6 @@ class GM2TabStyle : public TabStyleViews {
   const Tab* const tab_;
 
   std::unique_ptr<GlowHoverController> hover_controller_;
-
-  // Cache of the paint output for tab backgrounds.
-  mutable BackgroundCache background_active_cache_;
-  mutable BackgroundCache background_inactive_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(GM2TabStyle);
 };
@@ -181,22 +140,6 @@ bool UpdateValue(T* dest, const T& src) {
     return false;
   *dest = src;
   return true;
-}
-
-// BackgroundCache -------------------------------------------------------------
-
-bool BackgroundCache::UpdateCacheKey(float scale,
-                                     const gfx::Size& size,
-                                     SkColor active_color,
-                                     SkColor inactive_color,
-                                     SkColor stroke_color,
-                                     float stroke_thickness) {
-  // Use | instead of || to prevent lazy evaluation.
-  return UpdateValue(&scale_, scale) | UpdateValue(&size_, size) |
-         UpdateValue(&active_color_, active_color) |
-         UpdateValue(&inactive_color_, inactive_color) |
-         UpdateValue(&stroke_color_, stroke_color) |
-         UpdateValue(&stroke_thickness_, stroke_thickness);
 }
 
 // GM2TabStyle -----------------------------------------------------------------
@@ -452,26 +395,24 @@ TabStyle::TabColors GM2TabStyle::CalculateColors() const {
     expected_opacity = GetHoverOpacity();
   }
   const SkColor bg_color = color_utils::AlphaBlend(
-      tab_->controller()->GetTabBackgroundColor(TAB_ACTIVE),
-      tab_->controller()->GetTabBackgroundColor(TAB_INACTIVE),
+      GetTabBackgroundColor(TAB_ACTIVE), GetTabBackgroundColor(TAB_INACTIVE),
       expected_opacity);
 
   SkColor title_color = tab_->controller()->GetTabForegroundColor(
       expected_opacity > 0.5f ? TAB_ACTIVE : TAB_INACTIVE, bg_color);
-  title_color = color_utils::GetColorWithMinimumContrast(title_color, bg_color);
+  title_color = color_utils::BlendForMinContrast(title_color, bg_color).color;
 
   const SkColor base_hovered_color = theme_provider->GetColor(
       ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_HOVER);
   const SkColor base_pressed_color = theme_provider->GetColor(
       ThemeProperties::COLOR_TAB_CLOSE_BUTTON_BACKGROUND_PRESSED);
 
-  const auto get_color_for_contrast_ratio = [](SkColor fg_color,
-                                               SkColor bg_color,
-                                               float contrast_ratio) {
-    const SkAlpha blend_alpha = color_utils::GetBlendValueWithMinimumContrast(
-        bg_color, fg_color, bg_color, contrast_ratio);
-    return color_utils::AlphaBlend(fg_color, bg_color, blend_alpha);
-  };
+  const auto get_color_for_contrast_ratio =
+      [](SkColor fg_color, SkColor bg_color, float contrast_ratio) {
+        return color_utils::BlendForMinContrast(bg_color, bg_color, fg_color,
+                                                contrast_ratio)
+            .color;
+      };
 
   const SkColor generated_icon_color = get_color_for_contrast_ratio(
       title_color, bg_color,
@@ -483,11 +424,11 @@ TabStyle::TabColors GM2TabStyle::CalculateColors() const {
       base_pressed_color, bg_color, kMinimumPressedContrastRatio);
 
   const SkColor generated_hovered_icon_color =
-      color_utils::GetColorWithMinimumContrast(title_color,
-                                               generated_hovered_color);
+      color_utils::BlendForMinContrast(title_color, generated_hovered_color)
+          .color;
   const SkColor generated_pressed_icon_color =
-      color_utils::GetColorWithMinimumContrast(title_color,
-                                               generated_pressed_color);
+      color_utils::BlendForMinContrast(title_color, generated_pressed_color)
+          .color;
 
   return {bg_color,
           title_color,
@@ -507,7 +448,7 @@ void GM2TabStyle::PaintTab(gfx::Canvas* canvas, const SkPath& clip) const {
   }
 
   if (tab_->IsActive()) {
-    PaintTabBackground(canvas, true /* active */, active_tab_fill_id,
+    PaintTabBackground(canvas, TAB_ACTIVE, active_tab_fill_id,
                        active_tab_y_inset, nullptr /* clip */);
   } else {
     PaintInactiveTabBackground(canvas, clip);
@@ -516,7 +457,7 @@ void GM2TabStyle::PaintTab(gfx::Canvas* canvas, const SkPath& clip) const {
     if (throb_value > 0) {
       canvas->SaveLayerAlpha(gfx::ToRoundedInt(throb_value * 0xff),
                              tab_->GetLocalBounds());
-      PaintTabBackground(canvas, true /* active */, active_tab_fill_id,
+      PaintTabBackground(canvas, TAB_ACTIVE, active_tab_fill_id,
                          active_tab_y_inset, nullptr /* clip */);
       canvas->Restore();
     }
@@ -622,29 +563,23 @@ TabStyle::SeparatorOpacities GM2TabStyle::GetSeparatorOpacities(
     }
   }
 
-  // For the first or last tab in the strip, fade the leading or trailing
-  // separator based on the NTB position and how close to the target bounds this
-  // tab is.  In the steady state, this hides separators on the opposite end of
-  // the strip from the NTB; it fades out the separators as tabs animate into
-  // these positions, after they pass by the other tabs; and it snaps the
-  // separators to full visibility immediately when animating away from these
-  // positions, which seems desirable.
-  const NewTabButtonPosition ntb_position =
-      tab_->controller()->GetNewTabButtonPosition();
+  // For the first or (when tab shapes are visible) last tab in the strip, fade
+  // the leading or trailing separator based on how close to the target bounds
+  // this tab is.  In the steady state, this hides the leading separator; it
+  // fades out the separators as tabs animate into these positions, after they
+  // pass by the other tabs; and it snaps the separators to full visibility
+  // immediately when animating away from these positions, which seems
+  // desirable.
   const gfx::Rect target_bounds =
       tab_->controller()->GetTabAnimationTargetBounds(tab_);
   const int tab_width = std::max(tab_->width(), target_bounds.width());
   const float target_opacity =
       float{std::min(std::abs(tab_->x() - target_bounds.x()), tab_width)} /
       tab_width;
-  // If the tab shapes are visible, never draw end separators.
-  const bool always_hide_separators_on_ends =
-      tab_->controller()->HasVisibleBackgroundTabShapes();
-  if (tab_->controller()->IsFirstVisibleTab(tab_) &&
-      (ntb_position != LEADING || always_hide_separators_on_ends))
+  if (tab_->controller()->IsFirstVisibleTab(tab_))
     leading_opacity = target_opacity;
   if (tab_->controller()->IsLastVisibleTab(tab_) &&
-      (ntb_position != AFTER_TABS || always_hide_separators_on_ends))
+      tab_->controller()->HasVisibleBackgroundTabShapes())
     trailing_opacity = target_opacity;
 
   // Return the opacities in physical order, rather than logical.
@@ -702,6 +637,42 @@ int GM2TabStyle::GetStrokeThickness(bool should_paint_as_active) const {
              : 0;
 }
 
+bool GM2TabStyle::ShouldPaintTabBackgroundColor(TabState active_state,
+                                                int fill_id) const {
+  // In the active case, always paint the tab background. The fill image may be
+  // transparent.
+  if (active_state == TAB_ACTIVE)
+    return true;
+
+  // In the inactive case, the fill image is guaranteed to be opaque, so it's
+  // not necessary to paint the background when there is one.
+  if (fill_id)
+    return false;
+
+  return tab_->GetThemeProvider()->GetDisplayProperty(
+      ThemeProperties::SHOULD_FILL_BACKGROUND_TAB_COLOR);
+}
+
+SkColor GM2TabStyle::GetTabBackgroundColor(TabState active_state) const {
+  SkColor color = tab_->controller()->GetTabBackgroundColor(active_state);
+
+  base::Optional<SkColor> group_color = tab_->GetGroupColor();
+  if (group_color.has_value()) {
+    if (tab_->IsActive()) {
+      color = group_color.value();
+    } else {
+      // Tint with group color. With a dark scheme, the tint needs a higher
+      // contrast to stand out effectively.
+      const float target_contrast = color_utils::IsDark(color) ? 1.8f : 1.2f;
+      color = color_utils::BlendForMinContrast(
+                  color, color, group_color.value(), target_contrast)
+                  .color;
+    }
+  }
+
+  return color;
+}
+
 void GM2TabStyle::PaintInactiveTabBackground(gfx::Canvas* canvas,
                                              const SkPath& clip) const {
   bool has_custom_image;
@@ -709,109 +680,52 @@ void GM2TabStyle::PaintInactiveTabBackground(gfx::Canvas* canvas,
   if (!has_custom_image)
     fill_id = 0;
 
-  PaintTabBackground(canvas, false /* active */, fill_id, 0,
+  PaintTabBackground(canvas, TAB_INACTIVE, fill_id, 0,
                      tab_->controller()->MaySetClip() ? &clip : nullptr);
 }
 
 void GM2TabStyle::PaintTabBackground(gfx::Canvas* canvas,
-                                     bool active,
+                                     TabState active_state,
                                      int fill_id,
                                      int y_inset,
                                      const SkPath* clip) const {
   // |y_inset| is only set when |fill_id| is being used.
   DCHECK(!y_inset || fill_id);
 
-  const SkColor active_color =
-      tab_->controller()->GetTabBackgroundColor(TAB_ACTIVE);
-  const SkColor inactive_color =
-      tab_->GetThemeProvider()->GetDisplayProperty(
-          ThemeProperties::SHOULD_FILL_BACKGROUND_TAB_COLOR)
-          ? tab_->controller()->GetTabBackgroundColor(TAB_INACTIVE)
-          : SK_ColorTRANSPARENT;
   const SkColor stroke_color =
       tab_->controller()->GetToolbarTopSeparatorColor();
-  const bool paint_hover_effect = !active && IsHoverActive();
-  const float scale = canvas->image_scale();
-  const float stroke_thickness = GetStrokeThickness(active);
+  const bool paint_hover_effect =
+      active_state == TAB_INACTIVE && IsHoverActive();
+  const float stroke_thickness = GetStrokeThickness(active_state == TAB_ACTIVE);
 
-  // If there is a |fill_id| we don't try to cache. This could be improved but
-  // would require knowing then the image from the ThemeProvider had been
-  // changed, and invalidating when the tab's x-coordinate or background_offset_
-  // changed.
-  //
-  // If |paint_hover_effect|, we don't try to cache since hover effects change
-  // on every invalidation and we would need to invalidate the cache based on
-  // the hover states.
-  //
-  // Finally, we don't cache for non-integral scale factors, since tabs draw
-  // with slightly different offsets so as to pixel-align the layout rect (see
-  // ScaleAndAlignBounds()).
-  if (fill_id || paint_hover_effect || (std::trunc(scale) != scale)) {
-    PaintTabBackgroundFill(canvas, active, paint_hover_effect, active_color,
-                           inactive_color, fill_id, y_inset);
-    if (stroke_thickness > 0) {
-      gfx::ScopedCanvas scoped_canvas(clip ? canvas : nullptr);
-      if (clip)
-        canvas->sk_canvas()->clipPath(*clip, SkClipOp::kDifference, true);
-      PaintBackgroundStroke(canvas, active, stroke_color);
-    }
-  } else {
-    const gfx::Size& size = tab_->size();
-    BackgroundCache& cache =
-        active ? background_active_cache_ : background_inactive_cache_;
-
-    // If any of the cache key values have changed, update the cached records.
-    if (cache.UpdateCacheKey(scale, size, active_color, inactive_color,
-                             stroke_color, stroke_thickness)) {
-      cc::PaintRecorder recorder;
-      {
-        gfx::Canvas cache_canvas(
-            recorder.beginRecording(size.width(), size.height()), scale);
-        PaintTabBackgroundFill(&cache_canvas, active, paint_hover_effect,
-                               active_color, inactive_color, fill_id, y_inset);
-        cache.set_fill_record(recorder.finishRecordingAsPicture());
-      }
-      if (stroke_thickness > 0) {
-        gfx::Canvas cache_canvas(
-            recorder.beginRecording(size.width(), size.height()), scale);
-        PaintBackgroundStroke(&cache_canvas, active, stroke_color);
-        cache.set_stroke_record(recorder.finishRecordingAsPicture());
-      }
-    }
-
-    canvas->sk_canvas()->drawPicture(cache.fill_record());
-    if (stroke_thickness > 0) {
-      gfx::ScopedCanvas scoped_canvas(clip ? canvas : nullptr);
-      if (clip)
-        canvas->sk_canvas()->clipPath(*clip, SkClipOp::kDifference, true);
-      canvas->sk_canvas()->drawPicture(cache.stroke_record());
-    }
+  PaintTabBackgroundFill(canvas, active_state, paint_hover_effect, fill_id,
+                         y_inset);
+  if (stroke_thickness > 0) {
+    gfx::ScopedCanvas scoped_canvas(clip ? canvas : nullptr);
+    if (clip)
+      canvas->sk_canvas()->clipPath(*clip, SkClipOp::kDifference, true);
+    PaintBackgroundStroke(canvas, active_state, stroke_color);
   }
 
   PaintSeparators(canvas);
 }
 
 void GM2TabStyle::PaintTabBackgroundFill(gfx::Canvas* canvas,
-                                         bool active,
+                                         TabState active_state,
                                          bool paint_hover_effect,
-                                         SkColor active_color,
-                                         SkColor inactive_color,
                                          int fill_id,
                                          int y_inset) const {
-  const SkPath fill_path =
-      GetPath(PathType::kFill, canvas->image_scale(), active);
+  const SkPath fill_path = GetPath(PathType::kFill, canvas->image_scale(),
+                                   active_state == TAB_ACTIVE);
   gfx::ScopedCanvas scoped_canvas(canvas);
   const float scale = canvas->UndoDeviceScaleFactor();
 
   canvas->ClipPath(fill_path, true);
 
-  // In the active case, always fill the tab with its bg color first in case the
-  // image is transparent. In the inactive case, the image is guaranteed to be
-  // opaque, so it's only necessary to fill the color when there's no image.
-  if (active || !fill_id) {
+  if (ShouldPaintTabBackgroundColor(active_state, fill_id)) {
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
-    flags.setColor(active ? active_color : inactive_color);
+    flags.setColor(GetTabBackgroundColor(active_state));
     canvas->DrawRect(gfx::ScaleToEnclosingRect(tab_->GetLocalBounds(), scale),
                      flags);
   }
@@ -831,22 +745,24 @@ void GM2TabStyle::PaintTabBackgroundFill(gfx::Canvas* canvas,
     const SkScalar radius =
         std::max(SkFloatToScalar(tab_->width() / 4.f), kMinHoverRadius);
     DrawHighlight(canvas, hover_location, radius * scale,
-                  SkColorSetA(active_color, hover_controller_->GetAlpha()));
+                  SkColorSetA(GetTabBackgroundColor(TAB_ACTIVE),
+                              hover_controller_->GetAlpha()));
   }
 }
 
 void GM2TabStyle::PaintBackgroundStroke(gfx::Canvas* canvas,
-                                        bool active,
+                                        TabState active_state,
                                         SkColor stroke_color) const {
   SkPath outer_path =
-      GetPath(TabStyle::PathType::kBorder, canvas->image_scale(), active);
+      GetPath(TabStyle::PathType::kBorder, canvas->image_scale(),
+              active_state == TAB_ACTIVE);
   gfx::ScopedCanvas scoped_canvas(canvas);
   float scale = canvas->UndoDeviceScaleFactor();
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
   flags.setColor(stroke_color);
   flags.setStyle(cc::PaintFlags::kStroke_Style);
-  flags.setStrokeWidth(GetStrokeThickness(active) * scale);
+  flags.setStrokeWidth(GetStrokeThickness(active_state == TAB_ACTIVE) * scale);
   canvas->DrawPath(outer_path, flags);
 }
 

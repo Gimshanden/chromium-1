@@ -7,7 +7,6 @@
 #include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/layout_constants.h"
-#include "chrome/browser/ui/views/location_bar/location_bar_separator_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "components/strings/grit/components_strings.h"
@@ -61,7 +60,7 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
   }
 
   int width() const { return bounds().width(); }
-  bool IsLabelVisible() const { return label()->visible(); }
+  bool IsLabelVisible() const { return label()->GetVisible(); }
   void SetLabelVisible(bool visible) { label()->SetVisible(visible); }
   const gfx::Rect& GetLabelBounds() const { return label()->bounds(); }
 

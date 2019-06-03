@@ -12,6 +12,7 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/media/webrtc/desktop_media_picker_manager.h"
 #include "chrome/browser/media/webrtc/fake_desktop_media_list.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/desktop_capture/desktop_media_list_controller.h"
@@ -35,6 +36,13 @@
 using content::DesktopMediaID;
 
 namespace views {
+
+class MockDesktopMediaPickerDialogObserver
+    : public DesktopMediaPickerManager::DialogObserver {
+ public:
+  MOCK_METHOD0(OnDialogOpened, void());
+  MOCK_METHOD0(OnDialogClosed, void());
+};
 
 const std::vector<DesktopMediaID::Type> kSourceTypes = {
     DesktopMediaID::TYPE_SCREEN, DesktopMediaID::TYPE_WINDOW,
@@ -72,6 +80,9 @@ class DesktopMediaPickerViewsTest : public testing::Test {
     picker_params.app_name = app_name;
     picker_params.target_name = app_name;
     picker_params.request_audio = true;
+    DesktopMediaPickerManager::Get()->AddObserver(&observer_);
+    EXPECT_CALL(observer_, OnDialogOpened());
+    EXPECT_CALL(observer_, OnDialogClosed());
     picker_views_->Show(picker_params, std::move(source_lists),
                         base::Bind(&DesktopMediaPickerViewsTest::OnPickerDone,
                                    base::Unretained(this)));
@@ -82,6 +93,7 @@ class DesktopMediaPickerViewsTest : public testing::Test {
       EXPECT_CALL(*this, OnPickerDone(content::DesktopMediaID()));
       GetPickerDialogView()->GetWidget()->CloseNow();
     }
+    DesktopMediaPickerManager::Get()->RemoveObserver(&observer_);
   }
 
   DesktopMediaPickerDialogView* GetPickerDialogView() const {
@@ -96,6 +108,7 @@ class DesktopMediaPickerViewsTest : public testing::Test {
   std::map<DesktopMediaID::Type, FakeDesktopMediaList*> media_lists_;
   std::unique_ptr<DesktopMediaPickerViews> picker_views_;
   DesktopMediaPickerViewsTestApi test_api_;
+  MockDesktopMediaPickerDialogObserver observer_;
 };
 
 TEST_F(DesktopMediaPickerViewsTest, DoneCallbackCalledWhenWindowClosed) {
@@ -136,13 +149,15 @@ TEST_F(DesktopMediaPickerViewsTest, SelectMediaSourceViewOnSingleClick) {
         DesktopMediaID(source_type, 20));
 
     // By default, nothing should be selected.
-    EXPECT_EQ(-1, test_api_.GetSelectedSourceId());
+    EXPECT_FALSE(test_api_.GetSelectedSourceId().has_value());
 
     test_api_.PressMouseOnSourceAtIndex(0);
-    EXPECT_EQ(10, test_api_.GetSelectedSourceId());
+    ASSERT_TRUE(test_api_.GetSelectedSourceId().has_value());
+    EXPECT_EQ(10, test_api_.GetSelectedSourceId().value());
 
     test_api_.PressMouseOnSourceAtIndex(1);
-    EXPECT_EQ(20, test_api_.GetSelectedSourceId());
+    ASSERT_TRUE(test_api_.GetSelectedSourceId().has_value());
+    EXPECT_EQ(20, test_api_.GetSelectedSourceId().value());
   }
 }
 
@@ -208,13 +223,16 @@ TEST_F(DesktopMediaPickerViewsTest, FocusMediaSourceViewToSelect) {
         DesktopMediaID(source_type, 20));
 
     test_api_.FocusSourceAtIndex(0);
-    EXPECT_EQ(10, test_api_.GetSelectedSourceId());
+    ASSERT_TRUE(test_api_.GetSelectedSourceId().has_value());
+    EXPECT_EQ(10, test_api_.GetSelectedSourceId().value());
 
     test_api_.FocusAudioCheckbox();
-    EXPECT_EQ(10, test_api_.GetSelectedSourceId());
+    ASSERT_TRUE(test_api_.GetSelectedSourceId().has_value());
+    EXPECT_EQ(10, test_api_.GetSelectedSourceId().value());
 
     test_api_.FocusSourceAtIndex(1);
-    EXPECT_EQ(20, test_api_.GetSelectedSourceId());
+    ASSERT_TRUE(test_api_.GetSelectedSourceId().has_value());
+    EXPECT_EQ(20, test_api_.GetSelectedSourceId().value());
   }
 }
 
@@ -246,13 +264,13 @@ TEST_F(DesktopMediaPickerViewsTest, AudioCheckboxState) {
 #if defined(OS_WIN) || defined(USE_CRAS)
   expect_value = true;
 #endif
-  EXPECT_EQ(expect_value, test_api_.GetAudioShareCheckbox()->visible());
+  EXPECT_EQ(expect_value, test_api_.GetAudioShareCheckbox()->GetVisible());
 
   test_api_.SelectTabForSourceType(DesktopMediaID::TYPE_WINDOW);
-  EXPECT_FALSE(test_api_.GetAudioShareCheckbox()->visible());
+  EXPECT_FALSE(test_api_.GetAudioShareCheckbox()->GetVisible());
 
   test_api_.SelectTabForSourceType(DesktopMediaID::TYPE_WEB_CONTENTS);
-  EXPECT_TRUE(test_api_.GetAudioShareCheckbox()->visible());
+  EXPECT_TRUE(test_api_.GetAudioShareCheckbox()->GetVisible());
 }
 
 // Verifies that audio share information is recorded in the ID if the checkbox
@@ -275,6 +293,53 @@ TEST_F(DesktopMediaPickerViewsTest, DoneWithAudioShare) {
 
   GetPickerDialogView()->GetDialogClientView()->AcceptWindow();
   base::RunLoop().RunUntilIdle();
+}
+
+// This test validates that a DesktopMediaPickerViews that only has a tab list
+// has a reasonable default size, and chooses reasonable bounds on its own size
+// when the source list grows. Specifically, DesktopMediaPickerViews should
+// never be "too small" (ie: it should always be sized as though it contains at
+// least m sources, for some small fixed m) and never be "too large" (ie: it
+// should only grow to show at most n sources, for some fixed n > m). This unit
+// test checks for three properties of a dialog containing k sources:
+//   1) Adding another source such that k < m does not change the dialog's size
+//   2) Adding another source when k > n does not change the dialog's size
+//   3) Adding a source when m <= k <= n does change the dialog's size
+TEST_F(DesktopMediaPickerViewsTest, TabListHasReasonableSize) {
+  auto AddTabSource = [&]() {
+    media_lists_[DesktopMediaID::TYPE_WEB_CONTENTS]->AddSourceByFullMediaID(
+        DesktopMediaID(DesktopMediaID::TYPE_WEB_CONTENTS, 0));
+  };
+
+  auto GetDialogHeight = [&]() {
+    return GetPickerDialogView()
+        ->GetDialogClientView()
+        ->GetPreferredSize()
+        .height();
+  };
+
+  // The dialog's height should not change when doing from zero sources to two
+  // sources.
+  int old_size = GetDialogHeight();
+  AddTabSource();
+  AddTabSource();
+  EXPECT_EQ(GetDialogHeight(), old_size);
+
+  // The dialog's height should change when going from two to twelve, though.
+  for (int i = 0; i < 10; i++)
+    AddTabSource();
+  EXPECT_GT(GetDialogHeight(), old_size);
+
+  for (int i = 0; i < 50; i++)
+    AddTabSource();
+
+  // And then it shouldn't change when going from a large number of sources (in
+  // this case 62) to a larger number, because the ScrollView should scroll
+  // large numbers of sources.
+  old_size = GetDialogHeight();
+  for (int i = 0; i < 50; i++)
+    AddTabSource();
+  EXPECT_EQ(GetDialogHeight(), old_size);
 }
 
 }  // namespace views

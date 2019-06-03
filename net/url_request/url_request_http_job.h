@@ -114,7 +114,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   bool CopyFragmentOnRedirect(const GURL& location) const override;
   bool IsSafeRedirect(const GURL& location) override;
   bool NeedsAuth() override;
-  void GetAuthChallengeInfo(scoped_refptr<AuthChallengeInfo>*) override;
+  std::unique_ptr<AuthChallengeInfo> GetAuthChallengeInfo() override;
   void SetAuth(const AuthCredentials& credentials) override;
   void CancelAuth() override;
   void ContinueWithCertificate(
@@ -149,14 +149,17 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void DoneWithRequest(CompletionCause reason);
 
   // Callback functions for Cookie Monster
-  void SetCookieHeaderAndStart(const CookieList& cookie_list,
+  void SetCookieHeaderAndStart(const CookieOptions& options,
+                               const CookieList& cookie_list,
                                const CookieStatusList& excluded_list);
 
   // Another Cookie Monster callback
-  void OnSetCookieResult(std::string cookie_string,
+  void OnSetCookieResult(const CookieOptions& options,
+                         base::Optional<CanonicalCookie> cookie,
+                         std::string cookie_string,
                          CanonicalCookie::CookieInclusionStatus status);
   int num_cookie_lines_left_;
-  std::vector<CookieLineWithStatus> cs_status_list_;
+  CookieAndLineStatusList cs_status_list_;
 
   // Some servers send the body compressed, but specify the content length as
   // the uncompressed size. If this is the case, we return true in order

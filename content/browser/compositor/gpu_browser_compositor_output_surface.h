@@ -14,7 +14,7 @@
 #include "ui/latency/latency_tracker.h"
 
 namespace viz {
-class CompositorOverlayCandidateValidator;
+class OverlayCandidateValidator;
 }
 
 namespace gfx {
@@ -41,8 +41,7 @@ class GpuBrowserCompositorOutputSurface
  public:
   GpuBrowserCompositorOutputSurface(
       scoped_refptr<ws::ContextProviderCommandBuffer> context,
-      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::OverlayCandidateValidator>
           overlay_candidate_validator);
 
   ~GpuBrowserCompositorOutputSurface() override;

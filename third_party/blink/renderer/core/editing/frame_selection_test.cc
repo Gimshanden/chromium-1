@@ -130,7 +130,7 @@ TEST_F(FrameSelectionTest, PaintCaretShouldNotLayout) {
       SelectionInDOMTree::Builder().Collapse(Position(text, 0)).Build());
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(Selection().ComputeVisibleSelectionInDOMTree().IsCaret());
-  EXPECT_TRUE(ToLayoutBlock(GetDocument().body()->GetLayoutObject())
+  EXPECT_TRUE(To<LayoutBlock>(GetDocument().body()->GetLayoutObject())
                   ->ShouldPaintCursorCaret());
 
   unsigned start_count = LayoutCount();
@@ -147,7 +147,7 @@ TEST_F(FrameSelectionTest, PaintCaretShouldNotLayout) {
     GraphicsContext context(*paint_controller);
     paint_controller->UpdateCurrentPaintChunkProperties(
         root_paint_chunk_id_, PropertyTreeState::Root());
-    Selection().PaintCaret(context, LayoutPoint());
+    Selection().PaintCaret(context, PhysicalOffset());
   }
   paint_controller->CommitNewDisplayItems();
   EXPECT_EQ(start_count, LayoutCount());

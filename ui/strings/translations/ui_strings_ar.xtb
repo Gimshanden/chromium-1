@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Shift</translation>
 <translation id="1710340000377843106">الآن</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{دقيقة واحدة}zero{# من الدقائق}two{دقيقتان (#)}few{# دقائق}many{# دقيقة}other{# من الدقائق}}</translation>
-<translation id="1756116796893109054">جارٍ إرسال علامة التبويب...</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> بايت</translation>
 <translation id="1801827354178857021">الفترة</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{شهر واحد}zero{# شهر}two{شهران (#)}few{# أشهر}many{# شهرًا}other{# شهر}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">مفتاح سهم  إلى أسفل</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{يوم واحد}zero{# من الأيام}two{يومان (#)}few{# أيام}many{# يومًا}other{# من الأيام}}</translation>
 <translation id="335581015389089642">الحديث</translation>
+<translation id="3443810440409579745">تم استلام علامة تبويب.</translation>
 <translation id="3479552764303398839">ليس الآن</translation>
 <translation id="348799646910989694">إخفاء الرف تلقائيًا</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{يتبقى يوم واحد}zero{يتبقى عدد # من الأيام}two{يتبقى يومان (#)}few{يتبقى # أيام}many{يتبقى # يومًا}other{يتبقى # من الأيام}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">التطبيقات المستخدمة بشكل متكرر</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{يتبقى شهر واحد}zero{يتبقى # شهر}two{يتبقى شهرين (#)}few{يتبقى # أشهر}many{يتبقى # شهرًا}other{يتبقى # شهر}}</translation>
 <translation id="4841881773802181781">إدراج</translation>
+<translation id="4881695831933465202">فتح</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{ثانية واحدة}zero{# من الثواني}two{ثانيتان (#)}few{# ثوانٍ}many{# ثانية}other{# من الثواني}}</translation>
 <translation id="4971687151119236543">المقطع الصوتي السابق للوسائط</translation>
 <translation id="5046499563572181734">انقر هنا</translation>
@@ -108,6 +109,7 @@
 <translation id="5137751499640340777">‏بدء "مساعد Google"</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> بيتابايت</translation>
 <translation id="5266161281976477809">مثلث الإفصاح</translation>
+<translation id="5278860589123563674">تعذّر الإرسال</translation>
 <translation id="528468243742722775">‏مفتاح End</translation>
 <translation id="5329858601952122676">&amp;حذف</translation>
 <translation id="5395308026110844773"><ph name="DRAGGED_APP_NAME" /> في أعلى <ph name="IN_PLACE_APP" />، يُرجى التحرير لإنشاء مجلد.</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">‏مفتاح Del (حذف)</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> بايت/ثانية</translation>
 <translation id="6156262341071374681">التوسيع لعرض كل التطبيقات</translation>
+<translation id="6165508094623778733">مزيد من المعلومات</translation>
 <translation id="6264365405983206840">تحديد &amp;الكل</translation>
 <translation id="6351032674660237738">اقتراحات التطبيقات</translation>
 <translation id="6364916375976753737">التمرير إلى اليمين</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{يتبقى دقيقة واحدة}zero{يتبقى # من الدقائق}two{يتبقى دقيقتان (#)}few{يتبقى # دقائق}many{يتبقى # دقيقة}other{يتبقى # من الدقائق}}</translation>
 <translation id="7319740667687257810">‏Launcher، عرض جزئي</translation>
+<translation id="732374792807444530">الإرسال إلى <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{قبل دقيقة واحدة}zero{قبل # من الدقاق}two{قبل دقيقتين (#)}few{قبل # دقائق}many{قبل # دقيقة}other{قبل # من الدقائق}}</translation>
 <translation id="7389409599945284130">- <ph name="MESSAGE" /></translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{يتبقى دقيقة واحدة}zero{يتبقى # من الدقائق}two{يتبقى دقيقتان (#)}few{يتبقى # دقائق}many{يتبقى # دقيقة}other{يتبقى # من الدقائق}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{أكثر من إشعار واحد غير مقروء}zero{أكثر من # إشعار غير مقروء}two{أكثر من إشعارين غير مقروءين (#)}few{أكثر من # إشعارات غير مقروءة}many{أكثر من # إشعارًا غير مقروء}other{أكثر من # إشعار غير مقروء}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{خلال دقيقة واحدة}zero{خلال # دقيقة}two{خلال دقيقتين (#)}few{خلال # دقائق}many{خلال # دقيقة}other{خلال # دقيقة}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" />+<ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">‏بدء طلب البحث الصوتي "لمساعد Google"</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{قبل ساعة واحدة}zero{قبل # من الساعات}two{قبل ساعتين (#)}few{قبل # ساعات}many{قبل # ساعة}other{قبل # من الساعات}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{يتبقى ثانية واحدة}zero{يتبقى # من الثواني}two{يتبقى ثانيتان (#)}few{يتبقى # ثوانٍ}many{يتبقى # ثانية}other{يتبقى # من الثواني}}</translation>
+<translation id="8144660977431427332">‏عمليات بحثك يوفّرها "مساعد Google". <ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />، الإكمال التلقائي</translation>
 <translation id="815598010540052116">التمرير إلى أسفل</translation>
 <translation id="8170087467028567933">ستؤدي إزالة هذا الاقتراح إلى إخفائه من حسابك على جميع أجهزتك.</translation>

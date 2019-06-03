@@ -19,6 +19,7 @@ class LoginDisplayHostMojo;
 
 // Interface used by UI-agnostic code to send messages to views-based login
 // screen.
+// TODO(estade): rename to LoginDisplayAsh.
 class LoginDisplayMojo : public LoginDisplay,
                          public SigninScreenHandlerDelegate,
                          public user_manager::UserManager::Observer {
@@ -45,7 +46,6 @@ class LoginDisplayMojo : public LoginDisplay,
                                  const std::string& email) override;
   void ShowSigninUI(const std::string& email) override;
   void ShowWhitelistCheckFailedError() override;
-  void ShowUnrecoverableCrypthomeErrorDialog() override;
 
   // SigninScreenHandlerDelegate:
   void Login(const UserContext& user_context,
@@ -75,6 +75,11 @@ class LoginDisplayMojo : public LoginDisplay,
   void OnUserImageChanged(const user_manager::User& user) override;
 
  private:
+  // Callback to ShowLoginScreen request.
+  // |users_empty| - whether the login screen was initialized with no users.
+  // |did_show| - whether the screen was successfully shown.
+  void OnLoginScreenShown(bool users_empty, bool did_show);
+
   void OnPinCanAuthenticate(const AccountId& account_id, bool can_authenticate);
 
   bool initialized_ = false;

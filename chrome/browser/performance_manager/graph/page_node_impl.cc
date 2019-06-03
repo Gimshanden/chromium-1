@@ -10,8 +10,8 @@
 #include "base/stl_util.h"
 #include "base/time/default_tick_clock.h"
 #include "chrome/browser/performance_manager/graph/frame_node_impl.h"
+#include "chrome/browser/performance_manager/graph/graph_impl.h"
 #include "chrome/browser/performance_manager/graph/process_node_impl.h"
-#include "chrome/browser/performance_manager/observers/graph_observer.h"
 #include "chrome/browser/performance_manager/performance_manager_clock.h"
 
 namespace performance_manager {
@@ -42,9 +42,16 @@ void ForFrameAndDescendents(FrameNodeImpl* frame_node,
 
 }  // namespace
 
-PageNodeImpl::PageNodeImpl(Graph* graph)
+PageNodeImplObserver::PageNodeImplObserver() = default;
+PageNodeImplObserver::~PageNodeImplObserver() = default;
+
+PageNodeImpl::PageNodeImpl(GraphImpl* graph,
+                           const WebContentsProxy& contents_proxy,
+                           bool is_visible)
     : TypedNodeBase(graph),
-      visibility_change_time_(PerformanceManagerClock::NowTicks()) {
+      contents_proxy_(contents_proxy),
+      visibility_change_time_(PerformanceManagerClock::NowTicks()),
+      is_visible_(is_visible) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -52,22 +59,20 @@ PageNodeImpl::~PageNodeImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
+const WebContentsProxy& PageNodeImpl::contents_proxy() const {
+  return contents_proxy_;
+}
+
 void PageNodeImpl::AddFrame(FrameNodeImpl* frame_node) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(frame_node);
   DCHECK_EQ(this, frame_node->page_node());
-  DCHECK(NodeInGraph(frame_node));
+  DCHECK(graph()->NodeInGraph(frame_node));
 
-  if (frame_node->parent_frame_node() == nullptr) {
-    main_frame_nodes_.insert(frame_node);
-  }
   ++frame_node_count_;
+  if (frame_node->parent_frame_node() == nullptr)
+    main_frame_nodes_.insert(frame_node);
 
-  OnNumFrozenFramesStateChange(
-      frame_node->lifecycle_state() ==
-              resource_coordinator::mojom::LifecycleState::kFrozen
-          ? 1
-          : 0);
   MaybeInvalidateInterventionPolicies(frame_node, true /* adding_frame */);
 }
 
@@ -75,7 +80,7 @@ void PageNodeImpl::RemoveFrame(FrameNodeImpl* frame_node) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(frame_node);
   DCHECK_EQ(this, frame_node->page_node());
-  DCHECK(NodeInGraph(frame_node));
+  DCHECK(graph()->NodeInGraph(frame_node));
 
   --frame_node_count_;
   if (frame_node->parent_frame_node() == nullptr) {
@@ -83,11 +88,6 @@ void PageNodeImpl::RemoveFrame(FrameNodeImpl* frame_node) {
     DCHECK_EQ(1u, removed);
   }
 
-  OnNumFrozenFramesStateChange(
-      frame_node->lifecycle_state() ==
-              resource_coordinator::mojom::LifecycleState::kFrozen
-          ? -1
-          : 0);
   MaybeInvalidateInterventionPolicies(frame_node, false /* adding_frame */);
 }
 
@@ -110,11 +110,15 @@ void PageNodeImpl::SetUkmSourceId(ukm::SourceId ukm_source_id) {
 }
 
 void PageNodeImpl::OnFaviconUpdated() {
-  SendEvent(resource_coordinator::mojom::Event::kFaviconUpdated);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (auto& observer : observers())
+    observer.OnFaviconUpdated(this);
 }
 
 void PageNodeImpl::OnTitleUpdated() {
-  SendEvent(resource_coordinator::mojom::Event::kTitleUpdated);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (auto& observer : observers())
+    observer.OnTitleUpdated(this);
 }
 
 void PageNodeImpl::OnMainFrameNavigationCommitted(
@@ -125,13 +129,14 @@ void PageNodeImpl::OnMainFrameNavigationCommitted(
   navigation_committed_time_ = navigation_committed_time;
   main_frame_url_ = url;
   navigation_id_ = navigation_id;
-  SendEvent(resource_coordinator::mojom::Event::kNavigationCommitted);
+  for (auto& observer : observers())
+    observer.OnMainFrameNavigationCommitted(this);
 }
 
-std::set<ProcessNodeImpl*> PageNodeImpl::GetAssociatedProcessCoordinationUnits()
+base::flat_set<ProcessNodeImpl*> PageNodeImpl::GetAssociatedProcessNodes()
     const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  std::set<ProcessNodeImpl*> process_nodes;
+  base::flat_set<ProcessNodeImpl*> process_nodes;
   ForAllFrameNodes([&process_nodes](FrameNodeImpl* frame_node) -> bool {
     if (auto* process_node = frame_node->process_node())
       process_nodes.insert(process_node);
@@ -144,9 +149,8 @@ double PageNodeImpl::GetCPUUsage() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   double cpu_usage = 0;
 
-  for (auto* process_node : GetAssociatedProcessCoordinationUnits()) {
-    size_t pages_in_process =
-        process_node->GetAssociatedPageCoordinationUnits().size();
+  for (auto* process_node : GetAssociatedProcessNodes()) {
+    size_t pages_in_process = process_node->GetAssociatedPageNodes().size();
     DCHECK_LE(1u, pages_in_process);
     cpu_usage += process_node->cpu_usage() / pages_in_process;
   }
@@ -178,29 +182,97 @@ std::vector<FrameNodeImpl*> PageNodeImpl::GetFrameNodes() const {
 
 FrameNodeImpl* PageNodeImpl::GetMainFrameNode() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Return an arbitrary node from the main frame nodes set.
-  // TODO(siggi): Make sure to preferentially return the active main frame node.
   if (main_frame_nodes_.empty())
     return nullptr;
 
+  // Return the current frame node if there is one. Iterating over this set is
+  // fine because it is almost always of length 1 or 2.
+  for (auto* frame : main_frame_nodes_) {
+    if (frame->is_current())
+      return frame;
+  }
+
+  // Otherwise, return any old main frame node.
   return *main_frame_nodes_.begin();
 }
 
-void PageNodeImpl::OnFrameLifecycleStateChanged(
-    FrameNodeImpl* frame_node,
-    resource_coordinator::mojom::LifecycleState old_state) {
+bool PageNodeImpl::is_visible() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(this, frame_node->page_node());
-  DCHECK_NE(old_state, frame_node->lifecycle_state());
+  return is_visible_.value();
+}
 
-  int delta = 0;
-  if (old_state == resource_coordinator::mojom::LifecycleState::kFrozen)
-    delta = -1;
-  else if (frame_node->lifecycle_state() ==
-           resource_coordinator::mojom::LifecycleState::kFrozen)
-    delta = 1;
-  if (delta != 0)
-    OnNumFrozenFramesStateChange(delta);
+bool PageNodeImpl::is_loading() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return is_loading_.value();
+}
+
+ukm::SourceId PageNodeImpl::ukm_source_id() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return ukm_source_id_.value();
+}
+
+PageNodeImpl::LifecycleState PageNodeImpl::lifecycle_state() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return lifecycle_state_.value();
+}
+
+const base::flat_set<FrameNodeImpl*>& PageNodeImpl::main_frame_nodes() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return main_frame_nodes_;
+}
+
+base::TimeTicks PageNodeImpl::usage_estimate_time() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return usage_estimate_time_;
+}
+
+base::TimeDelta PageNodeImpl::cumulative_cpu_usage_estimate() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return cumulative_cpu_usage_estimate_;
+}
+
+uint64_t PageNodeImpl::private_footprint_kb_estimate() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return private_footprint_kb_estimate_;
+}
+
+bool PageNodeImpl::page_almost_idle() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return page_almost_idle_.value();
+}
+
+const GURL& PageNodeImpl::main_frame_url() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return main_frame_url_;
+}
+
+int64_t PageNodeImpl::navigation_id() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return navigation_id_;
+}
+
+void PageNodeImpl::set_usage_estimate_time(
+    base::TimeTicks usage_estimate_time) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  usage_estimate_time_ = usage_estimate_time;
+}
+
+void PageNodeImpl::set_cumulative_cpu_usage_estimate(
+    base::TimeDelta cumulative_cpu_usage_estimate) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  cumulative_cpu_usage_estimate_ = cumulative_cpu_usage_estimate;
+}
+
+void PageNodeImpl::set_private_footprint_kb_estimate(
+    uint64_t private_footprint_kb_estimate) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  private_footprint_kb_estimate_ = private_footprint_kb_estimate;
+}
+
+void PageNodeImpl::set_has_nonempty_beforeunload(
+    bool has_nonempty_beforeunload) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  has_nonempty_beforeunload_ = has_nonempty_beforeunload;
 }
 
 void PageNodeImpl::OnFrameInterventionPolicyChanged(
@@ -267,6 +339,8 @@ void PageNodeImpl::LeaveGraph() {
 }
 
 bool PageNodeImpl::HasFrame(FrameNodeImpl* frame_node) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   bool has_node = false;
   ForAllFrameNodes([&has_node, &frame_node](FrameNodeImpl* node) -> bool {
     if (node != frame_node)
@@ -280,51 +354,12 @@ bool PageNodeImpl::HasFrame(FrameNodeImpl* frame_node) {
 }
 
 void PageNodeImpl::SetPageAlmostIdle(bool page_almost_idle) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   page_almost_idle_.SetAndMaybeNotify(this, page_almost_idle);
 }
 
-void PageNodeImpl::OnEventReceived(resource_coordinator::mojom::Event event) {
+void PageNodeImpl::SetLifecycleState(LifecycleState lifecycle_state) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : observers())
-    observer.OnPageEventReceived(this, event);
-}
-
-void PageNodeImpl::OnNumFrozenFramesStateChange(int num_frozen_frames_delta) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  num_frozen_frames_ += num_frozen_frames_delta;
-  DCHECK_LE(num_frozen_frames_, frame_node_count_);
-
-  const auto kRunning = resource_coordinator::mojom::LifecycleState::kRunning;
-  const auto kFrozen = resource_coordinator::mojom::LifecycleState::kFrozen;
-
-  // We are interested in knowing when we have transitioned to or from
-  // "fully frozen". A page with no frames is considered to be running by
-  // default.
-  bool was_fully_frozen = lifecycle_state_.value() == kFrozen;
-  bool is_fully_frozen =
-      (frame_node_count_ != 0) && num_frozen_frames_ == frame_node_count_;
-  if (was_fully_frozen == is_fully_frozen)
-    return;
-
-  if (is_fully_frozen) {
-    // Aggregate the beforeunload handler information from the entire frame
-    // tree.
-    bool has_nonempty_beforeunload = false;
-    ForAllFrameNodes(
-        [&has_nonempty_beforeunload](FrameNodeImpl* frame_node) -> bool {
-          if (!frame_node->has_nonempty_beforeunload())
-            return true;
-          has_nonempty_beforeunload = true;
-          return false;
-        });
-
-    set_has_nonempty_beforeunload(has_nonempty_beforeunload);
-  }
-
-  // TODO(fdoray): Store the lifecycle state as a member on the
-  // PageCoordinationUnit rather than as a non-typed property.
-  resource_coordinator::mojom::LifecycleState lifecycle_state =
-      is_fully_frozen ? kFrozen : kRunning;
   lifecycle_state_.SetAndMaybeNotify(this, lifecycle_state);
 }
 
@@ -401,8 +436,12 @@ void PageNodeImpl::RecomputeInterventionPolicy(
 
 template <typename MapFunction>
 void PageNodeImpl::ForAllFrameNodes(MapFunction map_function) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto* main_frame_node : main_frame_nodes_)
     ForFrameAndDescendents(main_frame_node, map_function);
 }
+
+PageNodeImpl::ObserverDefaultImpl::ObserverDefaultImpl() = default;
+PageNodeImpl::ObserverDefaultImpl::~ObserverDefaultImpl() = default;
 
 }  // namespace performance_manager

@@ -51,55 +51,93 @@
 #include "third_party/blink/renderer/core/layout/layout_video.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_image.h"
 #include "third_party/blink/renderer/core/loader/importance_attribute.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loading_log.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
 
 namespace {
-bool IsLazyLoadableImage(const LocalFrame* frame,
-                         HTMLImageElement* html_image,
-                         const KURL& url) {
-  if (!url.ProtocolIsInHTTPFamily())
-    return false;
 
-  if (EqualIgnoringASCIICase(
-          html_image->FastGetAttribute(html_names::kLoadAttr), "lazy"))
-    return true;
+enum class LazyLoadImageEligibility {
+  kDisabled,
+  kEnabledExplicit,
+  kEnabledAutomatic
+};
+
+LazyLoadImageEligibility DetermineLazyLoadImageEligibility(
+    const LocalFrame& frame,
+    const HTMLImageElement& html_image,
+    const KURL& url) {
+  if (!url.ProtocolIsInHTTPFamily())
+    return LazyLoadImageEligibility::kDisabled;
+
+  const String& loading_attr =
+      html_image.FastGetAttribute(html_names::kLoadingAttr);
+  if (EqualIgnoringASCIICase(loading_attr, "lazy"))
+    return LazyLoadImageEligibility::kEnabledExplicit;
+  if (EqualIgnoringASCIICase(loading_attr, "eager") &&
+      !frame.GetDocument()->IsLazyLoadPolicyEnforced()) {
+    return LazyLoadImageEligibility::kDisabled;
+  }
 
   // Do not lazyload image elements created from javascript.
-  if (!html_image->ElementCreatedByParser())
-    return false;
+  if (!html_image.ElementCreatedByParser())
+    return LazyLoadImageEligibility::kDisabled;
 
-  if (EqualIgnoringASCIICase(
-          html_image->FastGetAttribute(html_names::kLoadAttr), "eager") &&
-      !frame->GetDocument()->IsLazyLoadPolicyEnforced()) {
-    return false;
+  if (frame.Owner() && !frame.Owner()->ShouldLazyLoadChildren())
+    return LazyLoadImageEligibility::kDisabled;
+
+  // Avoid automatically lazyloading if width and height attributes are small.
+  // This heuristic helps avoid double fetching tracking pixels.
+  if (HTMLImageElement::GetAttributeLazyLoadDimensionType(
+          html_image.FastGetAttribute(html_names::kWidthAttr)) ==
+          HTMLImageElement::LazyLoadDimensionType::kAbsoluteSmall &&
+      HTMLImageElement::GetAttributeLazyLoadDimensionType(
+          html_image.FastGetAttribute(html_names::kHeightAttr)) ==
+          HTMLImageElement::LazyLoadDimensionType::kAbsoluteSmall) {
+    return LazyLoadImageEligibility::kDisabled;
   }
-  // Avoid lazyloading if width and height attributes are small. This
-  // heuristic helps avoid double fetching tracking pixels.
-  if (HTMLImageElement::IsDimensionSmallAndAbsoluteForLazyLoad(
-          html_image->getAttribute(html_names::kWidthAttr)) &&
-      HTMLImageElement::IsDimensionSmallAndAbsoluteForLazyLoad(
-          html_image->getAttribute(html_names::kHeightAttr))) {
-    return false;
+  // Avoid automatically lazyloading if width or height is specified in inline
+  // style and is small enough. This heuristic helps avoid double fetching
+  // tracking pixels.
+  if (HTMLImageElement::GetInlineStyleDimensionsType(
+          html_image.InlineStyle()) ==
+      HTMLImageElement::LazyLoadDimensionType::kAbsoluteSmall) {
+    return LazyLoadImageEligibility::kDisabled;
   }
-  // Avoid lazyloading if width or height is specified in inline style and is
-  // small enough. This heuristic helps avoid double fetching tracking pixels.
-  if (HTMLImageElement::IsInlineStyleDimensionsSmall(html_image->InlineStyle()))
-    return false;
-  return true;
+
+  return LazyLoadImageEligibility::kEnabledAutomatic;
+}
+
+// Returns true if absolute dimension is specified in the width and height
+// attributes or in the inline style.
+bool IsDimensionAbsoluteLarge(const HTMLImageElement& html_image) {
+  if (HTMLImageElement::GetAttributeLazyLoadDimensionType(
+          html_image.FastGetAttribute(html_names::kWidthAttr)) ==
+          HTMLImageElement::LazyLoadDimensionType::kAbsoluteNotSmall ||
+      HTMLImageElement::GetAttributeLazyLoadDimensionType(
+          html_image.FastGetAttribute(html_names::kHeightAttr)) ==
+          HTMLImageElement::LazyLoadDimensionType::kAbsoluteNotSmall) {
+    return true;
+  }
+  if (HTMLImageElement::GetInlineStyleDimensionsType(
+          html_image.InlineStyle()) ==
+      HTMLImageElement::LazyLoadDimensionType::kAbsoluteNotSmall) {
+    return true;
+  }
+  return false;
 }
 
 bool CheckForUnoptimizedImagePolicy(const Document& document,
@@ -378,7 +416,7 @@ static void ConfigureRequest(
         element.GetDocument().GetSecurityOrigin(), cross_origin);
   }
 
-  if (origin_trials::PriorityHintsEnabled(&element.GetDocument())) {
+  if (RuntimeEnabledFeatures::PriorityHintsEnabled(&element.GetDocument())) {
     mojom::FetchImportanceMode importance_mode =
         GetFetchImportanceAttributeValue(
             element.FastGetAttribute(html_names::kImportanceAttr));
@@ -505,8 +543,8 @@ void ImageLoader::DoUpdateFromElement(
     // own origin checking logic that may get confused if service workers
     // respond with resources from another origin.
     // https://w3c.github.io/ServiceWorker/#implementer-concerns
-    if (GetElement()->IsHTMLElement() &&
-        ToHTMLElement(GetElement())->IsPluginElement()) {
+    auto* html_element = DynamicTo<HTMLElement>(GetElement());
+    if (html_element && html_element->IsPluginElement()) {
       resource_request.SetSkipServiceWorker(true);
     }
 
@@ -521,15 +559,34 @@ void ImageLoader::DoUpdateFromElement(
       if (frame->IsClientLoFiAllowed(params.GetResourceRequest())) {
         params.SetClientLoFiPlaceholder();
       } else if (auto* html_image = ToHTMLImageElementOrNull(GetElement())) {
-        if (IsLazyLoadableImage(frame, html_image,
-                                params.GetResourceRequest().Url())) {
-          if (frame->GetDocument()->GetSettings()->GetLazyLoadEnabled() &&
-              frame->IsLazyLoadingImageAllowed()) {
+        const LazyLoadImageEligibility lazy_load_image_eligibility =
+            DetermineLazyLoadImageEligibility(*frame, *html_image,
+                                              params.Url());
+        const auto lazy_load_image_enabled_state =
+            frame->GetLazyLoadImageEnabledState();
+
+        if ((lazy_load_image_eligibility ==
+                 LazyLoadImageEligibility::kEnabledExplicit &&
+             lazy_load_image_enabled_state !=
+                 LocalFrame::LazyLoadImageEnabledState::kDisabled) ||
+            (lazy_load_image_eligibility ==
+                 LazyLoadImageEligibility::kEnabledAutomatic &&
+             lazy_load_image_enabled_state ==
+                 LocalFrame::LazyLoadImageEnabledState::kEnabledAutomatic)) {
+          if (IsDimensionAbsoluteLarge(*html_image)) {
+            params.SetLazyImageDeferred();
+          } else {
             params.SetLazyImagePlaceholder();
-            lazy_image_load_state_ = LazyImageLoadState::kDeferred;
           }
-          if (!frame->Owner() || frame->Owner()->ShouldLazyLoadChildren())
-            LazyLoadImageObserver::StartTrackingVisibilityMetrics(html_image);
+          lazy_image_load_state_ = LazyImageLoadState::kDeferred;
+        }
+
+        if (RuntimeEnabledFeatures::LazyImageVisibleLoadTimeMetricsEnabled() &&
+            (lazy_load_image_eligibility ==
+                 LazyLoadImageEligibility::kEnabledExplicit ||
+             lazy_load_image_eligibility ==
+                 LazyLoadImageEligibility::kEnabledAutomatic)) {
+          LazyLoadImageObserver::StartTrackingVisibilityMetrics(html_image);
         }
       }
     }
@@ -786,7 +843,7 @@ void ImageLoader::ImageNotifyFinished(ImageResourceContent* resource) {
   // crbug.com/930281
   if (CheckForUnoptimizedImagePolicy(element_->GetDocument(), image_content_) &&
       IsHTMLImageElement(element_))
-    ToHTMLImageElement(element_)->SetImagePolicyViolated();
+    ToHTMLImageElement(element_.Get())->SetImagePolicyViolated();
 
   DispatchDecodeRequestsIfComplete();
 
@@ -959,7 +1016,7 @@ void ImageLoader::DecodeRequest::Resolve() {
 }
 
 void ImageLoader::DecodeRequest::Reject() {
-  resolver_->Reject(DOMException::Create(
+  resolver_->Reject(MakeGarbageCollected<DOMException>(
       DOMExceptionCode::kEncodingError, "The source image cannot be decoded."));
   loader_ = nullptr;
 }

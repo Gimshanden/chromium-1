@@ -54,14 +54,12 @@ namespace blink {
 
 Canvas2DLayerBridge::Canvas2DLayerBridge(const IntSize& size,
                                          AccelerationMode acceleration_mode,
-                                         const CanvasColorParams& color_params,
-                                         bool needs_y_flip)
+                                         const CanvasColorParams& color_params)
     : logger_(std::make_unique<Logger>()),
       have_recorded_draw_commands_(false),
       is_hidden_(false),
       is_deferral_enabled_(true),
       software_rendering_while_hidden_(false),
-      needs_y_flip_(needs_y_flip),
       acceleration_mode_(acceleration_mode),
       color_params_(color_params),
       size_(size),
@@ -126,9 +124,6 @@ void Canvas2DLayerBridge::ResetResourceProvider() {
 }
 
 bool Canvas2DLayerBridge::ShouldAccelerate(AccelerationHint hint) const {
-  if (base::FeatureList::IsEnabled(features::kAlwaysAccelerateCanvas)) {
-    return true;
-  }
   bool accelerate;
   if (software_rendering_while_hidden_) {
     accelerate = false;
@@ -299,13 +294,11 @@ CanvasResourceProvider* Canvas2DLayerBridge::GetOrCreateResourceProvider(
   if (IsAccelerated() && !layer_) {
     layer_ = cc::TextureLayer::CreateForMailbox(this);
     layer_->SetIsDrawable(true);
+    layer_->SetHitTestable(true);
     layer_->SetContentsOpaque(ColorParams().GetOpacityMode() == kOpaque);
     layer_->SetBlendBackgroundColor(ColorParams().GetOpacityMode() != kOpaque);
     layer_->SetNearestNeighbor(resource_host_->FilterQuality() ==
                                kNone_SkFilterQuality);
-    // Canvas has the origin of coordinates on the upper left corner, whereas
-    // textures have it on the lower left corner.
-    layer_->SetFlipped(needs_y_flip_);
     GraphicsLayer::RegisterContentsLayer(layer_.get());
   }
 
@@ -591,8 +584,19 @@ bool Canvas2DLayerBridge::PrepareTransferableResource(
     return false;
 
   // Note frame is kept alive via a reference kept in out_release_callback.
-  return frame->PrepareTransferableResource(out_resource, out_release_callback,
-                                            kUnverifiedSyncToken);
+  if (!frame->PrepareTransferableResource(out_resource, out_release_callback,
+                                          kUnverifiedSyncToken) ||
+      *out_resource == previous_frame_resource_) {
+    // If the resource did not change, the release will be handled correctly
+    // when the callback from the previous frame is dispatched. But run the
+    // |out_release_callback| to release the ref acquired above.
+    (*out_release_callback)->Run(gpu::SyncToken(), false /* is_lost */);
+    *out_release_callback = nullptr;
+    return false;
+  }
+
+  previous_frame_resource_ = *out_resource;
+  return true;
 }
 
 cc::Layer* Canvas2DLayerBridge::Layer() {

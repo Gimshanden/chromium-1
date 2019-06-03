@@ -22,7 +22,6 @@
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_request_info_impl.h"
-#include "content/browser/loader/stream_resource_handler.h"
 #include "content/browser/web_package/signed_exchange_utils.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/plugin_service.h"
@@ -445,7 +444,7 @@ bool MimeSniffingResourceHandler::MaybeStartInterception() {
   const std::string& mime_type = response_->head.mime_type;
 
   // Allow requests for object/embed tags to be intercepted as streams.
-  if (info->GetResourceType() == content::RESOURCE_TYPE_OBJECT) {
+  if (info->GetResourceType() == content::ResourceType::kObject) {
     DCHECK(info->resource_intercept_policy() !=
            ResourceInterceptPolicy::kAllowAll);
 
@@ -460,10 +459,10 @@ bool MimeSniffingResourceHandler::MaybeStartInterception() {
     return true;
 
   // A policy unequal to ResourceInterceptPolicy::kAllowNone implies
-  // info->GetResourceType() == RESOURCE_TYPE_MAIN_FRAME or
-  // info->GetResourceType() == RESOURCE_TYPE_SUB_FRAME.
-  DCHECK(info->GetResourceType() == RESOURCE_TYPE_MAIN_FRAME ||
-         info->GetResourceType() == RESOURCE_TYPE_SUB_FRAME);
+  // info->GetResourceType() == ResourceType::kMainFrame or
+  // info->GetResourceType() == ResourceType::kSubFrame.
+  DCHECK(info->GetResourceType() == ResourceType::kMainFrame ||
+         info->GetResourceType() == ResourceType::kSubFrame);
 
   bool must_download = MustDownload();
   if (!must_download) {
@@ -525,21 +524,8 @@ bool MimeSniffingResourceHandler::CheckForPluginHandler(
     return false;
   }
 
-  if (has_plugin && plugin.type != WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN) {
+  if (has_plugin && plugin.type != WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN)
     *handled_by_plugin = true;
-    return true;
-  }
-
-  // Attempt to intercept the request as a stream.
-  std::string payload;
-  std::unique_ptr<ResourceHandler> handler(
-      host_->MaybeInterceptAsStream(request(), response_.get(), &payload));
-  if (handler) {
-    if (!CheckResponseIsNotProvisional())
-      return false;
-    *handled_by_plugin = true;
-    intercepting_handler_->UseNewHandler(std::move(handler), payload);
-  }
 #endif
   return true;
 }

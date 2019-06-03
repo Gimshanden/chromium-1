@@ -19,7 +19,7 @@ namespace performance_manager {
 // reached an "almost idle" state after initial load, based on CPU and network
 // quiescence, as well as an absolute timeout. This state is then updated on
 // PageNodes in a graph.
-class PageAlmostIdleDecorator : public GraphObserver {
+class PageAlmostIdleDecorator : public GraphObserverDefaultImpl {
  public:
   class Data;
 
@@ -27,11 +27,11 @@ class PageAlmostIdleDecorator : public GraphObserver {
   ~PageAlmostIdleDecorator() override;
 
   // GraphObserver implementation:
+  void OnRegistered() override;
   bool ShouldObserve(const NodeBase* node) override;
-  void OnPageEventReceived(PageNodeImpl* page_node,
-                           resource_coordinator::mojom::Event event) override;
   void OnNetworkAlmostIdleChanged(FrameNodeImpl* frame_node) override;
   void OnIsLoadingChanged(PageNodeImpl* page_node) override;
+  void OnMainFrameNavigationCommitted(PageNodeImpl* page_node) override;
   void OnMainThreadTaskLoadIsLow(ProcessNodeImpl* process_node) override;
 
  protected:

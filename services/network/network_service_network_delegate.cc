@@ -101,11 +101,11 @@ bool NetworkServiceNetworkDelegate::OnCanGetCookies(
     const net::CookieList& cookie_list,
     bool allowed_from_caller) {
   URLLoader* url_loader = URLLoader::ForRequest(request);
-  if (url_loader && network_context_->network_service()->client()) {
-    network_context_->network_service()->client()->OnCookiesRead(
-        url_loader->GetProcessId(), url_loader->GetRenderFrameId(),
-        request.url(), request.site_for_cookies(), cookie_list,
-        !allowed_from_caller);
+  if (url_loader && network_context_->client()) {
+    network_context_->client()->OnCookiesRead(
+        false /* is_service_worker */, url_loader->GetProcessId(),
+        url_loader->GetRenderFrameId(), request.url(),
+        request.site_for_cookies(), cookie_list, !allowed_from_caller);
   }
   if (url_loader && allowed_from_caller) {
     return url_loader->AllowCookies(request.url(), request.site_for_cookies());
@@ -125,11 +125,11 @@ bool NetworkServiceNetworkDelegate::OnCanSetCookie(
     net::CookieOptions* options,
     bool allowed_from_caller) {
   URLLoader* url_loader = URLLoader::ForRequest(request);
-  if (url_loader && network_context_->network_service()->client()) {
-    network_context_->network_service()->client()->OnCookieChange(
-        url_loader->GetProcessId(), url_loader->GetRenderFrameId(),
-        request.url(), request.site_for_cookies(), cookie,
-        !allowed_from_caller);
+  if (url_loader && network_context_->client()) {
+    network_context_->client()->OnCookieChange(
+        false /* is_service_worker */, url_loader->GetProcessId(),
+        url_loader->GetRenderFrameId(), request.url(),
+        request.site_for_cookies(), cookie, !allowed_from_caller);
   }
   if (url_loader && allowed_from_caller) {
     return url_loader->AllowCookies(request.url(), request.site_for_cookies());
@@ -205,8 +205,7 @@ int NetworkServiceNetworkDelegate::HandleClearSiteDataHeader(
     const net::HttpResponseHeaders* original_response_headers) {
   DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
   DCHECK(request);
-  if (!original_response_headers ||
-      !network_context_->network_service()->client())
+  if (!original_response_headers || !network_context_->client())
     return net::OK;
 
   URLLoader* url_loader = URLLoader::ForRequest(*request);
@@ -218,7 +217,7 @@ int NetworkServiceNetworkDelegate::HandleClearSiteDataHeader(
                                                       &header_value))
     return net::OK;
 
-  network_context_->network_service()->client()->OnClearSiteData(
+  network_context_->client()->OnClearSiteData(
       url_loader->GetProcessId(), url_loader->GetRenderFrameId(),
       request->url(), header_value, request->load_flags(),
       base::BindOnce(&NetworkServiceNetworkDelegate::FinishedClearSiteData,

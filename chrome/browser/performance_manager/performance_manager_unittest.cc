@@ -38,6 +38,8 @@ class PerformanceManagerTest : public testing::Test {
     task_environment_.RunUntilIdle();
   }
 
+  void RunUntilIdle() { task_environment_.RunUntilIdle(); }
+
  protected:
   PerformanceManager* performance_manager() {
     return performance_manager_.get();
@@ -51,49 +53,61 @@ class PerformanceManagerTest : public testing::Test {
 };
 
 TEST_F(PerformanceManagerTest, InstantiateNodes) {
+  std::unique_ptr<ProcessNodeImpl> process_node =
+      performance_manager()->CreateProcessNode();
+  EXPECT_NE(nullptr, process_node.get());
   std::unique_ptr<PageNodeImpl> page_node =
-      performance_manager()->CreatePageNode();
+      performance_manager()->CreatePageNode(WebContentsProxy(), false);
   EXPECT_NE(nullptr, page_node.get());
 
   // Create a node of each type.
   std::unique_ptr<FrameNodeImpl> frame_node =
-      performance_manager()->CreateFrameNode(page_node.get(), nullptr);
+      performance_manager()->CreateFrameNode(
+          process_node.get(), page_node.get(), nullptr, 0,
+          base::UnguessableToken::Create(), 0, 0);
   EXPECT_NE(nullptr, frame_node.get());
 
-  std::unique_ptr<ProcessNodeImpl> process_node =
-      performance_manager()->CreateProcessNode();
-  EXPECT_NE(nullptr, process_node.get());
-
-  performance_manager()->DeleteNode(std::move(process_node));
   performance_manager()->DeleteNode(std::move(frame_node));
   performance_manager()->DeleteNode(std::move(page_node));
+  performance_manager()->DeleteNode(std::move(process_node));
 }
 
 TEST_F(PerformanceManagerTest, BatchDeleteNodes) {
   // Create a page node and a small hierarchy of frames.
+  std::unique_ptr<ProcessNodeImpl> process_node =
+      performance_manager()->CreateProcessNode();
   std::unique_ptr<PageNodeImpl> page_node =
-      performance_manager()->CreatePageNode();
+      performance_manager()->CreatePageNode(WebContentsProxy(), false);
 
   std::unique_ptr<FrameNodeImpl> parent1_frame =
-      performance_manager()->CreateFrameNode(page_node.get(), nullptr);
+      performance_manager()->CreateFrameNode(
+          process_node.get(), page_node.get(), nullptr, 0,
+          base::UnguessableToken::Create(), 0, 0);
   std::unique_ptr<FrameNodeImpl> parent2_frame =
-      performance_manager()->CreateFrameNode(page_node.get(), nullptr);
+      performance_manager()->CreateFrameNode(
+          process_node.get(), page_node.get(), nullptr, 1,
+          base::UnguessableToken::Create(), 0, 0);
 
   std::unique_ptr<FrameNodeImpl> child1_frame =
-      performance_manager()->CreateFrameNode(page_node.get(),
-                                             parent1_frame.get());
+      performance_manager()->CreateFrameNode(
+          process_node.get(), page_node.get(), parent1_frame.get(), 2,
+          base::UnguessableToken::Create(), 0, 0);
   std::unique_ptr<FrameNodeImpl> child2_frame =
-      performance_manager()->CreateFrameNode(page_node.get(),
-                                             parent2_frame.get());
+      performance_manager()->CreateFrameNode(
+          process_node.get(), page_node.get(), parent2_frame.get(), 3,
+          base::UnguessableToken::Create(), 0, 0);
 
   std::vector<std::unique_ptr<NodeBase>> nodes;
   for (size_t i = 0; i < 10; ++i) {
-    nodes.push_back(performance_manager()->CreateFrameNode(page_node.get(),
-                                                           child1_frame.get()));
-    nodes.push_back(performance_manager()->CreateFrameNode(page_node.get(),
-                                                           child1_frame.get()));
+    nodes.push_back(performance_manager()->CreateFrameNode(
+        process_node.get(), page_node.get(), child1_frame.get(), 0,
+        base::UnguessableToken::Create(), 0, 0));
+    nodes.push_back(performance_manager()->CreateFrameNode(
+        process_node.get(), page_node.get(), child1_frame.get(), 1,
+        base::UnguessableToken::Create(), 0, 0));
   }
 
+  nodes.push_back(std::move(process_node));
   nodes.push_back(std::move(page_node));
   nodes.push_back(std::move(parent1_frame));
   nodes.push_back(std::move(parent2_frame));
@@ -103,8 +117,18 @@ TEST_F(PerformanceManagerTest, BatchDeleteNodes) {
   performance_manager()->BatchDeleteNodes(std::move(nodes));
 }
 
-// TODO(siggi): More tests!
-// - Test the WebUI interface.
-// - Test the graph introspector interface.
+TEST_F(PerformanceManagerTest, CallOnGraph) {
+  // Create a page node for something to target.
+  std::unique_ptr<PageNodeImpl> page_node =
+      performance_manager()->CreatePageNode(WebContentsProxy(), false);
+
+  PerformanceManager::GraphCallback graph_callback = base::BindLambdaForTesting(
+      [&page_node](GraphImpl* graph) { EXPECT_EQ(page_node->graph(), graph); });
+
+  performance_manager()->CallOnGraph(FROM_HERE, std::move(graph_callback));
+  RunUntilIdle();
+
+  performance_manager()->DeleteNode(std::move(page_node));
+}
 
 }  // namespace performance_manager

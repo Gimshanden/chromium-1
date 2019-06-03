@@ -50,6 +50,7 @@
 #include "third_party/blink/renderer/platform/cursor.h"
 #include "third_party/blink/renderer/platform/geometry/layout_point.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_traits.h"
@@ -175,8 +176,11 @@ class CORE_EXPORT EventHandler final
   WebInputEventResult HandleGestureEvent(const GestureEventWithHitTestResults&);
 
   // Clear the old hover/active state within frames before moving the hover
-  // state to the another frame
-  void UpdateGestureHoverActiveState(const HitTestRequest&, Element*);
+  // state to the another frame. |is_active| specifies whether the active state
+  // is being applied to or removed from the given element. This method should
+  // be initially called on the root document, it will recurse into child
+  // frames as needed.
+  void UpdateCrossFrameHoverActiveState(bool is_active, Element*);
 
   // Hit-test the provided (non-scroll) gesture event, applying touch-adjustment
   // and updating hover/active state across all frames if necessary. This should
@@ -224,7 +228,6 @@ class CORE_EXPORT EventHandler final
   void ReleasePointerCapture(PointerId, Element*);
   void ReleaseMousePointerCapture();
   bool HasPointerCapture(PointerId, const Element*) const;
-  void ProcessPendingPointerCaptureForPointerLock(const WebMouseEvent&);
 
   void ElementRemoved(Element*);
 
@@ -295,6 +298,8 @@ class CORE_EXPORT EventHandler final
   enum NoCursorChangeType { kNoCursorChange };
 
   class OptionalCursor {
+    STACK_ALLOCATED();
+
    public:
     OptionalCursor(NoCursorChangeType) : is_cursor_change_(false) {}
     OptionalCursor(const Cursor& cursor)

@@ -57,6 +57,10 @@ const char kAccessibilityAutoclickEventType[] =
 // another event type action, or whether it should stay as the other event type.
 const char kAccessibilityAutoclickRevertToLeftClick[] =
     "settings.a11y.autoclick_revert_to_left_click";
+// Whether Autoclick should stabilize the cursor movement before a click occurs
+// or not.
+const char kAccessibilityAutoclickStabilizePosition[] =
+    "settings.a11y.autoclick_stabilize_position";
 // The default threshold of mouse movement, measured in DIP, that will initiate
 // a new autoclick.
 const char kAccessibilityAutoclickMovementThreshold[] =
@@ -83,6 +87,10 @@ const char kAccessibilityDictationEnabled[] = "settings.a11y.dictation";
 // A boolean pref which determines whether the accessibility menu shows
 // regardless of the state of a11y features.
 const char kShouldAlwaysShowAccessibilityMenu[] = "settings.a11y.enable_menu";
+
+// A boolean pref that stores whether the user is eligible to start the Kiosk
+// Next shell.
+const char kKioskNextShellEligible[] = "ash.kiosk_next_shell.eligible";
 
 // A boolean pref that stores whether the Kiosk Next Shell is enabled. When it
 // is, we start it after sign in.
@@ -293,6 +301,9 @@ const char kPowerFastSuspendWhenBacklightsForcedOff[] =
 // Boolean controlling whether smart dim model is enabled.
 const char kPowerSmartDimEnabled[] = "power.smart_dim_enabled";
 
+// Boolean controlling whether ALS logging is enabled.
+const char kPowerAlsLoggingEnabled[] = "power.als_logging_enabled";
+
 // |kShelfAlignment| and |kShelfAutoHideBehavior| have a local variant. The
 // local variant is not synced and is used if set. If the local variant is not
 // set its value is set from the synced value (once prefs have been
@@ -357,17 +368,77 @@ const char kAssistantNumWarmerWelcomeTriggered[] =
 const char kVpnConfigAllowed[] = "vpn_config_allowed";
 
 // A boolean pref that indicates whether power peak shift is enabled.
-const char kDevicePowerPeakShiftEnabled[] = "ash.power.peak_shift_enabled";
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kPowerPeakShiftEnabled[] = "ash.power.peak_shift_enabled";
+
 // An integer pref that specifies the power peak shift battery threshold in
 // percent.
-const char kDevicePowerPeakShiftBatteryThreshold[] =
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kPowerPeakShiftBatteryThreshold[] =
     "ash.power.peak_shift_battery_threshold";
+
 // A dictionary pref that specifies the power peak shift day configs.
 // For details see "DevicePowerPeakShiftDayConfig" in policy_templates.json.
-const char kDevicePowerPeakShiftDayConfig[] = "ash.power.peak_shift_day_config";
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kPowerPeakShiftDayConfig[] = "ash.power.peak_shift_day_config";
 
 // A boolean pref that indicates whether boot on AC is enabled.
-const char kDeviceBootOnAcEnabled[] = "ash.power.boot_on_ac_enabled";
+const char kBootOnAcEnabled[] = "ash.power.boot_on_ac_enabled";
+
+// A boolean pref that indicates whether advanced battery charge mode is
+// enabled.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kAdvancedBatteryChargeModeEnabled[] =
+    "ash.power.advanced_battery_charge_mode_enabled";
+
+// A dictionary pref that specifies the advanced battery charge mode day config.
+// For details see "DeviceAdvancedBatteryChargeModeDayConfig" in
+// policy_templates.json.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kAdvancedBatteryChargeModeDayConfig[] =
+    "ash.power.advanced_battery_charge_mode_day_config";
+
+// An integer pref that specifies the battery charge mode.
+// For details see "DeviceBatteryChargeMode" in policy_templates.json.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kBatteryChargeMode[] = "ash.power.battery_charge_mode";
+
+// An integer pref that specifies the battery charge custom start charging in
+// percent.
+// For details see "DeviceBatteryChargeCustomStartCharging" in
+// policy_templates.json.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kBatteryChargeCustomStartCharging[] =
+    "ash.power.battery_charge_custom_start_charging";
+
+// An integer pref that specifies the battery charge custom stop charging in
+// percent.
+// For details see "DeviceBatteryChargeCustomStopCharging" in
+// policy_templates.json.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kBatteryChargeCustomStopCharging[] =
+    "ash.power.battery_charge_custom_stop_charging";
+
+// A boolean pref that indicates whether USB power share is enabled.
+// For details see "DeviceUsbPowerShareEnabled" in policy_templates.json.
+// Ignored unless powerd is configured to honor charging-related prefs.
+const char kUsbPowerShareEnabled[] = "ash.power.usb_power_share_enabled";
+
+// An integer pref that specifies how many times the Assistant privacy info has
+// been shown in Launcher. This value will increment by one every time when
+// Launcher changes state from Peeking to Half or FullscreenSearch up to a
+// predefined threshold, e.g. six times. If the info has been shown for more
+// than the threshold, do not show the privacy info any more.
+const char kAssistantPrivacyInfoShownInLauncher[] =
+    "ash.launcher.assistant_privacy_info_shown";
+
+// A boolean pref that indicates whether the Assistant privacy info may be
+// displayed to user. A false value indicates that the info can be displayed if
+// the value of |kAssistantPrivacyInfoShownInLauncher| is smaller than the
+// predefined threshold. A true value implies that the user has dismissed the
+// info view, and do not show the privacy info any more.
+const char kAssistantPrivacyInfoDismissedInLauncher[] =
+    "ash.launcher.assistant_privacy_info_dismissed";
 
 // NOTE: New prefs should start with the "ash." prefix. Existing prefs moved
 // into this file should not be renamed, since they may be synced.

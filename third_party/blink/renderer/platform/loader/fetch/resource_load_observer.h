@@ -10,6 +10,7 @@
 #include "base/containers/span.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_load_priority.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 
 namespace blink {
@@ -30,6 +31,9 @@ struct FetchInitiatorInfo;
 //    from network - For example, this class may have a function which is called
 //    when ResourceFetcher::RequestResource is called. On the other hand, this
 //    class will not have "operation"s, such as PrepareRequest.
+//
+// All functions except for the destructor and the trace method must be pure
+// virtual, and must not be called when the associated fetcher is detached.
 class PLATFORM_EXPORT ResourceLoadObserver
     : public GarbageCollectedFinalized<ResourceLoadObserver> {
  public:
@@ -43,17 +47,21 @@ class PLATFORM_EXPORT ResourceLoadObserver
                                ResourceType,
                                const FetchInitiatorInfo&) = 0;
 
+  // Called when the priority of the request changes.
+  virtual void DidChangePriority(uint64_t identifier,
+                                 ResourceLoadPriority,
+                                 int intra_priority_value) = 0;
+
   enum ResponseSource { kFromMemoryCache, kNotFromMemoryCache };
   // Called when a response is received.
   // |request| and |resource| are provided separately because when it's from
   // the memory cache |request| and |resource->GetResourceRequest()| don't
   // match. |response| may not yet be set to |resource| when this function is
   // called.
-  // TODO(yhirano): Use const* Resource.
   virtual void DidReceiveResponse(uint64_t identifier,
                                   const ResourceRequest& request,
                                   const ResourceResponse& response,
-                                  Resource* resource,
+                                  const Resource* resource,
                                   ResponseSource) = 0;
 
   // Called when a response body chunk is received.

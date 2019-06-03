@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_functions.h"
@@ -37,6 +36,7 @@
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source_type.h"
+#include "net/quic/address_utils.h"
 #include "net/quic/crypto/proof_verifier_chromium.h"
 #include "net/quic/properties_based_quic_server_info.h"
 #include "net/quic/quic_chromium_alarm_factory.h"
@@ -51,6 +51,7 @@
 #include "net/socket/socket_performance_watcher.h"
 #include "net/socket/socket_performance_watcher_factory.h"
 #include "net/socket/udp_client_socket.h"
+#include "net/third_party/quiche/src/quic/core/crypto/null_decrypter.h"
 #include "net/third_party/quiche/src/quic/core/crypto/proof_verifier.h"
 #include "net/third_party/quiche/src/quic/core/crypto/quic_random.h"
 #include "net/third_party/quiche/src/quic/core/http/quic_client_promised_info.h"
@@ -104,11 +105,11 @@ const int32_t kQuicSocketReceiveBufferSize = 1024 * 1024;  // 1MB
 // Set the maximum number of undecryptable packets the connection will store.
 const int32_t kMaxUndecryptablePackets = 100;
 
-std::unique_ptr<base::Value> NetLogQuicStreamFactoryJobCallback(
+base::Value NetLogQuicStreamFactoryJobCallback(
     const quic::QuicServerId* server_id,
     NetLogCaptureMode capture_mode) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString(
+  base::DictionaryValue dict;
+  dict.SetString(
       "server_id",
       "https://" +
           HostPortPair(server_id->host(), server_id->port()).ToString() +
@@ -273,8 +274,9 @@ class QuicStreamFactory::CertVerifierJob {
     auto* verify_callback_ptr = verify_callback.get();
     quic::QuicAsyncStatus status =
         crypto_config->proof_verifier()->VerifyCertChain(
-            server_id_.host(), cached->certs(), verify_context_.get(),
-            &verify_error_details_, &verify_details_,
+            server_id_.host(), cached->certs(),
+            /*ocsp_response=*/std::string(), cached->cert_sct(),
+            verify_context_.get(), &verify_error_details_, &verify_details_,
             std::move(verify_callback));
     if (status == quic::QUIC_PENDING) {
       verify_callback_ = verify_callback_ptr;
@@ -287,7 +289,7 @@ class QuicStreamFactory::CertVerifierJob {
     UMA_HISTOGRAM_TIMES("Net.QuicSession.CertVerifierJob.CompleteTime",
                         base::TimeTicks::Now() - start_time_);
     if (!callback_.is_null())
-      base::ResetAndReturn(&callback_).Run(OK);
+      std::move(callback_).Run(OK);
   }
 
   const quic::QuicServerId& server_id() const { return server_id_; }
@@ -411,7 +413,7 @@ class QuicStreamFactory::Job {
   bool DoesPeerAddressMatchWithFreshAddressList() {
     std::vector<net::IPEndPoint> endpoints =
         fresh_resolve_host_request_->GetAddressResults().value().endpoints();
-    IPEndPoint stale_address = session_->peer_address().impl().socket_address();
+    IPEndPoint stale_address = ToIPEndPoint(session_->peer_address());
 
     if (std::find(endpoints.begin(), endpoints.end(), stale_address) !=
         endpoints.end()) {
@@ -575,6 +577,7 @@ void QuicStreamFactory::Job::OnResolveHostComplete(int rv) {
 
   if (fresh_resolve_host_request_) {
     DCHECK(race_stale_dns_on_connection_);
+    dns_resolution_end_time_ = base::TimeTicks::Now();
     if (rv != OK) {
       CloseStaleHostConnection();
       resolve_host_request_ = std::move(fresh_resolve_host_request_);
@@ -587,7 +590,7 @@ void QuicStreamFactory::Job::OnResolveHostComplete(int rv) {
       LogConnectionIpPooling(true);
       CloseStaleHostConnection();
       if (!callback_.is_null())
-        base::ResetAndReturn(&callback_).Run(OK);
+        std::move(callback_).Run(OK);
       return;
     } else if (io_state_ != STATE_HOST_VALIDATION) {
       // Case where host resolution returns successfully, but stale connection
@@ -621,7 +624,7 @@ void QuicStreamFactory::Job::OnResolveHostComplete(int rv) {
   }
 
   if (rv != ERR_IO_PENDING && !callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(rv);
+    std::move(callback_).Run(rv);
 }
 
 void QuicStreamFactory::Job::OnConnectComplete(int rv) {
@@ -632,7 +635,7 @@ void QuicStreamFactory::Job::OnConnectComplete(int rv) {
 
   rv = DoLoop(rv);
   if (rv != ERR_IO_PENDING && !callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(rv);
+    std::move(callback_).Run(rv);
 }
 
 void QuicStreamFactory::Job::PopulateNetErrorDetails(
@@ -656,6 +659,7 @@ int QuicStreamFactory::Job::DoResolveHost() {
   HostResolver::ResolveHostParameters parameters;
   parameters.initial_priority = priority_;
   if (race_stale_dns_on_connection_) {
+    // Allow host resolver to return stale result immediately.
     parameters.cache_usage =
         HostResolver::ResolveHostParameters::CacheUsage::STALE_ALLOWED;
   }
@@ -663,6 +667,8 @@ int QuicStreamFactory::Job::DoResolveHost() {
       host_resolver_->CreateRequest(key_.destination(), net_log_, parameters);
   // Unretained is safe because |this| owns the request, ensuring cancellation
   // on destruction.
+  // When race_stale_dns_on_connection_ is on, this request will query for stale
+  // cache if no fresh host result is available.
   int rv = resolve_host_request_->Start(base::BindOnce(
       &QuicStreamFactory::Job::OnResolveHostComplete, base::Unretained(this)));
 
@@ -683,6 +689,7 @@ int QuicStreamFactory::Job::DoResolveHost() {
       host_resolver_->CreateRequest(key_.destination(), net_log_, parameters);
   // Unretained is safe because |this| owns the request, ensuring cancellation
   // on destruction.
+  // This request will only query fresh host resolution.
   int fresh_rv = fresh_resolve_host_request_->Start(base::BindOnce(
       &QuicStreamFactory::Job::OnResolveHostComplete, base::Unretained(this)));
   if (fresh_rv != ERR_IO_PENDING) {
@@ -692,6 +699,10 @@ int QuicStreamFactory::Job::DoResolveHost() {
     return rv;
   }
 
+  // No fresh host resolution is available at this time, but there is available
+  // stale result. End time for stale host resolution is recorded and connection
+  // from stale host will be tried.
+  dns_resolution_end_time_ = base::TimeTicks().Now();
   io_state_ = STATE_CONNECT;
   LogStaleHostRacing(true);
   return OK;
@@ -719,6 +730,7 @@ int QuicStreamFactory::Job::DoResolveHostComplete(int rv) {
 }
 
 int QuicStreamFactory::Job::DoConnect() {
+  DCHECK(dns_resolution_end_time_ != base::TimeTicks());
   io_state_ = STATE_CONNECT_COMPLETE;
   bool require_confirmation = was_alternative_service_recently_broken_;
   net_log_.BeginEvent(
@@ -878,8 +890,7 @@ int QuicStreamFactory::Job::DoConfirmConnection(int rv) {
   DCHECK(!factory_->HasActiveSession(key_.session_key()));
   // There may well now be an active session for this IP.  If so, use the
   // existing session instead.
-  AddressList address(
-      session_->connection()->peer_address().impl().socket_address());
+  AddressList address(ToIPEndPoint(session_->connection()->peer_address()));
   if (factory_->HasMatchingIpSession(key_, address)) {
     LogConnectionIpPooling(true);
     session_->connection()->CloseConnection(
@@ -958,12 +969,12 @@ void QuicStreamRequest::SetSession(
 
 void QuicStreamRequest::OnConnectionFailedOnDefaultNetwork() {
   if (!failed_on_default_network_callback_.is_null())
-    base::ResetAndReturn(&failed_on_default_network_callback_).Run(OK);
+    std::move(failed_on_default_network_callback_).Run(OK);
 }
 
 void QuicStreamRequest::OnRequestComplete(int rv) {
   factory_ = nullptr;
-  base::ResetAndReturn(&callback_).Run(rv);
+  std::move(callback_).Run(rv);
 }
 
 void QuicStreamRequest::ExpectOnHostResolution() {
@@ -974,7 +985,7 @@ void QuicStreamRequest::OnHostResolutionComplete(int rv) {
   DCHECK(expect_on_host_resolution_);
   expect_on_host_resolution_ = false;
   if (!host_resolution_callback_.is_null()) {
-    base::ResetAndReturn(&host_resolution_callback_).Run(rv);
+    std::move(host_resolution_callback_).Run(rv);
   }
 }
 
@@ -1038,7 +1049,8 @@ QuicStreamFactory::QuicStreamFactory(
     bool headers_include_h2_stream_dependency,
     const quic::QuicTagVector& connection_options,
     const quic::QuicTagVector& client_connection_options,
-    bool enable_socket_recv_optimization)
+    bool enable_socket_recv_optimization,
+    int initial_rtt_for_handshake_milliseconds)
     : require_confirmation_(true),
       net_log_(net_log),
       host_resolver_(host_resolver),
@@ -1108,6 +1120,8 @@ QuicStreamFactory::QuicStreamFactory(
       task_runner_(nullptr),
       ssl_config_service_(ssl_config_service),
       enable_socket_recv_optimization_(enable_socket_recv_optimization),
+      initial_rtt_for_handshake_milliseconds_(
+          initial_rtt_for_handshake_milliseconds),
       weak_factory_(this) {
   DCHECK(transport_security_state_);
   DCHECK(http_server_properties_);
@@ -1122,6 +1136,12 @@ QuicStreamFactory::QuicStreamFactory(
 
   if (migrate_sessions_early_v2 || retry_on_alternate_network_before_handshake)
     DCHECK(migrate_sessions_on_network_change_v2);
+
+  if (retransmittable_on_wire_timeout_milliseconds == 0 &&
+      migrate_sessions_early_v2) {
+    retransmittable_on_wire_timeout_ = quic::QuicTime::Delta::FromMilliseconds(
+        kDefaultRetransmittableOnWireTimeoutMillisecs);
+  }
 
   // goaway_sessions_on_ip_change and close_sessions_on_ip_change should never
   // be simultaneously set to true.
@@ -1534,7 +1554,7 @@ std::unique_ptr<base::Value> QuicStreamFactory::QuicStreamFactoryInfoToValue()
         hosts.insert(HostPortPair(alias_it->server_id().host(),
                                   alias_it->server_id().port()));
       }
-      list->Append(session->GetInfoAsValue(hosts));
+      list->GetList().push_back(session->GetInfoAsValue(hosts));
     }
   }
   return std::move(list);
@@ -1720,7 +1740,7 @@ int QuicStreamFactory::ConfigureSocket(DatagramClientSocket* socket,
   // Set a buffer large enough to contain the initial CWND's worth of packet
   // to work around the problem with CHLO packets being sent out with the
   // wrong encryption level, when the send buffer is full.
-  rv = socket->SetSendBufferSize(quic::kMaxPacketSize * 20);
+  rv = socket->SetSendBufferSize(quic::kMaxOutgoingPacketSize * 20);
   if (rv != OK) {
     HistogramCreateSessionFailure(CREATION_ERROR_SETTING_SEND_BUFFER);
     return rv;
@@ -1801,8 +1821,8 @@ int QuicStreamFactory::CreateSession(
   QuicChromiumPacketWriter* writer =
       new QuicChromiumPacketWriter(socket.get(), task_runner_);
   quic::QuicConnection* connection = new quic::QuicConnection(
-      connection_id, quic::QuicSocketAddress(quic::QuicSocketAddressImpl(addr)),
-      helper_.get(), alarm_factory_.get(), writer, true /* owns_writer */,
+      connection_id, ToQuicSocketAddress(addr), helper_.get(),
+      alarm_factory_.get(), writer, true /* owns_writer */,
       quic::Perspective::IS_CLIENT,
       quic::ParsedQuicVersionVector{
           quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO, quic_version)});
@@ -1869,6 +1889,11 @@ int QuicStreamFactory::CreateSession(
     *session = nullptr;
     return ERR_CONNECTION_CLOSED;
   }
+  if (connection->version().KnowsWhichDecrypterToUse()) {
+    connection->InstallDecrypter(quic::ENCRYPTION_FORWARD_SECURE,
+                                 quic::QuicMakeUnique<quic::NullDecrypter>(
+                                     quic::Perspective::IS_CLIENT));
+  }
   return OK;
 }
 
@@ -1879,7 +1904,7 @@ void QuicStreamFactory::ActivateSession(const QuicSessionAliasKey& key,
   active_sessions_[key.session_key()] = session;
   session_aliases_[session].insert(key);
   const IPEndPoint peer_address =
-      session->connection()->peer_address().impl().socket_address();
+      ToIPEndPoint(session->connection()->peer_address());
   DCHECK(!base::ContainsKey(ip_aliases_[peer_address], session));
   ip_aliases_[peer_address].insert(session);
   DCHECK(!base::ContainsKey(session_peer_ip_, session));
@@ -1906,6 +1931,13 @@ void QuicStreamFactory::ConfigureInitialRttEstimate(
   if (type == NetworkChangeNotifier::CONNECTION_3G) {
     SetInitialRttEstimate(base::TimeDelta::FromMilliseconds(400),
                           INITIAL_RTT_CACHED, config);
+    return;
+  }
+
+  if (initial_rtt_for_handshake_milliseconds_ > 0) {
+    SetInitialRttEstimate(base::TimeDelta::FromMilliseconds(
+                              initial_rtt_for_handshake_milliseconds_),
+                          INITIAL_RTT_DEFAULT, config);
     return;
   }
 

@@ -46,81 +46,13 @@ void TestLoginScreen::ShowErrorMessage(int32_t login_attempts,
                                        const std::string& help_link_text,
                                        int32_t help_topic_id) {}
 
-void TestLoginScreen::ShowWarningBanner(const base::string16& message) {}
-
-void TestLoginScreen::HideWarningBanner() {}
-
 void TestLoginScreen::ClearErrors() {}
-
-void TestLoginScreen::ShowUserPodCustomIcon(
-    const AccountId& account_id,
-    ::ash::mojom::EasyUnlockIconOptionsPtr icon) {}
-
-void TestLoginScreen::HideUserPodCustomIcon(const AccountId& account_id) {}
-
-void TestLoginScreen::SetAuthType(const AccountId& account_id,
-                                  ::proximity_auth::mojom::AuthType auth_type,
-                                  const base::string16& initial_value) {}
-
-void TestLoginScreen::SetUserList(
-    std::vector<::ash::mojom::LoginUserInfoPtr> users) {}
-
-void TestLoginScreen::SetPinEnabledForUser(const AccountId& account_id,
-                                           bool is_enabled) {}
-
-void TestLoginScreen::SetFingerprintState(
-    const AccountId& account_id,
-    ::ash::mojom::FingerprintState state) {}
-
-void TestLoginScreen::NotifyFingerprintAuthResult(const AccountId& account_id,
-                                                  bool successful) {}
-
-void TestLoginScreen::SetAvatarForUser(const AccountId& account_id,
-                                       ::ash::mojom::UserAvatarPtr avatar) {}
-
-void TestLoginScreen::EnableAuthForUser(const AccountId& account_id) {}
-
-void TestLoginScreen::DisableAuthForUser(
-    const AccountId& account_id,
-    ash::mojom::AuthDisabledDataPtr auth_disabled_data) {}
-
-void TestLoginScreen::HandleFocusLeavingLockScreenApps(bool reverse) {}
-
-void TestLoginScreen::SetSystemInfo(bool show_if_hidden,
-                                    const std::string& os_version_label_text,
-                                    const std::string& enterprise_info_text,
-                                    const std::string& bluetooth_name) {}
 
 void TestLoginScreen::IsReadyForPassword(IsReadyForPasswordCallback callback) {
   std::move(callback).Run(true);
 }
 
-void TestLoginScreen::SetPublicSessionDisplayName(
-    const AccountId& account_id,
-    const std::string& display_name) {}
-
-void TestLoginScreen::SetPublicSessionLocales(
-    const AccountId& account_id,
-    std::vector<::ash::mojom::LocaleItemPtr> locales,
-    const std::string& default_locale,
-    bool show_advanced_view) {}
-
-void TestLoginScreen::SetPublicSessionKeyboardLayouts(
-    const AccountId& account_id,
-    const std::string& locale,
-    std::vector<::ash::mojom::InputMethodItemPtr> keyboard_layouts) {}
-
-void TestLoginScreen::SetPublicSessionShowFullManagementDisclosure(
-    bool show_full_management_disclosure) {}
-
-void TestLoginScreen::SetKioskApps(
-    std::vector<::ash::mojom::KioskAppInfoPtr> kiosk_apps,
-    SetKioskAppsCallback callback) {}
-
 void TestLoginScreen::ShowKioskAppError(const std::string& message) {}
-
-void TestLoginScreen::NotifyOobeDialogState(ash::mojom::OobeDialogState state) {
-}
 
 void TestLoginScreen::SetAddUserButtonEnabled(bool enable) {}
 
@@ -135,6 +67,14 @@ void TestLoginScreen::SetShowParentAccessButton(bool show) {}
 void TestLoginScreen::SetShowParentAccessDialog(bool show) {}
 
 void TestLoginScreen::FocusLoginShelf(bool reverse) {}
+
+void TestLoginScreen::ShowParentAccessWidget(
+    const AccountId& child_account_id,
+    base::RepeatingCallback<void(bool success)> callback) {}
+
+ash::LoginScreenModel* TestLoginScreen::GetModel() {
+  return &test_screen_model_;
+}
 
 void TestLoginScreen::Bind(mojo::ScopedMessagePipeHandle handle) {
   binding_.Bind(ash::mojom::LoginScreenRequest(std::move(handle)));

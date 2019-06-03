@@ -128,7 +128,7 @@ KURL BackgroundFetchIconLoader::PickBestIconForDisplay(
     icons.emplace_back(candidate_icon);
   }
 
-  return KURL(ManifestIconSelector::FindBestMatchingIcon(
+  return KURL(ManifestIconSelector::FindBestMatchingSquareIcon(
       std::move(icons), icon_display_size_pixels_.height, kMinimumIconSizeInPx,
       Manifest::ImageResource::Purpose::ANY));
 }
@@ -165,7 +165,7 @@ void BackgroundFetchIconLoader::DidFinishLoading(uint64_t resource_identifier) {
 
   worker_pool::PostTask(
       FROM_HERE,
-      CrossThreadBind(
+      CrossThreadBindOnce(
           &BackgroundFetchIconLoader::DecodeAndResizeImageOnBackgroundThread,
           WrapCrossThreadPersistent(this), std::move(task_runner),
           SegmentReader::CreateFromSharedBuffer(std::move(data_))));
@@ -214,10 +214,11 @@ void BackgroundFetchIconLoader::DecodeAndResizeImageOnBackgroundThread(
     }
   }
 
-  PostCrossThreadTask(*task_runner, FROM_HERE,
-                      CrossThreadBind(&BackgroundFetchIconLoader::RunCallback,
-                                      WrapCrossThreadPersistent(this),
-                                      ideal_to_chosen_icon_size_times_hundred));
+  PostCrossThreadTask(
+      *task_runner, FROM_HERE,
+      CrossThreadBindOnce(&BackgroundFetchIconLoader::RunCallback,
+                          WrapCrossThreadPersistent(this),
+                          ideal_to_chosen_icon_size_times_hundred));
 }
 
 void BackgroundFetchIconLoader::DidFail(const ResourceError& error) {

@@ -265,14 +265,6 @@ message AutoUpdateSettingsProto {
     // including network credentials during the rollback process.
     // If that is not possible, rolls back with a full powerwash.
     ROLLBACK_AND_RESTORE_IF_POSSIBLE = 3;
-    // If |target_version_prefix| specifies an older version than the currently
-    // installed Chrome OS version and it's possible to carry over device-level
-    // configuration such as network credentials during the rollback process
-    // and skipping OOBE after the rollback, the device rolls back to a Chrome
-    // OS version starting with |target_version_prefix|.
-    // If this is not possible, the device will stay on the current version
-    // (same as ROLLBACK_DISABLED).
-    ROLLBACK_ONLY_IF_RESTORE_POSSIBLE = 4;
   }
 
   // Specifies what should happen if |target_version_prefix| specifies an older
@@ -1208,6 +1200,76 @@ message DeviceBootOnAcProto {
   optional bool enabled = 1;
 }
 
+// Settings that control device's dock MAC address source.
+message DeviceDockMacAddressSourceProto {
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    // Device's designated dock MAC address.
+    DEVICE_DOCK_MAC_ADDRESS = 1;
+    // Device's built-in NIC MAC address.
+    DEVICE_NIC_MAC_ADDRESS = 2;
+    // Dock's built-in NIC MAC address.
+    DOCK_NIC_MAC_ADDRESS = 3;
+  }
+  optional Source source = 1;
+}
+
+// Settings that control advanced battery charge mode policy.
+message DeviceAdvancedBatteryChargeModeProto {
+  // Setting that controls whether advanced battery charge mode is enabled on
+  // this device.
+  // For details see "DeviceAdvancedBatteryChargeModeEnabled" in
+  // policy_templates.json.
+  optional bool enabled = 1;
+
+  // Setting that controls advanced battery charge mode day config on this
+  // device.
+  // This is a JSON string, for details see
+  // "DeviceAdvancedBatteryChargeModeDayConfig" in policy_templates.json.
+  optional string day_configs = 2;
+}
+
+// Settings that control battery charge mode policy.
+message DeviceBatteryChargeModeProto {
+  enum BatteryChargeMode {
+    MODE_UNSPECIFIED = 0;
+    STANDARD = 1;
+    EXPRESS_CHARGE = 2;
+    PRIMARILY_AC_USE = 3;
+    ADAPTIVE = 4;
+    CUSTOM = 5;
+  }
+
+  // Setting that controls battery charge mode on this device.
+  // For details see "DeviceBatteryChargeMode" in policy_templates.json.
+  optional BatteryChargeMode battery_charge_mode = 1;
+
+  // Percent at which charging starts when using CUSTOM.
+  // For details see "DeviceBatteryChargeCustomStartCharging" in
+  // policy_templates.json.
+  optional int32 custom_charge_start = 2;
+
+  // Percent at which charging stops when using CUSTOM.
+  // For details see "DeviceBatteryChargeCustomStopCharging" in
+  // policy_templates.json.
+  optional int32 custom_charge_stop = 3;
+}
+
+// Settings that control USB power share policy.
+message DeviceUsbPowerShareProto {
+  // Setting that controls whether USB power share is enabled on this device.
+  optional bool enabled = 1;
+}
+
+// Settings that control when a device will wake up and check for updates. These
+// checks are recurring. In order to disable a set schedule the policy must be
+// removed.
+message DeviceScheduledUpdateCheckProto {
+  // This is a JSON string, for details see "DeviceScheduledUpdateCheck" in
+  // policy_templates.json.
+  optional string device_scheduled_update_check_settings = 1;
+}
+
 message ChromeDeviceSettingsProto {
   reserved 61;
   optional DevicePolicyRefreshRateProto device_policy_refresh_rate = 1;
@@ -1313,4 +1375,10 @@ message ChromeDeviceSettingsProto {
   optional DeviceWiFiAllowedProto device_wifi_allowed = 82;
   optional DevicePowerPeakShiftProto device_power_peak_shift = 83;
   optional DeviceBootOnAcProto device_boot_on_ac = 84;
+  optional DeviceDockMacAddressSourceProto device_dock_mac_address_source = 85;
+  optional DeviceAdvancedBatteryChargeModeProto
+      device_advanced_battery_charge_mode = 86;
+  optional DeviceBatteryChargeModeProto device_battery_charge_mode = 87;
+  optional DeviceUsbPowerShareProto device_usb_power_share = 88;
+  optional DeviceScheduledUpdateCheckProto device_scheduled_update_check = 89;
 }

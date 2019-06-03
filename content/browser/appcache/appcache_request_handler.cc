@@ -19,7 +19,7 @@
 #include "content/browser/appcache/appcache_url_loader_job.h"
 #include "content/browser/appcache/appcache_url_loader_request.h"
 #include "content/browser/appcache/appcache_url_request_job.h"
-#include "content/common/navigation_subresource_loader_params.h"
+#include "content/browser/navigation_subresource_loader_params.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
 #include "services/network/public/cpp/features.h"
@@ -244,9 +244,9 @@ AppCacheRequestHandler::InitializeForMainResourceNetworkService(
 bool AppCacheRequestHandler::IsMainResourceType(ResourceType type) {
   // When PlzDedicatedWorker is enabled, a dedicated worker script is considered
   // to be a main resource.
-  if (type == RESOURCE_TYPE_WORKER)
+  if (type == ResourceType::kWorker)
     return blink::features::IsPlzDedicatedWorkerEnabled();
-  return IsResourceTypeFrame(type) || type == RESOURCE_TYPE_SHARED_WORKER;
+  return IsResourceTypeFrame(type) || type == ResourceType::kSharedWorker;
 }
 
 void AppCacheRequestHandler::OnDestructionImminent(AppCacheHost* host) {
@@ -355,8 +355,9 @@ std::unique_ptr<AppCacheJob> AppCacheRequestHandler::MaybeLoadMainResource(
   host_->enable_cache_selection(true);
 
   const AppCacheHost* spawning_host =
-      (resource_type_ == RESOURCE_TYPE_SHARED_WORKER) ?
-      host_ : host_->GetSpawningHost();
+      (resource_type_ == ResourceType::kSharedWorker)
+          ? host_
+          : host_->GetSpawningHost();
   GURL preferred_manifest_url = spawning_host ?
       spawning_host->preferred_manifest_url() : GURL();
 
@@ -395,7 +396,7 @@ void AppCacheRequestHandler::OnMainResponseFound(
     if (IsResourceTypeFrame(resource_type_)) {
       host_->NotifyMainResourceBlocked(manifest_url);
     } else {
-      DCHECK_EQ(resource_type_, RESOURCE_TYPE_SHARED_WORKER);
+      DCHECK_EQ(resource_type_, ResourceType::kSharedWorker);
       host_->OnContentBlocked(manifest_url);
     }
     DeliverNetworkResponse();

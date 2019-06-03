@@ -22,22 +22,27 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/arc/tracing/arc_cpu_model.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_graphics_jank_detector.h"
+#include "chrome/browser/chromeos/arc/tracing/arc_system_model.h"
+#include "chrome/browser/chromeos/arc/tracing/arc_system_stat_collector.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_graphics_model.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_model.h"
 #include "chrome/browser/chromeos/file_manager/path_util.h"
+#include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_controller.h"
 #include "components/arc/arc_prefs.h"
+#include "components/arc/arc_util.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/tracing_controller.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/events/event.h"
 #include "ui/gfx/codec/png_codec.h"
 
 namespace chromeos {
@@ -52,7 +57,7 @@ constexpr char kLastTracingModelName[] = "last_tracing_model.json";
 
 // Maximum interval to display.
 constexpr base::TimeDelta kMaxIntervalToDisplay =
-    base::TimeDelta::FromSecondsD(2.0);
+    base::TimeDelta::FromSecondsD(3.0);
 
 base::FilePath GetLastTracingModelPath(Profile* profile) {
   DCHECK(profile);
@@ -119,7 +124,7 @@ bool ReadNameFromStatus(pid_t pid, pid_t tid, std::string* out_name) {
 // Helper that clarifies thread and process names. Tracing events may not have
 // enough data for this. Also it determines the process pid the thread belongs
 // to.
-void UpdateThreads(arc::ArcCpuModel::ThreadMap* threads) {
+void UpdateThreads(arc::ArcSystemModel::ThreadMap* threads) {
   ProcessFilterPassAll filter_pass_all;
   base::ProcessIterator process_iterator(&filter_pass_all);
 
@@ -150,9 +155,12 @@ void UpdateThreads(arc::ArcCpuModel::ThreadMap* threads) {
 std::pair<base::Value, std::string> BuildGraphicsModel(
     const std::string& data,
     base::DictionaryValue tasks_info,
+    std::unique_ptr<arc::ArcSystemStatCollector> system_stat_collector,
     const base::TimeTicks& time_min,
     const base::TimeTicks& time_max,
     const base::FilePath& last_model_path) {
+  DCHECK(system_stat_collector);
+
   arc::ArcTracingModel common_model;
   const base::TimeTicks time_min_clamped =
       std::max(time_min, time_max - kMaxIntervalToDisplay);
@@ -163,11 +171,14 @@ std::pair<base::Value, std::string> BuildGraphicsModel(
   if (!common_model.Build(data))
     return std::make_pair(base::Value(), "Failed to process tracing data");
 
+  system_stat_collector->Flush(time_min, time_max,
+                               &common_model.system_model());
+
   arc::ArcTracingGraphicsModel graphics_model;
   if (!graphics_model.Build(common_model))
     return std::make_pair(base::Value(), "Failed to build tracing model");
 
-  UpdateThreads(&graphics_model.cpu_model().thread_map());
+  UpdateThreads(&graphics_model.system_model().thread_map());
 
   std::unique_ptr<base::DictionaryValue> model = graphics_model.Serialize();
   model->SetKey(kKeyTasks, std::move(tasks_info));
@@ -184,6 +195,16 @@ std::pair<base::Value, std::string> BuildGraphicsModel(
   }
 
   return std::make_pair(std::move(*model), "Tracing model is ready");
+}
+
+std::pair<base::Value, std::string> LoadGraphicsModel(
+    const std::string& json_text) {
+  arc::ArcTracingGraphicsModel graphics_model;
+  if (!graphics_model.LoadFromJson(json_text))
+    return std::make_pair(base::Value(), "Failed to load tracing model");
+
+  std::unique_ptr<base::DictionaryValue> model = graphics_model.Serialize();
+  return std::make_pair(std::move(*model), "Tracing model is loaded");
 }
 
 }  // namespace
@@ -218,6 +239,10 @@ void ArcGraphicsTracingHandler::RegisterMessages() {
       "setStopOnJank",
       base::BindRepeating(&ArcGraphicsTracingHandler::HandleSetStopOnJank,
                           base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "loadFromText",
+      base::BindRepeating(&ArcGraphicsTracingHandler::HandleLoadFromText,
+                          base::Unretained(this)));
 }
 
 void ArcGraphicsTracingHandler::OnWindowActivated(ActivationReason reason,
@@ -226,8 +251,10 @@ void ArcGraphicsTracingHandler::OnWindowActivated(ActivationReason reason,
   // Handle ARC current active window if any.
   DiscardActiveArcWindow();
 
-  active_task_id_ =
-      ArcAppWindowLauncherController::GetWindowTaskId(gained_active);
+  if (!gained_active)
+    return;
+
+  active_task_id_ = arc::GetWindowTaskId(gained_active);
   if (active_task_id_ <= 0)
     return;
 
@@ -256,8 +283,10 @@ void ArcGraphicsTracingHandler::OnCommit(exo::Surface* surface) {
 
 void ArcGraphicsTracingHandler::OnJankDetected(const base::Time& timestamp) {
   VLOG(1) << "Jank detected " << timestamp;
-  if (tracing_active_ && stop_on_jank_)
+  if (tracing_active_ && stop_on_jank_) {
     StopTracing();
+    Activate();
+  }
 }
 
 void ArcGraphicsTracingHandler::OnWindowPropertyChanged(aura::Window* window,
@@ -281,10 +310,12 @@ void ArcGraphicsTracingHandler::OnKeyEvent(ui::KeyEvent* event) {
       !event->IsControlDown() || !event->IsShiftDown()) {
     return;
   }
-  if (tracing_active_)
+  if (tracing_active_) {
     StopTracing();
-  else
+    Activate();
+  } else {
     StartTracing();
+  }
 }
 
 void ArcGraphicsTracingHandler::UpdateActiveArcWindowInfo() {
@@ -326,6 +357,17 @@ void ArcGraphicsTracingHandler::DiscardActiveArcWindow() {
   arc_active_window_ = nullptr;
 }
 
+void ArcGraphicsTracingHandler::Activate() {
+  aura::Window* const window =
+      web_ui()->GetWebContents()->GetTopLevelNativeWindow();
+  if (!window) {
+    LOG(ERROR) << "Failed to activate, no top level window.";
+    return;
+  }
+
+  platform_util::ActivateWindow(window);
+}
+
 void ArcGraphicsTracingHandler::StartTracing() {
   SetStatus("Collecting samples...");
 
@@ -337,6 +379,8 @@ void ArcGraphicsTracingHandler::StartTracing() {
   tracing_active_ = true;
   if (jank_detector_)
     jank_detector_->Reset();
+  system_stat_colletor_ = std::make_unique<arc::ArcSystemStatCollector>();
+  system_stat_colletor_->Start(kMaxIntervalToDisplay);
   content::TracingController::GetInstance()->StartTracing(
       config, base::BindOnce(&ArcGraphicsTracingHandler::OnTracingStarted,
                              weak_ptr_factory_.GetWeakPtr()));
@@ -348,6 +392,9 @@ void ArcGraphicsTracingHandler::StopTracing() {
   tracing_active_ = false;
 
   tracing_time_max_ = TRACE_TIME_TICKS_NOW();
+
+  if (system_stat_colletor_)
+    system_stat_colletor_->Stop();
 
   content::TracingController* const controller =
       content::TracingController::GetInstance();
@@ -378,12 +425,11 @@ void ArcGraphicsTracingHandler::OnTracingStopped(
     base::RefCountedString* trace_data) {
   std::string string_data;
   string_data.swap(trace_data->data());
-
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&BuildGraphicsModel, std::move(string_data),
-                     std::move(tasks_info_), tracing_time_min_,
-                     tracing_time_max_,
+                     std::move(tasks_info_), std::move(system_stat_colletor_),
+                     tracing_time_min_, tracing_time_max_,
                      GetLastTracingModelPath(Profile::FromWebUI(web_ui()))),
       base::BindOnce(&ArcGraphicsTracingHandler::OnGraphicsModelReady,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -417,6 +463,22 @@ void ArcGraphicsTracingHandler::HandleSetStopOnJank(
     return;
   }
   stop_on_jank_ = args->GetList()[0].GetBool();
+}
+
+void ArcGraphicsTracingHandler::HandleLoadFromText(
+    const base::ListValue* args) {
+  DCHECK_EQ(1U, args->GetSize());
+  if (!args->GetList()[0].is_string()) {
+    LOG(ERROR) << "Invalid input";
+    return;
+  }
+
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&LoadGraphicsModel,
+                     std::move(args->GetList()[0].GetString())),
+      base::BindOnce(&ArcGraphicsTracingHandler::OnGraphicsModelReady,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 }  // namespace chromeos

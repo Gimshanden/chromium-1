@@ -62,6 +62,9 @@ class WindowAndroid::WindowBeginFrameSource : public viz::BeginFrameSource {
   viz::BeginFrameArgs last_begin_frame_args_;
   uint64_t next_sequence_number_;
   bool paused_;
+  // Used for determining what the sequence number should be on
+  // CreateBeginFrameArgs.
+  base::TimeTicks next_expected_frame_time_;
 
   // Set by ScopedOnBeginFrame.
   std::vector<base::OnceClosure>* vsync_complete_callbacks_ptr_ = nullptr;
@@ -130,13 +133,30 @@ void WindowAndroid::WindowBeginFrameSource::OnGpuNoLongerBusy() {
 void WindowAndroid::WindowBeginFrameSource::OnVSync(
     base::TimeTicks frame_time,
     base::TimeDelta vsync_period) {
+  uint64_t sequence_number = next_sequence_number_;
+  // We expect |sequence_number| to be the number for the frame at
+  // |expected_frame_time|. We adjust this sequence number according to the
+  // actual frame time in case it is later than expected.
+  if (next_expected_frame_time_ != base::TimeTicks()) {
+    // Add |error_margin| to round |frame_time| up to the next tick if it is
+    // close to the end of an interval. This happens when a timebase is a bit
+    // off because of an imperfect presentation timestamp that may be a bit
+    // later than the beginning of the next interval.
+    constexpr double kErrorMarginIntervalPct = 0.05;
+    base::TimeDelta error_margin = vsync_period * kErrorMarginIntervalPct;
+    int ticks_since_estimated_frame_time =
+        (frame_time + error_margin - next_expected_frame_time_) / vsync_period;
+    sequence_number += std::max(0, ticks_since_estimated_frame_time);
+  }
+
   // frame time is in the past, so give the next vsync period as the deadline.
   base::TimeTicks deadline = frame_time + vsync_period;
   last_begin_frame_args_ = viz::BeginFrameArgs::Create(
-      BEGINFRAME_FROM_HERE, source_id(), next_sequence_number_, frame_time,
-      deadline, vsync_period, viz::BeginFrameArgs::NORMAL);
+      BEGINFRAME_FROM_HERE, source_id(), sequence_number, frame_time, deadline,
+      vsync_period, viz::BeginFrameArgs::NORMAL);
   DCHECK(last_begin_frame_args_.IsValid());
-  next_sequence_number_++;
+  next_sequence_number_ = sequence_number + 1;
+  next_expected_frame_time_ = deadline;
   if (RequestCallbackOnGpuAvailable())
     return;
   OnGpuNoLongerBusy();
@@ -182,6 +202,26 @@ WindowAndroid::ScopedOnBeginFrame::~ScopedOnBeginFrame() {
     std::move(callback).Run();
 }
 
+WindowAndroid::ScopedSelectionHandles::ScopedSelectionHandles(
+    WindowAndroid* window)
+    : window_(window) {
+  if (++window_->selection_handles_active_count_ == 1) {
+    JNIEnv* env = AttachCurrentThread();
+    Java_WindowAndroid_onSelectionHandlesStateChanged(
+        env, window_->GetJavaObject(), true /* active */);
+  }
+}
+
+WindowAndroid::ScopedSelectionHandles::~ScopedSelectionHandles() {
+  DCHECK_GT(window_->selection_handles_active_count_, 0);
+
+  if (--window_->selection_handles_active_count_ == 0) {
+    JNIEnv* env = AttachCurrentThread();
+    Java_WindowAndroid_onSelectionHandlesStateChanged(
+        env, window_->GetJavaObject(), false /* active */);
+  }
+}
+
 // static
 WindowAndroid* WindowAndroid::FromJavaWindowAndroid(
     const JavaParamRef<jobject>& jwindow_android) {
@@ -192,29 +232,20 @@ WindowAndroid* WindowAndroid::FromJavaWindowAndroid(
       AttachCurrentThread(), jwindow_android));
 }
 
-WindowAndroid::WindowAndroid(
-    JNIEnv* env,
-    jobject obj,
-    int display_id,
-    float scroll_factor,
-    bool window_is_wide_color_gamut,
-    float current_refresh_rate,
-    const base::android::JavaParamRef<jfloatArray>& supported_refresh_rates)
+WindowAndroid::WindowAndroid(JNIEnv* env,
+                             jobject obj,
+                             int display_id,
+                             float scroll_factor,
+                             bool window_is_wide_color_gamut)
     : display_id_(display_id),
       window_is_wide_color_gamut_(window_is_wide_color_gamut),
       compositor_(NULL),
       begin_frame_source_(new WindowBeginFrameSource(this)),
-      needs_begin_frames_(false),
-      current_refresh_rate_(current_refresh_rate) {
+      needs_begin_frames_(false) {
   java_window_.Reset(env, obj);
   mouse_wheel_scroll_factor_ =
       scroll_factor > 0 ? scroll_factor
                         : kDefaultMouseWheelTickMultiplier * GetDipScale();
-
-  if (supported_refresh_rates) {
-    base::android::JavaFloatArrayToFloatVector(env, supported_refresh_rates,
-                                               &supported_refresh_rates_);
-  }
 }
 
 void WindowAndroid::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -285,7 +316,37 @@ void WindowAndroid::RequestVSyncUpdate() {
 }
 
 float WindowAndroid::GetRefreshRate() {
-  return current_refresh_rate_;
+  JNIEnv* env = AttachCurrentThread();
+  return Java_WindowAndroid_getRefreshRate(env, GetJavaObject());
+}
+
+std::vector<float> WindowAndroid::GetSupportedRefreshRates() {
+  if (test_hooks_)
+    return test_hooks_->GetSupportedRates();
+
+  JNIEnv* env = AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jfloatArray> j_supported_refresh_rates =
+      Java_WindowAndroid_getSupportedRefreshRates(env, GetJavaObject());
+  std::vector<float> supported_refresh_rates;
+  if (j_supported_refresh_rates) {
+    base::android::JavaFloatArrayToFloatVector(env, j_supported_refresh_rates,
+                                               &supported_refresh_rates);
+  }
+  return supported_refresh_rates;
+}
+
+void WindowAndroid::SetPreferredRefreshRate(float refresh_rate) {
+  if (force_60hz_refresh_rate_)
+    return;
+
+  if (test_hooks_) {
+    test_hooks_->SetPreferredRate(refresh_rate);
+    return;
+  }
+
+  JNIEnv* env = AttachCurrentThread();
+  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(),
+                                             refresh_rate);
 }
 
 void WindowAndroid::SetNeedsBeginFrames(bool needs_begin_frames) {
@@ -378,7 +439,6 @@ void WindowAndroid::OnUpdateRefreshRate(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
     float refresh_rate) {
-  current_refresh_rate_ = refresh_rate;
   if (compositor_)
     compositor_->OnUpdateRefreshRate(refresh_rate);
   Force60HzRefreshRateIfNeeded();
@@ -387,9 +447,15 @@ void WindowAndroid::OnUpdateRefreshRate(
 void WindowAndroid::OnSupportedRefreshRatesUpdated(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
-    const JavaParamRef<jfloatArray>& supported_refresh_rates) {
-  base::android::JavaFloatArrayToFloatVector(env, supported_refresh_rates,
-                                             &supported_refresh_rates_);
+    const JavaParamRef<jfloatArray>& j_supported_refresh_rates) {
+  std::vector<float> supported_refresh_rates;
+  if (j_supported_refresh_rates) {
+    base::android::JavaFloatArrayToFloatVector(env, j_supported_refresh_rates,
+                                               &supported_refresh_rates);
+  }
+  if (compositor_)
+    compositor_->OnUpdateSupportedRefreshRates(supported_refresh_rates);
+
   Force60HzRefreshRateIfNeeded();
 }
 
@@ -405,29 +471,8 @@ void WindowAndroid::Force60HzRefreshRateIfNeeded() {
   if (!force_60hz_refresh_rate_)
     return;
 
-  // Arbitrary error margin to account for cases where the display's refresh
-  // rate might not be exactly 60.
-  constexpr float kEpsilon = 2.f;
-  constexpr float k60HzRefreshRate = 60.f;
-
-  float target_refresh_rate_delta = std::numeric_limits<float>::max();
-  float target_refresh_rate = 0.f;
-  for (auto refresh_rate : supported_refresh_rates_) {
-    float refresh_rate_delta = fabs(refresh_rate - k60HzRefreshRate);
-    if (refresh_rate_delta < target_refresh_rate_delta) {
-      target_refresh_rate = refresh_rate;
-      target_refresh_rate_delta = refresh_rate_delta;
-    }
-  }
-
-  if (current_refresh_rate_ == target_refresh_rate ||
-      target_refresh_rate_delta > kEpsilon) {
-    return;
-  }
-
   JNIEnv* env = AttachCurrentThread();
-  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(),
-                                             target_refresh_rate);
+  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(), 60.f);
 }
 
 bool WindowAndroid::HasPermission(const std::string& permission) {
@@ -464,21 +509,28 @@ display::Display WindowAndroid::GetDisplayWithWindowColorSpace() {
   return display;
 }
 
+void WindowAndroid::SetTestHooks(TestHooks* hooks) {
+  test_hooks_ = hooks;
+  if (!test_hooks_)
+    return;
+
+  if (compositor_) {
+    compositor_->OnUpdateSupportedRefreshRates(
+        test_hooks_->GetSupportedRates());
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Native JNI methods
 // ----------------------------------------------------------------------------
 
-jlong JNI_WindowAndroid_Init(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jint sdk_display_id,
-    jfloat scroll_factor,
-    jboolean window_is_wide_color_gamut,
-    jfloat refresh_rate,
-    const base::android::JavaParamRef<jfloatArray>& supported_refresh_rates) {
+jlong JNI_WindowAndroid_Init(JNIEnv* env,
+                             const JavaParamRef<jobject>& obj,
+                             jint sdk_display_id,
+                             jfloat scroll_factor,
+                             jboolean window_is_wide_color_gamut) {
   WindowAndroid* window = new WindowAndroid(
-      env, obj, sdk_display_id, scroll_factor, window_is_wide_color_gamut,
-      refresh_rate, supported_refresh_rates);
+      env, obj, sdk_display_id, scroll_factor, window_is_wide_color_gamut);
   return reinterpret_cast<intptr_t>(window);
 }
 

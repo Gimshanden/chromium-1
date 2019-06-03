@@ -8,19 +8,30 @@ suite('<app-management-arc-permission-view>', () => {
   let arcPermissionView;
   let fakeHandler;
 
-  function getPermissionItemByPermissionType(permissionType) {
-    return arcPermissionView.root.querySelector(
-        '[permission-type=' + permissionType + ']');
-  }
-
   function expandPermissions() {
     arcPermissionView.root.querySelector('#subpermission-expand-row').click();
+  }
+
+  function getPermissionBoolByType(permissionType) {
+    return app_management.util.getPermissionValueBool(
+        arcPermissionView.app_, permissionType);
+  }
+
+  async function clickPermissionToggle(permissionType) {
+    getPermissionCrToggleByType(arcPermissionView, permissionType).click();
+    await fakeHandler.$.flushForTesting();
+  }
+
+  async function clickPermissionItem(permissionType) {
+    getPermissionItemByType(arcPermissionView, permissionType).click();
+    await fakeHandler.$.flushForTesting();
   }
 
   setup(async () => {
     fakeHandler = setupFakeHandler();
     replaceStore();
 
+    // Create an ARC app without microphone permissions.
     const arcOptions = {
       type: apps.mojom.AppType.kArc,
       permissions: app_management.FakePageHandler.createArcPermissions([
@@ -48,8 +59,61 @@ suite('<app-management-arc-permission-view>', () => {
 
   test('Permissions are hidden correctly', () => {
     expandPermissions();
-    assertTrue(isHidden(getPermissionItemByPermissionType('MICROPHONE')));
-    assertFalse(isHidden(getPermissionItemByPermissionType('LOCATION')));
-    assertFalse(isHidden(getPermissionItemByPermissionType('CAMERA')));
+    assertTrue(
+        isHidden(getPermissionItemByType(arcPermissionView, 'MICROPHONE')));
+    assertFalse(
+        isHidden(getPermissionItemByType(arcPermissionView, 'LOCATION')));
+    assertFalse(isHidden(getPermissionItemByType(arcPermissionView, 'CAMERA')));
+  });
+
+  test('Toggle works correctly', async () => {
+    const checkPermissionToggle = async (permissionType) => {
+      assertTrue(getPermissionBoolByType(permissionType));
+      assertTrue(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                     .checked);
+
+      // Toggle Off.
+      await clickPermissionToggle(permissionType);
+      assertFalse(getPermissionBoolByType(permissionType));
+      assertFalse(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                      .checked);
+
+      // Toggle On.
+      await clickPermissionToggle(permissionType);
+      assertTrue(getPermissionBoolByType(permissionType));
+      assertTrue(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                     .checked);
+    };
+
+    expandPermissions();
+    await checkPermissionToggle('LOCATION');
+    await checkPermissionToggle('CAMERA');
+    await checkPermissionToggle('NOTIFICATIONS');
+  });
+
+
+  test('OnClick handler for permission item works correctly', async () => {
+    const checkPermissionItemOnClick = async (permissionType) => {
+      assertTrue(getPermissionBoolByType(permissionType));
+      assertTrue(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                     .checked);
+
+      // Toggle Off.
+      await clickPermissionItem(permissionType);
+      assertFalse(getPermissionBoolByType(permissionType));
+      assertFalse(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                      .checked);
+
+      // Toggle On.
+      await clickPermissionItem(permissionType);
+      assertTrue(getPermissionBoolByType(permissionType));
+      assertTrue(getPermissionCrToggleByType(arcPermissionView, permissionType)
+                     .checked);
+    };
+
+    expandPermissions();
+    await checkPermissionItemOnClick('LOCATION');
+    await checkPermissionItemOnClick('CAMERA');
+    await checkPermissionItemOnClick('NOTIFICATIONS');
   });
 });

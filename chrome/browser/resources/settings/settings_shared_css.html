@@ -56,7 +56,7 @@
         }
       }
 
-      .separator + paper-icon-button-light {
+      .separator + cr-icon-button {
         margin-inline-start: var(--cr-icon-ripple-margin);
       }
 
@@ -248,7 +248,7 @@
       /* A settings-box that is embedded in another settings-box (e.g. a control
        * that is associated with a toggle button). */
       .settings-box.embedded {
-        padding-inline-start: var(--settings-box-row-indent);
+        padding-inline-start: var(--cr-section-indent-padding);
       }
 
       /* The lower line of text in a two-line row. */
@@ -302,10 +302,7 @@
       [scrollable],
       iron-list,
       .list-item {
-        --cr-paper-icon-button-margin: {
-          margin-inline-end: 0;
-          margin-inline-start: var(--cr-icon-button-margin-start);
-        };
+        --cr-icon-button-margin-end: 0;
       }
 
       /* Helper for a list frame to automatically avoid the separator line. */

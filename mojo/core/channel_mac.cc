@@ -17,8 +17,6 @@
 #include "base/containers/buffer_iterator.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
-#include "base/debug/crash_logging.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
 #include "base/mac/mach_logging.h"
 #include "base/mac/scoped_mach_msg_destroy.h"
@@ -117,11 +115,6 @@ class ChannelMac : public Channel,
                               size_t extra_header_size,
                               std::vector<PlatformHandle>* handles,
                               bool* deferred) override {
-    // TODO(https://crbug.com/946372): Remove when fixed.
-    static base::debug::CrashKeyString* error_crash_key =
-        base::debug::AllocateCrashKeyString("channel-mac-handles-error",
-                                            base::debug::CrashKeySize::Size64);
-
     // Validate the incoming handles. If validation fails, ensure they are
     // destroyed.
     std::vector<PlatformHandle> incoming_handles;
@@ -130,14 +123,12 @@ class ChannelMac : public Channel,
     if (extra_header_size <
         sizeof(Message::MachPortsExtraHeader) +
             (incoming_handles.size() * sizeof(Message::MachPortsEntry))) {
-      base::debug::SetCrashKeyString(error_crash_key, "extra_header_size");
       return false;
     }
 
     const auto* mach_ports_header =
         reinterpret_cast<const Message::MachPortsExtraHeader*>(extra_header);
     if (mach_ports_header->num_ports != incoming_handles.size()) {
-      base::debug::SetCrashKeyString(error_crash_key, "num_ports mismatch");
       return false;
     }
 
@@ -145,29 +136,19 @@ class ChannelMac : public Channel,
       auto type = static_cast<PlatformHandle::Type>(
           mach_ports_header->entries[i].mach_entry.type);
       if (type == PlatformHandle::Type::kNone) {
-        base::debug::SetCrashKeyString(
-            error_crash_key, base::StringPrintf("kNone handle #%d", i));
         return false;
       } else if (type == PlatformHandle::Type::kFd &&
                  incoming_handles[i].is_mach_send()) {
         int fd = fileport_makefd(incoming_handles[i].GetMachSendRight().get());
         if (fd < 0) {
-          base::debug::SetCrashKeyString(
-              error_crash_key,
-              base::StringPrintf("fileport_makefd %d -%d #%d", fd, errno, i));
           return false;
         }
         incoming_handles[i] = PlatformHandle(base::ScopedFD(fd));
       } else if (type != incoming_handles[i].type()) {
-        base::debug::SetCrashKeyString(
-            error_crash_key,
-            base::StringPrintf("handle mismatch %d != -%d #%d", type,
-                               incoming_handles[i].type(), i));
         return false;
       }
     }
 
-    base::debug::ClearCrashKeyString(error_crash_key);
     *handles = std::move(incoming_handles);
     return true;
   }
@@ -200,7 +181,10 @@ class ChannelMac : public Channel,
       DCHECK(receive_port_ == MACH_PORT_NULL);
       CHECK(base::mac::CreateMachPort(&receive_port_, nullptr,
                                       MACH_PORT_QLIMIT_LARGE));
-      RequestSendDeadNameNotification();
+      if (!RequestSendDeadNameNotification()) {
+        OnError(Error::kConnectionFailed);
+        return;
+      }
       SendHandshake();
     } else if (receive_port_ != MACH_PORT_NULL) {
       DCHECK(send_port_ == MACH_PORT_NULL);
@@ -238,15 +222,20 @@ class ChannelMac : public Channel,
   // Requests that the kernel notify the |receive_port_| when the receive right
   // connected to |send_port_| becomes a dead name. This should be called as
   // soon as the Channel establishes both the send and receive ports.
-  void RequestSendDeadNameNotification() {
+  bool RequestSendDeadNameNotification() {
     base::mac::ScopedMachSendRight previous;
     kern_return_t kr = mach_port_request_notification(
         mach_task_self(), send_port_.get(), MACH_NOTIFY_DEAD_NAME, 0,
         receive_port_.get(), MACH_MSG_TYPE_MAKE_SEND_ONCE,
         base::mac::ScopedMachSendRight::Receiver(previous).get());
     if (kr != KERN_SUCCESS) {
-      MACH_LOG(ERROR, kr) << "mach_port_request_notification";
+      // If port is already a dead name (i.e. the receiver is already gone),
+      // then the channel should be shut down by the caller.
+      MACH_LOG_IF(ERROR, kr != KERN_INVALID_ARGUMENT, kr)
+          << "mach_port_request_notification";
+      return false;
     }
+    return true;
   }
 
   // SendHandshake() sends to the |receive_port_| a right to |send_port_|,
@@ -304,7 +293,10 @@ class ChannelMac : public Channel,
 
     send_port_ = base::mac::ScopedMachSendRight(message->msgh_remote_port);
 
-    RequestSendDeadNameNotification();
+    if (!RequestSendDeadNameNotification()) {
+      OnError(Error::kConnectionFailed);
+      return false;
+    }
 
     base::AutoLock lock(write_lock_);
     handshake_done_ = true;
@@ -528,6 +520,12 @@ class ChannelMac : public Channel,
       }
       OnError(Error::kDisconnected);
       return;
+    } else if (header->msgh_id == MACH_NOTIFY_SEND_ONCE) {
+      // Notification of an extant send-once right being destroyed. This is
+      // sent for the right allocated in RequestSendDeadNameNotification(),
+      // and no action needs to be taken. Since it is ignored, the kernel
+      // audit token need not be checked.
+      return;
     }
 
     if (header->msgh_size < sizeof(mach_msg_base_t)) {
@@ -640,12 +638,6 @@ class ChannelMac : public Channel,
     size_t ignored;
     DispatchResult result = TryDispatchMessage(payload, &ignored);
     if (result != DispatchResult::kOK) {
-      // TODO(https://crbug.com/946372): Remove when fixed.
-      static auto* error_crash_key = base::debug::AllocateCrashKeyString(
-          "channel-mac-try-dispatch", base::debug::CrashKeySize::Size32);
-      base::debug::SetCrashKeyString(error_crash_key,
-                                     base::StringPrintf("%d", result));
-      base::debug::DumpWithoutCrashing();
       OnError(Error::kReceivedMalformedData);
       return;
     }

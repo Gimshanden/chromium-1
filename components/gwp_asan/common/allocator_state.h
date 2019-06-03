@@ -27,6 +27,8 @@
 
 #include <atomic>
 #include <limits>
+#include <string>
+#include <type_traits>
 
 #include "base/threading/platform_thread.h"
 
@@ -48,11 +50,12 @@ class AllocatorState {
   // Invalid metadata index.
   static constexpr MetadataIdx kInvalidMetadataIdx = kMaxMetadata;
 
-  // Maximum number of stack trace frames to collect.
-  static constexpr size_t kMaxStackFrames = 60;
-  // Number of bytes to allocate for packed stack traces. This can hold
-  // approximately kMaxStackFrames under normal conditions.
-  static constexpr size_t kMaxPackedTraceLength = 200;
+  // Maximum number of stack trace frames to collect for an allocation or
+  // deallocation.
+  static constexpr size_t kMaxStackFrames = 100;
+  // Number of bytes to allocate for both allocation and deallocation packed
+  // stack traces. (Stack trace entries take ~3.5 bytes on average.)
+  static constexpr size_t kMaxPackedTraceLength = 400;
 
   static_assert(std::numeric_limits<SlotIdx>::max() >= kMaxSlots - 1,
                 "SlotIdx can hold all possible slot index values");
@@ -71,12 +74,11 @@ class AllocatorState {
   };
 
   enum class GetMetadataReturnType {
-    kUnrelatedCrash = 0,
-    kGwpAsanCrash = 1,
-    kGwpAsanCrashWithMissingMetadata = 2,
-    kErrorBadSlot = 3,
-    kErrorBadMetadataIndex = 4,
-    kErrorOutdatedMetadataIndex = 5,
+    kGwpAsanCrash = 0,
+    kGwpAsanCrashWithMissingMetadata = 1,
+    kErrorBadSlot = 2,
+    kErrorBadMetadataIndex = 3,
+    kErrorOutdatedMetadataIndex = 4,
   };
 
   // Structure for storing data about a slot.
@@ -88,12 +90,14 @@ class AllocatorState {
       // (De)allocation thread id or base::kInvalidThreadId if no (de)allocation
       // occurred.
       uint64_t tid = base::kInvalidThreadId;
-      // Packed stack trace.
-      uint8_t packed_trace[kMaxPackedTraceLength];
       // Length used to encode the packed stack trace.
-      size_t trace_len = 0;
+      uint16_t trace_len = 0;
       // Whether a stack trace has been collected for this (de)allocation.
       bool trace_collected = false;
+
+      static_assert(std::numeric_limits<decltype(trace_len)>::max() >=
+                        kMaxPackedTraceLength - 1,
+                    "trace_len can hold all possible length values.");
     };
 
     // Size of the allocation
@@ -103,6 +107,10 @@ class AllocatorState {
     // Used to synchronize whether a deallocation has occurred (e.g. whether a
     // double free has occurred) between threads.
     std::atomic<bool> deallocation_occurred{false};
+    // Holds the combined allocation/deallocation stack traces. The deallocation
+    // stack trace is stored immediately after the allocation stack trace to
+    // optimize on space.
+    uint8_t stack_trace_pool[kMaxPackedTraceLength];
 
     AllocationInfo alloc;
     AllocationInfo dealloc;
@@ -124,20 +132,19 @@ class AllocatorState {
   bool IsValid() const;
 
   // This method is meant to be called from the crash handler with a validated
-  // AllocatorState object read from the crashed process. Given the metadata
-  // and slot to metadata arrays for the allocator and an exception address,
-  // this method determines if the exception is related to GWP-ASan or not and
-  // what the metadata for the relevant GWP-ASan allocation is if so.
-  //
-  // Returns an enum indicating an error, unrelated exception, or a GWP-ASan
-  // exception with or without metadata. If metadata is available, the
-  // metadata_idx parameter stores the index of the relevant metadata in the
-  // given array.
+  // AllocatorState object read from the crashed process and an exception
+  // address known to be in the GWP-ASan allocator region. Given the metadata
+  // and slot to metadata arrays for the allocator, this method returns an enum
+  // indicating an error or a GWP-ASan exception with or without metadata. If
+  // metadata is available, the |metadata_idx| parameter stores the index of the
+  // relevant metadata in the given array. If an error occurs, the |error|
+  // parameter is filled out with an error string.
   GetMetadataReturnType GetMetadataForAddress(
       uintptr_t exception_address,
       const SlotMetadata* metadata_arr,
       const MetadataIdx* slot_to_metadata,
-      MetadataIdx* metadata_idx) const;
+      MetadataIdx* metadata_idx,
+      std::string* error) const;
 
   // Returns the likely error type given an exception address and whether its
   // previously been allocated and deallocated.

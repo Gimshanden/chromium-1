@@ -25,7 +25,6 @@
 - (void)onPrimaryAccountSet:(const CoreAccountInfo&)primaryAccountInfo;
 - (void)onPrimaryAccountCleared:
     (const CoreAccountInfo&)previousPrimaryAccountInfo;
-- (void)onPrimaryAccountSigninFailed:(const GoogleServiceAuthError&)error;
 - (void)onRefreshTokenUpdatedForAccount:(const CoreAccountInfo&)accountInfo;
 - (void)onRefreshTokenRemovedForAccount:(const std::string&)accountId;
 - (void)onRefreshTokensLoaded;
@@ -52,11 +51,10 @@ class IdentityManagerObserverBridge : public IdentityManager::Observer {
       const CoreAccountInfo& primary_account_info) override;
   void OnPrimaryAccountCleared(
       const CoreAccountInfo& previous_primary_account_info) override;
-  void OnPrimaryAccountSigninFailed(
-      const GoogleServiceAuthError& error) override;
   void OnRefreshTokenUpdatedForAccount(
       const CoreAccountInfo& account_info) override;
-  void OnRefreshTokenRemovedForAccount(const std::string& account_id) override;
+  void OnRefreshTokenRemovedForAccount(
+      const CoreAccountId& account_id) override;
   void OnRefreshTokensLoaded() override;
   void OnAccountsInCookieUpdated(
       const identity::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,

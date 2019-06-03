@@ -13,7 +13,6 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/common/omnibox_features.h"
@@ -33,8 +32,19 @@
 namespace {
 
 // Server address for the experimental suggestions service.
+//
+// For now, we wish to disable on-focus suggestions, but do so in a way that
+// can be overridden by an experiment config file change.
+//
+// To disable on-focus suggestions, we set the address to a URL that will not
+// reply.  It returns a 404.  (This URL is at the same host and similar to the
+// URL that will reply.)
+//
+// We'd be able to enable on-focus suggestions again by overriding this
+// default address in an experiment config.
 const char kDefaultExperimentalServerAddress[] =
-    "https://cuscochromeextension-pa.googleapis.com/v1/omniboxsuggestions";
+    "https://cuscochromeextension-pa.googleapis.com/v_turned_down_returns_404/"
+    "omniboxsuggestions";
 
 void AddVariationHeaders(network::ResourceRequest* request) {
   // Add Chrome experiment state to the request headers.
@@ -79,7 +89,7 @@ std::string FormatRequestBodyExperimentalService(const std::string& current_url,
   // stream_type = 1 corresponds to zero suggest suggestions.
   request->SetInteger("stream_type", 1);
   const int experiment_id =
-      OmniboxFieldTrial::GetZeroSuggestRedirectToChromeExperimentId();
+      OmniboxFieldTrial::GetOnFocusSuggestionsCustomEndpointExperimentId();
   if (experiment_id >= 0)
     request->SetInteger("experiment_id", experiment_id);
   std::string result;
@@ -166,7 +176,8 @@ GURL ContextualSuggestionsService::ExperimentalContextualSuggestionsUrl(
     return GURL();
   }
 
-  if (!base::FeatureList::IsEnabled(omnibox::kZeroSuggestRedirectToChrome)) {
+  if (!base::FeatureList::IsEnabled(
+          omnibox::kOnFocusSuggestionsCustomEndpoint)) {
     return GURL();
   }
 
@@ -181,16 +192,16 @@ GURL ContextualSuggestionsService::ExperimentalContextualSuggestionsUrl(
   }
 
   const std::string server_address_param =
-      OmniboxFieldTrial::GetZeroSuggestRedirectToChromeServerAddress();
+      OmniboxFieldTrial::GetOnFocusSuggestionsCustomEndpointURL();
   GURL suggest_url(server_address_param.empty()
                        ? kDefaultExperimentalServerAddress
                        : server_address_param);
-  // Check that the suggest URL for redirect to chrome field trial is valid.
+  // Check that the custom endpoint URL is valid.
   if (!suggest_url.is_valid()) {
     return GURL();
   }
 
-  // Check that the suggest URL for redirect to chrome is HTTPS.
+  // Check that the custom endpoint URL is HTTPS.
   if (!suggest_url.SchemeIsCryptographic()) {
     return GURL();
   }
@@ -245,9 +256,6 @@ void ContextualSuggestionsService::CreateDefaultRequest(
   request->attach_same_site_cookies = true;
   request->site_for_cookies = suggest_url;
   AddVariationHeaders(request.get());
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // data_use_measurement::DataUseUserData::OMNIBOX
   StartDownloadAndTransferLoader(std::move(request), std::string(),
                                  traffic_annotation, std::move(start_callback),
                                  std::move(completion_callback));
@@ -300,11 +308,7 @@ void ContextualSuggestionsService::CreateExperimentalRequest(
   std::string request_body =
       FormatRequestBodyExperimentalService(current_url, visit_time);
   AddVariationHeaders(request.get());
-  request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // data_use_measurement::DataUseUserData::OMNIBOX
+  request->allow_credentials = false;
 
   // If authentication services are unavailable or if this request is still
   // waiting for an oauth2 token, run the contextual service without access

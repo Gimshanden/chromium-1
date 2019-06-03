@@ -27,7 +27,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_classification.h"
@@ -431,6 +430,9 @@ bool DocumentProvider::ParseDocumentSearchResults(const base::Value& root_val,
       omnibox::kDocumentProvider, "DocumentScoreResult2", 700);
   int score2 = base::GetFieldTrialParamByFeatureAsInt(
       omnibox::kDocumentProvider, "DocumentScoreResult3", 300);
+  // During development/quality iteration we may wish to defeat server scores.
+  bool use_server_scores = base::GetFieldTrialParamByFeatureAsBool(
+      omnibox::kDocumentProvider, "DocumentUseServerScore", true);
 
   // Some users may be in a counterfactual study arm in which we perform all
   // necessary work but do not forward the autocomplete matches.
@@ -444,7 +446,7 @@ bool DocumentProvider::ParseDocumentSearchResults(const base::Value& root_val,
   // results.
   int previous_score = -1;
   for (size_t i = 0; i < num_results; i++) {
-    if (matches->size() >= AutocompleteProvider::kMaxMatches) {
+    if (matches->size() >= provider_max_matches_) {
       break;
     }
     const base::DictionaryValue* result = nullptr;
@@ -473,7 +475,7 @@ bool DocumentProvider::ParseDocumentSearchResults(const base::Value& root_val,
         break;
     }
     int server_score;
-    if (result->GetInteger("score", &server_score)) {
+    if (use_server_scores && result->GetInteger("score", &server_score)) {
       if (previous_score >= 0 && server_score >= previous_score) {
         server_score = previous_score - 1;
       }
@@ -514,7 +516,7 @@ bool DocumentProvider::ParseDocumentSearchResults(const base::Value& root_val,
         match.description = GetProductDescriptionString(mimetype);
       }
       AutocompleteMatch::AddLastClassificationIfNecessary(
-          &match.description_class, 0, ACMatchClassification::NONE);
+          &match.description_class, 0, ACMatchClassification::DIM);
     }
     match.transition = ui::PAGE_TRANSITION_GENERATED;
     if (!in_counterfactual_group) {
@@ -530,7 +532,7 @@ bool DocumentProvider::ParseDocumentSearchResults(const base::Value& root_val,
 ACMatchClassifications DocumentProvider::Classify(
     const base::string16& text,
     const base::string16& input_text) {
-  TermMatches term_matches = FindTermMatches(input_text, text, true, false);
+  TermMatches term_matches = FindTermMatches(input_text, text);
   return ClassifyTermMatches(term_matches, text.size(),
                              ACMatchClassification::MATCH,
                              ACMatchClassification::NONE);
@@ -545,18 +547,22 @@ const GURL DocumentProvider::GetURLForDeduping(const GURL& url) {
   // All URLs are canonicalized to a GURL form only used for deduplication and
   // not guaranteed to be usable for navigation.
   // URLs of the following forms are handled:
-  // https://drive.google.com/open?id=(id)
-  // https://docs.google.com/document/d/(id)/edit
-  // https://docs.google.com/spreadsheets/d/(id)/edit#gid=12345
-  // https://docs.google.com/presentation/d/(id)/edit#slide=id.g12345a_0_26
-  // https://www.google.com/url?[...]url=https://drive.google.com/a/google.com/open?id%3D1fkxx6KYRYnSqljThxShJVliQJLdKzuJBnzogzL3n8rE&[...]
+  // https://drive.google.com/[a/domain.tld]/open?id=(id)
+  // https://docs.google.com/[a/domain.tld/]document/d/(id)/[...]
+  // https://docs.google.com/[a/domain.tld/]spreadsheets/d/(id)/edit#gid=12345
+  // https://docs.google.com/[a/domain.tld/]presentation/d/(id)/edit#slide=id.g12345a_0_26
+  // https://www.google.com/url?[...]url=https://drive.google.com/a/domain.tld/open?id%3D1fkxx6KYRYnSqljThxShJVliQJLdKzuJBnzogzL3n8rE&[...]
   // where id is comprised of characters in [0-9A-Za-z\-_] = [\w\-]
   std::string id;
-  if (url.host() == "drive.google.com" && url.path() == "/open") {
-    net::GetValueForKeyInQuery(url, "id", &id);
+
+  if (url.host() == "drive.google.com") {
+    static re2::LazyRE2 path_regex = {"^/(?:a/[\\w\\.]+/)?open$"};
+    if (RE2::PartialMatch(url.path(), *path_regex))
+      net::GetValueForKeyInQuery(url, "id", &id);
   } else if (url.host() == "docs.google.com") {
     static re2::LazyRE2 doc_link_regex = {
-        "^/(?:document|spreadsheets|presentation|forms)/d/([\\w-]+)/"};
+        "^/(?:a/[\\w\\.]+/)?(?:document|spreadsheets|presentation|forms)/d/"
+        "([\\w-]+)/"};
     RE2::PartialMatch(url.path(), *doc_link_regex, &id);
   } else if (url.host() == "www.google.com" && url.path() == "/url") {
     // Redirect links wrapping a drive.google.com/open?id= link.

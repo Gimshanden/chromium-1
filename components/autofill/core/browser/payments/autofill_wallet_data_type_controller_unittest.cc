@@ -24,7 +24,7 @@
 #include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/data_type_controller_mock.h"
 #include "components/sync/driver/fake_generic_change_processor.h"
-#include "components/sync/driver/fake_sync_service.h"
+#include "components/sync/driver/mock_sync_service.h"
 #include "components/sync/driver/sync_client_mock.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/model/fake_syncable_service.h"
@@ -82,7 +82,10 @@ class FakeWebDataService : public AutofillWebDataService {
 
 class AutofillWalletDataTypeControllerTest : public testing::Test {
  public:
-  AutofillWalletDataTypeControllerTest() : last_type_(syncer::UNSPECIFIED) {}
+  AutofillWalletDataTypeControllerTest() : last_type_(syncer::UNSPECIFIED) {
+    ON_CALL(sync_service_, GetUserShare()).WillByDefault(Return(&user_share_));
+  }
+
   ~AutofillWalletDataTypeControllerTest() override {}
 
   void SetUp() override {
@@ -99,8 +102,8 @@ class AutofillWalletDataTypeControllerTest : public testing::Test {
         base::ThreadTaskRunnerHandle::Get(),
         base::ThreadTaskRunnerHandle::Get());
     autofill_wallet_dtc_ = std::make_unique<AutofillWalletDataTypeController>(
-        syncer::AUTOFILL_WALLET_DATA, base::ThreadTaskRunnerHandle::Get(),
-        base::DoNothing(), &sync_service_, &sync_client_,
+        syncer::AUTOFILL_WALLET_METADATA, base::ThreadTaskRunnerHandle::Get(),
+        /*dump_stack=*/base::DoNothing(), &sync_service_, &sync_client_,
         AutofillWalletDataTypeController::PersonalDataManagerProvider(),
         web_data_service_);
 
@@ -112,7 +115,7 @@ class AutofillWalletDataTypeControllerTest : public testing::Test {
     // Make sure WebDataService is shutdown properly on DB thread before we
     // destroy it.
     // Must be done before we pump the loop.
-    syncable_service_.StopSyncing(syncer::AUTOFILL_WALLET_DATA);
+    syncable_service_.StopSyncing(syncer::AUTOFILL_WALLET_METADATA);
   }
 
  protected:
@@ -120,10 +123,10 @@ class AutofillWalletDataTypeControllerTest : public testing::Test {
     autofill_wallet_dtc_->SetGenericChangeProcessorFactoryForTest(
         std::make_unique<syncer::FakeGenericChangeProcessorFactory>(
             std::make_unique<syncer::FakeGenericChangeProcessor>(
-                syncer::AUTOFILL_WALLET_DATA)));
+                syncer::AUTOFILL_WALLET_METADATA)));
   }
 
-  void Start() {
+  bool Start() {
     autofill_wallet_dtc_->LoadModels(
         syncer::ConfigureContext(),
         base::BindRepeating(
@@ -131,11 +134,13 @@ class AutofillWalletDataTypeControllerTest : public testing::Test {
             base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
     if (autofill_wallet_dtc_->state() !=
-        syncer::DataTypeController::MODEL_LOADED)
-      return;
+        syncer::DataTypeController::MODEL_LOADED) {
+      return false;
+    }
     autofill_wallet_dtc_->StartAssociating(base::BindRepeating(
         &syncer::StartCallbackMock::Run, base::Unretained(&start_callback_)));
     base::RunLoop().RunUntilIdle();
+    return true;
   }
 
   void OnLoadFinished(syncer::ModelType type, const syncer::SyncError& error) {
@@ -145,7 +150,8 @@ class AutofillWalletDataTypeControllerTest : public testing::Test {
 
   base::test::ScopedTaskEnvironment task_environment_;
   TestingPrefServiceSimple prefs_;
-  syncer::FakeSyncService sync_service_;
+  syncer::UserShare user_share_;
+  testing::NiceMock<syncer::MockSyncService> sync_service_;
   syncer::StartCallbackMock start_callback_;
   syncer::FakeSyncableService syncable_service_;
   std::unique_ptr<AutofillWalletDataTypeController> autofill_wallet_dtc_;
@@ -166,7 +172,7 @@ TEST_F(AutofillWalletDataTypeControllerTest, StartDatatypeEnabled) {
             autofill_wallet_dtc_->state());
   Start();
   EXPECT_FALSE(last_error_.IsSet());
-  EXPECT_EQ(syncer::AUTOFILL_WALLET_DATA, last_type_);
+  EXPECT_EQ(syncer::AUTOFILL_WALLET_METADATA, last_type_);
   EXPECT_EQ(syncer::DataTypeController::RUNNING, autofill_wallet_dtc_->state());
 }
 
@@ -182,11 +188,14 @@ TEST_F(AutofillWalletDataTypeControllerTest,
   Start();
   EXPECT_EQ(syncer::DataTypeController::RUNNING, autofill_wallet_dtc_->state());
   EXPECT_FALSE(last_error_.IsSet());
-  EXPECT_EQ(syncer::AUTOFILL_WALLET_DATA, last_type_);
+  EXPECT_EQ(syncer::AUTOFILL_WALLET_METADATA, last_type_);
+
+  EXPECT_CALL(sync_service_,
+              ReadyForStartChanged(syncer::AUTOFILL_WALLET_METADATA));
   autofill::prefs::SetPaymentsIntegrationEnabled(&prefs_, false);
   autofill::prefs::SetCreditCardAutofillEnabled(&prefs_, true);
+  EXPECT_FALSE(autofill_wallet_dtc_->ReadyForStart());
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(last_error_.IsSet());
 }
 
 TEST_F(AutofillWalletDataTypeControllerTest,
@@ -201,11 +210,14 @@ TEST_F(AutofillWalletDataTypeControllerTest,
   Start();
   EXPECT_EQ(syncer::DataTypeController::RUNNING, autofill_wallet_dtc_->state());
   EXPECT_FALSE(last_error_.IsSet());
-  EXPECT_EQ(syncer::AUTOFILL_WALLET_DATA, last_type_);
+  EXPECT_EQ(syncer::AUTOFILL_WALLET_METADATA, last_type_);
+
+  EXPECT_CALL(sync_service_,
+              ReadyForStartChanged(syncer::AUTOFILL_WALLET_METADATA));
   autofill::prefs::SetPaymentsIntegrationEnabled(&prefs_, true);
   autofill::prefs::SetCreditCardAutofillEnabled(&prefs_, false);
+  EXPECT_FALSE(autofill_wallet_dtc_->ReadyForStart());
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(last_error_.IsSet());
 }
 
 TEST_F(AutofillWalletDataTypeControllerTest,
@@ -218,7 +230,8 @@ TEST_F(AutofillWalletDataTypeControllerTest,
             autofill_wallet_dtc_->state());
   Start();
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(last_error_.IsSet());
+  // OnLoadFinished() should not have been called.
+  EXPECT_EQ(syncer::UNSPECIFIED, last_type_);
 }
 
 TEST_F(AutofillWalletDataTypeControllerTest,
@@ -231,7 +244,8 @@ TEST_F(AutofillWalletDataTypeControllerTest,
             autofill_wallet_dtc_->state());
   Start();
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(last_error_.IsSet());
+  // OnLoadFinished() should not have been called.
+  EXPECT_EQ(syncer::UNSPECIFIED, last_type_);
 }
 
 }  // namespace

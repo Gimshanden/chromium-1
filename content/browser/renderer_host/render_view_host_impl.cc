@@ -227,7 +227,6 @@ RenderViewHostImpl::RenderViewHostImpl(
       main_frame_routing_id_(main_frame_routing_id),
       is_waiting_for_close_ack_(false),
       sudden_termination_allowed_(false),
-      render_view_termination_status_(base::TERMINATION_STATUS_STILL_RUNNING),
       updating_web_preferences_(false),
       has_notified_about_creation_(false),
       weak_factory_(this) {
@@ -272,6 +271,16 @@ RenderViewHostImpl::RenderViewHostImpl(
 }
 
 RenderViewHostImpl::~RenderViewHostImpl() {
+  // We can't release the SessionStorageNamespace until our peer
+  // in the renderer has wound down.
+  if (GetProcess()->IsInitializedAndNotDead()) {
+    RenderProcessHostImpl::ReleaseOnCloseACK(
+        GetProcess(), delegate_->GetSessionStorageNamespaceMap(),
+        GetWidget()->GetRoutingID());
+  }
+
+  GetWidget()->ShutdownAndDestroyWidget(false);
+
   if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
     base::PostTaskWithTraits(
         FROM_HERE, {BrowserThread::IO},
@@ -290,11 +299,11 @@ RenderViewHostImpl::~RenderViewHostImpl() {
   GetProcess()->RemoveObserver(this);
 }
 
-RenderViewHostDelegate* RenderViewHostImpl::GetDelegate() const {
+RenderViewHostDelegate* RenderViewHostImpl::GetDelegate() {
   return delegate_;
 }
 
-SiteInstanceImpl* RenderViewHostImpl::GetSiteInstance() const {
+SiteInstanceImpl* RenderViewHostImpl::GetSiteInstance() {
   return instance_.get();
 }
 
@@ -402,7 +411,7 @@ void RenderViewHostImpl::SetMainFrameRoutingId(int routing_id) {
   GetWidget()->UpdatePriority();
 }
 
-bool RenderViewHostImpl::IsRenderViewLive() const {
+bool RenderViewHostImpl::IsRenderViewLive() {
   return GetProcess()->IsInitializedAndNotDead() &&
          GetWidget()->renderer_initialized();
 }
@@ -491,9 +500,6 @@ const WebPreferences RenderViewHostImpl::ComputeWebPreferences() {
       switches::kAcceleratedCanvas2dMSAASampleCount).c_str());
 
   prefs.use_solid_color_scrollbars = false;
-
-  prefs.history_entry_requires_user_gesture =
-      command_line.HasSwitch(switches::kHistoryEntryRequiresUserGesture);
 
   prefs.disable_ipc_flooding_protection =
       command_line.HasSwitch(switches::kDisableIpcFloodingProtection) ||
@@ -718,7 +724,7 @@ void RenderViewHostImpl::RenderProcessExited(
   if (!GetWidget()->renderer_initialized())
     return;
 
-  GetWidget()->RendererExited(info.status, info.exit_code);
+  GetWidget()->RendererExited();
   delegate_->RenderViewTerminated(this, info.status, info.exit_code);
 }
 
@@ -726,15 +732,15 @@ bool RenderViewHostImpl::Send(IPC::Message* msg) {
   return GetWidget()->Send(msg);
 }
 
-RenderWidgetHostImpl* RenderViewHostImpl::GetWidget() const {
+RenderWidgetHostImpl* RenderViewHostImpl::GetWidget() {
   return render_widget_host_.get();
 }
 
-RenderProcessHost* RenderViewHostImpl::GetProcess() const {
+RenderProcessHost* RenderViewHostImpl::GetProcess() {
   return GetWidget()->GetProcess();
 }
 
-int RenderViewHostImpl::GetRoutingID() const {
+int RenderViewHostImpl::GetRoutingID() {
   return routing_id_;
 }
 
@@ -852,19 +858,6 @@ void RenderViewHostImpl::RenderWidgetDidClose() {
   // If the renderer is telling us to close, it has already run the unload
   // events, and we can take the fast path.
   ClosePageIgnoringUnloadEvents();
-}
-
-void RenderViewHostImpl::ShutdownAndDestroy() {
-  // We can't release the SessionStorageNamespace until our peer
-  // in the renderer has wound down.
-  if (GetProcess()->IsInitializedAndNotDead()) {
-    RenderProcessHostImpl::ReleaseOnCloseACK(
-        GetProcess(), delegate_->GetSessionStorageNamespaceMap(),
-        GetWidget()->GetRoutingID());
-  }
-
-  GetWidget()->ShutdownAndDestroyWidget(false);
-  delete this;
 }
 
 void RenderViewHostImpl::CreateNewWidget(int32_t widget_route_id,

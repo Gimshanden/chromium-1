@@ -79,9 +79,10 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::LastMultiColumnSet() const {
 }
 
 static inline bool IsMultiColumnContainer(const LayoutObject& object) {
-  if (!object.IsLayoutBlockFlow())
+  auto* block_flow = DynamicTo<LayoutBlockFlow>(object);
+  if (!block_flow)
     return false;
-  return ToLayoutBlockFlow(object).MultiColumnFlowThread();
+  return block_flow->MultiColumnFlowThread();
 }
 
 // Return true if there's nothing that prevents the specified object from being
@@ -101,13 +102,13 @@ static inline bool IsMultiColumnContainer(const LayoutObject& object) {
 // spanners inside objects that don't support fragmentation.
 static inline bool CanContainSpannerInParentFragmentationContext(
     const LayoutObject& object) {
-  if (!object.IsLayoutBlockFlow())
+  const auto* block_flow = DynamicTo<LayoutBlockFlow>(object);
+  if (!block_flow)
     return false;
-  const LayoutBlockFlow& block_flow = ToLayoutBlockFlow(object);
-  return !block_flow.CreatesNewFormattingContext() &&
-         !block_flow.StyleRef().CanContainFixedPositionObjects(false) &&
-         block_flow.GetPaginationBreakability() != LayoutBox::kForbidBreaks &&
-         !IsMultiColumnContainer(block_flow);
+  return !block_flow->CreatesNewFormattingContext() &&
+         !block_flow->StyleRef().CanContainFixedPositionObjects(false) &&
+         block_flow->GetPaginationBreakability() != LayoutBox::kForbidBreaks &&
+         !IsMultiColumnContainer(*block_flow);
 }
 
 static inline bool HasAnyColumnSpanners(
@@ -392,7 +393,7 @@ LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtOffset(
 LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtPoint(
     const LayoutPoint& flow_thread_point,
     CoordinateSpaceConversion mode) const {
-  LayoutPoint flipped_point = FlipForWritingMode(flow_thread_point);
+  LayoutPoint flipped_point = DeprecatedFlipForWritingMode(flow_thread_point);
   LayoutUnit block_offset =
       IsHorizontalWritingMode() ? flipped_point.Y() : flipped_point.X();
 
@@ -1342,16 +1343,16 @@ void LayoutMultiColumnFlowThread::ComputePreferredLogicalWidths() {
   LayoutUnit gap_extra((column_count - 1) *
                        ColumnGap(*multicol_style, LayoutUnit()));
 
+  DCHECK(!MultiColumnBlockFlow()->DisplayLockInducesSizeContainment());
   if (MultiColumnBlockFlow()->ShouldApplySizeContainment()) {
-    LayoutUnit size = gap_extra;
-    if (!multicol_style->HasAutoColumnWidth())
-      size += LayoutUnit(multicol_style->ColumnWidth()) * column_count;
-    max_preferred_logical_width_ = min_preferred_logical_width_ = size;
+    min_preferred_logical_width_ = max_preferred_logical_width_ = LayoutUnit();
     ClearPreferredLogicalWidthsDirty();
-    return;
+  } else {
+    // Calculate and set new min_preferred_logical_width_ and
+    // max_preferred_logical_width_.
+    LayoutFlowThread::ComputePreferredLogicalWidths();
   }
 
-  LayoutFlowThread::ComputePreferredLogicalWidths();
   LayoutUnit column_width;
   if (multicol_style->HasAutoColumnWidth()) {
     min_preferred_logical_width_ =

@@ -12,6 +12,7 @@
 #include "base/metrics/histogram.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/time/default_clock.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
@@ -80,7 +81,7 @@ base::HistogramBase::Sample ToSample(ReportCircumstance circumstance) {
 uint32_t GetFieldTrialUint32Param(const char* trial_name,
                                   const char* parameter_name,
                                   uint32_t default_param) {
-  std::map<std::string, std::string> trial_params;
+  base::FieldTrialParams trial_params;
   bool result = base::GetFieldTrialParams(trial_name, &trial_params);
   if (!result)
     return default_param;
@@ -97,7 +98,7 @@ uint32_t GetFieldTrialUint32Param(const char* trial_name,
 }
 
 size_t GetOutstandingThrottledLimit(
-    const ResourceFetcherProperties& properties) {
+    const DetachableResourceFetcherProperties& properties) {
   if (!RuntimeEnabledFeatures::ResourceLoadSchedulerEnabled())
     return ResourceLoadScheduler::kOutstandingUnlimited;
 
@@ -127,7 +128,7 @@ bool IsResourceLoadThrottlingEnabled() {
 class ResourceLoadScheduler::TrafficMonitor {
  public:
   explicit TrafficMonitor(
-      const ResourceFetcherProperties& resource_fetcher_properties);
+      const DetachableResourceFetcherProperties& resource_fetcher_properties);
   ~TrafficMonitor();
 
   // Notified when the ThrottlingState is changed.
@@ -140,7 +141,7 @@ class ResourceLoadScheduler::TrafficMonitor {
   void ReportAll();
 
  private:
-  const Persistent<const ResourceFetcherProperties>
+  const Persistent<const DetachableResourceFetcherProperties>
       resource_fetcher_properties_;
 
   scheduler::SchedulingLifecycleState current_state_ =
@@ -162,7 +163,7 @@ class ResourceLoadScheduler::TrafficMonitor {
 };
 
 ResourceLoadScheduler::TrafficMonitor::TrafficMonitor(
-    const ResourceFetcherProperties& resource_fetcher_properties)
+    const DetachableResourceFetcherProperties& resource_fetcher_properties)
     : resource_fetcher_properties_(resource_fetcher_properties),
       traffic_kilobytes_per_frame_status_(
           "Blink.ResourceLoadScheduler.TrafficBytes.KBPerFrameStatus",
@@ -351,14 +352,15 @@ constexpr ResourceLoadScheduler::ClientId
 
 ResourceLoadScheduler::ResourceLoadScheduler(
     ThrottlingPolicy initial_throttling_policy,
-    const ResourceFetcherProperties& resource_fetcher_properties,
+    const DetachableResourceFetcherProperties& resource_fetcher_properties,
     FrameScheduler* frame_scheduler,
-    ConsoleLogger& console_logger)
+    DetachableConsoleLogger& console_logger)
     : resource_fetcher_properties_(resource_fetcher_properties),
       policy_(initial_throttling_policy),
       outstanding_limit_for_throttled_frame_scheduler_(
           GetOutstandingThrottledLimit(*resource_fetcher_properties_)),
-      console_logger_(console_logger) {
+      console_logger_(console_logger),
+      clock_(base::DefaultClock::GetInstance()) {
   traffic_monitor_ = std::make_unique<ResourceLoadScheduler::TrafficMonitor>(
       resource_fetcher_properties);
 
@@ -428,7 +430,7 @@ void ResourceLoadScheduler::Request(ResourceLoadSchedulerClient* client,
   DCHECK(ThrottleOption::kStoppable == option ||
          ThrottleOption::kThrottleable == option);
   if (pending_requests_[option].empty())
-    pending_queue_update_times_[option] = CurrentTime();
+    pending_queue_update_times_[option] = clock_->Now().ToDoubleT();
   pending_requests_[option].insert(request_info);
   pending_request_map_.insert(
       *id, MakeGarbageCollected<ClientInfo>(client, option, priority,
@@ -663,12 +665,14 @@ bool ResourceLoadScheduler::GetNextPendingRequest(ClientId* id) {
   if (use_stoppable) {
     *id = stoppable_it->client_id;
     stoppable_queue.erase(stoppable_it);
-    pending_queue_update_times_[ThrottleOption::kStoppable] = CurrentTime();
+    pending_queue_update_times_[ThrottleOption::kStoppable] =
+        clock_->Now().ToDoubleT();
     return true;
   }
   *id = throttleable_it->client_id;
   throttleable_queue.erase(throttleable_it);
-  pending_queue_update_times_[ThrottleOption::kThrottleable] = CurrentTime();
+  pending_queue_update_times_[ThrottleOption::kThrottleable] =
+      clock_->Now().ToDoubleT();
   return true;
 }
 
@@ -732,7 +736,7 @@ void ResourceLoadScheduler::ShowConsoleMessageIfNeeded() {
   if (is_console_info_shown_ || pending_request_map_.IsEmpty())
     return;
 
-  const double limit = CurrentTime() - 60;  // In seconds
+  const double limit = clock_->Now().ToDoubleT() - 60;  // In seconds
   ThrottleOption target_option;
   if (pending_queue_update_times_[ThrottleOption::kThrottleable] < limit &&
       !IsPendingRequestEffectivelyEmpty(ThrottleOption::kThrottleable)) {
@@ -753,6 +757,10 @@ void ResourceLoadScheduler::ShowConsoleMessageIfNeeded() {
       "received any response from servers. See "
       "https://www.chromestatus.com/feature/5527160148197376 for more details");
   is_console_info_shown_ = true;
+}
+
+void ResourceLoadScheduler::SetClockForTesting(const base::Clock* clock) {
+  clock_ = clock;
 }
 
 }  // namespace blink

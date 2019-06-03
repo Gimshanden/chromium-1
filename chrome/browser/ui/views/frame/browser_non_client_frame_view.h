@@ -50,9 +50,10 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // left in LTR mode, or the right in RTL mode).
   virtual bool CaptionButtonsOnLeadingEdge() const;
 
-  // Retrieves the bounds, in non-client view coordinates within which the
+  // Retrieves the bounds in non-client view coordinates within which the
   // TabStrip should be laid out.
-  virtual gfx::Rect GetBoundsForTabStrip(const views::View* tabstrip) const = 0;
+  virtual gfx::Rect GetBoundsForTabStripRegion(
+      const views::View* tabstrip) const = 0;
 
   // Returns the inset of the topmost view in the client view from the top of
   // the non-client view. The topmost view depends on the window type. The
@@ -126,6 +127,7 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
 
   // views::NonClientFrameView:
   using views::NonClientFrameView::ShouldPaintAsActive;
+  void Layout() override;
   void VisibilityChanged(views::View* starting_from, bool is_visible) override;
   int NonClientHitTest(const gfx::Point& point) override;
   void ResetWindowControls() override;
@@ -146,7 +148,7 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
 
   // views::NonClientFrameView:
   void ChildPreferredSizeChanged(views::View* child) override;
-  void ActivationChanged(bool active) override;
+  void PaintAsActiveChanged(bool active) override;
   bool DoesIntersectRect(const views::View* target,
                          const gfx::Rect& rect) const override;
 

@@ -42,15 +42,15 @@ class ThreadSafeScriptContainerTest : public ::testing::Test {
       ThreadSafeScriptContainer::RawScriptData** out_data) {
     PostCrossThreadTask(
         *writer_thread_->GetTaskRunner(), FROM_HERE,
-        CrossThreadBind(
+        CrossThreadBindOnce(
             [](scoped_refptr<ThreadSafeScriptContainer> container,
                ThreadSafeScriptContainer::RawScriptData** out_data,
                base::WaitableEvent* waiter) {
               auto data =
                   std::make_unique<ThreadSafeScriptContainer::RawScriptData>(
                       String::FromUTF8("utf-8") /* encoding */,
-                      Vector<Vector<char>>() /* script_text */,
-                      Vector<Vector<char>>() /* meta_data */);
+                      Vector<uint8_t>() /* script_text */,
+                      Vector<uint8_t>() /* meta_data */);
               *out_data = data.get();
               container->AddOnIOThread(KURL(kKeyUrl), std::move(data));
               waiter->Signal();
@@ -63,7 +63,7 @@ class ThreadSafeScriptContainerTest : public ::testing::Test {
   base::WaitableEvent* OnAllDataAddedOnWriterThread() {
     PostCrossThreadTask(
         *writer_thread_->GetTaskRunner(), FROM_HERE,
-        CrossThreadBind(
+        CrossThreadBindOnce(
             [](scoped_refptr<ThreadSafeScriptContainer> container,
                base::WaitableEvent* waiter) {
               container->OnAllDataAddedOnIOThread();
@@ -76,7 +76,7 @@ class ThreadSafeScriptContainerTest : public ::testing::Test {
   base::WaitableEvent* GetStatusOnReaderThread(ScriptStatus* out_status) {
     PostCrossThreadTask(
         *reader_thread_->GetTaskRunner(), FROM_HERE,
-        CrossThreadBind(
+        CrossThreadBindOnce(
             [](scoped_refptr<ThreadSafeScriptContainer> container,
                ScriptStatus* out_status, base::WaitableEvent* waiter) {
               *out_status = container->GetStatusOnWorkerThread(KURL(kKeyUrl));
@@ -90,7 +90,7 @@ class ThreadSafeScriptContainerTest : public ::testing::Test {
   base::WaitableEvent* WaitOnReaderThread(bool* out_exists) {
     PostCrossThreadTask(
         *reader_thread_->GetTaskRunner(), FROM_HERE,
-        CrossThreadBind(
+        CrossThreadBindOnce(
             [](scoped_refptr<ThreadSafeScriptContainer> container,
                bool* out_exists, base::WaitableEvent* waiter) {
               *out_exists = container->WaitOnWorkerThread(KURL(kKeyUrl));
@@ -105,7 +105,7 @@ class ThreadSafeScriptContainerTest : public ::testing::Test {
       ThreadSafeScriptContainer::RawScriptData** out_data) {
     PostCrossThreadTask(
         *reader_thread_->GetTaskRunner(), FROM_HERE,
-        CrossThreadBind(
+        CrossThreadBindOnce(
             [](scoped_refptr<ThreadSafeScriptContainer> container,
                ThreadSafeScriptContainer::RawScriptData** out_data,
                base::WaitableEvent* waiter) {

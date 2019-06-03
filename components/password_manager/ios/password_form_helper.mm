@@ -16,7 +16,7 @@
 #include "components/password_manager/core/browser/form_parsing/ios_form_parser.h"
 #include "components/password_manager/ios/account_select_fill_data.h"
 #include "components/password_manager/ios/js_password_manager.h"
-#import "ios/web/public/web_state/web_frame.h"
+#import "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -406,14 +406,12 @@ constexpr char kCommandPrefix[] = "passwordForm";
             const std::vector<autofill::PasswordForm>& forms) {
     PasswordFormHelper* strongSelf = weakSelf;
     for (const auto& form : forms) {
-      autofill::PasswordFormFillData formData;
       std::map<base::string16, const autofill::PasswordForm*> matches;
-      // Initialize |matches| to satisfy the expectation from
-      // InitPasswordFormFillData() that the preferred match (3rd parameter)
-      // should be one of the |matches|.
+      // Initialize |matches| to satisfy the expectation from the constructor
+      // that the preferred match (3rd parameter) should be one of the
+      // |matches|.
       matches.insert(std::make_pair(form.username_value, &form));
-      autofill::InitPasswordFormFillData(form, matches, &form, false,
-                                         &formData);
+      autofill::PasswordFormFillData formData(form, matches, form, false);
       [strongSelf fillPasswordForm:formData
                       withUsername:base::SysNSStringToUTF16(username)
                           password:base::SysNSStringToUTF16(password)
@@ -459,6 +457,14 @@ constexpr char kCommandPrefix[] = "passwordForm";
 
   [self.jsPasswordManager extractForm:formName
                     completionHandler:extractFormDataCompletionHandler];
+}
+
+- (void)focusOnForm:(NSString*)formName
+      fieldIdentifier:(NSString*)fieldIdentifier
+    completionHandler:(nullable void (^)(BOOL))completionHandler {
+  [self.jsPasswordManager focusOnForm:formName
+                      fieldIdentifier:fieldIdentifier
+                    completionHandler:completionHandler];
 }
 
 @end

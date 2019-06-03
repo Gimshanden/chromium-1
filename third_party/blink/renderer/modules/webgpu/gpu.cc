@@ -12,9 +12,9 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/modules/webgpu/dawn_control_client_holder.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_adapter.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_request_adapter_options.h"
+#include "third_party/blink/renderer/platform/graphics/gpu/dawn_control_client_holder.h"
 
 namespace blink {
 
@@ -46,9 +46,8 @@ GPU* GPU::Create(ExecutionContext& execution_context) {
 GPU::GPU(ExecutionContext& execution_context,
          std::unique_ptr<WebGraphicsContext3DProvider> context_provider)
     : ContextLifecycleObserver(&execution_context),
-      context_provider_(std::move(context_provider)),
       dawn_control_client_(base::MakeRefCounted<DawnControlClientHolder>(
-          context_provider_->WebGPUInterface())) {}
+          std::move(context_provider))) {}
 
 GPU::~GPU() = default;
 
@@ -59,7 +58,6 @@ void GPU::Trace(blink::Visitor* visitor) {
 
 void GPU::ContextDestroyed(ExecutionContext* execution_context) {
   dawn_control_client_->MarkDestroyed();
-  context_provider_.reset();
 }
 
 ScriptPromise GPU::requestAdapter(ScriptState* script_state,

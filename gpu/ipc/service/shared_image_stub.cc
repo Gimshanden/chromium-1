@@ -8,6 +8,7 @@
 
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
+#include "components/viz/common/features.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/shared_image_factory.h"
@@ -27,7 +28,8 @@ SharedImageStub::SharedImageStub(GpuChannel* channel, int32_t route_id)
               CommandBufferNamespace::GPU_IO,
               CommandBufferIdFromChannelAndRoute(channel->client_id(),
                                                  route_id),
-              sequence_)) {
+              sequence_)),
+      weak_factory_(this) {
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "gpu::SharedImageStub", channel_->task_runner());
 }
@@ -73,6 +75,10 @@ bool SharedImageStub::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(GpuChannelMsg_DestroySharedImage, OnDestroySharedImage)
     IPC_MESSAGE_HANDLER(GpuChannelMsg_RegisterSharedImageUploadBuffer,
                         OnRegisterSharedImageUploadBuffer)
+#if defined(OS_WIN)
+    IPC_MESSAGE_HANDLER(GpuChannelMsg_CreateSwapChain, OnCreateSwapChain)
+    IPC_MESSAGE_HANDLER(GpuChannelMsg_PresentSwapChain, OnPresentSwapChain)
+#endif  // OS_WIN
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -252,6 +258,61 @@ void SharedImageStub::OnDestroySharedImage(const Mailbox& mailbox) {
   }
 }
 
+#if defined(OS_WIN)
+void SharedImageStub::OnCreateSwapChain(
+    const GpuChannelMsg_CreateSwapChain_Params& params) {
+  TRACE_EVENT0("gpu", "SharedImageStub::OnCreateSwapChain");
+
+  if (!params.front_buffer_mailbox.IsSharedImage() ||
+      !params.back_buffer_mailbox.IsSharedImage()) {
+    DLOG(ERROR) << "SharedImageStub: Trying to access SharedImage with a "
+                   "non-SharedImage mailbox.";
+    OnError();
+    return;
+  }
+
+  if (!MakeContextCurrent()) {
+    OnError();
+    return;
+  }
+
+  if (!factory_->CreateSwapChain(
+          params.front_buffer_mailbox, params.back_buffer_mailbox,
+          params.format, params.size, params.color_space, params.usage)) {
+    DLOG(ERROR) << "SharedImageStub: Unable to create swap chain";
+    OnError();
+    return;
+  }
+
+  sync_point_client_state_->ReleaseFenceSync(params.release_id);
+}
+
+void SharedImageStub::OnPresentSwapChain(const Mailbox& mailbox,
+                                         uint32_t release_id) {
+  TRACE_EVENT0("gpu", "SharedImageStub::OnPresentSwapChain");
+
+  if (!mailbox.IsSharedImage()) {
+    DLOG(ERROR) << "SharedImageStub: Trying to access a SharedImage with a "
+                   "non-SharedImage mailbox.";
+    OnError();
+    return;
+  }
+
+  if (!MakeContextCurrent()) {
+    OnError();
+    return;
+  }
+
+  if (!factory_->PresentSwapChain(mailbox)) {
+    DLOG(ERROR) << "SharedImageStub: Unable to present swap chain";
+    OnError();
+    return;
+  }
+
+  sync_point_client_state_->ReleaseFenceSync(release_id);
+}
+#endif  // OS_WIN
+
 void SharedImageStub::OnRegisterSharedImageUploadBuffer(
     base::ReadOnlySharedMemoryRegion shm) {
   TRACE_EVENT0("gpu", "SharedImageStub::OnRegisterSharedImageUploadBuffer");
@@ -311,7 +372,8 @@ ContextResult SharedImageStub::MakeContextCurrentAndCreateFactory() {
       channel_manager->gpu_feature_info(), context_state_.get(),
       channel_manager->mailbox_manager(),
       channel_manager->shared_image_manager(),
-      gmb_factory ? gmb_factory->AsImageFactory() : nullptr, this);
+      gmb_factory ? gmb_factory->AsImageFactory() : nullptr, this,
+      features::IsUsingSkiaRenderer());
   return ContextResult::kSuccess;
 }
 
@@ -359,6 +421,31 @@ bool SharedImageStub::OnMemoryDump(
   }
 
   return factory_->OnMemoryDump(args, pmd, ClientId(), ClientTracingId());
+}
+
+SharedImageStub::SharedImageDestructionCallback
+SharedImageStub::GetSharedImageDestructionCallback(const Mailbox& mailbox) {
+  return base::BindOnce(&SharedImageStub::DestroySharedImage,
+                        weak_factory_.GetWeakPtr(), mailbox);
+}
+
+void SharedImageStub::DestroySharedImage(const Mailbox& mailbox,
+                                         const SyncToken& sync_token) {
+  // If there is no sync token, we don't need to wait.
+  if (!sync_token.HasData()) {
+    OnSyncTokenReleased(mailbox);
+    return;
+  }
+
+  auto done_cb = base::BindOnce(&SharedImageStub::OnSyncTokenReleased,
+                                weak_factory_.GetWeakPtr(), mailbox);
+  channel_->scheduler()->ScheduleTask(
+      gpu::Scheduler::Task(sequence_, std::move(done_cb),
+                           std::vector<gpu::SyncToken>({sync_token})));
+}
+
+void SharedImageStub::OnSyncTokenReleased(const Mailbox& mailbox) {
+  factory_->DestroySharedImage(mailbox);
 }
 
 }  // namespace gpu

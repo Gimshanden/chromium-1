@@ -38,6 +38,14 @@ bool AreSortedPrioritiesUnique(const CompositeMatcher::MatcherList& matchers) {
   return true;
 }
 
+bool HasMatchingAllowRule(const RulesetMatcher* matcher,
+                          const RequestParams& params) {
+  if (!params.allow_rule_cache.contains(matcher))
+    params.allow_rule_cache[matcher] = matcher->HasMatchingAllowRule(params);
+
+  return params.allow_rule_cache[matcher];
+}
+
 }  // namespace
 
 CompositeMatcher::CompositeMatcher(MatcherList matchers)
@@ -70,6 +78,7 @@ void CompositeMatcher::AddOrUpdateRuleset(
   // Clear the renderers' cache so that they take the updated rules into
   // account.
   ClearRendererCacheOnNavigation();
+  has_any_extra_headers_matcher_.reset();
 }
 
 bool CompositeMatcher::ShouldBlockRequest(const RequestParams& params) const {
@@ -79,11 +88,12 @@ bool CompositeMatcher::ShouldBlockRequest(const RequestParams& params) const {
       "SingleExtension");
 
   for (const auto& matcher : matchers_) {
-    if (matcher->HasMatchingAllowRule(params))
+    if (HasMatchingAllowRule(matcher.get(), params))
       return false;
     if (matcher->HasMatchingBlockRule(params))
       return true;
   }
+
   return false;
 }
 
@@ -95,10 +105,38 @@ bool CompositeMatcher::ShouldRedirectRequest(const RequestParams& params,
       "SingleExtension");
 
   for (const auto& matcher : matchers_) {
+    if (HasMatchingAllowRule(matcher.get(), params))
+      return false;
     if (matcher->HasMatchingRedirectRule(params, redirect_url))
       return true;
   }
 
+  return false;
+}
+
+uint8_t CompositeMatcher::GetRemoveHeadersMask(const RequestParams& params,
+                                               uint8_t current_mask) const {
+  uint8_t mask = current_mask;
+  for (const auto& matcher : matchers_) {
+    // The allow rule will override lower priority remove header rules.
+    if (HasMatchingAllowRule(matcher.get(), params))
+      return mask;
+    mask |= matcher->GetRemoveHeadersMask(params, mask);
+  }
+  return mask;
+}
+
+bool CompositeMatcher::HasAnyExtraHeadersMatcher() const {
+  if (!has_any_extra_headers_matcher_.has_value())
+    has_any_extra_headers_matcher_ = ComputeHasAnyExtraHeadersMatcher();
+  return has_any_extra_headers_matcher_.value();
+}
+
+bool CompositeMatcher::ComputeHasAnyExtraHeadersMatcher() const {
+  for (const auto& matcher : matchers_) {
+    if (matcher->IsExtraHeadersMatcher())
+      return true;
+  }
   return false;
 }
 

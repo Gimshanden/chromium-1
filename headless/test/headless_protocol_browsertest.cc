@@ -211,8 +211,8 @@ HEADLESS_PROTOCOL_TEST(VirtualTimeBasics, "emulation/virtual-time-basics.js")
 HEADLESS_PROTOCOL_TEST(VirtualTimeInterrupt,
                        "emulation/virtual-time-interrupt.js")
 
-// Flaky on Linux. TODO(crbug.com/930717): Re-enable.
-#if defined(OS_LINUX)
+// Flaky on Linux & Mac. TODO(crbug.com/930717): Re-enable.
+#if defined(OS_LINUX) || defined(OS_MACOSX)
 #define MAYBE_VirtualTimeCrossProcessNavigation \
   DISABLED_VirtualTimeCrossProcessNavigation
 #else
@@ -310,7 +310,8 @@ class HeadlessProtocolCompositorBrowserTest
 // BeginFrameControl is not supported on MacOS yet, see: https://cs.chromium.org
 // chromium/src/headless/lib/browser/protocol/target_handler.cc?
 // rcl=5811aa08e60ba5ac7622f029163213cfbdb682f7&l=32
-#if defined(OS_MACOSX)
+// TODO(crbug.com/954398): Suite is timeout-flaky on Windows.
+#if defined(OS_MACOSX) || defined(OS_WIN)
 #define HEADLESS_PROTOCOL_COMPOSITOR_TEST(TEST_NAME, SCRIPT_NAME) \
   IN_PROC_BROWSER_TEST_F(HeadlessProtocolCompositorBrowserTest,   \
                          DISABLED_##TEST_NAME) {                  \

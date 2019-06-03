@@ -123,10 +123,11 @@ class ConnectTestingEventInterface : public WebSocketEventInterface {
   void OnSSLCertificateError(
       std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
       const GURL& url,
+      int net_error,
       const SSLInfo& ssl_info,
       bool fatal) override;
 
-  int OnAuthRequired(scoped_refptr<AuthChallengeInfo> auth_info,
+  int OnAuthRequired(const AuthChallengeInfo& auth_info,
                      scoped_refptr<HttpResponseHeaders> response_headers,
                      const IPEndPoint& remote_endpoint,
                      base::OnceCallback<void(const AuthCredentials*)> callback,
@@ -200,6 +201,7 @@ void ConnectTestingEventInterface::OnFinishOpeningHandshake(
 void ConnectTestingEventInterface::OnSSLCertificateError(
     std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
     const GURL& url,
+    int net_error,
     const SSLInfo& ssl_info,
     bool fatal) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -209,7 +211,7 @@ void ConnectTestingEventInterface::OnSSLCertificateError(
 }
 
 int ConnectTestingEventInterface::OnAuthRequired(
-    scoped_refptr<AuthChallengeInfo> auth_info,
+    const AuthChallengeInfo& auth_info,
     scoped_refptr<HttpResponseHeaders> response_headers,
     const IPEndPoint& remote_endpoint,
     base::OnceCallback<void(const AuthCredentials*)> callback,

@@ -1030,10 +1030,9 @@ TEST_F(CompositedLayerMappingTest,
     </div>
   )HTML");
 
-  CompositedLayerMapping* mapping =
-      ToLayoutBlock(GetLayoutObjectByElementId("container"))
-          ->Layer()
-          ->GetCompositedLayerMapping();
+  auto* mapping = To<LayoutBlock>(GetLayoutObjectByElementId("container"))
+                      ->Layer()
+                      ->GetCompositedLayerMapping();
   ASSERT_TRUE(mapping->ScrollingContentsLayer());
   EXPECT_EQ(static_cast<GraphicsLayerPaintingPhase>(
                 kGraphicsLayerPaintOverflowContents |
@@ -1046,7 +1045,7 @@ TEST_F(CompositedLayerMappingTest,
       mapping->ForegroundLayer()->PaintingPhase());
   // Regression test for crbug.com/767908: a foreground layer should also
   // participates hit testing.
-  EXPECT_TRUE(mapping->ForegroundLayer()->GetHitTestableWithoutDrawsContent());
+  EXPECT_TRUE(mapping->ForegroundLayer()->GetHitTestable());
 
   Element* negative_composited_child =
       GetDocument().getElementById("negative-composited-child");
@@ -1054,7 +1053,7 @@ TEST_F(CompositedLayerMappingTest,
       negative_composited_child);
   UpdateAllLifecyclePhasesForTest();
 
-  mapping = ToLayoutBlock(GetLayoutObjectByElementId("container"))
+  mapping = To<LayoutBlock>(GetLayoutObjectByElementId("container"))
                 ->Layer()
                 ->GetCompositedLayerMapping();
   ASSERT_TRUE(mapping->ScrollingContentsLayer());
@@ -1213,15 +1212,13 @@ TEST_F(CompositedLayerMappingTest,
     </div>
   )HTML");
 
-  CompositedLayerMapping* mapping =
-      ToLayoutBlock(GetLayoutObjectByElementId("scroller"))
-          ->Layer()
-          ->GetCompositedLayerMapping();
+  auto* mapping = To<LayoutBlock>(GetLayoutObjectByElementId("scroller"))
+                      ->Layer()
+                      ->GetCompositedLayerMapping();
 
-  CompositedLayerMapping* mapping2 =
-      ToLayoutBlock(GetLayoutObjectByElementId("scroller2"))
-          ->Layer()
-          ->GetCompositedLayerMapping();
+  auto* mapping2 = To<LayoutBlock>(GetLayoutObjectByElementId("scroller2"))
+                       ->Layer()
+                       ->GetCompositedLayerMapping();
 
   ASSERT_TRUE(mapping);
   ASSERT_TRUE(mapping2);
@@ -2231,12 +2228,12 @@ TEST_F(CompositedLayerMappingTest, StickyPositionNotSquashed) {
     </div>
   )HTML");
 
-  PaintLayer* sticky1 =
-      ToLayoutBlock(GetLayoutObjectByElementId("sticky1"))->Layer();
-  PaintLayer* sticky2 =
-      ToLayoutBlock(GetLayoutObjectByElementId("sticky2"))->Layer();
-  PaintLayer* sticky3 =
-      ToLayoutBlock(GetLayoutObjectByElementId("sticky3"))->Layer();
+  auto* sticky1 =
+      To<LayoutBlock>(GetLayoutObjectByElementId("sticky1"))->Layer();
+  auto* sticky2 =
+      To<LayoutBlock>(GetLayoutObjectByElementId("sticky2"))->Layer();
+  auto* sticky3 =
+      To<LayoutBlock>(GetLayoutObjectByElementId("sticky3"))->Layer();
   // All three sticky-pos elements are composited, because we composite
   // all sticky elements which stick to scrollers.
   EXPECT_EQ(kPaintsIntoOwnBacking, sticky1->GetCompositingState());
@@ -2272,8 +2269,8 @@ TEST_F(CompositedLayerMappingTest,
   ASSERT_TRUE(main_graphics_layer);
   ASSERT_TRUE(child_transform_layer);
 
-  PaintLayer* scroller =
-      ToLayoutBlock(GetLayoutObjectByElementId("scroller"))->Layer();
+  auto* scroller =
+      To<LayoutBlock>(GetLayoutObjectByElementId("scroller"))->Layer();
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   scrollable_area->ScrollToAbsolutePosition(
       FloatPoint(scrollable_area->ScrollPosition().Y(), 100));
@@ -2281,9 +2278,7 @@ TEST_F(CompositedLayerMappingTest,
 
   // On the blink side, a sticky offset of (0, 100) should have been applied to
   // the sticky element.
-  LayoutSize blink_sticky_offset = sticky->StickyPositionOffset();
-  EXPECT_FLOAT_EQ(0, blink_sticky_offset.Width());
-  EXPECT_FLOAT_EQ(100, blink_sticky_offset.Height());
+  EXPECT_EQ(PhysicalOffset(0, 100), sticky->StickyPositionOffset());
 
   // On the CompositedLayerMapping side however, the offset should have been
   // removed so that the compositor can take care of it.
@@ -2312,15 +2307,14 @@ TEST_F(CompositedLayerMappingTest,
     </div>
   )HTML");
 
-  CompositedLayerMapping* mapping =
-      ToLayoutBlock(GetLayoutObjectByElementId("sticky"))
-          ->Layer()
-          ->GetCompositedLayerMapping();
+  auto* mapping = To<LayoutBlock>(GetLayoutObjectByElementId("sticky"))
+                      ->Layer()
+                      ->GetCompositedLayerMapping();
   ASSERT_TRUE(mapping);
   GraphicsLayer* main_graphics_layer = mapping->MainGraphicsLayer();
 
-  PaintLayer* scroller =
-      ToLayoutBlock(GetLayoutObjectByElementId("scroller"))->Layer();
+  auto* scroller =
+      To<LayoutBlock>(GetLayoutObjectByElementId("scroller"))->Layer();
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   ASSERT_TRUE(scrollable_area);
   scrollable_area->ScrollToAbsolutePosition(
@@ -2722,6 +2716,28 @@ TEST_F(CompositedLayerMappingTest, ContentsNotOpaqueWithForegroundLayer) {
   CompositedLayerMapping* mapping = target_layer->GetCompositedLayerMapping();
   EXPECT_TRUE(mapping->ForegroundLayer());
   EXPECT_FALSE(mapping->MainGraphicsLayer()->ContentsOpaque());
+}
+
+TEST_F(CompositedLayerMappingTest, EmptyBoundsDoesntDrawContent) {
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    return;
+
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      div {
+        width: 100px;
+        height: 0px;
+        position: relative;
+        isolation: isolate;
+      }
+    </style>
+    <div id='target' style='will-change: transform; background: blue'>
+    </div>
+    )HTML");
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+  CompositedLayerMapping* mapping = target_layer->GetCompositedLayerMapping();
+  EXPECT_FALSE(mapping->MainGraphicsLayer()->DrawsContent());
 }
 
 TEST_F(CompositedLayerMappingTest, TouchActionRectsWithoutContent) {

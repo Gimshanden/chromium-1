@@ -14,6 +14,7 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/process/kill.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -24,6 +25,7 @@
 #include "components/viz/host/hit_test/hit_test_query.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/common/content_export.h"
+#include "content/common/tab_switch_time_recorder.h"
 #include "content/public/browser/render_frame_metadata_provider.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/input_event_ack_state.h"
@@ -44,17 +46,7 @@
 #include "ui/gfx/range/range.h"
 #include "ui/surface/transport_dib.h"
 
-#if defined(USE_AURA)
-#include "base/containers/flat_map.h"
-#include "content/common/render_widget_window_tree_client_factory.mojom.h"
-#include "services/ws/public/mojom/window_tree.mojom.h"
-#endif
-
 struct WidgetHostMsg_SelectionBounds_Params;
-
-namespace base {
-class UnguessableToken;
-}
 
 namespace cc {
 struct BeginFrameAck;
@@ -109,7 +101,7 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   RenderWidgetHostImpl* GetFocusedWidget() const;
 
   // RenderWidgetHostView implementation.
-  RenderWidgetHost* GetRenderWidgetHost() const final;
+  RenderWidgetHost* GetRenderWidgetHost() final;
   ui::TextInputClient* GetTextInputClient() override;
   void WasUnOccluded() override {}
   void WasOccluded() override {}
@@ -118,13 +110,13 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   bool IsMouseLocked() override;
   bool LockKeyboard(base::Optional<base::flat_set<ui::DomCode>> codes) override;
   void SetBackgroundColor(SkColor color) override;
-  base::Optional<SkColor> GetBackgroundColor() const override;
+  base::Optional<SkColor> GetBackgroundColor() override;
   void UnlockKeyboard() override;
   bool IsKeyboardLocked() override;
   base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
-  gfx::Size GetVisibleViewportSize() const override;
+  gfx::Size GetVisibleViewportSize() override;
   void SetInsets(const gfx::Insets& insets) override;
-  bool IsSurfaceAvailableForCopy() const override;
+  bool IsSurfaceAvailableForCopy() override;
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
@@ -132,15 +124,17 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> CreateVideoCapturer()
       override;
   void FocusedNodeTouched(bool editable) override;
-  void GetScreenInfo(ScreenInfo* screen_info) const override;
+  void GetScreenInfo(ScreenInfo* screen_info) override;
   void EnableAutoResize(const gfx::Size& min_size,
                         const gfx::Size& max_size) override;
   void DisableAutoResize(const gfx::Size& new_size) override;
-  bool IsScrollOffsetAtTop() const override;
-  float GetDeviceScaleFactor() const final;
+  bool IsScrollOffsetAtTop() override;
+  float GetDeviceScaleFactor() final;
   TouchSelectionControllerClientManager*
   GetTouchSelectionControllerClientManager() override;
-  void SetLastTabChangeStartTime(base::TimeTicks start_time) final;
+  void SetRecordTabSwitchTimeRequest(base::TimeTicks start_time,
+                                     bool destination_is_loaded,
+                                     bool destination_is_frozen) final;
 
   // This only needs to be overridden by RenderWidgetHostViewBase subclasses
   // that handle content embedded within other RenderWidgetHostViews.
@@ -200,10 +194,12 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   virtual viz::ScopedSurfaceIdAllocator DidUpdateVisualProperties(
       const cc::RenderFrameMetadata& metadata);
 
-  // Returns the time set by SetLastTabChangeStartTime. If this was not
-  // preceded by a call to SetLastTabChangeStartTime, this will return null.
-  // Calling this will reset the stored time to null.
-  base::TimeTicks GetAndResetLastTabChangeStartTime();
+  // Returns the time set by SetLastRecordTabSwitchTimeRequest. If this was not
+  // preceded by a call to SetLastRecordTabSwitchTimeRequest the
+  // |tab_switch_start_time| field of the returned struct will have a null
+  // timestamp. Calling this will reset
+  // |last_tab_switch_start_state_.tab_switch_start_time| to null.
+  base::Optional<RecordTabSwitchTimeRequest> TakeRecordTabSwitchTimeRequest();
 
   base::WeakPtr<RenderWidgetHostViewBase> GetWeakPtr();
 
@@ -221,13 +217,13 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
 
   // The requested size of the renderer. May differ from GetViewBounds().size()
   // when the view requires additional throttling.
-  virtual gfx::Size GetRequestedRendererSize() const;
+  virtual gfx::Size GetRequestedRendererSize();
 
   // Returns the current capture sequence number.
   virtual uint32_t GetCaptureSequenceNumber() const;
 
   // The size of the view's backing surface in non-DPI-adjusted pixels.
-  virtual gfx::Size GetCompositorViewportPixelSize() const;
+  virtual gfx::Size GetCompositorViewportPixelSize();
 
   // If mouse wheels can only specify the number of ticks of some static
   // multiplier constant, this method returns that constant (in DIPs). If mouse
@@ -511,8 +507,7 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   virtual void SetIsLoading(bool is_loading) = 0;
 
   // Notifies the View that the renderer has ceased to exist.
-  virtual void RenderProcessGone(base::TerminationStatus status,
-                                 int error_code) = 0;
+  virtual void RenderProcessGone() = 0;
 
   // Tells the View to destroy itself.
   virtual void Destroy();
@@ -583,20 +578,6 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
     return is_currently_scrolling_viewport_;
   }
 
-#if defined(USE_AURA)
-  void EmbedChildFrameRendererWindowTreeClient(
-      RenderWidgetHostViewBase* root_view,
-      int routing_id,
-      ws::mojom::WindowTreeClientPtr renderer_window_tree_client);
-  void OnChildFrameDestroyed(int routing_id);
-#endif
-
-#if defined(OS_MACOSX)
-  // Use only for resize on macOS. Returns true if there is not currently a
-  // frame of the view's size being displayed.
-  virtual bool ShouldContinueToPauseForFrame();
-#endif
-
   virtual void DidNavigate();
 
   // Called when the RenderWidgetHostImpl has be initialized.
@@ -626,14 +607,6 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   // but not consumed.
   virtual void StopFlingingIfNecessary(const blink::WebGestureEvent& event,
                                        InputEventAckState ack_result);
-
-#if defined(USE_AURA)
-  virtual void ScheduleEmbed(
-      ws::mojom::WindowTreeClientPtr client,
-      base::OnceCallback<void(const base::UnguessableToken&)> callback);
-
-  ws::mojom::WindowTreeClientPtr GetWindowTreeClientFromRenderer();
-#endif
 
   // If |event| is a touchpad pinch or double tap event for which we've sent a
   // synthetic wheel event, forward the |event| to the renderer, subject to
@@ -701,12 +674,6 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
 
   void SynchronizeVisualProperties();
 
-#if defined(USE_AURA)
-  void OnDidScheduleEmbed(int routing_id,
-                          int embed_id,
-                          const base::UnguessableToken& token);
-#endif
-
   // Called when display properties that need to be synchronized with the
   // renderer process changes. This method is called before notifying
   // RenderWidgetHostImpl in order to allow the view to allocate a new
@@ -738,24 +705,13 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
 
   base::ObserverList<RenderWidgetHostViewBaseObserver>::Unchecked observers_;
 
-#if defined(USE_AURA)
-  mojom::RenderWidgetWindowTreeClientPtr render_widget_window_tree_client_;
-
-  int next_embed_id_ = 0;
-  // Maps from routing_id to embed-id. The |routing_id| is the id supplied to
-  // EmbedChildFrameRendererWindowTreeClient() and the embed-id a unique id
-  // generate at the time EmbedChildFrameRendererWindowTreeClient() was called.
-  // This is done to ensure when OnDidScheduleEmbed() is received another call
-  // too EmbedChildFrameRendererWindowTreeClient() did not come in.
-  base::flat_map<int, int> pending_embeds_;
-#endif
-
   base::Optional<blink::WebGestureEvent> pending_touchpad_pinch_begin_;
 
-  // The last tab switch processing start time. This should only be set and
-  // retrieved using SetLastTabChangeStartTime and
-  // GetAndResetLastTabChangeStartTime.
-  base::TimeTicks last_tab_switch_start_time_;
+  // The last tab switch processing start request. This should only be set and
+  // retrieved using SetRecordTabSwitchTimeRequest and
+  // TakeRecordTabSwitchTimeRequest.
+  base::Optional<RecordTabSwitchTimeRequest>
+      last_record_tab_switch_time_request_;
 
   // True when StopFlingingIfNecessary() calls StopFling().
   bool view_stopped_flinging_for_test_ = false;

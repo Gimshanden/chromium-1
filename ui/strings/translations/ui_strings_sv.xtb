@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Skift</translation>
 <translation id="1710340000377843106">nu</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{1 minut}other{# minuter}}</translation>
-<translation id="1756116796893109054">Fliken skickas …</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> B</translation>
 <translation id="1801827354178857021">Period</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 månad}other{# månader}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">Nedpil</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{1 dag}other{# dagar}}</translation>
 <translation id="335581015389089642">Tal</translation>
+<translation id="3443810440409579745">En flik har tagits emot.</translation>
 <translation id="3479552764303398839">Inte nu</translation>
 <translation id="348799646910989694">Hyllan döljs automatiskt</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{1 dag kvar}other{# dagar kvar}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">OFTA ANVÄNDA</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{1 månad kvar}other{# månader kvar}}</translation>
 <translation id="4841881773802181781">Infogning</translation>
+<translation id="4881695831933465202">Öppna</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{1 sekund}other{# sekunder}}</translation>
 <translation id="4971687151119236543">Föregående spår</translation>
 <translation id="5046499563572181734">Tryck här</translation>
@@ -108,7 +109,8 @@
 <translation id="5137751499640340777">Starta Google Assistent</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> PB</translation>
 <translation id="5266161281976477809">Utökningstriangel</translation>
-<translation id="528468243742722775">End</translation>
+<translation id="5278860589123563674">Det gick inte att skicka</translation>
+<translation id="528468243742722775">Avsluta</translation>
 <translation id="5329858601952122676">&amp;Ta bort</translation>
 <translation id="5395308026110844773"><ph name="DRAGGED_APP_NAME" /> ovanpå <ph name="IN_PLACE_APP" />, om du släpper skapas en mapp.</translation>
 <translation id="5463830097259460683">Emoji och symboler</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">Del</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> B/sek</translation>
 <translation id="6156262341071374681">Utöka till alla appar</translation>
+<translation id="6165508094623778733">Läs mer</translation>
 <translation id="6264365405983206840">Markera &amp;alla</translation>
 <translation id="6351032674660237738">APPFÖRSLAG</translation>
 <translation id="6364916375976753737">Rulla åt vänster</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{1 min kvar}other{# min kvar}}</translation>
 <translation id="7319740667687257810">Översikt, delvy</translation>
+<translation id="732374792807444530">Skickar till <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{för 1 min sedan}other{för # min sedan}}</translation>
 <translation id="7389409599945284130">– <ph name="MESSAGE" /></translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{1 minut kvar}other{# minuter kvar}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{Fler än en oläst avisering}other{Fler än # olästa aviseringar}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{om 1 min}other{om # min}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" />+<ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">Aktivera röstfråga till Google-assistenten</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{för 1 timme sedan}other{för # timmar sedan}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{1 sek kvar}other{# sek kvar}}</translation>
+<translation id="8144660977431427332">Sökningarna görs med Google Assistent. <ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />, autoslutför</translation>
 <translation id="815598010540052116">Rulla nedåt</translation>
 <translation id="8170087467028567933">Om du tar bort förslaget döljs det i ditt konto på alla enheter.</translation>

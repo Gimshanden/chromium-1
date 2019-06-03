@@ -7,7 +7,7 @@
 #include "base/mac/foundation_util.h"
 #include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/payments/payments_service_url.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
@@ -220,8 +220,8 @@ static const AutofillFieldDisplayInfo kFieldsToDisplay[] = {
 
   cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
-  AutofillEditCell* textFieldCell =
-      base::mac::ObjCCastStrict<AutofillEditCell>(cell);
+  TableViewTextEditCell* textFieldCell =
+      base::mac::ObjCCastStrict<TableViewTextEditCell>(cell);
   textFieldCell.accessibilityIdentifier = textFieldCell.textLabel.text;
   textFieldCell.textField.delegate = self;
   return textFieldCell;
@@ -231,8 +231,8 @@ static const AutofillFieldDisplayInfo kFieldsToDisplay[] = {
     didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
   if (self.tableView.editing) {
     UITableViewCell* cell = [self.tableView cellForRowAtIndexPath:indexPath];
-    AutofillEditCell* textFieldCell =
-        base::mac::ObjCCastStrict<AutofillEditCell>(cell);
+    TableViewTextEditCell* textFieldCell =
+        base::mac::ObjCCastStrict<TableViewTextEditCell>(cell);
     [textFieldCell.textField becomeFirstResponder];
   }
 }

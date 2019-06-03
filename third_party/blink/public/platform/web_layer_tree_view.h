@@ -29,47 +29,26 @@
 #include "base/callback.h"
 #include "cc/input/browser_controls_state.h"
 #include "cc/input/event_listener_properties.h"
-#include "cc/input/overscroll_behavior.h"
 #include "cc/layers/layer.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_mutator.h"
+#include "cc/trees/paint_holding_commit_trigger.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
-namespace cc {
-class PaintImage;
-}
-
 namespace blink {
 
 class WebLayerTreeView {
  public:
-  // SwapResult mirrors the values of cc::SwapPromise::DidNotSwapReason, and
-  // should be kept consistent with it. SwapResult additionally adds a success
-  // value (kDidSwap).
-  // These values are written to logs. New enum values can be added, but
-  // existing enums must never be renumbered, deleted or reused.
-  enum SwapResult {
-    kDidSwap = 0,
-    kDidNotSwapSwapFails = 1,
-    kDidNotSwapCommitFails = 2,
-    kDidNotSwapCommitNoUpdate = 3,
-    kDidNotSwapActivationFails = 4,
-    kSwapResultMax,
-  };
-  using ReportTimeCallback =
-      base::OnceCallback<void(SwapResult, base::TimeTicks)>;
 
   virtual ~WebLayerTreeView() = default;
 
   // View properties ---------------------------------------------------
-
-  virtual void HeuristicsForGpuRasterizationUpdated(bool) {}
 
   // Sets the amount that the browser controls are showing, from 0 (hidden) to 1
   // (fully shown).
@@ -89,10 +68,6 @@ class WebLayerTreeView {
                                         float bottom_height,
                                         bool shrink_viewport) {}
 
-  // Set the browser's behavior when overscroll happens, e.g. whether to glow
-  // or navigate.
-  virtual void SetOverscrollBehavior(const cc::OverscrollBehavior&) {}
-
   // Flow control and scheduling ---------------------------------------
 
   // Prevents any updates to the input for the layer tree, and the layer tree
@@ -109,7 +84,7 @@ class WebLayerTreeView {
   virtual void StartDeferringCommits(base::TimeDelta timeout) {}
 
   // Immediately stop deferring commits.
-  virtual void StopDeferringCommits() {}
+  virtual void StopDeferringCommits(cc::PaintHoldingCommitTrigger) {}
 
   // For when the embedder itself change scales on the page (e.g. devtools)
   // and wants all of the content at the new scale to be crisp.
@@ -134,19 +109,7 @@ class WebLayerTreeView {
 
   virtual int LayerTreeId() const { return 0; }
 
-  // ReportTimeCallback is a callback that should be fired when the
-  // corresponding Swap completes (either with DidSwap or DidNotSwap).
-  virtual void NotifySwapTime(ReportTimeCallback callback) {}
-
   virtual void RequestBeginMainFrameNotExpected(bool new_state) {}
-
-  virtual void RequestDecode(const cc::PaintImage& image,
-                             base::OnceCallback<void(bool)> callback) {}
-
-  // Runs |callback| after a new frame has been submitted to the display
-  // compositor, and the display-compositor has displayed it on screen. Forces a
-  // redraw so that a new frame is submitted.
-  virtual void RequestPresentationCallback(base::OnceClosure callback) {}
 };
 
 }  // namespace blink

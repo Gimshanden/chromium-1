@@ -201,11 +201,11 @@ const SiteSettingsBehaviorImpl = {
         settings.ContentSettingsTypes.ADS,
         'enableSafeBrowsingSubresourceFilter');
     addOrRemoveSettingWithFlag(
-        settings.ContentSettingsTypes.CLIPBOARD,
-        'enableClipboardContentSetting');
-    addOrRemoveSettingWithFlag(
         settings.ContentSettingsTypes.PAYMENT_HANDLER,
         'enablePaymentHandlerContentSetting');
+    addOrRemoveSettingWithFlag(
+        settings.ContentSettingsTypes.BLUETOOTH_SCANNING,
+        'enableBluetoothScanningContentSetting');
     return this.contentTypes_.slice(0);
   },
 

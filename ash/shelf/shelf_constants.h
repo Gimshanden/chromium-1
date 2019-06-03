@@ -32,6 +32,8 @@ ASH_EXPORT constexpr SkColor kShelfControlPermanentHighlightBackground =
 ASH_EXPORT constexpr SkColor kStandaloneStatusAreaBackground =
     gfx::kGoogleGrey400;
 
+constexpr SkColor kShelfFocusBorderColor = gfx::kGoogleBlue300;
+
 // We reserve a small area on the edge of the workspace area to ensure that
 // the resize handle at the edge of the window can be hit.
 constexpr int kWorkspaceAreaVisibleInset = 2;
@@ -65,7 +67,7 @@ ASH_EXPORT constexpr SkColor kShelfIconColor = SK_ColorWHITE;
 
 // The alpha value for the shelf background.
 ASH_EXPORT constexpr int kShelfTranslucentOverAppList = 51;            // 20%
-ASH_EXPORT constexpr int kShelfTranslucentAlpha = 153;                 // 60%
+ASH_EXPORT constexpr int kShelfTranslucentAlpha = 189;                 // 74%
 // Using 0xFF causes clipping on the overlay candidate content, which prevent
 // HW overlay, probably due to a bug in compositor. Fix it and use 0xFF.
 // crbug.com/901538
@@ -86,6 +88,18 @@ constexpr int kShelfTooltipPreviewHeight = 128;
 constexpr int kShelfTooltipPreviewMaxWidth = 192;
 constexpr float kShelfTooltipPreviewMaxRatio = 1.5;    // = 3/2
 constexpr float kShelfTooltipPreviewMinRatio = 0.666;  // = 2/3
+
+// Kiosk Next shelf constants.
+// TODO(agawronska): Make it a part of theme.
+
+// Size of the space between control buttons on the shelf. Changes within
+// orientation.
+constexpr int kKioskNextShelfControlSpacingPortraitDp = 96;
+constexpr int kKioskNextShelfControlSpacingLandscapeDp = 122;
+
+// Size of the shelf control buttons (back and home).
+constexpr int kKioskNextShelfControlWidthDp = 64;
+constexpr int kKioskNextShelfControlHeightDp = 40;
 
 class ShelfConstants {
  public:

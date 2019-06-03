@@ -124,7 +124,7 @@ LauncherSearch.prototype.onQueryStarted_ = function(queryId, query, limit) {
       .then(() => {
         return Promise.all([
           this.queryDriveEntries_(queryId, query, limit, startTime),
-          this.queryLocalEntries_(queryId, query, startTime)
+          this.queryLocalEntries_(query, limit, startTime),
         ]);
       })
       .then((results) => {
@@ -196,6 +196,11 @@ LauncherSearch.prototype.onOpenResult_ = function(itemId) {
             // Execute default task.
             chrome.fileManagerPrivate.executeTask(
                 defaultTask.taskId, [entry], result => {
+                  if (chrome.runtime.lastError) {
+                    console.warn(
+                        'Unable to execute task: ' +
+                        chrome.runtime.lastError.message);
+                  }
                   if (result === 'opened' || result === 'message_sent') {
                     return;
                   }
@@ -240,7 +245,9 @@ LauncherSearch.prototype
     chrome.fileManagerPrivate.searchDriveMetadata(param, results => {
       chrome.fileManagerPrivate.getDriveConnectionState(connectionState => {
         if (connectionState.type !== 'online') {
-          results = results.filter(result => result.availableOffline !== false);
+          results = results.filter(
+              result => result.entry.isDirectory ||
+                  result.availableOffline !== false);
         }
         chrome.metricsPrivate.recordTime(
             'FileBrowser.LauncherSearch.Drive', Date.now() - startTime);
@@ -252,74 +259,22 @@ LauncherSearch.prototype
 
 /**
  * Queries entries which match the given query in Downloads.
- * @param {number} queryId
  * @param {string} query
  * @param {number} startTime
  * @return {!Promise<!Array<!Entry>>}
  * @private
  */
 LauncherSearch.prototype.queryLocalEntries_ = function(
-    queryId, query, startTime) {
+    query, limit, startTime) {
   if (!query) {
     return Promise.resolve([]);
   }
-
-  return this.getDownloadsEntry_()
-      .then((downloadsEntry) => {
-        return this.queryEntriesRecursively_(
-            downloadsEntry, queryId, query.toLowerCase(), startTime);
-      })
-      .catch((error) => {
-        if (error.name != 'AbortError') {
-          console.error('Query local entries failed.', error);
-        }
-        return [];
-      });
-};
-
-/**
- * Returns root entry of Downloads volume.
- * @return {!Promise<!DirectoryEntry>}
- * @private
- */
-LauncherSearch.prototype.getDownloadsEntry_ = () => {
-  return volumeManagerFactory.getInstance().then((volumeManager) => {
-    const downloadsVolumeInfo = volumeManager.getCurrentProfileVolumeInfo(
-        VolumeManagerCommon.VolumeType.DOWNLOADS);
-    return downloadsVolumeInfo.resolveDisplayRoot();
-  });
-};
-
-/**
- * Queries entries which match the given query inside rootEntry recursively.
- * @param {!DirectoryEntry} rootEntry
- * @param {number} queryId
- * @param {string} query
- * @param {number} startTime
- * @return {!Promise<!Array<!Entry>>}
- * @private
- */
-LauncherSearch.prototype.queryEntriesRecursively_ = function(
-    rootEntry, queryId, query, startTime) {
   return new Promise((resolve, reject) => {
-    let foundEntries = [];
-    util.readEntriesRecursively(
-        rootEntry,
-        (entries) => {
-          const matchEntries = entries.filter(
-              entry => entry.name.toLowerCase().indexOf(query) >= 0);
-          if (matchEntries.length > 0) {
-            foundEntries = foundEntries.concat(matchEntries);
-          }
-        },
-        () => {
+    chrome.fileManagerPrivate.searchFiles(
+        {query: query, types: 'ALL', maxResults: limit}, results => {
           chrome.metricsPrivate.recordTime(
               'FileBrowser.LauncherSearch.Local', Date.now() - startTime);
-          resolve(foundEntries);
-        },
-        reject,
-        () => {
-          return this.queryId_ != queryId;
+          resolve(results);
         });
   });
 };

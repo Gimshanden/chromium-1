@@ -15,8 +15,9 @@
 #error "This file requires ARC support."
 #endif
 
-@interface UnifiedConsentCoordinator ()<IdentityChooserCoordinatorDelegate,
-                                        UnifiedConsentViewControllerDelegate>
+@interface UnifiedConsentCoordinator () <IdentityChooserCoordinatorDelegate,
+                                         UnifiedConsentMediatorDelegate,
+                                         UnifiedConsentViewControllerDelegate>
 
 // Unified consent mediator.
 @property(nonatomic, strong) UnifiedConsentMediator* unifiedConsentMediator;
@@ -40,6 +41,7 @@
     _unifiedConsentViewController.delegate = self;
     _unifiedConsentMediator = [[UnifiedConsentMediator alloc]
         initWithUnifiedConsentViewController:_unifiedConsentViewController];
+    _unifiedConsentMediator.delegate = self;
   }
   return self;
 }
@@ -47,6 +49,16 @@
 - (void)start {
   [self.unifiedConsentMediator start];
 }
+
+- (void)scrollToBottom {
+  [self.unifiedConsentViewController scrollToBottom];
+}
+
+- (void)resetSettingLinkTapped {
+  self.settingsLinkWasTapped = NO;
+}
+
+#pragma mark - Properties
 
 - (ChromeIdentity*)selectedIdentity {
   return self.unifiedConsentMediator.selectedIdentity;
@@ -68,10 +80,6 @@
   return [self.unifiedConsentViewController consentStringIds];
 }
 
-- (void)scrollToBottom {
-  [self.unifiedConsentViewController scrollToBottom];
-}
-
 - (BOOL)isScrolledToBottom {
   return self.unifiedConsentViewController.isScrolledToBottom;
 }
@@ -86,6 +94,14 @@
   self.identityChooserCoordinator.origin = point;
   [self.identityChooserCoordinator start];
   self.identityChooserCoordinator.selectedIdentity = self.selectedIdentity;
+}
+
+#pragma mark - UnifiedConsentViewMediatorDelegate
+
+- (void)unifiedConsentViewMediatorDelegateNeedPrimaryButtonUpdate:
+    (UnifiedConsentMediator*)mediator {
+  DCHECK_EQ(self.unifiedConsentMediator, mediator);
+  [self.delegate unifiedConsentCoordinatorNeedPrimaryButtonUpdate:self];
 }
 
 #pragma mark - UnifiedConsentViewControllerDelegate

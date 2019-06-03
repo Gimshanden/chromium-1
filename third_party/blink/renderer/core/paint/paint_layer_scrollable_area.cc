@@ -113,15 +113,11 @@ static const int kDefaultMinimumHeightForResizing = 15;
 }  // namespace
 
 static LayoutRect LocalToAbsolute(const LayoutBox& box, LayoutRect rect) {
-  return LayoutRect(
-      box.LocalToAbsoluteQuad(FloatQuad(FloatRect(rect)), kUseTransforms)
-          .BoundingBox());
+  return box.LocalToAbsoluteRect(PhysicalRectToBeNoop(rect)).ToLayoutRect();
 }
 
 static LayoutRect AbsoluteToLocal(const LayoutBox& box, LayoutRect rect) {
-  return LayoutRect(
-      box.AbsoluteToLocalQuad(FloatQuad(FloatRect(rect)), kUseTransforms)
-          .BoundingBox());
+  return box.AbsoluteToLocalRect(PhysicalRectToBeNoop(rect)).ToLayoutRect();
 }
 
 PaintLayerScrollableAreaRareData::PaintLayerScrollableAreaRareData() = default;
@@ -668,15 +664,17 @@ LayoutRect PaintLayerScrollableArea::VisibleScrollSnapportRect(
 }
 
 IntSize PaintLayerScrollableArea::ContentsSize() const {
-  LayoutPoint offset(
+  PhysicalOffset offset(
       GetLayoutBox()->ClientLeft() + GetLayoutBox()->Location().X(),
       GetLayoutBox()->ClientTop() + GetLayoutBox()->Location().Y());
+  // TODO(crbug.com/962299): The pixel snapping is incorrect in some cases.
   return PixelSnappedContentsSize(offset);
 }
 
 IntSize PaintLayerScrollableArea::PixelSnappedContentsSize(
-    const LayoutPoint& paint_offset) const {
-  return PixelSnappedIntSize(overflow_rect_.Size(), paint_offset);
+    const PhysicalOffset& paint_offset) const {
+  return PixelSnappedIntRect(PhysicalRect(paint_offset, overflow_rect_.Size()))
+      .Size();
 }
 
 void PaintLayerScrollableArea::ContentsResized() {
@@ -857,7 +855,7 @@ void PaintLayerScrollableArea::UpdateScrollOrigin() {
 
 void PaintLayerScrollableArea::UpdateScrollDimensions() {
   LayoutRect new_overflow_rect = GetLayoutBox()->LayoutOverflowRect();
-  GetLayoutBox()->FlipForWritingMode(new_overflow_rect);
+  GetLayoutBox()->DeprecatedFlipForWritingMode(new_overflow_rect);
 
   // The layout viewport can be larger than the document's layout overflow when
   // top controls are hidden.  Expand the overflow here to ensure that our
@@ -994,8 +992,7 @@ void PaintLayerScrollableArea::UpdateAfterLayout() {
           SubtreeLayoutScope layout_scope(*GetLayoutBox());
           layout_scope.SetNeedsLayout(
               GetLayoutBox(), layout_invalidation_reason::kScrollbarChanged);
-          if (GetLayoutBox()->IsLayoutBlock()) {
-            LayoutBlock* block = ToLayoutBlock(GetLayoutBox());
+          if (auto* block = DynamicTo<LayoutBlock>(GetLayoutBox())) {
             block->ScrollbarsChanged(horizontal_scrollbar_should_change,
                                      vertical_scrollbar_should_change);
             block->UpdateBlockLayout(true);
@@ -1201,12 +1198,12 @@ void PaintLayerScrollableArea::UpdateAfterStyleChange(
   bool vertical_scrollbar_changed =
       SetHasVerticalScrollbar(needs_vertical_scrollbar);
 
-  if (GetLayoutBox()->IsLayoutBlock() &&
+  auto* layout_block = DynamicTo<LayoutBlock>(GetLayoutBox());
+  if (layout_block &&
       (horizontal_scrollbar_changed || vertical_scrollbar_changed)) {
-    ToLayoutBlock(GetLayoutBox())
-        ->ScrollbarsChanged(horizontal_scrollbar_changed,
-                            vertical_scrollbar_changed,
-                            LayoutBlock::ScrollbarChangeContext::kStyleChange);
+    layout_block->ScrollbarsChanged(
+        horizontal_scrollbar_changed, vertical_scrollbar_changed,
+        LayoutBlock::ScrollbarChangeContext::kStyleChange);
   }
 
   // With overflow: scroll, scrollbars are always visible but may be disabled.
@@ -1799,8 +1796,8 @@ bool PaintLayerScrollableArea::IsPointInResizeControl(
   if (!GetLayoutBox()->CanResize())
     return false;
 
-  IntPoint local_point = RoundedIntPoint(GetLayoutBox()->AbsoluteToLocal(
-      FloatPoint(absolute_point), kUseTransforms));
+  IntPoint local_point = RoundedIntPoint(
+      GetLayoutBox()->AbsoluteToLocalPoint(PhysicalOffset(absolute_point)));
   IntRect local_bounds(IntPoint(), Layer()->PixelSnappedSize());
   return ResizerCornerRect(local_bounds, resizer_hit_test_type)
       .Contains(local_point);
@@ -1930,8 +1927,8 @@ IntSize PaintLayerScrollableArea::OffsetFromResizeCorner(
   if (GetLayoutBox()->ShouldPlaceBlockDirectionScrollbarOnLogicalLeft())
     element_size.SetWidth(0);
   IntPoint resizer_point = IntPoint(element_size);
-  IntPoint local_point = RoundedIntPoint(GetLayoutBox()->AbsoluteToLocal(
-      FloatPoint(absolute_point), kUseTransforms));
+  IntPoint local_point = RoundedIntPoint(
+      GetLayoutBox()->AbsoluteToLocalPoint(PhysicalOffset(absolute_point)));
   return local_point - resizer_point;
 }
 
@@ -2525,7 +2522,7 @@ PaintLayerScrollableArea::PreventRelayoutScope::~PreventRelayoutScope() {
         LayoutBox* box = scrollable_area->GetLayoutBox();
         layout_scope_->SetNeedsLayout(
             box, layout_invalidation_reason::kScrollbarChanged);
-        if (box->IsLayoutBlock()) {
+        if (auto* layout_block = DynamicTo<LayoutBlock>(box)) {
           bool horizontal_scrollbar_changed =
               scrollable_area->HasHorizontalScrollbar() !=
               scrollable_area->HadHorizontalScrollbarBeforeRelayout();
@@ -2533,8 +2530,8 @@ PaintLayerScrollableArea::PreventRelayoutScope::~PreventRelayoutScope() {
               scrollable_area->HasVerticalScrollbar() !=
               scrollable_area->HadVerticalScrollbarBeforeRelayout();
           if (horizontal_scrollbar_changed || vertical_scrollbar_changed) {
-            ToLayoutBlock(box)->ScrollbarsChanged(horizontal_scrollbar_changed,
-                                                  vertical_scrollbar_changed);
+            layout_block->ScrollbarsChanged(horizontal_scrollbar_changed,
+                                            vertical_scrollbar_changed);
           }
         }
         scrollable_area->SetNeedsRelayout(false);
@@ -2643,12 +2640,11 @@ void PaintLayerScrollableArea::WillRemoveScrollbar(
   ScrollableArea::WillRemoveScrollbar(scrollbar, orientation);
 }
 
-static LayoutRect ScrollControlVisualRect(
-    const IntRect& scroll_control_rect,
-    const LayoutBox& box,
-    const PaintInvalidatorContext& context,
-    const LayoutRect& previous_visual_rect) {
-  LayoutRect visual_rect(scroll_control_rect);
+static IntRect ScrollControlVisualRect(const IntRect& scroll_control_rect,
+                                       const LayoutBox& box,
+                                       const PaintInvalidatorContext& context,
+                                       const IntRect& previous_visual_rect) {
+  IntRect visual_rect(scroll_control_rect);
 #if DCHECK_IS_ON()
   FindVisualRectNeedingUpdateScope finder(box, context, previous_visual_rect,
                                           visual_rect);
@@ -2664,8 +2660,8 @@ static LayoutRect ScrollControlVisualRect(
 
 // Returns true if the scroll control is invalidated.
 static bool InvalidatePaintOfScrollControlIfNeeded(
-    const LayoutRect& new_visual_rect,
-    const LayoutRect& previous_visual_rect,
+    const IntRect& new_visual_rect,
+    const IntRect& previous_visual_rect,
     bool needs_paint_invalidation,
     LayoutBox& box,
     const LayoutBoxModelObject& paint_invalidation_container) {
@@ -2681,17 +2677,17 @@ static bool InvalidatePaintOfScrollControlIfNeeded(
   return should_invalidate_new_rect;
 }
 
-static LayoutRect InvalidatePaintOfScrollbarIfNeeded(
+static IntRect InvalidatePaintOfScrollbarIfNeeded(
     Scrollbar* scrollbar,
     GraphicsLayer* graphics_layer,
     bool& previously_was_overlay,
-    const LayoutRect& previous_visual_rect,
+    const IntRect& previous_visual_rect,
     bool needs_paint_invalidation_arg,
     LayoutBox& box,
     const PaintInvalidatorContext& context) {
   bool is_overlay = scrollbar && scrollbar->IsOverlayScrollbar();
 
-  LayoutRect new_visual_rect;
+  IntRect new_visual_rect;
   // Calculate visual rect of the scrollbar, except overlay composited
   // scrollbars because we invalidate the graphics layer only.
   if (scrollbar && !(graphics_layer && is_overlay)) {
@@ -2722,10 +2718,10 @@ static LayoutRect InvalidatePaintOfScrollbarIfNeeded(
   // the box must have changed size and have been invalidated.
   const LayoutBoxModelObject& paint_invalidation_container =
       *context.paint_invalidation_container;
-  LayoutSize new_scrollbar_used_space_in_box;
+  IntSize new_scrollbar_used_space_in_box;
   if (!is_overlay)
     new_scrollbar_used_space_in_box = new_visual_rect.Size();
-  LayoutSize previous_scrollbar_used_space_in_box;
+  IntSize previous_scrollbar_used_space_in_box;
   if (!previously_was_overlay)
     previous_scrollbar_used_space_in_box = previous_visual_rect.Size();
 
@@ -2773,7 +2769,7 @@ void PaintLayerScrollableArea::InvalidatePaintOfScrollControlsIfNeeded(
       vertical_scrollbar_visual_rect_,
       VerticalScrollbarNeedsPaintInvalidation(), box, context));
 
-  LayoutRect scroll_corner_and_resizer_visual_rect =
+  IntRect scroll_corner_and_resizer_visual_rect =
       ScrollControlVisualRect(ScrollCornerAndResizerRect(), box, context,
                               scroll_corner_and_resizer_visual_rect_);
   const LayoutBoxModelObject& paint_invalidation_container =
@@ -2800,27 +2796,27 @@ void PaintLayerScrollableArea::InvalidatePaintOfScrollControlsIfNeeded(
 }
 
 void PaintLayerScrollableArea::ClearPreviousVisualRects() {
-  SetHorizontalScrollbarVisualRect(LayoutRect());
-  SetVerticalScrollbarVisualRect(LayoutRect());
-  SetScrollCornerAndResizerVisualRect(LayoutRect());
+  SetHorizontalScrollbarVisualRect(IntRect());
+  SetVerticalScrollbarVisualRect(IntRect());
+  SetScrollCornerAndResizerVisualRect(IntRect());
 }
 
 void PaintLayerScrollableArea::SetHorizontalScrollbarVisualRect(
-    const LayoutRect& rect) {
+    const IntRect& rect) {
   horizontal_scrollbar_visual_rect_ = rect;
   if (Scrollbar* scrollbar = HorizontalScrollbar())
     scrollbar->SetVisualRect(rect);
 }
 
 void PaintLayerScrollableArea::SetVerticalScrollbarVisualRect(
-    const LayoutRect& rect) {
+    const IntRect& rect) {
   vertical_scrollbar_visual_rect_ = rect;
   if (Scrollbar* scrollbar = VerticalScrollbar())
     scrollbar->SetVisualRect(rect);
 }
 
 void PaintLayerScrollableArea::SetScrollCornerAndResizerVisualRect(
-    const LayoutRect& rect) {
+    const IntRect& rect) {
   scroll_corner_and_resizer_visual_rect_ = rect;
   if (LayoutScrollbarPart* scroll_corner = ScrollCorner())
     scroll_corner->GetMutableForPainting().FirstFragment().SetVisualRect(rect);
@@ -2834,7 +2830,8 @@ void PaintLayerScrollableArea::ScrollControlWasSetNeedsPaintInvalidation() {
 
 void PaintLayerScrollableArea::DidScrollWithScrollbar(
     ScrollbarPart part,
-    ScrollbarOrientation orientation) {
+    ScrollbarOrientation orientation,
+    WebInputEvent::Type type) {
   WebFeature scrollbar_use_uma;
   switch (part) {
     case kBackButtonStartPart:
@@ -2863,7 +2860,26 @@ void PaintLayerScrollableArea::DidScrollWithScrollbar(
       return;
   }
 
-  UseCounter::Count(GetLayoutBox()->GetDocument(), scrollbar_use_uma);
+  Document& document = GetLayoutBox()->GetDocument();
+
+  // TODO(alpastew): Remove the UseCounters kScrollbarUseVerticalScrollbarThumb
+  // and kScrollbarUseHorizontalScrollbarThumb to avoid redundancy in metrics.
+  UseCounter::Count(document, scrollbar_use_uma);
+
+  if (scrollbar_use_uma == WebFeature::kScrollbarUseVerticalScrollbarThumb) {
+    WebFeature input_specific_uma =
+        (WebInputEvent::IsMouseEventType(type)
+             ? WebFeature::kVerticalScrollbarThumbScrollingWithMouse
+             : WebFeature::kVerticalScrollbarThumbScrollingWithTouch);
+    UseCounter::Count(document, input_specific_uma);
+  } else if (scrollbar_use_uma ==
+             WebFeature::kScrollbarUseHorizontalScrollbarThumb) {
+    WebFeature input_specific_uma =
+        (WebInputEvent::IsMouseEventType(type)
+             ? WebFeature::kHorizontalScrollbarThumbScrollingWithMouse
+             : WebFeature::kHorizontalScrollbarThumbScrollingWithTouch);
+    UseCounter::Count(document, input_specific_uma);
+  }
 }
 
 CompositorElementId PaintLayerScrollableArea::GetCompositorElementId() const {
@@ -2871,7 +2887,7 @@ CompositorElementId PaintLayerScrollableArea::GetCompositorElementId() const {
       GetLayoutBox()->UniqueId(), CompositorElementIdNamespace::kScroll);
 }
 
-LayoutRect
+IntRect
 PaintLayerScrollableArea::ScrollingBackgroundDisplayItemClient::VisualRect()
     const {
   const auto* box = scrollable_area_->GetLayoutBox();
@@ -2881,7 +2897,7 @@ PaintLayerScrollableArea::ScrollingBackgroundDisplayItemClient::VisualRect()
   auto scroll_size = scrollable_area_->PixelSnappedContentsSize(paint_offset);
   // Ensure scrolling contents are at least as large as the scroll clip
   scroll_size = scroll_size.ExpandedTo(overflow_clip_rect.Size());
-  LayoutRect result(overflow_clip_rect.Location(), scroll_size);
+  IntRect result(overflow_clip_rect.Location(), scroll_size);
 #if DCHECK_IS_ON()
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     DCHECK_EQ(result,

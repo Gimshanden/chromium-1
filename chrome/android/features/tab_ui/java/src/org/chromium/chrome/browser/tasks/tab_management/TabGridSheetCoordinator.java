@@ -12,12 +12,12 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.ThemeColorProvider;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
-import org.chromium.chrome.browser.lifecycle.Destroyable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupUtils;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetController;
+import org.chromium.chrome.tab_ui.R;
 import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.List;
@@ -27,8 +27,8 @@ import java.util.List;
  * {@link TabListCoordinator} as well as the life-cycle of shared component
  * objects.
  */
-public class TabGridSheetCoordinator implements Destroyable {
-    public final static String COMPONENT_NAME = "TabGridSheet";
+public class TabGridSheetCoordinator {
+    final static String COMPONENT_NAME = "TabGridSheet";
     private final Context mContext;
     private final TabListCoordinator mTabGridCoordinator;
     private final TabGridSheetMediator mMediator;
@@ -45,7 +45,8 @@ public class TabGridSheetCoordinator implements Destroyable {
 
         mTabGridCoordinator = new TabListCoordinator(TabListCoordinator.TabListMode.GRID, context,
                 tabModelSelector, tabContentManager::getTabThumbnailWithCallback, null, false, null,
-                bottomSheetController.getBottomSheet(), false, COMPONENT_NAME);
+                null, bottomSheetController.getBottomSheet(), null, false,
+                R.layout.tab_list_recycler_view_layout, COMPONENT_NAME);
 
         mMediator = new TabGridSheetMediator(mContext, bottomSheetController,
                 this::resetWithListOfTabs, mToolbarPropertyModel, tabModelSelector,
@@ -56,7 +57,6 @@ public class TabGridSheetCoordinator implements Destroyable {
     /**
      * Destroy any members that needs clean up.
      */
-    @Override
     public void destroy() {
         mTabGridCoordinator.destroy();
         mMediator.destroy();
@@ -95,6 +95,7 @@ public class TabGridSheetCoordinator implements Destroyable {
 
             if (mToolbarCoordinator != null) {
                 mToolbarCoordinator.destroy();
+                mToolbarCoordinator = null;
             }
         }
     }

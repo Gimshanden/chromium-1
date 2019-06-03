@@ -4,6 +4,8 @@
 
 #include "ash/login/ui/login_menu_view.h"
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 #include <utility>
 
@@ -32,7 +34,7 @@ constexpr SkColor kMenuBackgroundColor = SkColorSetRGB(0x3C, 0x40, 0x43);
 class MenuItemView : public views::Button, public views::ButtonListener {
  public:
   MenuItemView(const LoginMenuView::Item& item,
-               const LoginMenuView::OnHighLight& on_highlight)
+               const LoginMenuView::OnHighlight& on_highlight)
       : views::Button(this), item_(item), on_highlight_(on_highlight) {
     SetFocusBehavior(FocusBehavior::ALWAYS);
     SetLayoutManager(
@@ -92,7 +94,7 @@ class MenuItemView : public views::Button, public views::ButtonListener {
 
  private:
   const LoginMenuView::Item item_;
-  const LoginMenuView::OnHighLight on_highlight_;
+  const LoginMenuView::OnHighlight on_highlight_;
   std::unique_ptr<HoverNotifier> hover_notifier_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuItemView);
@@ -147,13 +149,12 @@ LoginMenuView::LoginMenuView(const std::vector<Item>& items,
       std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
   layout->SetDefaultFlex(1);
   layout->set_minimum_cross_axis_size(kMenuItemWidthDp);
-  layout->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
 
   for (size_t i = 0; i < items.size(); i++) {
     const Item& item = items[i];
     contents->AddChildView(new MenuItemView(
-        item, base::BindRepeating(&LoginMenuView::OnHighLightChange,
+        item, base::BindRepeating(&LoginMenuView::OnHighlightChange,
                                   base::Unretained(this), i)));
 
     if (item.selected)
@@ -165,9 +166,9 @@ LoginMenuView::LoginMenuView(const std::vector<Item>& items,
 
 LoginMenuView::~LoginMenuView() = default;
 
-void LoginMenuView::OnHighLightChange(int item_index, bool by_selection) {
+void LoginMenuView::OnHighlightChange(size_t item_index, bool by_selection) {
   selected_index_ = item_index;
-  views::View* highlight_item = contents_->child_at(item_index);
+  views::View* highlight_item = contents_->children()[item_index];
   for (views::View* child : contents_->GetChildrenInZOrder()) {
     child->SetBackground(views::CreateSolidBackground(
         child == highlight_item ? SK_ColorGRAY : SK_ColorTRANSPARENT));
@@ -181,35 +182,19 @@ void LoginMenuView::OnHighLightChange(int item_index, bool by_selection) {
   contents_->SchedulePaint();
 }
 
-int LoginMenuView::FindNextItem(bool reverse) {
-  int delta = reverse ? -1 : 1;
-  int current_index = selected_index_ + delta;
-  while (current_index >= 0 && current_index < contents_->child_count()) {
-    MenuItemView* menu_view =
-        static_cast<MenuItemView*>(contents_->child_at(current_index));
-    if (!menu_view->item().is_group)
-      break;
-    current_index += delta;
-  }
-
-  if (current_index < 0 || current_index == contents_->child_count())
-    return selected_index_;
-  return current_index;
-}
-
 LoginButton* LoginMenuView::GetBubbleOpener() const {
   return opener_;
 }
 
 void LoginMenuView::OnFocus() {
   // Forward the focus to the selected child view.
-  contents_->child_at(selected_index_)->RequestFocus();
+  contents_->children()[selected_index_]->RequestFocus();
 }
 
 bool LoginMenuView::OnKeyPressed(const ui::KeyEvent& event) {
   const ui::KeyboardCode key = event.key_code();
   if (key == ui::VKEY_UP || key == ui::VKEY_DOWN) {
-    contents_->child_at(FindNextItem(key == ui::VKEY_UP))->RequestFocus();
+    FindNextItem(key == ui::VKEY_UP)->RequestFocus();
     return true;
   }
 
@@ -218,7 +203,24 @@ bool LoginMenuView::OnKeyPressed(const ui::KeyEvent& event) {
 
 void LoginMenuView::VisibilityChanged(View* starting_from, bool is_visible) {
   if (is_visible)
-    contents_->child_at(selected_index_)->RequestFocus();
+    contents_->children()[selected_index_]->RequestFocus();
+}
+
+views::View* LoginMenuView::FindNextItem(bool reverse) {
+  const auto& children = contents_->children();
+  const auto is_item = [](views::View* v) {
+    return !static_cast<MenuItemView*>(v)->item().is_group;
+  };
+  const auto begin = std::next(children.begin(), selected_index_);
+  if (reverse) {
+    // Subtle: make_reverse_iterator() will result in an iterator that refers to
+    // the element before its argument, which is what we want.
+    const auto i = std::find_if(std::make_reverse_iterator(begin),
+                                children.rend(), is_item);
+    return (i == children.rend()) ? *begin : *i;
+  }
+  const auto i = std::find_if(std::next(begin), children.end(), is_item);
+  return (i == children.end()) ? *begin : *i;
 }
 
 }  // namespace ash

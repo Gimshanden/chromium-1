@@ -17,10 +17,13 @@
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "components/variations/field_trial_config/fieldtrial_testing_config.h"
 #include "components/variations/variations_associated_data.h"
+#include "components/variations/variations_seed_processor.h"
 #include "net/base/escape.h"
+#include "ui/base/device_form_factor.h"
 
 namespace variations {
 namespace {
@@ -34,8 +37,8 @@ bool HasPlatform(const FieldTrialTestingExperiment& experiment,
   return false;
 }
 
-// Returns true if the experiment config is has different value for
-// is_low_end_device than the current system value for this.
+// Returns true if the experiment config has a different value for
+// is_low_end_device than the current system value does.
 // If experiment has is_low_end_device missing, then it is False.
 bool HasDeviceLevelMismatch(const FieldTrialTestingExperiment& experiment) {
   if (experiment.is_low_end_device == Study::OPTIONAL_BOOL_MISSING) {
@@ -47,9 +50,43 @@ bool HasDeviceLevelMismatch(const FieldTrialTestingExperiment& experiment) {
   return experiment.is_low_end_device == Study::OPTIONAL_BOOL_TRUE;
 }
 
+// Gets current form factor and converts it from enum DeviceFormFactor to enum
+// Study_FormFactor.
+Study::FormFactor _GetCurrentFormFactor() {
+  switch (ui::GetDeviceFormFactor()) {
+    case ui::DEVICE_FORM_FACTOR_PHONE:
+      return Study::PHONE;
+    case ui::DEVICE_FORM_FACTOR_TABLET:
+      return Study::TABLET;
+    case ui::DEVICE_FORM_FACTOR_DESKTOP:
+      return Study::DESKTOP;
+  }
+}
+
+// Returns true if the experiment config has a missing form_factors or it
+// contains the current system's form_factor. Otherwise, it is False.
+bool HasFormFactor(const FieldTrialTestingExperiment& experiment) {
+  for (size_t i = 0; i < experiment.form_factors_size; ++i) {
+    if (experiment.form_factors[i] == _GetCurrentFormFactor())
+      return true;
+  }
+  return experiment.form_factors_size == 0;
+}
+
+// Records the override ui string config. Mainly used for testing.
+void ApplyUIStringOverrides(
+    const FieldTrialTestingExperiment& experiment,
+    const VariationsSeedProcessor::UIStringOverrideCallback& callback) {
+  for (size_t i = 0; i < experiment.override_ui_string_size; ++i) {
+    callback.Run(experiment.override_ui_string[i].name_hash,
+                 base::UTF8ToUTF16(experiment.override_ui_string[i].value));
+  }
+}
+
 void AssociateParamsFromExperiment(
     const std::string& study_name,
     const FieldTrialTestingExperiment& experiment,
+    const VariationsSeedProcessor::UIStringOverrideCallback& callback,
     base::FeatureList* feature_list) {
   if (experiment.params_size != 0) {
     std::map<std::string, std::string> params;
@@ -79,6 +116,8 @@ void AssociateParamsFromExperiment(
         experiment.disable_features[i],
         base::FeatureList::OVERRIDE_DISABLE_FEATURE, trial);
   }
+
+  ApplyUIStringOverrides(experiment, callback);
 }
 
 // Choose an experiment to associate. The rules are:
@@ -91,16 +130,21 @@ void AssociateParamsFromExperiment(
 //     a different experiment group for non low_end_device then pick that.
 //   - Otherwise, select the first experiment.
 // - If no experiments match this platform, do not associate any of them.
-void ChooseExperiment(const FieldTrialTestingStudy& study,
-                      base::FeatureList* feature_list,
-                      Study::Platform platform) {
+void ChooseExperiment(
+    const FieldTrialTestingStudy& study,
+    const VariationsSeedProcessor::UIStringOverrideCallback& callback,
+    Study::Platform platform,
+    base::FeatureList* feature_list) {
   const auto& command_line = *base::CommandLine::ForCurrentProcess();
   const FieldTrialTestingExperiment* chosen_experiment = nullptr;
   for (size_t i = 0; i < study.experiments_size; ++i) {
     const FieldTrialTestingExperiment* experiment = study.experiments + i;
     if (HasPlatform(*experiment, platform)) {
-      if (!chosen_experiment && !HasDeviceLevelMismatch(*experiment))
+      if (!chosen_experiment &&
+          !HasDeviceLevelMismatch(*experiment) &&
+          HasFormFactor(*experiment)) {
         chosen_experiment = experiment;
+    }
 
       if (experiment->forcing_flag &&
           command_line.HasSwitch(experiment->forcing_flag)) {
@@ -109,8 +153,10 @@ void ChooseExperiment(const FieldTrialTestingStudy& study,
       }
     }
   }
-  if (chosen_experiment)
-    AssociateParamsFromExperiment(study.name, *chosen_experiment, feature_list);
+  if (chosen_experiment) {
+    AssociateParamsFromExperiment(study.name, *chosen_experiment, callback,
+                                  feature_list);
+  }
 }
 
 }  // namespace
@@ -193,23 +239,27 @@ bool AssociateParamsFromString(const std::string& varations_string) {
   return true;
 }
 
-void AssociateParamsFromFieldTrialConfig(const FieldTrialTestingConfig& config,
-                                         base::FeatureList* feature_list,
-                                         Study::Platform platform) {
+void AssociateParamsFromFieldTrialConfig(
+    const FieldTrialTestingConfig& config,
+    const VariationsSeedProcessor::UIStringOverrideCallback& callback,
+    Study::Platform platform,
+    base::FeatureList* feature_list) {
   for (size_t i = 0; i < config.studies_size; ++i) {
     const FieldTrialTestingStudy& study = config.studies[i];
     if (study.experiments_size > 0) {
-      ChooseExperiment(study, feature_list, platform);
+      ChooseExperiment(study, callback, platform, feature_list);
     } else {
       DLOG(ERROR) << "Unexpected empty study: " << study.name;
     }
   }
 }
 
-void AssociateDefaultFieldTrialConfig(base::FeatureList* feature_list,
-                                      Study::Platform platform) {
-  AssociateParamsFromFieldTrialConfig(kFieldTrialConfig, feature_list,
-                                      platform);
+void AssociateDefaultFieldTrialConfig(
+    const VariationsSeedProcessor::UIStringOverrideCallback& callback,
+    Study::Platform platform,
+    base::FeatureList* feature_list) {
+  AssociateParamsFromFieldTrialConfig(kFieldTrialConfig, callback, platform,
+                                      feature_list);
 }
 
 }  // namespace variations

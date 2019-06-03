@@ -20,6 +20,7 @@
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
+#include "components/omnibox/common/omnibox_focus_state.h"
 #include "ios/chrome/browser/autocomplete/autocomplete_scheme_classifier_impl.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/ui/omnibox/chrome_omnibox_client_ios.h"
@@ -270,8 +271,15 @@ void OmniboxViewIOS::UpdatePopup() {
   if (model())
     model()->StartAutocomplete(current_selection_.length != 0,
                                prevent_inline_autocomplete);
+
+  UpdatePopupAppearance();
+}
+
+void OmniboxViewIOS::UpdatePopupAppearance() {
   DCHECK(popup_provider_);
   popup_provider_->SetTextAlignment([field_ bestTextAlignment]);
+  popup_provider_->SetSemanticContentAttribute(
+      [field_ bestSemanticContentAttribute]);
 }
 
 void OmniboxViewIOS::OnTemporaryTextMaybeChanged(
@@ -372,15 +380,18 @@ void OmniboxViewIOS::OnDidBeginEditing() {
   [field_ setText:[field_ text]];
   OnBeforePossibleChange();
 
+  // Make sure the omnibox popup's semantic content attribute is set correctly.
+  popup_provider_->SetSemanticContentAttribute(
+      [field_ bestSemanticContentAttribute]);
+
   if (model()) {
     // In the case where the user taps the fakebox on the Google landing page,
     // or from the secondary toolbar search button, the focus source is already
     // set to FAKEBOX or SEARCH_BUTTON respectively. Otherwise, set it to
     // OMNIBOX.
-    if (model()->focus_source() != OmniboxEditModel::FocusSource::FAKEBOX &&
-        model()->focus_source() !=
-            OmniboxEditModel::FocusSource::SEARCH_BUTTON) {
-      model()->set_focus_source(OmniboxEditModel::FocusSource::OMNIBOX);
+    if (model()->focus_source() != OmniboxFocusSource::FAKEBOX &&
+        model()->focus_source() != OmniboxFocusSource::SEARCH_BUTTON) {
+      model()->set_focus_source(OmniboxFocusSource::OMNIBOX);
     }
 
     model()->OnSetFocus(false);
@@ -804,8 +815,12 @@ void OmniboxViewIOS::EmphasizeURLComponents() {
 #pragma mark - OmniboxPopupViewSuggestionsDelegate
 
 void OmniboxViewIOS::OnTopmostSuggestionImageChanged(
-    AutocompleteMatchType::Type type) {
-  [left_image_consumer_ setLeftImageForAutocompleteType:type];
+    AutocompleteMatchType::Type match_type,
+    base::Optional<SuggestionAnswer::AnswerType> answer_type,
+    GURL favicon_url) {
+  [left_image_consumer_ setLeftImageForAutocompleteType:match_type
+                                             answerType:answer_type
+                                             faviconURL:favicon_url];
 }
 
 void OmniboxViewIOS::OnResultsChanged(const AutocompleteResult& result) {

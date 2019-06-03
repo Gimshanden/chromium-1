@@ -33,7 +33,7 @@ class OneShotTimer;
 namespace device {
 
 struct PlatformAuthenticatorInfo;
-class CtapGetAssertionRequest;
+struct CtapGetAssertionRequest;
 class FidoRequestHandlerBase;
 
 enum class FidoReturnCode : uint8_t;
@@ -83,10 +83,12 @@ class CONTENT_EXPORT AuthenticatorCommon {
   void IsUserVerifyingPlatformAuthenticatorAvailable(
       blink::mojom::Authenticator::
           IsUserVerifyingPlatformAuthenticatorAvailableCallback callback);
+  void Cancel();
 
   // Synchronous implementation of
   // IsUserVerifyingPlatformAuthenticatorAvailable.
-  bool IsUserVerifyingPlatformAuthenticatorAvailableImpl();
+  bool IsUserVerifyingPlatformAuthenticatorAvailableImpl(
+      AuthenticatorRequestClientDelegate* request_delegate);
 
   void Cleanup();
 
@@ -138,6 +140,7 @@ class CONTENT_EXPORT AuthenticatorCommon {
   // whether or not to return attestation data has been made.
   void OnRegisterResponseAttestationDecided(
       device::AuthenticatorMakeCredentialResponse response_data,
+      bool is_transport_used_internal,
       bool attestation_permitted);
 
   // Callback to handle the async response from a U2fDevice.
@@ -147,12 +150,12 @@ class CONTENT_EXPORT AuthenticatorCommon {
           response_data,
       base::Optional<device::FidoTransportProtocol> transport_used);
 
-  void FailWithErrorAndCleanup();
-
   // Runs when timer expires and cancels all issued requests to a U2fDevice.
   void OnTimeout();
+  // Cancels the currently pending request (if any) with the supplied status.
+  void CancelWithStatus(blink::mojom::AuthenticatorStatus status);
   // Runs when the user cancels WebAuthN request via UI dialog.
-  void Cancel();
+  void OnCancelFromUI();
 
   // Called when a GetAssertion has completed, either because an allow_list was
   // used and so an answer is returned directly, or because the user selected an
@@ -198,10 +201,6 @@ class CONTENT_EXPORT AuthenticatorCommon {
   std::string relying_party_id_;
   std::unique_ptr<base::OneShotTimer> timer_;
   base::Optional<std::string> app_id_;
-  // need_account_selection_ indicates if an empty allow-list was used, thus
-  // implying that an account selection dialog needs to be displayed to the user
-  // before returning any assertions.
-  bool need_account_selection_ = false;
   // awaiting_attestation_response_ is true if the embedder has been queried
   // about an attestsation decision and the response is still pending.
   bool awaiting_attestation_response_ = false;

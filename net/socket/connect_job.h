@@ -11,14 +11,17 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "net/base/address_list.h"
 #include "net/base/load_states.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_export.h"
 #include "net/base/privacy_mode.h"
 #include "net/base/request_priority.h"
 #include "net/log/net_log_with_source.h"
+#include "net/socket/connection_attempts.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/third_party/quiche/src/quic/core/quic_versions.h"
@@ -26,7 +29,7 @@
 namespace net {
 
 class ClientSocketFactory;
-class ClientSocketHandle;
+class HostPortPair;
 class HostResolver;
 class HttpAuthCache;
 class HttpAuthController;
@@ -34,13 +37,20 @@ class HttpAuthHandlerFactory;
 class HttpResponseInfo;
 class HttpUserAgentSettings;
 class NetLog;
+class NetLogWithSource;
+class NetworkIsolationKey;
 class NetworkQualityEstimator;
+struct NetworkTrafficAnnotationTag;
 class ProxyDelegate;
+class ProxyServer;
 class SocketPerformanceWatcherFactory;
+struct SSLConfig;
 class StreamSocket;
 class WebSocketEndpointLockManager;
 class QuicStreamFactory;
+class SocketTag;
 class SpdySessionPool;
+class SSLCertRequestInfo;
 
 // Immutable socket parameters intended for shared use by all ConnectJob types.
 // Excludes priority because it can be modified over the lifetime of a
@@ -54,7 +64,7 @@ struct NET_EXPORT_PRIVATE CommonConnectJobParams {
       HttpAuthCache* http_auth_cache,
       HttpAuthHandlerFactory* http_auth_handler_factory,
       SpdySessionPool* spdy_session_pool,
-      const quic::QuicTransportVersionVector* quic_supported_versions,
+      const quic::ParsedQuicVersionVector* quic_supported_versions,
       QuicStreamFactory* quic_stream_factory,
       ProxyDelegate* proxy_delegate,
       const HttpUserAgentSettings* http_user_agent_settings,
@@ -74,7 +84,7 @@ struct NET_EXPORT_PRIVATE CommonConnectJobParams {
   HttpAuthCache* http_auth_cache;
   HttpAuthHandlerFactory* http_auth_handler_factory;
   SpdySessionPool* spdy_session_pool;
-  const quic::QuicTransportVersionVector* quic_supported_versions;
+  const quic::ParsedQuicVersionVector* quic_supported_versions;
   QuicStreamFactory* quic_stream_factory;
   ProxyDelegate* proxy_delegate;
   const HttpUserAgentSettings* http_user_agent_settings;
@@ -87,6 +97,28 @@ struct NET_EXPORT_PRIVATE CommonConnectJobParams {
   // This must only be non-null for WebSockets.
   WebSocketEndpointLockManager* websocket_endpoint_lock_manager;
 };
+
+// When a host resolution completes, OnHostResolutionCallback() is invoked. If
+// it returns |kContinue|, the ConnectJob can continue immediately. If it
+// returns |kMayBeDeletedAsync|, the ConnectJob may be slated for asychronous
+// destruction, so should post a task before continuing, in case it will be
+// deleted. The purpose of kMayBeDeletedAsync is to avoid needlessly creating
+// and connecting a socket when it might not be needed.
+enum class OnHostResolutionCallbackResult {
+  kContinue,
+  kMayBeDeletedAsync,
+};
+
+// If non-null, invoked when host resolution completes. May not destroy the
+// ConnectJob synchronously, but may signal the ConnectJob may be destroyed
+// asynchronously. See OnHostResolutionCallbackResult above.
+//
+// |address_list| is the list of addresses the host being connected to was
+// resolved to, with the port fields populated to the port being connected to.
+using OnHostResolutionCallback =
+    base::RepeatingCallback<OnHostResolutionCallbackResult(
+        const HostPortPair& host_port_pair,
+        const AddressList& address_list)>;
 
 // ConnectJob provides an abstract interface for "connecting" a socket.
 // The connection may involve host resolution, tcp connection, ssl connection,
@@ -142,6 +174,25 @@ class NET_EXPORT_PRIVATE ConnectJob {
              NetLogEventType net_log_connect_event_type);
   virtual ~ConnectJob();
 
+  // Creates a ConnectJob with the specified parameters.
+  // |common_connect_job_params| and |delegate| must outlive the returned
+  // ConnectJob.
+  static std::unique_ptr<ConnectJob> CreateConnectJob(
+      bool using_ssl,
+      const HostPortPair& endpoint,
+      const ProxyServer& proxy_server,
+      const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
+      const SSLConfig* ssl_config_for_origin,
+      const SSLConfig* ssl_config_for_proxy,
+      bool force_tunnel,
+      PrivacyMode privacy_mode,
+      const OnHostResolutionCallback& resolution_callback,
+      RequestPriority request_priority,
+      SocketTag socket_tag,
+      const NetworkIsolationKey& network_isolation_key,
+      const CommonConnectJobParams* common_connect_job_params,
+      ConnectJob::Delegate* delegate);
+
   // Accessors
   const NetLogWithSource& net_log() { return net_log_; }
   RequestPriority priority() const { return priority_; }
@@ -183,14 +234,19 @@ class NET_EXPORT_PRIVATE ConnectJob {
   // Not safe to call after NotifyComplete() is invoked.
   virtual bool HasEstablishedConnection() const = 0;
 
-  // If Connect returns an error (or OnConnectJobComplete reports an error
-  // result) this method will be called, allowing a SocketPool to add additional
-  // error state to the ClientSocketHandle (post late-binding).
-  //
-  // TODO(mmenke): This is a layering violation. Consider refactoring it to not
-  // depend on ClientSocketHandle. Fixing this will need to wait until after
-  // proxy tunnel auth has been refactored.
-  virtual void GetAdditionalErrorState(ClientSocketHandle* handle) {}
+  // If the ConnectJobFailed, this method returns a list of failed attempts to
+  // connect to the destination server. Returns an empty list if connecting to a
+  // proxy.
+  virtual ConnectionAttempts GetConnectionAttempts() const;
+
+  // If the ConnectJob failed, returns true if the failure occurred after SSL
+  // negotiation started. If the ConnectJob succeeded, the returned value is
+  // undefined.
+  virtual bool IsSSLError() const;
+
+  // If the ConnectJob failed with ERR_SSL_CLIENT_AUTH_CERT_NEEDED, returns the
+  // SSLCertRequestInfo received. Otherwise, returns nullptr.
+  virtual scoped_refptr<SSLCertRequestInfo> GetCertRequestInfo();
 
   const LoadTimingInfo::ConnectTiming& connect_timing() const {
     return connect_timing_;

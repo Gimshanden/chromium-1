@@ -6,6 +6,7 @@
 #define NET_DNS_CONTEXT_HOST_RESOLVER_H_
 
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "base/macros.h"
@@ -18,25 +19,27 @@ class TickClock;
 
 namespace net {
 
-class DnsClient;
 struct DnsConfig;
+class HostCache;
 class HostResolverManager;
 struct ProcTaskParams;
 class URLRequestContext;
 
-// Wrapper for HostResolverManager that sets per-context parameters for created
-// requests. Except for tests, typically only interacted with through the
-// HostResolver interface.
+// Wrapper for HostResolverManager, expected to be owned by a URLRequestContext,
+// that sets per-URLRequestContext parameters for created requests. Except for
+// tests, typically only interacted with through the HostResolver interface.
 //
 // See HostResolver::Create[...]() methods for construction.
 class NET_EXPORT ContextHostResolver : public HostResolver {
  public:
   // Creates a ContextHostResolver that forwards all of its requests through
-  // |manager|.
-  explicit ContextHostResolver(HostResolverManager* manager);
+  // |manager|. Requests will be cached using |host_cache| if not null.
+  explicit ContextHostResolver(HostResolverManager* manager,
+                               std::unique_ptr<HostCache> host_cache);
   // Same except the created resolver will own its own HostResolverManager.
   explicit ContextHostResolver(
-      std::unique_ptr<HostResolverManager> owned_manager);
+      std::unique_ptr<HostResolverManager> owned_manager,
+      std::unique_ptr<HostCache> host_cache);
   ~ContextHostResolver() override;
 
   // HostResolver methods:
@@ -48,19 +51,9 @@ class NET_EXPORT ContextHostResolver : public HostResolver {
   std::unique_ptr<MdnsListener> CreateMdnsListener(
       const HostPortPair& host,
       DnsQueryType query_type) override;
-  void SetDnsClientEnabled(bool enabled) override;
   HostCache* GetHostCache() override;
-  bool HasCached(base::StringPiece hostname,
-                 HostCache::Entry::Source* source_out,
-                 HostCache::EntryStaleness* stale_out,
-                 bool* secure_out) const override;
   std::unique_ptr<base::Value> GetDnsConfigAsValue() const override;
-  void SetNoIPv6OnWifi(bool no_ipv6_on_wifi) override;
-  bool GetNoIPv6OnWifi() override;
-  void SetDnsConfigOverrides(const DnsConfigOverrides& overrides) override;
   void SetRequestContext(URLRequestContext* request_context) override;
-  const std::vector<DnsConfig::DnsOverHttpsServerConfig>*
-  GetDnsOverHttpsServersForTesting() const override;
   HostResolverManager* GetManagerForTesting() override;
   const URLRequestContext* GetContextForTesting() const override;
 
@@ -71,15 +64,25 @@ class NET_EXPORT ContextHostResolver : public HostResolver {
   size_t CacheSize() const;
 
   void SetProcParamsForTesting(const ProcTaskParams& proc_params);
-  void SetDnsClientForTesting(std::unique_ptr<DnsClient> dns_client);
   void SetBaseDnsConfigForTesting(const DnsConfig& base_config);
   void SetTickClockForTesting(const base::TickClock* tick_clock);
 
+  size_t GetNumActiveRequestsForTesting() const {
+    return active_requests_.size();
+  }
+
  private:
+  class WrappedRequest;
+
   HostResolverManager* const manager_;
   std::unique_ptr<HostResolverManager> owned_manager_;
 
+  // Requests are expected to clear themselves from this set on destruction or
+  // cancellation.
+  std::unordered_set<WrappedRequest*> active_requests_;
+
   URLRequestContext* context_ = nullptr;
+  std::unique_ptr<HostCache> host_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextHostResolver);
 };

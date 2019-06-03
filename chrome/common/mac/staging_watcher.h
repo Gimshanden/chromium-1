@@ -27,6 +27,17 @@ using StagingKeyChangedObserver = void (^)(BOOL stagingKeySet);
 // Returns a boolean indicating whether or not the staging key is set.
 - (BOOL)isStagingKeySet;
 
+// Returns a boolean indicating whether or not the staging key is set. This will
+// not return the correct answer in testing.
++ (BOOL)isStagingKeySet;
+
+// Returns the path to the staged update, or nil if there is no staging key set.
+- (NSString*)stagingLocation;
+
+// Returns the path to the staged update, or nil if there is no staging key set.
+// This will not return the correct answer in testing.
++ (NSString*)stagingLocation;
+
 // Sleeps until the staging key is clear. If there is no staging key set,
 // returns immediately.
 - (void)waitForStagingKeyToClear;
@@ -41,21 +52,19 @@ using StagingKeyChangedObserver = void (^)(BOOL stagingKeySet);
 @interface CrStagingKeyWatcher (TestingInterface)
 
 // The designated initializer. Allows a non-default NSUserDefaults to be
-// specified.
+// specified. Also allows the use of KVO to be disabled to allow the macOS 10.11
+// and earlier code path to be tested on 10.12 and later.
 - (instancetype)initWithUserDefaults:(NSUserDefaults*)defaults
-                         pollingTime:(NSTimeInterval)pollingTime;
-
-// KVO works for NSUserDefaults on 10.12 and later. This method turns off the
-// use of KVO to allow the macOS 10.11 and earlier code path to be tested on
-// 10.12 and later.
-- (void)disableKVOForTesting;
+                         pollingTime:(NSTimeInterval)pollingTime
+                disableKVOForTesting:(BOOL)disableKVOForTesting;
 
 // Returns whether the last call to -waitForStagingKeyToClear blocked or
 // returned immediately.
 - (BOOL)lastWaitWasBlockedForTesting;
 
 // Returns the NSUserDefaults key that is used to indicate staging. The value to
-// be used is an array of strings, each string being a file path to the bundle.
+// be used is a dictionary of strings, with the key being the file path to the
+// existing bundle, and the value being the file path to the staged bundle.
 + (NSString*)stagingKeyForTesting;
 
 @end

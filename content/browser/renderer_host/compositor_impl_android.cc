@@ -57,7 +57,7 @@
 #include "components/viz/service/display/output_surface.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
-#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator_android.h"
+#include "components/viz/service/display_embedder/overlay_candidate_validator_android.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/direct_layer_tree_frame_sink.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
@@ -72,6 +72,7 @@
 #include "content/public/browser/android/compositor_client.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/gpu_stream_constants.h"
 #include "gpu/command_buffer/client/context_support.h"
@@ -93,7 +94,7 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/ca_layer_params.h"
 #include "ui/gfx/swap_result.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 #include "ui/latency/latency_tracker.h"
 
 namespace content {
@@ -102,11 +103,37 @@ namespace {
 
 static const char* kBrowser = "Browser";
 
+gfx::OverlayTransform RotationToDisplayTransform(
+    display::Display::Rotation rotation) {
+  // Note that the angle provided by |rotation| here is the opposite direction
+  // of the physical rotation of the device, which is the space in which the UI
+  // prepares the scene (see
+  // https://developer.android.com/reference/android/view/Display#getRotation()
+  // for details).
+  //
+  // The rotation which needs to be applied by the display compositor to allow
+  // the buffers produced by it to be used directly by the system compositor
+  // needs to be the inverse of this rotation. Since display::Rotation is in
+  // clockwise direction while gfx::OverlayTransform is anti-clockwise, directly
+  // mapping them below performs this inversion.
+  switch (rotation) {
+    case display::Display::ROTATE_0:
+      return gfx::OVERLAY_TRANSFORM_NONE;
+    case display::Display::ROTATE_90:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_90;
+    case display::Display::ROTATE_180:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_180;
+    case display::Display::ROTATE_270:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_270;
+  }
+  NOTREACHED();
+  return gfx::OVERLAY_TRANSFORM_NONE;
+}
+
 // These functions are called based on application visibility status.
 void SendOnBackgroundedToGpuService() {
   content::GpuProcessHost::CallOnIO(
-      content::GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
-      false /* force_create */,
+      content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindRepeating([](content::GpuProcessHost* host) {
         if (host) {
           host->gpu_service()->OnBackgrounded();
@@ -116,8 +143,7 @@ void SendOnBackgroundedToGpuService() {
 
 void SendOnForegroundedToGpuService() {
   content::GpuProcessHost::CallOnIO(
-      content::GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
-      false /* force_create */,
+      content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindRepeating([](content::GpuProcessHost* host) {
         if (host) {
           host->gpu_service()->OnForegrounded();
@@ -144,34 +170,6 @@ class SingleThreadTaskGraphRunner : public cc::SingleThreadTaskGraphRunner {
   }
 
   ~SingleThreadTaskGraphRunner() override { Shutdown(); }
-};
-
-// An implementation of HostDisplayClient which handles swap callbacks.
-class AndroidHostDisplayClient : public viz::HostDisplayClient {
- public:
-  explicit AndroidHostDisplayClient(
-      base::RepeatingCallback<void(const gfx::Size&)> on_swap,
-      base::RepeatingCallback<void(gpu::ContextResult)>
-          on_context_creation_failure)
-      : HostDisplayClient(gfx::kNullAcceleratedWidget),
-        on_swap_(std::move(on_swap)),
-        on_context_creation_failure_(std::move(on_context_creation_failure)) {}
-
-  // viz::mojom::DisplayClient implementation:
-  void DidCompleteSwapWithSize(const gfx::Size& pixel_size) override {
-    if (on_swap_)
-      on_swap_.Run(pixel_size);
-  }
-  void OnFatalOrSurfaceContextCreationFailure(
-      gpu::ContextResult context_result) override {
-    if (on_context_creation_failure_)
-      on_context_creation_failure_.Run(context_result);
-  }
-
- private:
-  base::RepeatingCallback<void(const gfx::Size&)> on_swap_;
-  base::RepeatingCallback<void(gpu::ContextResult)>
-      on_context_creation_failure_;
 };
 
 class CompositorDependencies {
@@ -294,8 +292,7 @@ class CompositorDependencies {
     // Next, notify the GPU process to do background processing, which will
     // lose all renderer contexts.
     content::GpuProcessHost::CallOnIO(
-        content::GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
-        false /* force_create */,
+        content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
         base::BindRepeating([](content::GpuProcessHost* host) {
           if (host) {
             host->gpu_service()->OnBackgroundCleanup();
@@ -431,7 +428,7 @@ class AndroidOutputSurface : public viz::OutputSurface {
       : viz::OutputSurface(std::move(context_provider)),
         swap_buffers_callback_(std::move(swap_buffers_callback)),
         overlay_candidate_validator_(
-            new viz::CompositorOverlayCandidateValidatorAndroid()),
+            new viz::OverlayCandidateValidatorAndroid()),
         weak_ptr_factory_(this) {
     capabilities_.max_frames_pending = kMaxDisplaySwapBuffers;
   }
@@ -482,12 +479,12 @@ class AndroidOutputSurface : public viz::OutputSurface {
                bool use_stencil) override {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   }
 
-  viz::OverlayCandidateValidator* GetOverlayCandidateValidator()
-      const override {
-    return overlay_candidate_validator_.get();
+  std::unique_ptr<viz::OverlayCandidateValidator>
+  TakeOverlayCandidateValidator() override {
+    return std::move(overlay_candidate_validator_);
   }
 
   bool IsDisplayedAsOverlayPlane() const override { return false; }
@@ -505,6 +502,14 @@ class AndroidOutputSurface : public viz::OutputSurface {
   }
 
   unsigned UpdateGpuFence() override { return 0; }
+
+  void SetUpdateVSyncParametersCallback(
+      viz::UpdateVSyncParametersCallback callback) override {}
+
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
+  gfx::OverlayTransform GetDisplayTransform() override {
+    return gfx::OVERLAY_TRANSFORM_NONE;
+  }
 
  private:
   gpu::CommandBufferProxyImpl* GetCommandBufferProxy() {
@@ -541,6 +546,44 @@ class AndroidOutputSurface : public viz::OutputSurface {
 static bool g_initialized = false;
 
 }  // anonymous namespace
+
+// An implementation of HostDisplayClient which handles swap callbacks.
+class CompositorImpl::AndroidHostDisplayClient : public viz::HostDisplayClient {
+ public:
+  explicit AndroidHostDisplayClient(CompositorImpl* compositor)
+      : HostDisplayClient(gfx::kNullAcceleratedWidget),
+        compositor_(compositor) {}
+
+  // viz::mojom::DisplayClient implementation:
+  void DidCompleteSwapWithSize(const gfx::Size& pixel_size) override {
+    compositor_->DidSwapBuffers(pixel_size);
+  }
+  void OnFatalOrSurfaceContextCreationFailure(
+      gpu::ContextResult context_result) override {
+    compositor_->OnFatalOrSurfaceContextCreationFailure(context_result);
+  }
+  void SetPreferredRefreshRate(float refresh_rate) override {
+    if (compositor_->root_window_)
+      compositor_->root_window_->SetPreferredRefreshRate(refresh_rate);
+  }
+
+ private:
+  CompositorImpl* compositor_;
+};
+
+class CompositorImpl::ScopedCachedBackBuffer {
+ public:
+  ScopedCachedBackBuffer(const viz::FrameSinkId& root_sink_id) {
+    cache_id_ =
+        GetHostFrameSinkManager()->CacheBackBufferForRootSink(root_sink_id);
+  }
+  ~ScopedCachedBackBuffer() {
+    GetHostFrameSinkManager()->EvictCachedBackBuffer(cache_id_);
+  }
+
+ private:
+  uint32_t cache_id_;
+};
 
 // static
 Compositor* Compositor::Create(CompositorClient* client,
@@ -617,7 +660,7 @@ CompositorImpl::~CompositorImpl() {
   display::Screen::GetScreen()->RemoveObserver(this);
   DetachRootWindow();
   // Clean-up any surface references.
-  SetSurface(NULL);
+  SetSurface(nullptr, false);
 }
 
 void CompositorImpl::DetachRootWindow() {
@@ -682,7 +725,8 @@ void CompositorImpl::SetRootLayer(scoped_refptr<cc::Layer> root_layer) {
   }
 }
 
-void CompositorImpl::SetSurface(jobject surface) {
+void CompositorImpl::SetSurface(jobject surface,
+                                bool can_be_used_with_surface_control) {
   JNIEnv* env = base::android::AttachCurrentThread();
   gpu::GpuSurfaceTracker* tracker = gpu::GpuSurfaceTracker::Get();
 
@@ -709,7 +753,8 @@ void CompositorImpl::SetSurface(jobject surface) {
     ANativeWindow_acquire(window);
     // Register first, SetVisible() might create a LayerTreeFrameSink.
     surface_handle_ = tracker->AddSurfaceForNativeWidget(
-        gpu::GpuSurfaceTracker::SurfaceRecord(window, surface));
+        gpu::GpuSurfaceTracker::SurfaceRecord(
+            window, surface, can_be_used_with_surface_control));
     SetVisible(true);
     ANativeWindow_release(window);
   }
@@ -1134,15 +1179,25 @@ void CompositorImpl::RemoveChildFrameSink(
 
 void CompositorImpl::OnDisplayMetricsChanged(const display::Display& display,
                                              uint32_t changed_metrics) {
-  if (changed_metrics & display::DisplayObserver::DisplayMetric::
-                            DISPLAY_METRIC_DEVICE_SCALE_FACTOR &&
-      display.id() == display::Screen::GetScreen()
+  if (display.id() != display::Screen::GetScreen()
                           ->GetDisplayNearestWindow(root_window_)
                           .id()) {
+    return;
+  }
+
+  if (changed_metrics & display::DisplayObserver::DisplayMetric::
+                            DISPLAY_METRIC_DEVICE_SCALE_FACTOR) {
     // TODO(ccameron): This is transiently incorrect -- |size_| must be
     // recalculated here as well. Is the call in SetWindowBounds sufficient?
     host_->SetViewportSizeAndScale(size_, root_window_->GetDipScale(),
                                    GenerateLocalSurfaceId());
+  }
+
+  if ((changed_metrics &
+       display::DisplayObserver::DisplayMetric::DISPLAY_METRIC_ROTATION) &&
+      display_private_) {
+    display_private_->SetDisplayTransformHint(
+        RotationToDisplayTransform(display.rotation()));
   }
 }
 
@@ -1182,6 +1237,12 @@ void CompositorImpl::OnUpdateRefreshRate(float refresh_rate) {
     display_private_->UpdateRefreshRate(refresh_rate);
 }
 
+void CompositorImpl::OnUpdateSupportedRefreshRates(
+    const std::vector<float>& supported_refresh_rates) {
+  if (display_private_)
+    display_private_->SetSupportedRefreshRates(supported_refresh_rates);
+}
+
 void CompositorImpl::InitializeVizLayerTreeFrameSink(
     scoped_refptr<ws::ContextProviderCommandBuffer> context_provider) {
   DCHECK(enable_viz_);
@@ -1203,26 +1264,22 @@ void CompositorImpl::InitializeVizLayerTreeFrameSink(
   viz::mojom::CompositorFrameSinkClientRequest client_request =
       mojo::MakeRequest(&root_params->compositor_frame_sink_client);
   root_params->display_private = mojo::MakeRequest(&display_private_);
-  display_client_ = std::make_unique<AndroidHostDisplayClient>(
-      base::BindRepeating(&CompositorImpl::DidSwapBuffers,
-                          weak_factory_.GetWeakPtr()),
-      base::BindRepeating(
-          &CompositorImpl::OnFatalOrSurfaceContextCreationFailure,
-          weak_factory_.GetWeakPtr()));
+  display_client_ = std::make_unique<AndroidHostDisplayClient>(this);
   root_params->display_client =
       display_client_->GetBoundPtr(task_runner).PassInterface();
+
+  const auto& display_props =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(root_window_);
 
   viz::RendererSettings renderer_settings;
   renderer_settings.partial_swap_enabled = true;
   renderer_settings.allow_antialiasing = false;
   renderer_settings.highp_threshold_min = 2048;
   renderer_settings.requires_alpha_channel = requires_alpha_channel_;
-  renderer_settings.initial_screen_size =
-      display::Screen::GetScreen()
-          ->GetDisplayNearestWindow(root_window_)
-          .GetSizeInPixel();
+  renderer_settings.initial_screen_size = display_props.GetSizeInPixel();
   renderer_settings.use_skia_renderer = features::IsUsingSkiaRenderer();
   renderer_settings.color_space = display_color_space_;
+
   root_params->frame_sink_id = frame_sink_id_;
   root_params->widget = surface_handle_;
   root_params->gpu_compositing = true;
@@ -1255,6 +1312,10 @@ void CompositorImpl::InitializeVizLayerTreeFrameSink(
   display_private_->SetDisplayColorSpace(display_color_space_,
                                          display_color_space_);
   display_private_->SetVSyncPaused(vsync_paused_);
+  display_private_->SetSupportedRefreshRates(
+      root_window_->GetSupportedRefreshRates());
+  display_private_->SetDisplayTransformHint(
+      RotationToDisplayTransform(display_props.rotation()));
 }
 
 viz::LocalSurfaceIdAllocation CompositorImpl::GenerateLocalSurfaceId() {
@@ -1273,13 +1334,24 @@ void CompositorImpl::OnFatalOrSurfaceContextCreationFailure(
       << "Fatal error making Gpu context";
 
   if (context_result == gpu::ContextResult::kSurfaceFailure) {
-    SetSurface(nullptr);
+    SetSurface(nullptr, false);
     client_->RecreateSurface();
   }
 }
 
 void CompositorImpl::OnFirstSurfaceActivation(const viz::SurfaceInfo& info) {
   NOTREACHED();
+}
+
+void CompositorImpl::CacheBackBufferForCurrentSurface() {
+  if (window_ && display_private_) {
+    cached_back_buffer_ =
+        std::make_unique<ScopedCachedBackBuffer>(frame_sink_id_);
+  }
+}
+
+void CompositorImpl::EvictCachedBackBuffer() {
+  cached_back_buffer_.reset();
 }
 
 }  // namespace content

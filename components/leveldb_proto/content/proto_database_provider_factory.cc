@@ -20,10 +20,14 @@ ProtoDatabaseProviderFactory* ProtoDatabaseProviderFactory::GetInstance() {
 
 // static
 ProtoDatabaseProvider* ProtoDatabaseProviderFactory::GetForKey(
-    SimpleFactoryKey* key,
-    PrefService* prefs) {
+    SimpleFactoryKey* key) {
   return static_cast<ProtoDatabaseProvider*>(
-      GetInstance()->GetServiceForKey(key, prefs, true));
+      GetInstance()->GetServiceForKey(key, true));
+}
+
+// static
+void ProtoDatabaseProviderFactory::RemoveKeyForTesting(SimpleFactoryKey* key) {
+  GetInstance()->SimpleContextDestroyed(key);
 }
 
 ProtoDatabaseProviderFactory::ProtoDatabaseProviderFactory()
@@ -34,9 +38,8 @@ ProtoDatabaseProviderFactory::~ProtoDatabaseProviderFactory() = default;
 
 std::unique_ptr<KeyedService>
 ProtoDatabaseProviderFactory::BuildServiceInstanceFor(
-    SimpleFactoryKey* key,
-    PrefService* prefs) const {
-  return std::make_unique<ProtoDatabaseProvider>(key->path());
+    SimpleFactoryKey* key) const {
+  return std::make_unique<ProtoDatabaseProvider>(key->GetPath());
 }
 
 }  // namespace leveldb_proto

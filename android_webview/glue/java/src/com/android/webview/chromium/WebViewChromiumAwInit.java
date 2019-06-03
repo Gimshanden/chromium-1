@@ -24,6 +24,7 @@ import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwCookieManager;
+import org.chromium.android_webview.AwFirebaseConfig;
 import org.chromium.android_webview.AwNetworkChangeNotifierRegistrationPolicy;
 import org.chromium.android_webview.AwProxyController;
 import org.chromium.android_webview.AwQuotaManagerBridge;
@@ -39,6 +40,7 @@ import org.chromium.base.BuildConfig;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FieldTrialList;
+import org.chromium.base.JNIUtils;
 import org.chromium.base.PathService;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
@@ -133,6 +135,10 @@ public class WebViewChromiumAwInit {
             }
 
             final Context context = ContextUtils.getApplicationContext();
+
+            BuildInfo.setFirebaseAppId(AwFirebaseConfig.getFirebaseAppId());
+
+            JNIUtils.setClassLoader(WebViewChromiumAwInit.class.getClassLoader());
 
             // We are rewriting Java resources in the background.
             // NOTE: Any reference to Java resources will cause a crash.
@@ -459,7 +465,14 @@ public class WebViewChromiumAwInit {
                 return;
             }
 
-            PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> FieldTrialList.logActiveTrials());
+            PostTask.postTask(UiThreadTaskTraits.BEST_EFFORT, () -> {
+                // TODO(ntfschr): CommandLine can change at any time. For simplicity, only log it
+                // once during startup.
+                AwContentsStatics.logCommandLineForDebugging();
+                // Field trials can be activated at any time. We'll continue logging them as they're
+                // activated.
+                FieldTrialList.logActiveTrials();
+            });
         });
     }
 

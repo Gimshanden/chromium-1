@@ -338,6 +338,7 @@ bool TestRecipeReplayer::StartWebPageReplayServer(
 
   args.push_back(base::StringPrintf("--http_port=%d", kHostHttpPort));
   args.push_back(base::StringPrintf("--https_port=%d", kHostHttpsPort));
+  args.push_back("--serve_response_in_chronological_sequence");
   args.push_back(base::StringPrintf(
       "--inject_scripts=%s,%s",
       FilePathToUTF8(src_dir.AppendASCII("third_party")
@@ -425,7 +426,6 @@ bool TestRecipeReplayer::RunWebPageReplayCmd(
                                                   .AppendASCII("catapult")
                                                   .AppendASCII("telemetry")
                                                   .AppendASCII("telemetry")
-                                                  .AppendASCII("internal")
                                                   .AppendASCII("bin");
   options.current_directory = web_page_replay_binary_dir;
 

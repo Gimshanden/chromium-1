@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind_test_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/chromeos/mock_ime_candidate_window_handler.h"
@@ -88,6 +89,10 @@ class TestableInputMethodChromeOS : public InputMethodChromeOS {
     }
     return details;
   }
+  void CommitText(const std::string& text) override {
+    InputMethodChromeOS::CommitText(text);
+    text_committed_ = text;
+  }
 
   void ResetCallCount() {
     process_key_event_post_ime_call_count_ = 0;
@@ -101,6 +106,8 @@ class TestableInputMethodChromeOS : public InputMethodChromeOS {
     return process_key_event_post_ime_call_count_;
   }
 
+  const std::string& text_committed() const { return text_committed_; }
+
   // Change access rights for testing.
   using InputMethodChromeOS::ExtractCompositionText;
   using InputMethodChromeOS::ResetContext;
@@ -108,6 +115,7 @@ class TestableInputMethodChromeOS : public InputMethodChromeOS {
  private:
   ProcessKeyEventPostIMEArgs process_key_event_post_ime_args_;
   int process_key_event_post_ime_call_count_;
+  std::string text_committed_;
 };
 
 class SetSurroundingTextVerifier {
@@ -387,6 +395,8 @@ class InputMethodChromeOSTest : public internal::InputMethodDelegate,
   bool stop_propagation_post_ime_;
 
   TestInputMethodManager* input_method_manager_;
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodChromeOSTest);
 };

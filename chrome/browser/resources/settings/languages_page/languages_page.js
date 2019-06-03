@@ -27,6 +27,7 @@ Polymer({
   is: 'settings-languages-page',
 
   behaviors: [
+    I18nBehavior,
     PrefsBehavior,
   ],
 
@@ -60,6 +61,9 @@ Polymer({
         return [];
       },
     },
+
+    /** @private {string|undefined} */
+    languageSyncedWithBrowserEnableSpellchecking_: String,
     // </if>
 
     /**
@@ -68,6 +72,12 @@ Polymer({
      * @private
      */
     detailLanguage_: Object,
+
+    /** @private */
+    hideSpellCheckLanguages_: {
+      type: Boolean,
+      value: false,
+    },
 
     /**
      * Whether the language settings list is opened.
@@ -90,14 +100,12 @@ Polymer({
         if (settings.routes.EDIT_DICTIONARY) {
           map.set(
               settings.routes.EDIT_DICTIONARY.path,
-              '#spellCheckCollapse .subpage-arrow button');
+              '#spellCheckSubpageTrigger');
         }
         // </if>
         // <if expr="chromeos">
         if (settings.routes.INPUT_METHODS) {
-          map.set(
-              settings.routes.INPUT_METHODS.path,
-              '#inputMethodsCollapse .subpage-arrow button');
+          map.set(settings.routes.INPUT_METHODS.path, '#manageInputMethods');
         }
         // </if>
         return map;
@@ -219,11 +227,17 @@ Polymer({
 
   /**
    * @param {string} languageCode The language code identifying a language.
-   * @return {boolean} True iff this language is the one used when translating
-   *     pages.
+   * @param {string} translateTarget The target language.
+   * @return {string} 'target' if |languageCode| matches the target language,
+   'non-target' otherwise.
    */
-  isTranslationTarget_: function(languageCode) {
-    return languageCode == this.languages.translateTarget;
+  isTranslationTarget_: function(languageCode, translateTarget) {
+    if (this.languageHelper.convertLanguageCodeForTranslate(languageCode) ==
+        translateTarget) {
+      return 'target';
+    } else {
+      return 'non-target';
+    }
   },
 
   // <if expr="chromeos">
@@ -266,7 +280,7 @@ Polymer({
     // Taps on the button are handled in onInputMethodOptionsTap_.
     // TODO(dschuyler): The row has two operations that are not clearly
     // delineated. crbug.com/740691
-    if (e.target.tagName == 'BUTTON') {
+    if (e.target.tagName == 'CR-ICON-BUTTON') {
       return;
     }
 
@@ -541,12 +555,57 @@ Polymer({
       this.notifyPath(
           `spellCheckLanguages_.${i}.downloadDictionaryFailureCount`);
     }
+
+    if (this.spellCheckLanguages_.length === 0) {
+      // If there are no supported spell check languages, automatically turn
+      // off spell check to indicate no spell check will happen.
+      this.setPrefValue('browser.enable_spellchecking', false);
+    }
+
+    if (this.spellCheckLanguages_.length === 1) {
+      const singleLanguage = this.spellCheckLanguages_[0];
+
+      // Hide list of spell check languages if there is only 1 language
+      // and we don't need to display any errors for that language
+      this.hideSpellCheckLanguages_ = !singleLanguage.isManaged &&
+          singleLanguage.downloadDictionaryFailureCount === 0;
+
+      // Turn off spell check if spell check for the 1 remaining language is off
+      if (!singleLanguage.spellCheckEnabled) {
+        this.setPrefValue('browser.enable_spellchecking', false);
+        this.languageSyncedWithBrowserEnableSpellchecking_ =
+            singleLanguage.language.code;
+      }
+
+      // Undo the sync if spell check appeared as turned off for the language
+      // because a download was still in progress. This only occurs when
+      // Settings is loaded for the very first time and dictionaries have not
+      // been downloaded yet.
+      if (this.languageSyncedWithBrowserEnableSpellchecking_ ===
+              singleLanguage.language.code &&
+          singleLanguage.spellCheckEnabled) {
+        this.setPrefValue('browser.enable_spellchecking', true);
+      }
+    } else {
+      this.hideSpellCheckLanguages_ = false;
+      this.languageSyncedWithBrowserEnableSpellchecking_ = undefined;
+    }
   },
 
   /** @private */
   updateSpellcheckEnabled_: function() {
     if (this.prefs == undefined) {
       return;
+    }
+
+    // If there is only 1 language, we hide the list of languages so users
+    // are unable to toggle on/off spell check specifically for the 1 language.
+    // Therefore, we need to treat the toggle for `browser.enable_spellchecking`
+    // as the toggle for the 1 language as well.
+    if (this.spellCheckLanguages_.length === 1) {
+      this.languageHelper.toggleSpellCheck(
+          this.spellCheckLanguages_[0].language.code,
+          !!this.getPref('browser.enable_spellchecking').value);
     }
 
     // <if expr="_google_chrome">
@@ -570,10 +629,10 @@ Polymer({
   },
 
   /**
-   * Handler for enabling or disabling spell check.
+   * Handler for enabling or disabling spell check for a specific language.
    * @param {!{target: Element, model: !{item: !LanguageState}}} e
    */
-  onSpellCheckChange_: function(e) {
+  onSpellCheckLanguageChange_: function(e) {
     const item = e.model.item;
     if (!item.language.supportsSpellcheck) {
       return;
@@ -601,7 +660,7 @@ Polymer({
    */
   onSpellCheckNameClick_: function(e) {
     assert(!this.isSpellCheckNameClickDisabled_(e.model.item));
-    this.onSpellCheckChange_(e);
+    this.onSpellCheckLanguageChange_(e);
   },
 
   /**
@@ -632,6 +691,20 @@ Polymer({
       return 'selected';
     }
     return '';
+  },
+
+  /**
+   * @return {string|undefined}
+   * @private
+   */
+  getSpellCheckSubLabel_: function() {
+    // <if expr="not is_macosx">
+    if (this.spellCheckLanguages_.length === 0) {
+      return this.i18n('spellCheckDisabledReason');
+    }
+    // </if>
+
+    return undefined;
   },
 
   // <if expr="chromeos">

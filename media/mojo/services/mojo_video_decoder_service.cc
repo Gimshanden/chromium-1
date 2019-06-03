@@ -124,8 +124,8 @@ void MojoVideoDecoderService::Construct(
     mojom::VideoFrameHandleReleaserRequest video_frame_handle_releaser,
     mojo::ScopedDataPipeConsumerHandle decoder_buffer_pipe,
     mojom::CommandBufferIdPtr command_buffer_id,
-    const gfx::ColorSpace& target_color_space,
-    mojom::VideoDecoderImplementation implementation) {
+    VideoDecoderImplementation implementation,
+    const gfx::ColorSpace& target_color_space) {
   DVLOG(1) << __func__;
   TRACE_EVENT0("media", "MojoVideoDecoderService::Construct");
 
@@ -151,9 +151,10 @@ void MojoVideoDecoderService::Construct(
 
   decoder_ = mojo_media_client_->CreateVideoDecoder(
       task_runner, media_log_.get(), std::move(command_buffer_id),
+      implementation,
       base::BindRepeating(
           &MojoVideoDecoderService::OnDecoderRequestedOverlayInfo, weak_this_),
-      target_color_space, implementation);
+      target_color_space);
 }
 
 void MojoVideoDecoderService::Initialize(const VideoDecoderConfig& config,
@@ -312,9 +313,8 @@ void MojoVideoDecoderService::OnDecoderReset() {
   std::move(reset_cb_).Run();
 }
 
-void MojoVideoDecoderService::OnDecoderOutput(
-    const scoped_refptr<VideoFrame>& frame) {
-  DVLOG(3) << __func__;
+void MojoVideoDecoderService::OnDecoderOutput(scoped_refptr<VideoFrame> frame) {
+  DVLOG(3) << __func__ << " pts=" << frame->timestamp().InMilliseconds();
   DCHECK(client_);
   DCHECK(decoder_);
   TRACE_EVENT1("media", "MojoVideoDecoderService::OnDecoderOutput",
@@ -335,7 +335,8 @@ void MojoVideoDecoderService::OnDecoderOutput(
     release_token = releaser->RegisterVideoFrame(frame);
   }
 
-  client_->OnVideoFrameDecoded(frame, decoder_->CanReadWithoutStalling(),
+  client_->OnVideoFrameDecoded(std::move(frame),
+                               decoder_->CanReadWithoutStalling(),
                                std::move(release_token));
 }
 

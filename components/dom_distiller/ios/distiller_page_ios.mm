@@ -17,9 +17,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "ios/web/public/browser_state.h"
+#import "ios/web/public/deprecated/crw_js_injection_manager.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
@@ -30,7 +30,7 @@
 
 namespace {
 
-// This is duplicated here from ios/web/web_state/ui/web_view_js_utils.mm in
+// This is duplicated here from ios/web/js_messaging/web_view_js_utils.mm in
 // order to handle numbers. The dom distiller proto expects integers and the
 // generated JSON deserializer does not accept doubles in the place of ints.
 // However WKWebView only returns "numbers." However, here the proto expects

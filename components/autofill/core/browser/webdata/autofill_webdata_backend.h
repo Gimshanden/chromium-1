@@ -31,9 +31,6 @@ class AutofillWebDataBackend {
   virtual void RemoveObserver(
       AutofillWebDataServiceObserverOnDBSequence* observer) = 0;
 
-  // Remove expired elements from the database and commit if needed.
-  virtual void RemoveExpiredFormElements() = 0;
-
   // Commits the currently open transaction in the database. Should be only used
   // by parties that talk directly to the database and not through the
   // WebDatabase backend (notably Sync reacting to remote changes coming from
@@ -58,6 +55,12 @@ class AutofillWebDataBackend {
   // NOTE: This method is intended to be called from the DB sequence. The UI
   // sequence notifications are asynchronous.
   virtual void NotifyOfMultipleAutofillChanges() = 0;
+
+  // Notifies listeners on the UI sequence that conversion of server profiles
+  // into local profiles is completed.
+  // NOTE: This method is intended to be called from the DB sequence. The UI
+  // sequence notifications are asynchronous.
+  virtual void NotifyOfAddressConversionCompleted() = 0;
 
   // Notifies listeners on the UI sequence that sync has started for
   // |model_type|.

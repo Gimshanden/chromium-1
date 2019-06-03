@@ -42,6 +42,16 @@ bool LayoutNGMixin<Base>::IsOfType(LayoutObject::LayoutObjectType type) const {
 }
 
 template <typename Base>
+void LayoutNGMixin<Base>::StyleDidChange(StyleDifference diff,
+                                         const ComputedStyle* old_style) {
+  Base::StyleDidChange(diff, old_style);
+
+  if (diff.NeedsCollectInlines()) {
+    Base::SetNeedsCollectInlines();
+  }
+}
+
+template <typename Base>
 NGInlineNodeData* LayoutNGMixin<Base>::TakeNGInlineNodeData() {
   return ng_inline_node_data_.release();
 }
@@ -73,7 +83,7 @@ const NGPhysicalBoxFragment* LayoutNGMixin<Base>::CurrentFragment() const {
   if (!cached_layout_result)
     return nullptr;
 
-  return To<NGPhysicalBoxFragment>(cached_layout_result->PhysicalFragment());
+  return &To<NGPhysicalBoxFragment>(cached_layout_result->PhysicalFragment());
 }
 
 template <typename Base>
@@ -142,7 +152,7 @@ void LayoutNGMixin<Base>::AddScrollingOverflowFromChildren() {
                                Base::StyleRef().Direction());
   }
 
-  NGPhysicalOffsetRect children_overflow;
+  PhysicalRect children_overflow;
 
   // Only add overflow for fragments NG has not reflected into Legacy.
   // These fragments are:
@@ -152,7 +162,7 @@ void LayoutNGMixin<Base>::AddScrollingOverflowFromChildren() {
   // correctly. NG is not yet transform-aware. crbug.com/855965
   if (!physical_fragment->Children().IsEmpty()) {
     for (const auto& child : physical_fragment->Children()) {
-      NGPhysicalOffsetRect child_scrollable_overflow;
+      PhysicalRect child_scrollable_overflow;
       if (child->IsOutOfFlowPositioned()) {
         child_scrollable_overflow =
             child->ScrollableOverflowForPropagation(this);
@@ -179,15 +189,25 @@ void LayoutNGMixin<Base>::AddScrollingOverflowFromChildren() {
 
 template <typename Base>
 void LayoutNGMixin<Base>::AddOutlineRects(
-    Vector<LayoutRect>& rects,
-    const LayoutPoint& additional_offset,
+    Vector<PhysicalRect>& rects,
+    const PhysicalOffset& additional_offset,
     NGOutlineType include_block_overflows) const {
   if (PaintFragment()) {
-    PaintFragment()->AddSelfOutlineRect(&rects, additional_offset,
-                                        include_block_overflows);
+    PaintFragment()->AddSelfOutlineRects(&rects, additional_offset,
+                                         include_block_overflows);
   } else {
     Base::AddOutlineRects(rects, additional_offset, include_block_overflows);
   }
+}
+
+template <typename Base>
+bool LayoutNGMixin<Base>::PaintedOutputOfObjectHasNoEffectRegardlessOfSize()
+    const {
+  // LayoutNGMixin is in charge of paint invalidation of the first line.
+  if (PaintFragment())
+    return false;
+
+  return Base::PaintedOutputOfObjectHasNoEffectRegardlessOfSize();
 }
 
 // Retrieve NGBaseline from the current fragment.
@@ -229,37 +249,6 @@ LayoutUnit LayoutNGMixin<Base>::InlineBlockBaseline(
 }
 
 template <typename Base>
-bool LayoutNGMixin<Base>::AreCachedLinesValidFor(
-    const NGConstraintSpace& new_space) const {
-  const NGLayoutResult* cached_layout_result = Base::GetCachedLayoutResult();
-  if (!cached_layout_result)
-    return false;
-
-  const NGConstraintSpace& old_space =
-      cached_layout_result->GetConstraintSpaceForCaching();
-
-  if (new_space.AvailableSize().inline_size !=
-      old_space.AvailableSize().inline_size)
-    return false;
-
-  // Floats in either cached or new constraint space prevents reusing cached
-  // lines.
-  if (new_space.HasFloats() || old_space.HasFloats())
-    return false;
-
-  // Any floats might need to move, causing lines to wrap differently, needing
-  // re-layout.
-  if (!cached_layout_result->ExclusionSpace().IsEmpty())
-    return false;
-
-  // Propagating OOF needs re-layout.
-  if (!cached_layout_result->OutOfFlowPositionedDescendants().IsEmpty())
-    return false;
-
-  return true;
-}
-
-template <typename Base>
 void LayoutNGMixin<Base>::SetPaintFragment(
     const NGBlockBreakToken* break_token,
     scoped_refptr<const NGPhysicalFragment> fragment) {
@@ -268,36 +257,15 @@ void LayoutNGMixin<Base>::SetPaintFragment(
   scoped_refptr<NGPaintFragment>* current =
       NGPaintFragment::Find(&paint_fragment_, break_token);
   DCHECK(current);
-  const NGPaintFragment* old = current->get();
   if (fragment) {
     *current = NGPaintFragment::Create(std::move(fragment), break_token,
                                        std::move(*current));
-  } else {
+    // |NGPaintFragment::Create()| calls |SlowSetPaintingLayerNeedsRepaint()|.
+  } else if (*current) {
+    DCHECK_EQ(this, (*current)->GetLayoutObject());
     *current = nullptr;
-  }
-
-  if (old && old != current->get()) {
-    // Painting layer needs repaint when a DisplayItemClient is destroyed.
-    // TODO(kojii): We need this here for now, but this should be handled
-    // differently for better efficiency, in pre-paint tree walk to walk
-    // fragment tree, or before layout. crbug.com/941228
     ObjectPaintInvalidator(*this).SlowSetPaintingLayerNeedsRepaint();
   }
-}
-
-template <typename Base>
-void LayoutNGMixin<Base>::InvalidateDisplayItemClients(
-    PaintInvalidationReason invalidation_reason) const {
-  if (NGPaintFragment* fragment = PaintFragment()) {
-    // TODO(koji): Should be in the PaintInvalidator, possibly with more logic
-    // ported from BlockFlowPaintInvalidator.
-    ObjectPaintInvalidator object_paint_invalidator(*this);
-    object_paint_invalidator.InvalidateDisplayItemClient(*fragment,
-                                                         invalidation_reason);
-    return;
-  }
-
-  LayoutBlockFlow::InvalidateDisplayItemClients(invalidation_reason);
 }
 
 template <typename Base>
@@ -360,7 +328,7 @@ PositionWithAffinity LayoutNGMixin<Base>::PositionForPoint(
     return Base::CreatePositionWithAffinity(0);
 
   const PositionWithAffinity ng_position =
-      PaintFragment()->PositionForPoint(NGPhysicalOffset(point));
+      PaintFragment()->PositionForPoint(PhysicalOffset(point));
   if (ng_position.IsNotNull())
     return ng_position;
   return Base::CreatePositionWithAffinity(0);

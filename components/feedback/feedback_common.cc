@@ -66,7 +66,8 @@ std::string LogsToString(const FeedbackCommon::SystemLogsMap& sys_info) {
 
     // We must avoid adding the crash IDs to the system_logs.txt file for
     // privacy reasons. They should just be part of the product specific data.
-    if (key == feedback::FeedbackReport::kCrashReportIdsKey)
+    if (key == feedback::FeedbackReport::kCrashReportIdsKey ||
+        key == feedback::FeedbackReport::kAllCrashReportIdsKey)
       continue;
 
     if (value.find("\n") != std::string::npos) {
@@ -131,8 +132,8 @@ void FeedbackCommon::AddFile(const std::string& filename, std::string data) {
   attachments_.emplace_back(filename, std::move(data));
 }
 
-void FeedbackCommon::AddLog(const std::string& name, const std::string& value) {
-  logs_[name] = value;
+void FeedbackCommon::AddLog(std::string name, std::string value) {
+  logs_[std::move(name)] = std::move(value);
 }
 
 void FeedbackCommon::AddLogs(SystemLogsMap logs) {
@@ -242,6 +243,14 @@ void FeedbackCommon::AddFilesAndLogsToReport(
 
   for (const auto& iter : logs_) {
     if (BelowCompressionThreshold(iter.second)) {
+      // We only send the list of all the crash report IDs if the user has a
+      // @google.com email. We do this also in feedback_private_api, but not all
+      // code paths go through that so we need to check again here.
+      if (iter.first == feedback::FeedbackReport::kAllCrashReportIdsKey &&
+          !feedback_util::IsGoogleEmail(user_email())) {
+        continue;
+      }
+
       // Small enough logs should end up in the report data itself. However,
       // they're still added as part of the system_logs.zip file.
       AddFeedbackData(feedback_data, iter.first, iter.second);

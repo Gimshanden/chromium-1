@@ -9,6 +9,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "components/content_capture/android/content_capture_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/ContentCaptureData_jni.h"
 #include "jni/ContentCaptureReceiverManager_jni.h"
@@ -112,6 +113,21 @@ void ContentCaptureReceiverManagerAndroid::DidCaptureContent(
       jdata);
 }
 
+void ContentCaptureReceiverManagerAndroid::DidUpdateContent(
+    const ContentCaptureSession& parent_session,
+    const ContentCaptureData& data) {
+  JNIEnv* env = AttachCurrentThread();
+  DCHECK(java_ref_.obj());
+
+  ScopedJavaLocalRef<jobject> jdata =
+      ToJavaObjectOfContentCaptureData(env, data, JavaRef<jobject>());
+  if (jdata.is_null())
+    return;
+  Java_ContentCaptureReceiverManager_didUpdateContent(
+      env, java_ref_, ToJavaArrayOfContentCaptureData(env, parent_session),
+      jdata);
+}
+
 void ContentCaptureReceiverManagerAndroid::DidRemoveContent(
     const ContentCaptureSession& session,
     const std::vector<int64_t>& data) {
@@ -128,6 +144,10 @@ void ContentCaptureReceiverManagerAndroid::DidRemoveSession(
   DCHECK(java_ref_.obj());
   Java_ContentCaptureReceiverManager_didRemoveSession(
       env, java_ref_, ToJavaArrayOfContentCaptureData(env, session));
+}
+
+bool ContentCaptureReceiverManagerAndroid::ShouldCapture(const GURL& url) {
+  return ContentCaptureController::Get()->ShouldCapture(url);
 }
 
 ScopedJavaLocalRef<jobject>

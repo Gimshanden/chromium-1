@@ -53,7 +53,6 @@
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors_error_string.h"
-#include "third_party/blink/renderer/platform/loader/fetch/bytes_consumer_for_data_consumer_handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
@@ -199,17 +198,17 @@ class ResourceLoader::CodeCacheRequest {
 
   // Callback to receive data from CodeCacheLoader.
   void DidReceiveCachedCode(ResourceLoader* loader,
-                            const base::Time& response_time,
-                            const std::vector<uint8_t>& data);
+                            base::Time response_time,
+                            base::span<const uint8_t> data);
 
   // Process the response from code cache.
   void ProcessCodeCacheResponse(const base::Time& response_time,
-                                const std::vector<uint8_t>& data,
+                                base::span<const uint8_t> data,
                                 ResourceLoader* resource_loader);
 
   // Send |cache_code| if we got a response from code_cache_loader and the
   // web_url_loader.
-  void MaybeSendCachedCode(const std::vector<uint8_t>& cached_code,
+  void MaybeSendCachedCode(base::span<const uint8_t> cached_code,
                            ResourceLoader* resource_loader);
 
   CodeCacheRequestStatus status_;
@@ -287,8 +286,8 @@ bool ResourceLoader::CodeCacheRequest::SetDefersLoading(bool defers) {
 
 void ResourceLoader::CodeCacheRequest::DidReceiveCachedCode(
     ResourceLoader* resource_loader,
-    const base::Time& response_time,
-    const std::vector<uint8_t>& data) {
+    base::Time response_time,
+    base::span<const uint8_t> data) {
   ProcessCodeCacheResponse(response_time, data, resource_loader);
   // Reset the deferred value to its original state.
   DCHECK(resource_loader);
@@ -300,7 +299,7 @@ void ResourceLoader::CodeCacheRequest::DidReceiveCachedCode(
 // will be processed when the response is received from the URLLoader.
 void ResourceLoader::CodeCacheRequest::ProcessCodeCacheResponse(
     const base::Time& response_time,
-    const std::vector<uint8_t>& data,
+    base::span<const uint8_t> data,
     ResourceLoader* resource_loader) {
   status_ = kReceivedResponse;
   cached_code_response_time_ = response_time;
@@ -309,7 +308,7 @@ void ResourceLoader::CodeCacheRequest::ProcessCodeCacheResponse(
     // Wait for the response before we can send the cached code.
     // TODO(crbug.com/866889): Pass this as a handle to avoid the overhead of
     // copying this data.
-    cached_code_ = data;
+    cached_code_.assign(data.begin(), data.end());
     return;
   }
 
@@ -317,7 +316,7 @@ void ResourceLoader::CodeCacheRequest::ProcessCodeCacheResponse(
 }
 
 void ResourceLoader::CodeCacheRequest::MaybeSendCachedCode(
-    const std::vector<uint8_t>& cached_code,
+    base::span<const uint8_t> cached_code,
     ResourceLoader* resource_loader) {
   if (status_ != kReceivedResponse || cached_code_response_time_.is_null() ||
       resource_response_time_.is_null()) {
@@ -333,18 +332,8 @@ void ResourceLoader::CodeCacheRequest::MaybeSendCachedCode(
     return;
   }
 
-  if (!cached_code.empty()) {
-    resource_loader->SendCachedCodeToResource(
-        reinterpret_cast<const char*>(cached_code.data()), cached_code.size());
-  }
-}
-
-ResourceLoader* ResourceLoader::Create(ResourceFetcher* fetcher,
-                                       ResourceLoadScheduler* scheduler,
-                                       Resource* resource,
-                                       uint32_t inflight_keepalive_bytes) {
-  return MakeGarbageCollected<ResourceLoader>(fetcher, scheduler, resource,
-                                              inflight_keepalive_bytes);
+  if (!cached_code.empty())
+    resource_loader->SendCachedCodeToResource(cached_code);
 }
 
 ResourceLoader::ResourceLoader(ResourceFetcher* fetcher,
@@ -363,6 +352,12 @@ ResourceLoader::ResourceLoader(ResourceFetcher* fetcher,
                     &ResourceLoader::CancelTimerFired) {
   DCHECK(resource_);
   DCHECK(fetcher_);
+
+  if (FrameScheduler* frame_scheduler = fetcher->GetFrameScheduler()) {
+    feature_handle_for_scheduler_ = frame_scheduler->RegisterFeature(
+        SchedulingPolicy::Feature::kOutstandingNetworkRequest,
+        {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+  }
 
   resource_->SetLoader(this);
 }
@@ -555,6 +550,7 @@ void ResourceLoader::Release(
   bool released = scheduler_->Release(scheduler_client_id_, option, hints);
   DCHECK(released);
   scheduler_client_id_ = ResourceLoadScheduler::kInvalidClientId;
+  feature_handle_for_scheduler_.reset();
 }
 
 void ResourceLoader::Restart(const ResourceRequest& request) {
@@ -854,9 +850,8 @@ blink::mojom::CodeCacheType ResourceLoader::GetCodeCacheType() const {
   return Resource::ResourceTypeToCodeCacheType(resource_->GetType());
 }
 
-void ResourceLoader::SendCachedCodeToResource(const char* data, int length) {
-  resource_->SetSerializedCachedMetadata(reinterpret_cast<const uint8_t*>(data),
-                                         length);
+void ResourceLoader::SendCachedCodeToResource(base::span<const uint8_t> data) {
+  resource_->SetSerializedCachedMetadata(data.data(), data.size());
 }
 
 void ResourceLoader::ClearCachedCode() {
@@ -873,17 +868,13 @@ FetchContext& ResourceLoader::Context() const {
   return fetcher_->Context();
 }
 
-void ResourceLoader::DidReceiveResponse(
-    const WebURLResponse& web_url_response,
-    std::unique_ptr<WebDataConsumerHandle> handle) {
-  DCHECK(!web_url_response.IsNull());
-  DidReceiveResponseInternal(web_url_response.ToResourceResponse(),
-                             std::move(handle));
+void ResourceLoader::DidReceiveResponse(const WebURLResponse& response) {
+  DCHECK(!response.IsNull());
+  DidReceiveResponseInternal(response.ToResourceResponse());
 }
 
 void ResourceLoader::DidReceiveResponseInternal(
-    const ResourceResponse& response,
-    std::unique_ptr<WebDataConsumerHandle> handle) {
+    const ResourceResponse& response) {
   const ResourceRequest& request = resource_->GetResourceRequest();
 
   if (request.IsAutomaticUpgrade()) {
@@ -938,7 +929,7 @@ void ResourceLoader::DidReceiveResponseInternal(
       DCHECK(!last_request.GetSkipServiceWorker());
       // This code handles the case when a controlling service worker doesn't
       // handle a cross origin request.
-      if (!Context().ShouldLoadNewResource(resource_type)) {
+      if (fetcher_->GetProperties().ShouldBlockLoadingSubResource()) {
         // Cancel the request if we should not trigger a reload now.
         HandleError(
             ResourceError::CancelledError(response.CurrentRequestUrl()));
@@ -1017,11 +1008,6 @@ void ResourceLoader::DidReceiveResponseInternal(
         ResourceLoadObserver::ResponseSource::kNotFromMemoryCache);
   }
 
-  // When streaming, unpause virtual time early to prevent deadlocking
-  // against stream consumer in case stream has backpressure enabled.
-  if (handle)
-    resource_->VirtualTimePauser().UnpauseVirtualTime();
-
   resource_->ResponseReceived(response_to_pass);
 
   // Send the cached code after we notify that the response is received.
@@ -1036,12 +1022,12 @@ void ResourceLoader::DidReceiveResponseInternal(
     if (response.CacheControlContainsNoCache()) {
       frame_scheduler->RegisterStickyFeature(
           SchedulingPolicy::Feature::kSubresourceHasCacheControlNoCache,
-          {SchedulingPolicy::DisableBackForwardCache()});
+          {SchedulingPolicy::RecordMetricsForBackForwardCache()});
     }
     if (response.CacheControlContainsNoStore()) {
       frame_scheduler->RegisterStickyFeature(
           SchedulingPolicy::Feature::kSubresourceHasCacheControlNoStore,
-          {SchedulingPolicy::DisableBackForwardCache()});
+          {SchedulingPolicy::RecordMetricsForBackForwardCache()});
     }
   }
 
@@ -1054,16 +1040,6 @@ void ResourceLoader::DidReceiveResponseInternal(
         ResourceError::CancelledError(response_to_pass.CurrentRequestUrl()));
     return;
   }
-
-  if (handle) {
-    DidStartLoadingResponseBodyInternal(
-        *MakeGarbageCollected<BytesConsumerForDataConsumerHandle>(
-            GetLoadingTaskRunner(), std::move(handle)));
-  }
-}
-
-void ResourceLoader::DidReceiveResponse(const WebURLResponse& response) {
-  DidReceiveResponse(response, nullptr);
 }
 
 void ResourceLoader::DidStartLoadingResponseBody(
@@ -1200,7 +1176,7 @@ void ResourceLoader::HandleError(const ResourceError& error) {
     data_pipe_completion_notifier_->SignalError(BytesConsumer::Error());
 
   if (is_cache_aware_loading_activated_ && error.IsCacheMiss() &&
-      Context().ShouldLoadNewResource(resource_->GetType())) {
+      !fetcher_->GetProperties().ShouldBlockLoadingSubResource()) {
     resource_->WillReloadAfterDiskCacheMiss();
     is_cache_aware_loading_activated_ = false;
     Restart(resource_->GetResourceRequest());
@@ -1473,7 +1449,7 @@ void ResourceLoader::HandleDataUrl() {
   DCHECK(data);
   const size_t data_size = data->size();
 
-  DidReceiveResponseInternal(response, nullptr);
+  DidReceiveResponseInternal(response);
   if (!IsLoading())
     return;
 

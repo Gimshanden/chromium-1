@@ -26,8 +26,12 @@ enum class TileSource {
   WHITELIST,
   // Tile containing the user-set home page is replacing the home page button.
   HOMEPAGE,
+  // Tile comes from explore sites list.
+  EXPLORE,
+  // Tile containing the Google Search page.
+  SEARCH_PAGE,
 
-  LAST = HOMEPAGE
+  LAST = SEARCH_PAGE
 };
 
 }  // namespace ntp_tiles

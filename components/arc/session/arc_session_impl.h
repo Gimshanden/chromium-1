@@ -30,6 +30,8 @@ namespace mojom {
 class ArcBridgeHost;
 }  // namespace mojom
 
+constexpr int64_t kMinimumFreeDiskSpaceBytes = 64 << 20;  // 64MB
+
 class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
  public:
   // The possible states of the session. Expected state changes are as follows.
@@ -77,7 +79,7 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
   //   SessionManager. Its completion will be notified via ArcInstanceStopped.
   //   Otherwise, it just turns into STOPPED state.
   // CONNECTING_MOJO:
-  //   The main task runs on TaskScheduler's thread, but it is a blocking call.
+  //   The main task runs on ThreadPool's thread, but it is a blocking call.
   //   So, Stop() sends a request to cancel the blocking by closing the pipe
   //   whose read side is also polled. Then, in its callback, similar to
   //   STARTING_{MINI,FULL}_INSTANCE, a request to stop the ARC instance is
@@ -87,10 +89,9 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
   //   There is no more callback which runs on normal flow, so Stop() requests
   //   to stop the ARC instance via SessionManager.
   //
-  // Another trigger to change the state coming from outside of this class
-  // is an event ArcInstanceStopped() sent from SessionManager, when ARC
-  // instace unexpectedly terminates. ArcInstanceStopped() turns the state into
-  // STOPPED immediately.
+  // Another trigger to change the state coming from outside of this class is an
+  // event, ArcInstanceStopped(), sent from SessionManager when the ARC instance
+  // terminates. ArcInstanceStopped() turns the state into STOPPED immediately.
   //
   // In NOT_STARTED or STOPPED state, the instance can be safely destructed.
   // Specifically, in STOPPED state, there may be inflight operations or
@@ -155,6 +156,13 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
     // it's not yet available. Calling this method while there is a pending
     // callback will cancel the pending callback.
     virtual void GetLcdDensity(GetLcdDensityCallback callback) = 0;
+
+    // Gets the available disk space under /home. The result is in bytes.
+    using GetFreeDiskSpaceCallback = base::OnceCallback<void(int64_t)>;
+    virtual void GetFreeDiskSpace(GetFreeDiskSpaceCallback callback) = 0;
+
+    // Returns the channel for the installation.
+    virtual version_info::Channel GetChannel() = 0;
   };
 
   explicit ArcSessionImpl(std::unique_ptr<Delegate> delegate);
@@ -163,7 +171,8 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
   // Returns default delegate implementation used for the production.
   static std::unique_ptr<Delegate> CreateDelegate(
       ArcBridgeService* arc_bridge_service,
-      ash::DefaultScaleFactorRetriever* retriever);
+      ash::DefaultScaleFactorRetriever* retriever,
+      version_info::Channel channel);
 
   State GetStateForTesting() { return state_; }
 
@@ -176,7 +185,7 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
 
  private:
   // D-Bus callback for StartArcMiniContainer().
-  void OnMiniInstanceStarted(base::Optional<std::string> container_instance_id);
+  void OnMiniInstanceStarted(bool result);
 
   // Sends a D-Bus message to upgrade to a full instance.
   void DoUpgrade();
@@ -186,7 +195,7 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
 
   // D-Bus callback for UpgradeArcContainer(). |socket_fd| should be a socket
   // which should be accept(2)ed to connect ArcBridgeService Mojo channel.
-  void OnUpgraded(base::ScopedFD socket_fd);
+  void OnUpgraded(base::ScopedFD socket_fd, bool result);
 
   // D-Bus callback for UpgradeArcContainer when the upgrade fails.
   // |low_free_disk_space| signals whether the failure was due to low free disk
@@ -201,8 +210,7 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
   void StopArcInstance();
 
   // ArcClientAdapter::Observer:
-  void ArcInstanceStopped(ArcContainerStopReason stop_reason,
-                          const std::string& container_instance_id) override;
+  void ArcInstanceStopped() override;
 
   // Completes the termination procedure. Note that calling this may end up with
   // deleting |this| because the function calls observers' OnSessionStopped().
@@ -210,6 +218,9 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
 
   // LCD density for the device is available.
   void OnLcdDensity(int32_t lcd_density);
+
+  // Free disk space under /home in bytes.
+  void OnFreeDiskSpace(int64_t space);
 
   // Checks whether a function runs on the thread where the instance is
   // created.
@@ -230,9 +241,8 @@ class ArcSessionImpl : public ArcSession, public ArcClientAdapter::Observer {
   // Whether the full container has been requested
   bool upgrade_requested_ = false;
 
-  // Container instance id passed from session_manager.
-  // Should be available only after On{Mini,Full}InstanceStarted().
-  std::string container_instance_id_;
+  // Whether there's insufficient disk space to start the container.
+  bool insufficient_disk_space_ = false;
 
   // In CONNECTING_MOJO state, this is set to the write side of the pipe
   // to notify cancelling of the procedure.

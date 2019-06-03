@@ -14,8 +14,6 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
-#include "content/public/browser/stream_handle.h"
-#include "content/public/browser/stream_info.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/mime_handler_view_mode.h"
 #include "content/public/common/url_constants.h"
@@ -25,6 +23,7 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_stream_manager.h"
+#include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_constants.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
 #include "extensions/browser/process_manager.h"
@@ -35,49 +34,37 @@
 #include "extensions/common/mojo/guest_view.mojom.h"
 #include "extensions/strings/grit/extensions_strings.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/platform/web_gesture_event.h"
+
 using content::WebContents;
 using guest_view::GuestViewBase;
 
 namespace extensions {
 
 StreamContainer::StreamContainer(
-    std::unique_ptr<content::StreamInfo> stream,
     int tab_id,
     bool embedded,
     const GURL& handler_url,
     const std::string& extension_id,
     content::mojom::TransferrableURLLoaderPtr transferrable_loader,
     const GURL& original_url)
-    : stream_(std::move(stream)),
-      embedded_(embedded),
+    : embedded_(embedded),
       tab_id_(tab_id),
       handler_url_(handler_url),
       extension_id_(extension_id),
       transferrable_loader_(std::move(transferrable_loader)),
-      mime_type_(stream_ ? stream_->mime_type
-                         : transferrable_loader_->head.mime_type),
-      original_url_(stream_ ? stream_->original_url : original_url),
-      stream_url_(stream_ ? stream_->handle->GetURL()
-                          : transferrable_loader_->url),
-      response_headers_(stream_ ? stream_->response_headers
-                                : transferrable_loader_->head.headers),
-      weak_factory_(this) {
-  DCHECK(stream_ || transferrable_loader_);
-}
+      mime_type_(transferrable_loader_->head.mime_type),
+      original_url_(original_url),
+      stream_url_(transferrable_loader_->url),
+      response_headers_(transferrable_loader_->head.headers),
+      weak_factory_(this) {}
 
 StreamContainer::~StreamContainer() {
 }
 
 void StreamContainer::Abort(const base::Closure& callback) {
-  if (!stream_ || !stream_->handle) {
-    callback.Run();
-    return;
-  }
-  stream_->handle->AddCloseListener(callback);
-  stream_->handle.reset();
-  stream_url_ = GURL();
+  callback.Run();
 }
 
 base::WeakPtr<StreamContainer> StreamContainer::GetWeakPtr() {
@@ -103,15 +90,22 @@ MimeHandlerViewGuest::MimeHandlerViewGuest(WebContents* owner_web_contents)
           ExtensionsAPIClient::Get()->CreateMimeHandlerViewGuestDelegate(this)),
       embedder_frame_process_id_(content::ChildProcessHost::kInvalidUniqueID),
       embedder_frame_routing_id_(MSG_ROUTING_NONE),
-      embedder_widget_routing_id_(MSG_ROUTING_NONE) {}
+      embedder_widget_routing_id_(MSG_ROUTING_NONE),
+      weak_factory_(this) {}
 
 MimeHandlerViewGuest::~MimeHandlerViewGuest() {
   // Before attaching is complete, the instance ID is not valid.
   if (content::MimeHandlerViewMode::UsesCrossProcessFrame() &&
       element_instance_id() != guest_view::kInstanceIDNone) {
-    if (auto* embedder_frame = GetEmbedderFrame()) {
-      mojom::MimeHandlerViewContainerManagerPtr container_manager;
-      embedder_frame->GetRemoteInterfaces()->GetInterface(&container_manager);
+    // If we are awaiting attaching to outer WebContents
+    if (GetEmbedderFrame() && GetEmbedderFrame()->GetParent()) {
+      // TODO(ekaramad): This should only be needed if the embedder frame is in
+      // a plugin element (https://crbug.com/957373).
+      mojom::MimeHandlerViewContainerManagerAssociatedPtr container_manager;
+      GetEmbedderFrame()
+          ->GetParent()
+          ->GetRemoteAssociatedInterfaces()
+          ->GetInterface(&container_manager);
       container_manager->DestroyFrameContainer(element_instance_id());
     }
   }
@@ -150,7 +144,19 @@ void MimeHandlerViewGuest::SetEmbedderFrame(int process_id, int routing_id) {
     embedder_widget_routing_id_ =
         rfh->GetView()->GetRenderWidgetHost()->GetRoutingID();
   }
+  auto owner_type = rfh ? rfh->GetFrameOwnerElementType()
+                        : blink::FrameOwnerElementType::kNone;
+  // If the embedder frame is the ContentFrame() of a plugin element, then there
+  // could be a MimeHandlerViewFrameContainer in the parent frame. Note that
+  // the MHVFC is only created through HTMLPlugInElement::UpdatePlugin (manually
+  // navigating a plugin element's window would create a MHVFC).
+  maybe_has_frame_container_ =
+      owner_type == blink::FrameOwnerElementType::kEmbed ||
+      owner_type == blink::FrameOwnerElementType::kObject;
   DCHECK_NE(MSG_ROUTING_NONE, embedder_widget_routing_id_);
+  if (content::MimeHandlerViewMode::UsesCrossProcessFrame())
+    delegate_->RecordLoadMetric(
+        /* in_main_frame */ !GetEmbedderFrame()->GetParent(), mime_type_);
 }
 
 void MimeHandlerViewGuest::SetBeforeUnloadController(
@@ -181,6 +187,7 @@ void MimeHandlerViewGuest::CreateWebContents(
     std::move(callback).Run(nullptr);
     return;
   }
+  mime_type_ = stream_->mime_type();
   const Extension* mime_handler_extension =
       // TODO(lazyboy): Do we need handle the case where the extension is
       // terminated (ExtensionRegistry::TERMINATED)?
@@ -258,8 +265,9 @@ bool MimeHandlerViewGuest::ShouldDestroyOnDetach() const {
 WebContents* MimeHandlerViewGuest::OpenURLFromTab(
     WebContents* source,
     const content::OpenURLParams& params) {
-  return embedder_web_contents()->GetDelegate()->OpenURLFromTab(
-      embedder_web_contents(), params);
+  auto* delegate = embedder_web_contents()->GetDelegate();
+  return delegate ? delegate->OpenURLFromTab(embedder_web_contents(), params)
+                  : nullptr;
 }
 
 void MimeHandlerViewGuest::NavigationStateChanged(
@@ -281,8 +289,9 @@ void MimeHandlerViewGuest::NavigationStateChanged(
   if (last_committed_entry) {
     embedder_web_contents()->UpdateTitleForEntry(last_committed_entry,
                                                  source->GetTitle());
-    embedder_web_contents()->GetDelegate()->NavigationStateChanged(
-        embedder_web_contents(), changed_flags);
+    auto* delegate = embedder_web_contents()->GetDelegate();
+    if (delegate)
+      delegate->NavigationStateChanged(embedder_web_contents(), changed_flags);
   }
 }
 
@@ -315,8 +324,9 @@ MimeHandlerViewGuest::GetJavaScriptDialogManager(
   // So we pretend to be our owner WebContents, but only for the request to
   // obtain the JavaScriptDialogManager. During calls to the
   // JavaScriptDialogManager we will be honest about who we are.
-  return owner_web_contents()->GetDelegate()->GetJavaScriptDialogManager(
-      owner_web_contents());
+  auto* delegate = owner_web_contents()->GetDelegate();
+  return delegate ? delegate->GetJavaScriptDialogManager(owner_web_contents())
+                  : nullptr;
 }
 
 bool MimeHandlerViewGuest::PluginDoSave() {
@@ -364,15 +374,19 @@ void MimeHandlerViewGuest::EnterFullscreenModeForTab(
     const GURL& origin,
     const blink::WebFullscreenOptions& options) {
   if (SetFullscreenState(true)) {
-    embedder_web_contents()->GetDelegate()->EnterFullscreenModeForTab(
-        embedder_web_contents(), origin, options);
+    auto* delegate = embedder_web_contents()->GetDelegate();
+    if (delegate) {
+      delegate->EnterFullscreenModeForTab(embedder_web_contents(), origin,
+                                          options);
+    }
   }
 }
 
 void MimeHandlerViewGuest::ExitFullscreenModeForTab(content::WebContents*) {
   if (SetFullscreenState(false)) {
-    embedder_web_contents()->GetDelegate()->ExitFullscreenModeForTab(
-        embedder_web_contents());
+    auto* delegate = embedder_web_contents()->GetDelegate();
+    if (delegate)
+      delegate->ExitFullscreenModeForTab(embedder_web_contents());
   }
 }
 
@@ -401,8 +415,9 @@ bool MimeHandlerViewGuest::ShouldCreateWebContents(
   // Extensions are allowed to open popups under circumstances covered by
   // running as a mime handler.
   open_params.user_gesture = true;
-  embedder_web_contents()->GetDelegate()->OpenURLFromTab(
-      embedder_web_contents(), open_params);
+  auto* delegate = embedder_web_contents()->GetDelegate();
+  if (delegate)
+    delegate->OpenURLFromTab(embedder_web_contents(), open_params);
   return false;
 }
 
@@ -427,9 +442,14 @@ void MimeHandlerViewGuest::DocumentOnLoadCompletedInMainFrame() {
   // removed before the guest is properly loaded, then owner RenderWidgetHost
   // will be nullptr.
   if (CanUseCrossProcessFrames()) {
-    mojom::MimeHandlerViewContainerManagerPtr container_manager;
-    GetEmbedderFrame()->GetRemoteInterfaces()->GetInterface(&container_manager);
-    container_manager->DidLoad(element_instance_id());
+    // For plugin elements, the embedder should be notified so that the queued
+    // messages (postMessage) are forwarded to the guest page. Otherwise we
+    // just send the upadte to the embedder (full page  MHV).
+    auto* rfh = maybe_has_frame_container_ ? GetEmbedderFrame()->GetParent()
+                                           : GetEmbedderFrame();
+    mojom::MimeHandlerViewContainerManagerAssociatedPtr container_manager;
+    rfh->GetRemoteAssociatedInterfaces()->GetInterface(&container_manager);
+    container_manager->DidLoad(element_instance_id(), original_resource_url_);
     return;
   }
   if (auto* rwh = GetOwnerRenderWidgetHost()) {
@@ -463,6 +483,10 @@ void MimeHandlerViewGuest::FuseBeforeUnloadControl(
 content::RenderFrameHost* MimeHandlerViewGuest::GetEmbedderFrame() const {
   return content::RenderFrameHost::FromID(embedder_frame_process_id_,
                                           embedder_frame_routing_id_);
+}
+
+base::WeakPtr<MimeHandlerViewGuest> MimeHandlerViewGuest::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 }  // namespace extensions

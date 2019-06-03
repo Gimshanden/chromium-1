@@ -25,12 +25,11 @@
 #include "ash/system/status_area_widget.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/wm/window_util.h"
-#include "ash/ws/window_service_owner.h"
 #include "base/command_line.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "services/ws/window_service.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -93,6 +92,12 @@ aura::Window* GetWindow(AshWindowTreeHost* ash_host) {
 }
 
 const char* GetUICompositorMemoryLimitMB() {
+  bool uses_shader_rounded_corner = features::ShouldUseShaderRoundedCorner();
+  // TODO(oshima): Cleanup once new rounded corners is launched.
+  // Uses 512mb which is default.
+  if (uses_shader_rounded_corner)
+    return "512";
+
   display::DisplayManager* display_manager =
       ash::Shell::Get()->display_manager();
   int width;
@@ -111,14 +116,6 @@ const char* GetUICompositorMemoryLimitMB() {
   }
 
   return width >= 3000 ? "1024" : "512";
-}
-
-// Returns the Shell's WindowService instance or nullptr if Shell's
-// |window_service_owner_| is not yet created.
-ws::WindowService* GetWindowService() {
-  return Shell::Get()->window_service_owner()
-             ? Shell::Get()->window_service_owner()->window_service()
-             : nullptr;
 }
 
 }  // namespace
@@ -148,12 +145,15 @@ class FocusActivationStore {
     if (active_ && focused_ != active_)
       tracker_.Add(active_);
 
-    // Deactivate the window to close menu / bubble windows.
-    if (clear_focus)
-      activation_client_->DeactivateWindow(active_);
+    // Deactivate the window to close menu / bubble windows. Deactivating by
+    // setting active window to nullptr to avoid side effects of activating an
+    // arbitrary window, such as covering |active_| before Restore().
+    if (clear_focus && active_)
+      activation_client_->ActivateWindow(nullptr);
 
     // Release capture if any.
     capture_client_->SetCapture(nullptr);
+
     // Clear the focused window if any. This is necessary because a
     // window may be deleted when losing focus (fullscreen flash for
     // example).  If the focused window is still alive after move, it'll
@@ -249,8 +249,7 @@ void WindowTreeHostManager::Shutdown() {
 void WindowTreeHostManager::CreatePrimaryHost(
     const AshWindowTreeHostInitParams& init_params) {
   auto* command_line = base::CommandLine::ForCurrentProcess();
-  if (!features::ShouldUseShaderRoundedCorner() &&
-      !command_line->HasSwitch(
+  if (!command_line->HasSwitch(
           switches::kUiCompositorMemoryLimitWhenVisibleMB)) {
     command_line->AppendSwitchASCII(
         switches::kUiCompositorMemoryLimitWhenVisibleMB,
@@ -276,6 +275,19 @@ void WindowTreeHostManager::InitHosts() {
       RootWindowController::CreateForSecondaryDisplay(ash_host);
     }
   }
+
+  // Record display zoom for the primary display for https://crbug.com/955071.
+  // This can be removed after M79.
+  const display::ManagedDisplayInfo& display_info =
+      display_manager->GetDisplayInfo(primary_display_id);
+  int zoom_percent = std::round(display_info.zoom_factor() * 100);
+  constexpr int kMaxValue = 300;
+  constexpr int kBucketSize = 5;
+  constexpr int kBucketCount = kMaxValue / kBucketSize + 1;
+  base::LinearHistogram::FactoryGet(
+      "Ash.Display.PrimaryDisplayZoomAtStartup", kBucketSize, kMaxValue,
+      kBucketCount, base::HistogramBase::kUmaTargetedHistogramFlag)
+      ->Add(zoom_percent);
 
   for (auto& observer : observers_)
     observer.OnDisplaysInitialized();
@@ -524,8 +536,6 @@ void WindowTreeHostManager::OnDisplayAdded(const display::Display& display) {
     GetRootWindowSettings(GetWindow(ash_host))->display_id = display.id();
     for (auto& observer : observers_)
       observer.OnWindowTreeHostReusedForDisplay(ash_host, display);
-    if (auto* window_service = GetWindowService())
-      window_service->OnWindowTreeHostsDisplayIdChanged({GetWindow(ash_host)});
     const display::ManagedDisplayInfo& display_info =
         GetDisplayManager()->GetDisplayInfo(display.id());
     ash_host->AsWindowTreeHost()->SetBoundsInPixels(
@@ -593,10 +603,6 @@ void WindowTreeHostManager::OnDisplayRemoved(const display::Display& display) {
 
     for (auto& observer : observers_)
       observer.OnWindowTreeHostsSwappedDisplays(host_to_delete, primary_host);
-    if (auto* window_service = GetWindowService()) {
-      window_service->OnWindowTreeHostsDisplayIdChanged(
-          {GetWindow(host_to_delete), GetWindow(primary_host)});
-    }
 
     OnDisplayMetricsChanged(
         GetDisplayManager()->GetDisplayForId(primary_display_id),
@@ -614,12 +620,6 @@ void WindowTreeHostManager::OnDisplayRemoved(const display::Display& display) {
 void WindowTreeHostManager::OnDisplayMetricsChanged(
     const display::Display& display,
     uint32_t metrics) {
-  // Shell creates |window_service_owner_| from Shell::Init(), but this
-  // function may be called before |window_service_owner_| is created. It's safe
-  // to ignore the call in this case as no clients have connected yet.
-  if (auto* window_service = GetWindowService())
-    window_service->OnDisplayMetricsChanged(display, metrics);
-
   if (!(metrics & (DISPLAY_METRIC_BOUNDS | DISPLAY_METRIC_ROTATION |
                    DISPLAY_METRIC_DEVICE_SCALE_FACTOR))) {
     return;
@@ -737,10 +737,6 @@ void WindowTreeHostManager::SetPrimaryDisplayId(int64_t id) {
 
   for (auto& observer : observers_)
     observer.OnWindowTreeHostsSwappedDisplays(primary_host, non_primary_host);
-  if (auto* window_service = GetWindowService()) {
-    window_service->OnWindowTreeHostsDisplayIdChanged(
-        {primary_window, non_primary_window});
-  }
 
   const display::DisplayLayout& layout =
       GetDisplayManager()->GetCurrentDisplayLayout();

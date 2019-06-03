@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/input/pointer_event_manager.h"
 
 #include "base/auto_reset.h"
+#include "base/metrics/field_trial_params.h"
 #include "third_party/blink/public/platform/web_touch_event.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
@@ -25,17 +26,25 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/pointer_lock_controller.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
 namespace {
+
+// Field trial name for skipping touch filtering
+const char kSkipTouchEventFilterTrial[] = "SkipTouchEventFilter";
+const char kSkipTouchEventFilterTrialProcessParamName[] =
+    "skip_filtering_process";
+const char kSkipTouchEventFilterTrialTypeParamName[] = "type";
 
 size_t ToPointerTypeIndex(WebPointerProperties::PointerType t) {
   return static_cast<size_t>(t);
 }
 bool HasPointerEventListener(const EventHandlerRegistry& registry) {
   return registry.HasEventHandlers(EventHandlerRegistry::kPointerEvent) ||
-         registry.HasEventHandlers(EventHandlerRegistry::kPointerRawMoveEvent);
+         registry.HasEventHandlers(
+             EventHandlerRegistry::kPointerRawUpdateEvent);
 }
 
 const AtomicString& MouseEventNameForPointerEventInputType(
@@ -69,6 +78,18 @@ PointerEventManager::PointerEventManager(LocalFrame& frame,
       touch_event_manager_(MakeGarbageCollected<TouchEventManager>(frame)),
       mouse_event_manager_(mouse_event_manager) {
   Clear();
+  if (RuntimeEnabledFeatures::SkipTouchEventFilterEnabled() &&
+      base::GetFieldTrialParamValue(
+          kSkipTouchEventFilterTrial,
+          kSkipTouchEventFilterTrialProcessParamName) ==
+          "browser_and_renderer") {
+    skip_touch_filter_discrete_ = true;
+    if (base::GetFieldTrialParamValue(
+            kSkipTouchEventFilterTrial,
+            kSkipTouchEventFilterTrialTypeParamName) == "all") {
+      skip_touch_filter_all_ = true;
+    }
+  }
 }
 
 void PointerEventManager::Clear() {
@@ -160,8 +181,10 @@ WebInputEventResult PointerEventManager::DispatchPointerEvent(
 
   const PointerId pointer_id = pointer_event->pointerId();
   const AtomicString& event_type = pointer_event->type();
+  bool should_filter = ShouldFilterEvent(pointer_event);
 
-  if (!frame_ || !HasPointerEventListener(frame_->GetEventHandlerRegistry()))
+  if (should_filter &&
+      !HasPointerEventListener(frame_->GetEventHandlerRegistry()))
     return WebInputEventResult::kNotHandled;
 
   if (event_type == event_type_names::kPointerdown) {
@@ -172,13 +195,17 @@ WebInputEventResult PointerEventManager::DispatchPointerEvent(
     }
   }
 
-  if (!check_for_listener || target->HasEventListeners(event_type)) {
+  bool listeners_exist =
+      !check_for_listener || target->HasEventListeners(event_type);
+  if (listeners_exist) {
     UseCounter::Count(frame_->GetDocument(), WebFeature::kPointerEventDispatch);
     if (event_type == event_type_names::kPointerdown) {
       UseCounter::Count(frame_->GetDocument(),
                         WebFeature::kPointerEventDispatchPointerDown);
     }
+  }
 
+  if (!should_filter || listeners_exist) {
     DCHECK(!dispatching_pointer_id_);
     base::AutoReset<PointerId> dispatch_holder(&dispatching_pointer_id_,
                                                pointer_id);
@@ -357,6 +384,27 @@ void PointerEventManager::AdjustTouchPointerEvent(
       pointer_event.unique_touch_event_id, pointer_event.PositionInWidget());
 }
 
+bool PointerEventManager::ShouldFilterEvent(PointerEvent* pointer_event) {
+  // Filter as normal if the experiment is disabled.
+  if (!skip_touch_filter_discrete_)
+    return true;
+
+  // If the experiment is enabled and the event is pointer up/down, do not
+  // filter.
+  if (pointer_event->type() == event_type_names::kPointerdown ||
+      pointer_event->type() == event_type_names::kPointerup) {
+    return false;
+  }
+  // If the experiment is "all", do not filter pointermove.
+  if (skip_touch_filter_all_ &&
+      pointer_event->type() == event_type_names::kPointermove)
+    return false;
+
+  // Continue filtering other types of events, even thought the experiment is
+  // enabled.
+  return true;
+}
+
 event_handling_util::PointerEventTarget
 PointerEventManager::ComputePointerEventTarget(
     const WebPointerEvent& web_pointer_event) {
@@ -485,10 +533,10 @@ WebInputEventResult PointerEventManager::HandlePointerEvent(
     const WebPointerEvent& event,
     const Vector<WebPointerEvent>& coalesced_events,
     const Vector<WebPointerEvent>& predicted_events) {
-  if (event.GetType() == WebInputEvent::Type::kPointerRawMove) {
-    if (!RuntimeEnabledFeatures::PointerRawMoveEnabled() ||
+  if (event.GetType() == WebInputEvent::Type::kPointerRawUpdate) {
+    if (!RuntimeEnabledFeatures::PointerRawUpdateEnabled() ||
         !frame_->GetEventHandlerRegistry().HasEventHandlers(
-            EventHandlerRegistry::kPointerRawMoveEvent))
+            EventHandlerRegistry::kPointerRawUpdateEvent))
       return WebInputEventResult::kHandledSystem;
 
     // If the page has pointer lock active and the event was from
@@ -572,7 +620,8 @@ WebInputEventResult PointerEventManager::CreateAndDispatchPointerEvent(
     const AtomicString& mouse_event_name,
     const WebMouseEvent& mouse_event,
     const Vector<WebMouseEvent>& coalesced_events,
-    const Vector<WebMouseEvent>& predicted_events) {
+    const Vector<WebMouseEvent>& predicted_events,
+    const String& canvas_region_id) {
   WebInputEvent::Type event_type;
   // TODO(crbug.com/665924): The following ifs skip the mouseover/leave cases,
   // we should fixed them when further merge the code path.
@@ -596,6 +645,10 @@ WebInputEventResult PointerEventManager::CreateAndDispatchPointerEvent(
   PointerEvent* pointer_event = pointer_event_factory_.Create(
       web_pointer_event, pointer_coalesced_events, pointer_predicted_events,
       target->GetDocument().domWindow());
+
+  ProcessCaptureAndPositionOfPointerEvent(pointer_event, target,
+                                          canvas_region_id, &mouse_event);
+
   return DispatchPointerEvent(target, pointer_event);
 }
 
@@ -614,7 +667,8 @@ WebInputEventResult PointerEventManager::DirectDispatchMousePointerEvent(
       pointer_event_factory_.GetLastPointerPosition(
           PointerEventFactory::kMouseId, event);
   WebInputEventResult result = CreateAndDispatchPointerEvent(
-      target, mouse_event_type, event, coalesced_events, predicted_events);
+      target, mouse_event_type, event, coalesced_events, predicted_events,
+      canvas_region_id);
 
   result = event_handling_util::MergeEventResult(
       result, mouse_event_manager_->DispatchMouseEvent(
@@ -686,14 +740,14 @@ WebInputEventResult PointerEventManager::SendMousePointerEvent(
   if ((event_type == WebInputEvent::kPointerDown ||
        event_type == WebInputEvent::kPointerUp) &&
       pointer_event->type() == event_type_names::kPointermove &&
-      RuntimeEnabledFeatures::PointerRawMoveEnabled() &&
+      RuntimeEnabledFeatures::PointerRawUpdateEnabled() &&
       frame_->GetEventHandlerRegistry().HasEventHandlers(
-          EventHandlerRegistry::kPointerRawMoveEvent)) {
+          EventHandlerRegistry::kPointerRawUpdateEvent)) {
     // This is a chorded button move event. We need to also send a
-    // pointerrawmove for it.
+    // pointerrawupdate for it.
     DispatchPointerEvent(
         effective_target,
-        pointer_event_factory_.CreatePointerRawMoveEvent(pointer_event));
+        pointer_event_factory_.CreatePointerRawUpdateEvent(pointer_event));
   }
   WebInputEventResult result =
       DispatchPointerEvent(effective_target, pointer_event);
@@ -859,15 +913,6 @@ void PointerEventManager::ProcessPendingPointerCapture(
   } else {
     pointer_capture_target_.erase(pointer_id);
   }
-}
-
-void PointerEventManager::ProcessPendingPointerCaptureForPointerLock(
-    const WebMouseEvent& mouse_event) {
-  PointerEvent* pointer_event = pointer_event_factory_.Create(
-      WebPointerEvent(WebInputEvent::kPointerMove, mouse_event),
-      Vector<WebPointerEvent>(), Vector<WebPointerEvent>(),
-      frame_->GetDocument()->domWindow());
-  ProcessPendingPointerCapture(pointer_event);
 }
 
 void PointerEventManager::RemoveTargetFromPointerCapturingMapping(

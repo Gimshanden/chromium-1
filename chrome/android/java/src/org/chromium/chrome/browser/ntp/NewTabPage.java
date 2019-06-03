@@ -53,6 +53,7 @@ import org.chromium.chrome.browser.suggestions.TileGroupDelegateImpl;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.Tab.TabHidingType;
+import org.chromium.chrome.browser.tab.TabBrowserControlsState;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
@@ -335,7 +336,7 @@ public class NewTabPage implements NativePage, InvalidationAwareThumbnailProvide
         mTab.addObserver(mTabObserver);
         updateSearchProviderHasLogo();
 
-        initializeMainView(activity);
+        initializeMainView(activity, nativePageHost);
 
         mFullscreenManager = activity.getFullscreenManager();
         getView().addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
@@ -364,8 +365,9 @@ public class NewTabPage implements NativePage, InvalidationAwareThumbnailProvide
     /**
      * Create and initialize the main view contained in this NewTabPage.
      * @param context The context used to inflate the view.
+     * @param host NativePageHost used for initialization.
      */
-    protected void initializeMainView(Context context) {
+    protected void initializeMainView(Context context, NativePageHost host) {
         LayoutInflater inflater = LayoutInflater.from(context);
         mNewTabPageView = (NewTabPageView) inflater.inflate(R.layout.new_tab_page_view, null);
         mNewTabPageLayout = mNewTabPageView.getNewTabPageLayout();
@@ -425,7 +427,7 @@ public class NewTabPage implements NativePage, InvalidationAwareThumbnailProvide
                 ((ViewGroup.MarginLayoutParams) view.getLayoutParams());
         if (layoutParams == null) return;
 
-        final @BrowserControlsState int constraints = mTab.getBrowserControlsStateConstraints();
+        final @BrowserControlsState int constraints = TabBrowserControlsState.getConstraints(mTab);
         layoutParams.bottomMargin = (constraints != BrowserControlsState.HIDDEN)
                 ? mFullscreenManager.getBottomControlsHeight()
                 : 0;
@@ -621,6 +623,9 @@ public class NewTabPage implements NativePage, InvalidationAwareThumbnailProvide
         if (tab.getWebContents() == null) return defaultValue;
 
         String stringValue = getStringFromNavigationEntry(tab, key);
+        if (stringValue == null || stringValue.isEmpty()) {
+            return RecyclerView.NO_POSITION;
+        }
 
         try {
             return Integer.parseInt(stringValue);

@@ -31,7 +31,6 @@ blink_modules_sources("media_controls") {
     "elements/media_control_download_button_element.h",
     "elements/media_control_element_base.cc",
     "elements/media_control_element_base.h",
-    "elements/media_control_element_type.h",
     "elements/media_control_elements_helper.cc",
     "elements/media_control_elements_helper.h",
     "elements/media_control_fullscreen_button_element.cc",
@@ -105,6 +104,8 @@ blink_modules_sources("media_controls") {
 
   if (is_android && notouch_build) {
     sources += [
+      "touchless/elements/media_controls_touchless_bottom_container_element.cc",
+      "touchless/elements/media_controls_touchless_bottom_container_element.h",
       "touchless/elements/media_controls_touchless_element.cc",
       "touchless/elements/media_controls_touchless_element.h",
       "touchless/elements/media_controls_touchless_overlay_element.cc",
@@ -113,10 +114,14 @@ blink_modules_sources("media_controls") {
       "touchless/elements/media_controls_touchless_play_button_element.h",
       "touchless/elements/media_controls_touchless_seek_button_element.cc",
       "touchless/elements/media_controls_touchless_seek_button_element.h",
+      "touchless/elements/media_controls_touchless_time_display_element.cc",
+      "touchless/elements/media_controls_touchless_time_display_element.h",
       "touchless/elements/media_controls_touchless_timeline_element.cc",
       "touchless/elements/media_controls_touchless_timeline_element.h",
       "touchless/elements/media_controls_touchless_volume_button_element.cc",
       "touchless/elements/media_controls_touchless_volume_button_element.h",
+      "touchless/elements/media_controls_touchless_volume_container_element.cc",
+      "touchless/elements/media_controls_touchless_volume_container_element.h",
       "touchless/media_controls_touchless_impl.cc",
       "touchless/media_controls_touchless_impl.h",
       "touchless/media_controls_touchless_media_event_listener.cc",

@@ -6,6 +6,8 @@
 #define CONTENT_RENDERER_MEDIA_WEBRTC_FAKE_RTC_RTP_TRANSCEIVER_H_
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/public/platform/web_media_constraints.h"
@@ -48,8 +50,10 @@ class FakeRTCRtpSender : public blink::WebRTCRtpSender {
   void SetParameters(blink::WebVector<webrtc::RtpEncodingParameters>,
                      webrtc::DegradationPreference,
                      blink::WebRTCVoidRequest) override;
-  void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>,
+  void GetStats(blink::WebRTCStatsReportCallback,
                 const std::vector<webrtc::NonStandardGroupId>&) override;
+  void SetStreams(
+      const blink::WebVector<blink::WebString>& stream_ids) override;
 
  private:
   base::Optional<std::string> track_id_;
@@ -74,9 +78,11 @@ class FakeRTCRtpReceiver : public blink::WebRTCRtpReceiver {
   blink::WebVector<blink::WebString> StreamIds() const override;
   blink::WebVector<std::unique_ptr<blink::WebRTCRtpSource>> GetSources()
       override;
-  void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>,
+  void GetStats(blink::WebRTCStatsReportCallback,
                 const std::vector<webrtc::NonStandardGroupId>&) override;
   std::unique_ptr<webrtc::RtpParameters> GetParameters() const override;
+  void SetJitterBufferMinimumDelay(
+      base::Optional<double> delay_seconds) override;
 
  private:
   blink::WebMediaStreamTrack track_;

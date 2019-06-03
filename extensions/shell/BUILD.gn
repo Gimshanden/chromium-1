@@ -52,9 +52,7 @@ source_set("app_shell_lib") {
     "//components/version_info",
     "//content",
     "//content/shell:content_shell_lib",
-    "//device/base",
     "//device/bluetooth",
-    "//device/usb",
     "//extensions:extensions_resources",
     "//extensions:shell_and_test_pak",
     "//extensions/browser",
@@ -121,8 +119,6 @@ source_set("app_shell_lib") {
     "browser/shell_content_browser_client.h",
     "browser/shell_desktop_controller_mac.h",
     "browser/shell_desktop_controller_mac.mm",
-    "browser/shell_device_client.cc",
-    "browser/shell_device_client.h",
     "browser/shell_display_info_provider.cc",
     "browser/shell_display_info_provider.h",
     "browser/shell_extension_host_delegate.cc",
@@ -230,6 +226,8 @@ source_set("app_shell_lib") {
       "//chromeos/audio",
       "//chromeos/constants",
       "//chromeos/dbus",
+      "//chromeos/dbus/audio",
+      "//chromeos/dbus/power",
       "//chromeos/disks",
       "//chromeos/login/login_state",
       "//chromeos/network",
@@ -360,6 +358,8 @@ test("app_shell_unittests") {
       "//chromeos/audio",
       "//chromeos/constants",
       "//chromeos/dbus:test_support",
+      "//chromeos/dbus/audio",
+      "//chromeos/dbus/power",
     ]
   }
 

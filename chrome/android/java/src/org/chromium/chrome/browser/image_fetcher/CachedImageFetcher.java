@@ -39,11 +39,6 @@ public class CachedImageFetcher extends ImageFetcher {
     }
 
     @Override
-    public void reportEvent(String clientName, @CachedImageFetcherEvent int eventId) {
-        mImageFetcherBridge.reportEvent(clientName, eventId);
-    }
-
-    @Override
     public void destroy() {
         // Do nothing, this lives for the lifetime of the application.
     }
@@ -69,13 +64,15 @@ public class CachedImageFetcher extends ImageFetcher {
             BaseGifImage cachedGif, long startTimeMillis) {
         if (cachedGif != null) {
             callback.onResult(cachedGif);
-            reportEvent(clientName, CachedImageFetcherEvent.JAVA_DISK_CACHE_HIT);
+            reportEvent(clientName, ImageFetcherEvent.JAVA_DISK_CACHE_HIT);
             mImageFetcherBridge.reportCacheHitTime(clientName, startTimeMillis);
         } else {
-            mImageFetcherBridge.fetchGif(url, clientName, (BaseGifImage gifFromNative) -> {
-                callback.onResult(gifFromNative);
-                mImageFetcherBridge.reportTotalFetchTimeFromNative(clientName, startTimeMillis);
-            });
+            mImageFetcherBridge.fetchGif(
+                    getConfig(), url, clientName, (BaseGifImage gifFromNative) -> {
+                        callback.onResult(gifFromNative);
+                        mImageFetcherBridge.reportTotalFetchTimeFromNative(
+                                clientName, startTimeMillis);
+                    });
         }
     }
 
@@ -102,7 +99,7 @@ public class CachedImageFetcher extends ImageFetcher {
             Callback<Bitmap> callback, Bitmap cachedBitmap, long startTimeMillis) {
         if (cachedBitmap != null) {
             callback.onResult(cachedBitmap);
-            reportEvent(clientName, CachedImageFetcherEvent.JAVA_DISK_CACHE_HIT);
+            reportEvent(clientName, ImageFetcherEvent.JAVA_DISK_CACHE_HIT);
             mImageFetcherBridge.reportCacheHitTime(clientName, startTimeMillis);
         } else {
             mImageFetcherBridge.fetchImage(
@@ -113,6 +110,9 @@ public class CachedImageFetcher extends ImageFetcher {
                     });
         }
     }
+
+    @Override
+    public void clear() {}
 
     @Override
     public @ImageFetcherConfig int getConfig() {

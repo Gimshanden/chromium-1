@@ -28,7 +28,6 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
-#include "content/browser/cache_storage/cache_storage_dispatcher_host.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/media/video_decoder_proxy.h"
@@ -195,9 +194,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void FilterURL(bool empty_allowed, GURL* url) override;
   void EnableAudioDebugRecordings(const base::FilePath& file) override;
   void DisableAudioDebugRecordings() override;
-  void SetEchoCanceller3(
-      bool enable,
-      base::OnceCallback<void(bool, const std::string&)> callback) override;
   WebRtcStopRtpDumpCallback StartRtpDump(
       bool incoming,
       bool outgoing,
@@ -649,8 +645,8 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void SendDisableAecDumpToRenderer();
   base::FilePath GetAecDumpFilePathWithExtensions(const base::FilePath& file);
   base::SequencedTaskRunner& GetAecDumpFileTaskRunner();
-  void OnAec3Enabled();
   void NotifyRendererIfLockedToSite();
+  void PopulateTerminationInfoRendererFields(ChildProcessTerminationInfo* info);
 
   static void OnMojoError(int render_process_id, const std::string& error);
 
@@ -842,7 +838,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   // Must be accessed on UI thread.
   std::vector<int> aec_dump_consumers_;
-  base::OnceCallback<void(bool, const std::string&)> aec3_set_callback_;
 
   WebRtcStopRtpDumpCallback stop_rtp_dump_callback_;
 
@@ -872,8 +867,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   std::unique_ptr<IndexedDBDispatcherHost, base::OnTaskRunnerDeleter>
       indexed_db_factory_;
-
-  scoped_refptr<CacheStorageDispatcherHost> cache_storage_dispatcher_host_;
 
   bool channel_connected_;
   bool sent_render_process_ready_;

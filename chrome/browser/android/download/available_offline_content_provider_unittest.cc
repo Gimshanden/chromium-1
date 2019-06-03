@@ -20,6 +20,7 @@
 #include "components/offline_items_collection/core/offline_item.h"
 #include "components/offline_items_collection/core/offline_item_state.h"
 #include "components/offline_items_collection/core/test_support/mock_offline_content_provider.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -69,6 +70,7 @@ OfflineItem SuggestedOfflinePageItem() {
   item.creation_time =
       base::Time::Now() - base::TimeDelta::FromMinutes(60 * 3.5);
   item.last_accessed_time = base::Time::Now();
+  item.attribution = "attribution";
   return item;
 }
 
@@ -117,6 +119,7 @@ OfflineItem DangerousItem() {
 OfflineItemVisuals TestThumbnail() {
   OfflineItemVisuals visuals;
   visuals.icon = gfx::test::CreateImage(2, 4);
+  visuals.custom_favicon = gfx::test::CreateImage(4, 4);
   return visuals;
 }
 
@@ -177,7 +180,12 @@ TEST_F(AvailableOfflineContentTest, TooFewInterestingItems) {
   EXPECT_TRUE(list_visible_by_prefs);
 }
 
-TEST_F(AvailableOfflineContentTest, FourInterestingItems) {
+#if defined(DISABLE_OFFLINE_PAGES_TOUCHLESS)
+#define MAYBE_FourInterestingItems DISABLED_FourInterestingItems
+#else
+#define MAYBE_FourInterestingItems FourInterestingItems
+#endif
+TEST_F(AvailableOfflineContentTest, MAYBE_FourInterestingItems) {
   // We need at least 4 interesting items for anything to show up at all.
   content_provider_.SetItems({UninterestingImageItem(), VideoItem(),
                               SuggestedOfflinePageItem(), AudioItem(),
@@ -215,8 +223,10 @@ TEST_F(AvailableOfflineContentTest, FourInterestingItems) {
   EXPECT_TRUE(base::StartsWith(first->thumbnail_data_uri.spec(),
                                "data:image/png;base64,iVBORw0K",
                                base::CompareCase::SENSITIVE));
-  // TODO(crbug.com/852872): Add attribution.
-  EXPECT_EQ("", first->attribution);
+  EXPECT_TRUE(base::StartsWith(first->favicon_data_uri.spec(),
+                               "data:image/png;base64,iVBORw0K",
+                               base::CompareCase::SENSITIVE));
+  EXPECT_EQ(page_item.attribution, first->attribution);
 }
 
 TEST_F(AvailableOfflineContentTest, NotEnabled) {
@@ -232,7 +242,12 @@ TEST_F(AvailableOfflineContentTest, NotEnabled) {
   EXPECT_TRUE(list_visible_by_prefs);
 }
 
-TEST_F(AvailableOfflineContentTest, ListVisibilityChanges) {
+#if defined(DISABLE_OFFLINE_PAGES_TOUCHLESS)
+#define MAYBE_ListVisibilityChanges DISABLED_ListVisibilityChanges
+#else
+#define MAYBE_ListVisibilityChanges ListVisibilityChanges
+#endif
+TEST_F(AvailableOfflineContentTest, MAYBE_ListVisibilityChanges) {
   // We need at least 4 interesting items for anything to show up at all.
   content_provider_.SetItems({UninterestingImageItem(), VideoItem(),
                               SuggestedOfflinePageItem(), AudioItem(),

@@ -34,7 +34,6 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_type_info.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/variations/variations_associated_data.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
@@ -214,7 +213,8 @@ void DataReductionProxyConfig::InitializeOnIOThread(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     WarmupURLFetcher::CreateCustomProxyConfigCallback
         create_custom_proxy_config_callback,
-    NetworkPropertiesManager* manager) {
+    NetworkPropertiesManager* manager,
+    const std::string& user_agent) {
   DCHECK(thread_checker_.CalledOnValidThread());
   network_properties_manager_ = manager;
   network_properties_manager_->ResetWarmupURLFetchMetrics();
@@ -227,7 +227,7 @@ void DataReductionProxyConfig::InitializeOnIOThread(
           base::Unretained(this)),
       base::BindRepeating(&DataReductionProxyConfig::GetHttpRttEstimate,
                           base::Unretained(this)),
-      ui_task_runner_));
+      ui_task_runner_, user_agent));
 
   AddDefaultProxyBypassRules();
 

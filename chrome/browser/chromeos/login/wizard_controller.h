@@ -23,7 +23,6 @@
 #include "chrome/browser/chromeos/login/enrollment/enrollment_screen.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
 #include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/screens/demo_preferences_screen.h"
 #include "chrome/browser/chromeos/login/screens/demo_setup_screen.h"
 #include "chrome/browser/chromeos/login/screens/enable_debugging_screen.h"
@@ -55,10 +54,10 @@ struct TimeZoneResponseData;
 
 // Class that manages control flow between wizard screens. Wizard controller
 // interacts with screen controllers to move the user between screens.
-class WizardController : public BaseScreenDelegate {
+class WizardController {
  public:
   WizardController();
-  ~WizardController() override;
+  ~WizardController();
 
   // Returns the default wizard controller if it has been created. This is a
   // helper for LoginDisplayHost::default_host()->GetWizardController();
@@ -78,7 +77,7 @@ class WizardController : public BaseScreenDelegate {
   static bool IsZeroDelayEnabled();
 
   // Checks whether screen show time should be tracked with UMA.
-  static bool IsOOBEStepToTrack(OobeScreen screen_id);
+  static bool IsOOBEStepToTrack(OobeScreenId screen_id);
 
   // Skips any screens that may normally be shown after login (registration,
   // Terms of Service, user image selection).
@@ -87,25 +86,28 @@ class WizardController : public BaseScreenDelegate {
   // Skips any enrollment prompts that may be normally shown.
   static void SkipEnrollmentPromptsForTesting();
 
+  // Forces screens that should only appear in chrome branded builds to show.
+  static std::unique_ptr<base::AutoReset<bool>> ForceOfficialBuildForTesting();
+
   // Returns true if OOBE is operating under the
   // Zero-Touch Hands-Off Enrollment Flow.
   static bool UsingHandsOffEnrollment();
 
   // Shows the first screen defined by |first_screen| or by default if the
   // parameter is empty.
-  void Init(OobeScreen first_screen);
+  void Init(OobeScreenId first_screen);
 
   // Advances to screen defined by |screen| and shows it.
-  void AdvanceToScreen(OobeScreen screen);
+  void AdvanceToScreen(OobeScreenId screen);
 
   // Starts Demo Mode setup flow. The flow starts from network screen and reuses
   // some of regular OOBE screens. It consists of the following screens:
-  //    chromeos::OobeScreen::SCREEN_OOBE_DEMO_PREFERENCES
-  //    chromeos::OobeScreen::SCREEN_OOBE_NETWORK
-  //    chromeos::OobeScreen::SCREEN_OOBE_EULA
-  //    chromeos::OobeScreen::SCREEN_ARC_TERMS_OF_SERVICE
-  //    chromeos::OobeScreen::SCREEN_OOBE_UPDATE
-  //    chromeos::OobeScreen::SCREEN_OOBE_DEMO_SETUP
+  //    chromeos::DemoPreferencesScreenView::kScreenId
+  //    chromeos::NetworkScreenView::kScreenId
+  //    chromeos::EulaView::kScreenId
+  //    chromeos::ArcTermsOfServiceScreenView::kScreenId
+  //    chromeos::UpdateView::kScreenId
+  //    chromeos::DemoSetupScreenView::kScreenId
   void StartDemoModeSetup();
 
   // Simulates demo mode setup environment. If |demo_config| has a value, it
@@ -135,17 +137,13 @@ class WizardController : public BaseScreenDelegate {
   bool login_screen_started() const { return login_screen_started_; }
 
   // Returns a given screen. Creates it lazily.
-  BaseScreen* GetScreen(OobeScreen screen);
+  BaseScreen* GetScreen(OobeScreenId screen);
 
   // Returns the current ScreenManager instance.
   ScreenManager* screen_manager() const { return screen_manager_.get(); }
 
   // Volume percent at which spoken feedback is still audible.
   static const int kMinAudibleOutputVolumePercent;
-
-  // Allocate a given BaseScreen for the given |Screen|. Used by
-  // |screen_manager_|.
-  std::unique_ptr<BaseScreen> CreateScreen(OobeScreen screen);
 
   // Set the current screen. For Test use only.
   void SetCurrentScreenForTesting(BaseScreen* screen);
@@ -154,6 +152,9 @@ class WizardController : public BaseScreenDelegate {
       scoped_refptr<network::SharedURLLoaderFactory> factory);
 
  private:
+  // Create BaseScreen instances. These are owned by |screen_manager_|.
+  std::vector<std::unique_ptr<BaseScreen>> CreateScreens();
+
   // Show specific screen.
   void ShowWelcomeScreen();
   void ShowNetworkScreen();
@@ -177,6 +178,7 @@ class WizardController : public BaseScreenDelegate {
   void ShowHIDDetectionScreen();
   void ShowDeviceDisabledScreen();
   void ShowEncryptionMigrationScreen();
+  void ShowSupervisionOnboardingScreen();
   void ShowSupervisionTransitionScreen();
   void ShowUpdateRequiredScreen();
   void ShowAssistantOptInFlowScreen();
@@ -189,7 +191,7 @@ class WizardController : public BaseScreenDelegate {
 
   // Shared actions to be performed on a screen exit.
   // |exit_code| is the screen specific exit code reported by the screen.
-  void OnScreenExit(OobeScreen screen, int exit_code);
+  void OnScreenExit(OobeScreenId screen, int exit_code);
 
   // Exit handlers:
   void OnWrongHWIDScreenExit();
@@ -225,6 +227,7 @@ class WizardController : public BaseScreenDelegate {
   void OnMultiDeviceSetupScreenExit();
   void OnResetScreenExit();
   void OnDeviceModificationCanceled();
+  void OnSupervisionOnboardingScreenExit();
   void OnSupervisionTransitionScreenExit();
   void OnOobeFlowFinished();
 
@@ -249,11 +252,8 @@ class WizardController : public BaseScreenDelegate {
   // Actions that should be done right after update stage is finished.
   void PerformOOBECompletedActions();
 
-  // Overridden from BaseScreenDelegate:
-  void ShowCurrentScreen() override;
-  ErrorScreen* GetErrorScreen() override;
-  void ShowErrorScreen() override;
-  void HideErrorScreen(BaseScreen* parent_screen) override;
+  ErrorScreen* GetErrorScreen();
+  void ShowErrorScreen();
 
   void OnHIDScreenNecessityCheck(bool screen_needed);
 
@@ -267,12 +267,8 @@ class WizardController : public BaseScreenDelegate {
   // Switches from one screen to another.
   void SetCurrentScreen(BaseScreen* screen);
 
-  // Switches from one screen to another with delay before showing. Calling
-  // ShowCurrentScreen directly forces screen to be shown immediately.
-  void SetCurrentScreenSmooth(BaseScreen* screen, bool use_smoothing);
-
   // Update the status area visibility for |screen|.
-  void UpdateStatusAreaVisibilityForScreen(OobeScreen screen);
+  void UpdateStatusAreaVisibilityForScreen(OobeScreenId screen);
 
   // Launched kiosk app configured for auto-launch.
   void AutoLaunchKioskApp();
@@ -287,7 +283,7 @@ class WizardController : public BaseScreenDelegate {
     local_state_for_testing_ = local_state;
   }
 
-  OobeScreen first_screen() const { return first_screen_; }
+  OobeScreenId first_screen() const { return first_screen_; }
 
   // Called when network is UP.
   void StartTimezoneResolve();
@@ -319,7 +315,7 @@ class WizardController : public BaseScreenDelegate {
   void StartEnrollmentScreen(bool force_interactive);
 
   void OnConfigurationLoaded(
-      OobeScreen first_screen,
+      OobeScreenId first_screen,
       std::unique_ptr<base::DictionaryValue> configuration);
 
   // Returns auto enrollment controller (lazily initializes one if it doesn't
@@ -342,19 +338,13 @@ class WizardController : public BaseScreenDelegate {
   BaseScreen* previous_screen_ = nullptr;
 
 // True if running official BUILD.
-#if defined(GOOGLE_CHROME_BUILD)
-  bool is_official_build_ = true;
-#else
-  bool is_official_build_ = false;
-#endif
+  static bool is_official_build_;
 
   // True if full OOBE flow should be shown.
   bool is_out_of_box_ = false;
 
   // Value of the screen name that WizardController was started with.
-  OobeScreen first_screen_;
-
-  base::OneShotTimer smooth_show_timer_;
+  OobeScreenId first_screen_ = OobeScreen::SCREEN_UNKNOWN;
 
   // If true then update check is cancelled and enrollment is started after
   // EULA is accepted.
@@ -390,11 +380,8 @@ class WizardController : public BaseScreenDelegate {
   FRIEND_TEST_ALL_PREFIXES(WizardControllerDeviceStateTest,
                            ControlFlowNoForcedReEnrollmentOnFirstBoot);
 
-  friend class DemoSetupTest;
-  friend class EnterpriseEnrollmentConfigurationTest;
-  friend class HandsOffEnrollmentTest;
+  friend class AutoEnrollmentLocalPolicyServer;
   friend class WizardControllerBrokenLocalStateTest;
-  friend class WizardControllerDemoSetupTest;
   friend class WizardControllerDeviceStateTest;
   friend class WizardControllerFlowTest;
   friend class WizardControllerOobeConfigurationTest;
@@ -416,18 +403,18 @@ class WizardController : public BaseScreenDelegate {
   std::unique_ptr<DemoSetupController> demo_setup_controller_;
 
   // Maps screen names to last time of their shows.
-  std::map<OobeScreen, base::Time> screen_show_times_;
+  std::map<OobeScreenId, base::Time> screen_show_times_;
 
   // Tests check result of timezone resolve.
   bool timezone_resolved_ = false;
   base::Closure on_timezone_resolved_for_testing_;
 
   // Configuration (dictionary) for automating OOBE screens.
-  base::Value oobe_configuration_;
+  base::Value oobe_configuration_{base::Value::Type::DICTIONARY};
 
   BaseScreen* hid_screen_ = nullptr;
 
-  base::WeakPtrFactory<WizardController> weak_factory_;
+  base::WeakPtrFactory<WizardController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WizardController);
 };

@@ -47,6 +47,7 @@ class GLFenceEGL;
 namespace media {
 
 class H264Parser;
+class V4L2StatefulWorkaround;
 
 // This class handles video accelerators directly through a V4L2 device exported
 // by the hardware blocks.
@@ -109,7 +110,7 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   // VideoDecodeAccelerator implementation.
   // Note: Initialize() and Destroy() are synchronous.
   bool Initialize(const Config& config, Client* client) override;
-  void Decode(const BitstreamBuffer& bitstream_buffer) override;
+  void Decode(BitstreamBuffer bitstream_buffer) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer,
               int32_t bitstream_id) override;
   void AssignPictureBuffers(const std::vector<PictureBuffer>& buffers) override;
@@ -205,6 +206,7 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   void InitializeTask(const Config& config,
                       bool* result,
                       base::WaitableEvent* done);
+  bool CheckConfig(const Config& config);
 
   // Enqueue a buffer to decode.  This will enqueue a buffer to the
   // decoder_input_queue_, then queue a DecodeBufferTask() to actually decode
@@ -506,6 +508,11 @@ class MEDIA_GPU_EXPORT V4L2VideoDecodeAccelerator
   // For H264 decode, hardware requires that we send it frame-sized chunks.
   // We'll need to parse the stream.
   std::unique_ptr<H264Parser> decoder_h264_parser_;
+
+  // Workaround for V4L2VideoDecodeAccelerator. This is created only if some
+  // workaround is necessary for the V4L2VideoDecodeAccelerator.
+  std::vector<std::unique_ptr<V4L2StatefulWorkaround>> workarounds_;
+
   // Set if the decoder has a pending incomplete frame in an input buffer.
   bool decoder_partial_frame_pending_;
 

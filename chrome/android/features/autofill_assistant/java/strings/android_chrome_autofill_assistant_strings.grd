@@ -18,9 +18,9 @@
     <output filename="values-et/android_chrome_autofill_assistant_strings.xml" lang="et" type="android" />
     <output filename="values-fa/android_chrome_autofill_assistant_strings.xml" lang="fa" type="android" />
     <output filename="values-fi/android_chrome_autofill_assistant_strings.xml" lang="fi" type="android" />
+    <output filename="values-gu/android_chrome_autofill_assistant_strings.xml" lang="fi" type="android" />
     <output filename="values-tl/android_chrome_autofill_assistant_strings.xml" lang="fil" type="android" />
     <output filename="values-fr/android_chrome_autofill_assistant_strings.xml" lang="fr" type="android" />
-    <output filename="values-gu/android_chrome_autofill_assistant_strings.xml" lang="gu" type="android" />
     <output filename="values-hi/android_chrome_autofill_assistant_strings.xml" lang="hi" type="android" />
     <output filename="values-hr/android_chrome_autofill_assistant_strings.xml" lang="hr" type="android" />
     <output filename="values-hu/android_chrome_autofill_assistant_strings.xml" lang="hu" type="android" />
@@ -112,9 +112,6 @@
   </translations>
   <release allow_pseudo="false" seq="1">
     <messages fallback_to_english="true">
-      <message name="IDS_AUTOFILL_ASSISTANT_ONBOARDING_TITLE" desc="Onboarding title for the autofill assistant.">
-        Google Assistant\nin Chrome
-      </message>
       <message name="IDS_INIT_OK" desc="Init screen confirmation text.">
         I accept
       </message>
@@ -136,9 +133,6 @@
       <message name="IDS_AUTOFILL_ASSISTANT_3RD_PARTY_PRIVACY_NOTICE" desc="Privacy notice telling users that autofill assistant will send personal data to a third party’s website.">
         Chrome will send personal data you selected to <ph name="BEGIN_BOLD">&lt;b&gt;</ph><ph name="DOMAIN">%1$s<ex>google.com</ex></ph><ph name="END_BOLD">&lt;/b&gt;</ph>
       </message>
-      <message name="IDS_AUTOFILL_ASSISTANT_AVAILABLE_ACCESSIBILITY" desc="Accessibility description of Autofill Assistant is available.">
-        Google Assistant in Chrome is available near bottom of the screen
-      </message>
       <message name="IDS_AUTOFILL_ASSISTANT_FIRST_RUN_ACCESSIBILITY" desc="Accessibility description of Autofill Assistant first run screen is shown.">
         Google Assistant in Chrome first run screen is shown
       </message>
@@ -147,17 +141,32 @@
                internal_comment="TODO(wnwen): Remove duplication in components/autofill_assistant_strings.grdp">
         Sorry I'm not able to help, please continue on your own.
       </message>
-      <message name="IDS_AUTOFILL_ASSISTANT_VIEW_ORIGINAL_IMAGE_TITLE" desc="Title of view image dialog.">
-        Open Image
+      <message name="IDS_AUTOFILL_ASSISTANT_PAYMENT_INFORMATION_MISSING" desc="Text label that is shown when a payment request entry (e.g., contact details or payment method) is incomplete.">
+        Information missing
       </message>
       <message name="IDS_AUTOFILL_ASSISTANT_VIEW_ORIGINAL_IMAGE_DESC" desc="Description of view image dialog.">
-        Would you like to navigate to the image URL?
+        Open external link?
       </message>
       <message name="IDS_AUTOFILL_ASSISTANT_VIEW_ORIGINAL_IMAGE_VIEW" desc="Text on the button to view original image.">
         View
       </message>
       <message name="IDS_AUTOFILL_ASSISTANT_VIEW_ORIGINAL_IMAGE_CANCEL" desc="Text on the button to dismiss view image dialog.">
         Cancel
+      </message>
+      <message name="IDS_AUTOFILL_ASSISTANT_SHEET_CONTENT_DESCRIPTION" desc="Content description for the Autofill Assistant sheet.">
+        Google Assistant in Chrome.
+      </message>
+      <message name="IDS_AUTOFILL_ASSISTANT_SHEET_HALF_HEIGHT" desc="Text announced when the Autofill Assistant sheet is opened at half height.">
+        Google Assistant in Chrome opened at half height.
+      </message>
+      <message name="IDS_AUTOFILL_ASSISTANT_SHEET_FULL_HEIGHT" desc="Text announced when the Autofill Assistant sheet is opened at full height.">
+        Google Assistant in Chrome opened at full height.
+      </message>
+      <message name="IDS_AUTOFILL_ASSISTANT_SHEET_CLOSED" desc="Text announced when the Autofill Assistant sheet is closed.">
+        Google Assistant in Chrome closed.
+      </message>
+      <message name="IDS_AUTOFILL_ASSISTANT_SEND_FEEDBACK" desc="Option shown in the menu when clicking the Autofill Assistant profile icon. Clicking this option will open a feedback sharing dialog.">
+        Send feedback
       </message>
     </messages>
   </release>

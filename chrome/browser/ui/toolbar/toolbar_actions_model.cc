@@ -29,6 +29,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
@@ -156,22 +157,27 @@ void ToolbarActionsModel::OnExtensionActionUpdated(
 }
 
 std::vector<std::unique_ptr<ToolbarActionViewController>>
-ToolbarActionsModel::CreateActions(Browser* browser, ToolbarActionsBar* bar) {
+ToolbarActionsModel::CreateActions(Browser* browser,
+                                   ExtensionsContainer* main_bar,
+                                   bool in_overflow_mode) {
   DCHECK(browser);
-  DCHECK(bar);
+  DCHECK(main_bar);
   std::vector<std::unique_ptr<ToolbarActionViewController>> action_list;
 
   // action_ids() might not equate to |action_ids_| in the case where a
   // subset is highlighted.
-  for (const ActionId& action_id : action_ids())
-    action_list.push_back(CreateActionForId(browser, bar, action_id));
+  for (const ActionId& action_id : action_ids()) {
+    action_list.push_back(
+        CreateActionForId(browser, main_bar, in_overflow_mode, action_id));
+  }
 
   return action_list;
 }
 
 std::unique_ptr<ToolbarActionViewController>
 ToolbarActionsModel::CreateActionForId(Browser* browser,
-                                       ToolbarActionsBar* bar,
+                                       ExtensionsContainer* main_bar,
+                                       bool in_overflow_mode,
                                        const ActionId& action_id) {
   // We should never have uninitialized actions in action_ids().
   DCHECK(!action_id.empty());
@@ -182,7 +188,8 @@ ToolbarActionsModel::CreateActionForId(Browser* browser,
   // Create and add an ExtensionActionViewController for the extension.
   return std::make_unique<ExtensionActionViewController>(
       extension, browser,
-      extension_action_manager_->GetExtensionAction(*extension), bar);
+      extension_action_manager_->GetExtensionAction(*extension), main_bar,
+      in_overflow_mode);
 }
 
 void ToolbarActionsModel::OnExtensionLoaded(
@@ -606,7 +613,11 @@ void ToolbarActionsModel::UpdatePrefs() {
 
 void ToolbarActionsModel::SetActionVisibility(const ActionId& action_id,
                                               bool is_now_visible) {
-  // Hiding works differently with the new and old toolbars.
+  if (base::FeatureList::IsEnabled(features::kExtensionsToolbarMenu)) {
+    // TODO(pbos): Add extension pinning using a vector of pinned action IDs.
+    return;
+  }
+
   DCHECK(HasAction(action_id));
 
   int new_size = 0;

@@ -57,7 +57,6 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/main_thread_debugger.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
@@ -91,94 +90,6 @@ static void ReportOOMErrorInMainThread(const char* location, bool is_js_heap) {
   DVLOG(1) << "V8 " << (is_js_heap ? "javascript" : "process") << " OOM: ("
            << location << ").";
   OOM_CRASH();
-}
-
-namespace {
-
-// Set to BloatedRendererDetector::OnNearV8HeapLimitOnMainThread during startup.
-static NearV8HeapLimitCallback g_near_heap_limit_on_main_thread_callback_ =
-    nullptr;
-
-void Record(NearV8HeapLimitHandling handling,
-            v8::Isolate* isolate,
-            size_t heap_limit,
-            ukm::UkmRecorder* ukm_recorder,
-            int64_t ukm_source_id) {
-  UMA_HISTOGRAM_ENUMERATION("BloatedRenderer.V8.NearV8HeapLimitHandling",
-                            handling);
-  if (ukm_recorder) {
-    // Record size metrics in MB similar to Memory.Experimental.Renderer2.V8.
-    const size_t kMB = 1024 * 1024;
-    v8::HeapStatistics heap_statistics;
-    isolate->GetHeapStatistics(&heap_statistics);
-    ukm::builders::BloatedRenderer(ukm_source_id)
-        .SetV8_NearV8HeapLimitHandling(static_cast<int64_t>(handling))
-        .SetV8_Heap(heap_statistics.total_physical_size() / kMB)
-        .SetV8_Heap_AllocatedObjects(heap_statistics.used_heap_size() / kMB)
-        .SetV8_Heap_Limit(heap_limit / kMB)
-        .Record(ukm_recorder);
-  }
-}
-
-size_t IncreaseV8HeapLimit(size_t v8_heap_limit) {
-  // The heap limit for a bloated page should be increased to avoid immediate
-  // OOM crash. The exact amount is not important, it should be sufficiently
-  // large to give enough time for the browser process to reload the page.
-  // Increase the heap limit by 25%.
-  return v8_heap_limit + v8_heap_limit / 4;
-}
-
-size_t NearHeapLimitCallbackOnMainThread(void* data,
-                                         size_t current_heap_limit,
-                                         size_t initial_heap_limit) {
-  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(data);
-  // Find the main document for UKM recording.
-  Document* document = nullptr;
-  int pages = 0;
-  for (Page* page : Page::OrdinaryPages()) {
-    if (auto* main_local_frame = DynamicTo<LocalFrame>(page->MainFrame())) {
-      ++pages;
-      document = main_local_frame->GetDocument();
-    }
-  }
-  ukm::UkmRecorder* ukm_recorder = nullptr;
-  int64_t ukm_source_id = 0;
-  // Do not record UKM if there are multiple pages as we cannot attribute
-  // the heap size to a specific page.
-  if (pages == 1 && document) {
-    ukm_recorder = document->UkmRecorder();
-    ukm_source_id = document->UkmSourceID();
-  }
-
-  if (current_heap_limit != initial_heap_limit) {
-    Record(NearV8HeapLimitHandling::kIgnoredDueToChangedHeapLimit, isolate,
-           current_heap_limit, ukm_recorder, ukm_source_id);
-    return current_heap_limit;
-  }
-
-  NearV8HeapLimitHandling handling =
-      g_near_heap_limit_on_main_thread_callback_();
-  Record(handling, isolate, current_heap_limit, ukm_recorder, ukm_source_id);
-  return (handling == NearV8HeapLimitHandling::kForwardedToBrowser)
-             ? IncreaseV8HeapLimit(current_heap_limit)
-             : current_heap_limit;
-}
-
-size_t NearHeapLimitCallbackOnWorkerThread(void* data,
-                                           size_t current_heap_limit,
-                                           size_t initial_heap_limit) {
-  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(data);
-  // Do not record UKM on worker thread.
-  Record(NearV8HeapLimitHandling::kIgnoredDueToWorker, isolate,
-         current_heap_limit, nullptr, 0);
-  return current_heap_limit;
-}
-
-}  // anonymous namespace
-
-void V8Initializer::SetNearV8HeapLimitOnMainThreadCallback(
-    NearV8HeapLimitCallback callback) {
-  g_near_heap_limit_on_main_thread_callback_ = callback;
 }
 
 static String ExtractMessageForConsole(v8::Isolate* isolate,
@@ -492,7 +403,7 @@ static bool WasmThreadsEnabledCallback(v8::Local<v8::Context> context) {
   if (!execution_context)
     return false;
 
-  return origin_trials::WebAssemblyThreadsEnabled(execution_context);
+  return RuntimeEnabledFeatures::WebAssemblyThreadsEnabled(execution_context);
 }
 
 v8::Local<v8::Value> NewRangeException(v8::Isolate* isolate,
@@ -697,17 +608,10 @@ void V8Initializer::InitializeMainThread(const intptr_t* reference_table) {
 
   ThreadState::MainThreadState()->RegisterTraceDOMWrappers(
       isolate, V8GCController::TraceDOMWrappers);
-
   InitializeV8Common(isolate);
 
   isolate->SetOOMErrorHandler(ReportOOMErrorInMainThread);
 
-  if (RuntimeEnabledFeatures::BloatedRendererDetectionEnabled()) {
-    DCHECK(g_near_heap_limit_on_main_thread_callback_);
-    isolate->AddNearHeapLimitCallback(NearHeapLimitCallbackOnMainThread,
-                                      isolate);
-    isolate->AutomaticallyRestoreInitialHeapLimit();
-  }
   isolate->SetFatalErrorHandler(ReportFatalErrorInMainThread);
   isolate->AddMessageListenerWithErrorLevel(
       MessageHandlerInMainThread,
@@ -749,6 +653,8 @@ static void ReportFatalErrorInWorker(const char* location,
 static const int kWorkerMaxStackSize = 500 * 1024;
 
 void V8Initializer::InitializeWorker(v8::Isolate* isolate) {
+  ThreadState::Current()->RegisterTraceDOMWrappers(
+      isolate, V8GCController::TraceDOMWrappers);
   InitializeV8Common(isolate);
 
   isolate->AddMessageListenerWithErrorLevel(
@@ -760,10 +666,6 @@ void V8Initializer::InitializeWorker(v8::Isolate* isolate) {
 
   isolate->SetStackLimit(WTF::GetCurrentStackPosition() - kWorkerMaxStackSize);
   isolate->SetPromiseRejectCallback(PromiseRejectHandlerInWorker);
-  if (RuntimeEnabledFeatures::BloatedRendererDetectionEnabled()) {
-    isolate->AddNearHeapLimitCallback(NearHeapLimitCallbackOnWorkerThread,
-                                      isolate);
-  }
 }
 
 }  // namespace blink

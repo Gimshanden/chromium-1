@@ -5,7 +5,10 @@
 #include "chrome/browser/web_applications/components/web_app_tab_helper_base.h"
 
 #include "base/unguessable_token.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/web_applications/components/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/components/web_app_audio_focus_id_map.h"
+#include "chrome/browser/web_applications/components/web_app_provider_base.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/site_instance.h"
@@ -15,13 +18,17 @@ namespace web_app {
 WEB_CONTENTS_USER_DATA_KEY_IMPL(WebAppTabHelperBase)
 
 WebAppTabHelperBase::WebAppTabHelperBase(content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents) {}
+    : content::WebContentsObserver(web_contents) {
+  auto* provider = web_app::WebAppProviderBase::GetProviderBase(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+  DCHECK(provider);
+  observer_.Add(&provider->registrar());
+}
 
 WebAppTabHelperBase::~WebAppTabHelperBase() = default;
 
 void WebAppTabHelperBase::Init(WebAppAudioFocusIdMap* audio_focus_id_map) {
-  DCHECK(!audio_focus_id_map_ && audio_focus_id_map);
-  audio_focus_id_map_ = audio_focus_id_map;
+  SetAudioFocusIdMap(audio_focus_id_map);
 
   // Sync app_id with the initial url from WebContents (used in Tab Restore etc)
   const GURL init_url = web_contents()->GetSiteInstance()->GetSiteURL();
@@ -48,6 +55,8 @@ void WebAppTabHelperBase::DidFinishNavigation(
 
   const AppId app_id = FindAppIdInScopeOfUrl(navigation_handle->GetURL());
   SetAppId(app_id);
+
+  ReinstallPlaceholderAppIfNecessary(navigation_handle->GetURL());
 }
 
 void WebAppTabHelperBase::DidCloneToNewWebContents(
@@ -56,8 +65,16 @@ void WebAppTabHelperBase::DidCloneToNewWebContents(
   // When the WebContents that this is attached to is cloned, give the new clone
   // a WebAppTabHelperBase.
   WebAppTabHelperBase* new_tab_helper = CloneForWebContents(new_web_contents);
+
   // Clone common state:
+  new_tab_helper->SetAudioFocusIdMap(audio_focus_id_map_);
   new_tab_helper->SetAppId(app_id());
+}
+
+void WebAppTabHelperBase::SetAudioFocusIdMap(
+    WebAppAudioFocusIdMap* audio_focus_id_map) {
+  DCHECK(!audio_focus_id_map_ && audio_focus_id_map);
+  audio_focus_id_map_ = audio_focus_id_map;
 }
 
 void WebAppTabHelperBase::OnWebAppInstalled(const AppId& installed_app_id) {
@@ -72,12 +89,17 @@ void WebAppTabHelperBase::OnWebAppUninstalled(const AppId& uninstalled_app_id) {
     ResetAppId();
 }
 
-void WebAppTabHelperBase::OnWebAppRegistryShutdown() {
+void WebAppTabHelperBase::OnAppRegistrarShutdown() {
   ResetAppId();
+}
+
+void WebAppTabHelperBase::OnAppRegistrarDestroyed() {
+  observer_.RemoveAll();
 }
 
 void WebAppTabHelperBase::ResetAppId() {
   app_id_.clear();
+
   OnAssociatedAppChanged();
 }
 
@@ -96,6 +118,18 @@ void WebAppTabHelperBase::UpdateAudioFocusGroupId() {
 
   content::MediaSession::Get(web_contents())
       ->SetAudioFocusGroupId(audio_focus_group_id_);
+}
+
+void WebAppTabHelperBase::ReinstallPlaceholderAppIfNecessary(const GURL& url) {
+  auto* provider = web_app::WebAppProviderBase::GetProviderBase(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+  DCHECK(provider);
+
+  // WebAppPolicyManager might be nullptr in the non-extensions implementation.
+  if (!provider->policy_manager())
+    return;
+
+  provider->policy_manager()->ReinstallPlaceholderAppIfNecessary(url);
 }
 
 }  // namespace web_app

@@ -16,6 +16,7 @@
 #include "chrome/browser/chromeos/printing/cups_printers_manager.h"
 #include "chrome/browser/chromeos/printing/printer_configurer.h"
 #include "chrome/browser/chromeos/printing/printer_event_tracker.h"
+#include "chrome/browser/local_discovery/endpoint_resolver.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chromeos/printing/ppd_provider.h"
 #include "chromeos/printing/printer_configuration.h"
@@ -87,7 +88,7 @@ class CupsPrintersHandler : public ::settings::SettingsPageUIHandler,
 
   // Handles the callback for HandleGetPrinterInfo for a discovered printer.
   void OnAutoconfQueriedDiscovered(
-      std::unique_ptr<Printer> printer,
+      Printer printer,
       bool success,
       const std::string& make,
       const std::string& model,
@@ -99,7 +100,8 @@ class CupsPrintersHandler : public ::settings::SettingsPageUIHandler,
   void OnPpdResolved(const std::string& callback_id,
                      base::Value info,
                      PpdProvider::CallbackResultCode res,
-                     const Printer::PpdReference& ppd_ref);
+                     const Printer::PpdReference& ppd_ref,
+                     const std::string& usb_manufacturer);
 
   void HandleAddCupsPrinter(const base::ListValue* args);
 
@@ -171,8 +173,11 @@ class CupsPrintersHandler : public ::settings::SettingsPageUIHandler,
                                     bool is_automatic);
 
   // CupsPrintersManager::Observer override:
-  void OnPrintersChanged(CupsPrintersManager::PrinterClass printer_class,
+  void OnPrintersChanged(PrinterClass printer_class,
                          const std::vector<Printer>& printers) override;
+
+  // Handles getting the EULA URL if available.
+  void HandleGetEulaUrl(const base::ListValue* args);
 
   // ui::SelectFileDialog::Listener override:
   void FileSelected(const base::FilePath& path,
@@ -189,6 +194,8 @@ class CupsPrintersHandler : public ::settings::SettingsPageUIHandler,
   // Fires the on-manually-add-discovered-printer event with the appropriate
   // parameters.  See https://crbug.com/835476
   void FireManuallyAddDiscoveredPrinter(const Printer& printer);
+
+  void OnIpResolved(const Printer& printer, const net::IPEndPoint& endpoint);
 
   Profile* profile_;
 
@@ -213,6 +220,7 @@ class CupsPrintersHandler : public ::settings::SettingsPageUIHandler,
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
   std::string webui_callback_id_;
   CupsPrintersManager* printers_manager_;
+  std::unique_ptr<local_discovery::EndpointResolver> endpoint_resolver_;
 
   ScopedObserver<CupsPrintersManager, CupsPrintersManager::Observer>
       printers_manager_observer_;

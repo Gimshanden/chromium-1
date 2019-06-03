@@ -26,21 +26,14 @@ namespace chromeos {
 
 namespace {
 
-// Prefix for KRB5CCNAME environment variable. Defines credential cache type.
-constexpr char kKrb5CCFilePrefix[] = "FILE:";
-// Directory in the user home to store Kerberos files.
-constexpr char kKrb5Directory[] = "kerberos";
-// Environment variable pointing to credential cache file.
-constexpr char kKrb5CCEnvName[] = "KRB5CCNAME";
-// Credential cache file name.
-constexpr char kKrb5CCFile[] = "krb5cc";
-// Environment variable pointing to Kerberos config file.
-constexpr char kKrb5ConfEnvName[] = "KRB5_CONFIG";
-// Kerberos config file name.
-constexpr char kKrb5ConfFile[] = "krb5.conf";
+base::FilePath GetKerberosDir() {
+  base::FilePath dir;
+  base::PathService::Get(base::DIR_HOME, &dir);
+  return dir.Append(kKrb5Directory);
+}
 
 // Writes |blob| into file <UserPath>/kerberos/|file_name|. First writes into
-// temporary file and then replaces existing one.
+// temporary file and then replaces existing one. Prints an error or failure.
 void WriteFile(const base::FilePath& path, base::Optional<std::string> blob) {
   if (!blob.has_value())
     return;
@@ -48,13 +41,17 @@ void WriteFile(const base::FilePath& path, base::Optional<std::string> blob) {
     LOG(ERROR) << "Failed to write file " << path.value();
 }
 
+// Deletes file at |path|. Prints an error or failure.
+void RemoveFile(const base::FilePath& path) {
+  if (!base::DeleteFile(path, false /* recursive */))
+    LOG(ERROR) << "Failed to delete file " << path.value();
+}
+
 // Writes |krb5cc| to <DIR_HOME>/kerberos/krb5cc and |krb5config| to
 // <DIR_HOME>/kerberos/krb5.conf if set. Creates directories if necessary.
 void WriteFiles(base::Optional<std::string> krb5cc,
                 base::Optional<std::string> krb5config) {
-  base::FilePath dir;
-  base::PathService::Get(base::DIR_HOME, &dir);
-  dir = dir.Append(kKrb5Directory);
+  base::FilePath dir = GetKerberosDir();
   base::File::Error error;
   if (!base::CreateDirectoryAndGetError(dir, &error)) {
     LOG(ERROR) << "Failed to create '" << dir.value()
@@ -64,6 +61,13 @@ void WriteFiles(base::Optional<std::string> krb5cc,
 
   WriteFile(dir.Append(kKrb5CCFile), std::move(krb5cc));
   WriteFile(dir.Append(kKrb5ConfFile), std::move(krb5config));
+}
+
+// Deletes <DIR_HOME>/kerberos/krb5cc and <DIR_HOME>/kerberos/krb5.conf.
+void RemoveFiles() {
+  base::FilePath dir = GetKerberosDir();
+  RemoveFile(dir.Append(kKrb5CCFile));
+  RemoveFile(dir.Append(kKrb5ConfFile));
 }
 
 // If |config| has a value, puts canonicalization settings first depending on
@@ -82,10 +86,16 @@ base::Optional<std::string> MaybeAdjustConfig(
 
 }  // namespace
 
-const char* kKrb5CnameSettings =
+const char kKrb5CnameSettings[] =
     "[libdefaults]\n"
     "\tdns_canonicalize_hostname = %s\n"
     "\trdns = false\n";
+const char kKrb5CCEnvName[] = "KRB5CCNAME";
+const char kKrb5ConfEnvName[] = "KRB5_CONFIG";
+const char kKrb5CCFilePrefix[] = "FILE:";
+const char kKrb5Directory[] = "kerberos";
+const char kKrb5CCFile[] = "krb5cc";
+const char kKrb5ConfFile[] = "krb5.conf";
 
 KerberosFilesHandler::KerberosFilesHandler(
     base::RepeatingClosure get_kerberos_files)
@@ -132,6 +142,18 @@ void KerberosFilesHandler::SetFiles(base::Optional<std::string> krb5cc,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&WriteFiles, std::move(krb5cc), std::move(krb5conf)),
+      base::BindOnce(&KerberosFilesHandler::OnFilesChanged,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void KerberosFilesHandler::DeleteFiles() {
+  // These files contain user credentials, so use BLOCK_SHUTDOWN here to make
+  // sure they do get deleted.
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      base::BindOnce(&RemoveFiles),
       base::BindOnce(&KerberosFilesHandler::OnFilesChanged,
                      weak_factory_.GetWeakPtr()));
 }

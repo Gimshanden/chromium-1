@@ -6,6 +6,7 @@
 #define CONTENT_RENDERER_MEDIA_WEBRTC_RTC_RTP_SENDER_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
@@ -139,8 +140,10 @@ class CONTENT_EXPORT RTCRtpSender : public blink::WebRTCRtpSender {
   void SetParameters(blink::WebVector<webrtc::RtpEncodingParameters>,
                      webrtc::DegradationPreference,
                      blink::WebRTCVoidRequest) override;
-  void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>,
+  void GetStats(blink::WebRTCStatsReportCallback,
                 const std::vector<webrtc::NonStandardGroupId>&) override;
+  void SetStreams(
+      const blink::WebVector<blink::WebString>& stream_ids) override;
 
   // The ReplaceTrack() that takes a blink::WebRTCVoidRequest is implemented on
   // top of this, which returns the result in a callback instead. Allows doing
@@ -160,7 +163,8 @@ class CONTENT_EXPORT RTCRtpSender : public blink::WebRTCRtpSender {
 class CONTENT_EXPORT RTCRtpSenderOnlyTransceiver
     : public blink::WebRTCRtpTransceiver {
  public:
-  RTCRtpSenderOnlyTransceiver(std::unique_ptr<blink::WebRTCRtpSender> sender);
+  explicit RTCRtpSenderOnlyTransceiver(
+      std::unique_ptr<blink::WebRTCRtpSender> sender);
   ~RTCRtpSenderOnlyTransceiver() override;
 
   blink::WebRTCRtpTransceiverImplementationType ImplementationType()
@@ -176,6 +180,8 @@ class CONTENT_EXPORT RTCRtpSenderOnlyTransceiver
       const override;
   base::Optional<webrtc::RtpTransceiverDirection> FiredDirection()
       const override;
+  webrtc::RTCError SetCodecPreferences(
+      blink::WebVector<webrtc::RtpCodecCapability>) override;
 
  private:
   std::unique_ptr<blink::WebRTCRtpSender> sender_;

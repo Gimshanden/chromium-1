@@ -425,7 +425,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
     || defined(THREAD_SANITIZER)
 #define MAYBE_GetSizeForNewRenderView DISABLED_GetSizeForNewRenderView
 #else
-#define MAYBE_GetSizeForNewRenderView GetSizeForNewRenderView
+#define MAYBE_GetSizeForNewRenderView DISABLED_GetSizeForNewRenderView
 #endif
 // Test that RenderViewHost is created and updated at the size specified by
 // WebContentsDelegate::GetSizeForNewRenderView().
@@ -552,7 +552,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, OpenURLSubframe) {
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
                        AppendingFrameInWebUIDoesNotCrash) {
-  const GURL kWebUIUrl("chrome://tracing");
+  const GURL kWebUIUrl(GetWebUIURL("tracing"));
   const char kJSCodeForAppendingFrame[] =
       "document.body.appendChild(document.createElement('iframe'));";
 
@@ -813,17 +813,17 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, ResourceLoadComplete) {
   base::TimeTicks after = base::TimeTicks::Now();
   ASSERT_EQ(3U, observer.resource_load_infos().size());
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      page_url, /*referrer=*/GURL(), "GET", content::RESOURCE_TYPE_MAIN_FRAME,
+      page_url, /*referrer=*/GURL(), "GET", content::ResourceType::kMainFrame,
       FILE_PATH_LITERAL("page_with_iframe.html"), "text/html", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/true, before, after));
   SCOPE_TRACED(observer.CheckResourceLoaded(
       embedded_test_server()->GetURL("/image.jpg"),
-      /*referrer=*/page_url, "GET", content::RESOURCE_TYPE_IMAGE,
+      /*referrer=*/page_url, "GET", content::ResourceType::kImage,
       FILE_PATH_LITERAL("image.jpg"), "image/jpeg", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/false, before, after));
   SCOPE_TRACED(observer.CheckResourceLoaded(
       embedded_test_server()->GetURL("/title1.html"),
-      /*referrer=*/page_url, "GET", content::RESOURCE_TYPE_SUB_FRAME,
+      /*referrer=*/page_url, "GET", content::ResourceType::kSubFrame,
       FILE_PATH_LITERAL("title1.html"), "text/html", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/false, before, after));
 }
@@ -843,13 +843,14 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   GURL resource_url = embedded_test_server()->GetURL("/cachetime");
   ASSERT_EQ(2U, observer.resource_load_infos().size());
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      page_url, /*referrer=*/GURL(), "GET", content::RESOURCE_TYPE_MAIN_FRAME,
+      page_url, /*referrer=*/GURL(), "GET", content::ResourceType::kMainFrame,
       /*served_file_name=*/FILE_PATH_LITERAL(""), "text/html", "127.0.0.1",
       /*was_cached=*/false,
       /*first_network_request=*/true, before, after));
 
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      resource_url, /*referrer=*/page_url, "GET", content::RESOURCE_TYPE_SCRIPT,
+      resource_url, /*referrer=*/page_url, "GET",
+      content::ResourceType::kScript,
       /*served_file_name=*/FILE_PATH_LITERAL(""), "text/html", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/false, before, after));
   EXPECT_TRUE(
@@ -863,7 +864,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   after = base::TimeTicks::Now();
   ASSERT_EQ(1U, observer.resource_load_infos().size());
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      page_url, /*referrer=*/GURL(), "GET", content::RESOURCE_TYPE_MAIN_FRAME,
+      page_url, /*referrer=*/GURL(), "GET", content::ResourceType::kMainFrame,
       /*served_file_name=*/FILE_PATH_LITERAL(""), "text/html", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/false, before, after));
   ASSERT_EQ(1U, observer.memory_cached_loaded_urls().size());
@@ -872,7 +873,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   // Kill the renderer process so when the navigate again, it will be a fresh
   // renderer with an empty in-memory cache.
-  NavigateToURL(shell(), GURL("chrome:crash"));
+  NavigateToURL(shell(), GetWebUIURL("crash"));
 
   // Reload that URL, the subresource should be served from the network cache.
   before = base::TimeTicks::Now();
@@ -880,11 +881,12 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   after = base::TimeTicks::Now();
   ASSERT_EQ(2U, observer.resource_load_infos().size());
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      page_url, /*referrer=*/GURL(), "GET", content::RESOURCE_TYPE_MAIN_FRAME,
+      page_url, /*referrer=*/GURL(), "GET", content::ResourceType::kMainFrame,
       /*served_file_name=*/FILE_PATH_LITERAL(""), "text/html", "127.0.0.1",
       /*was_cached=*/false, /*first_network_request=*/true, before, after));
   SCOPE_TRACED(observer.CheckResourceLoaded(
-      resource_url, /*referrer=*/page_url, "GET", content::RESOURCE_TYPE_SCRIPT,
+      resource_url, /*referrer=*/page_url, "GET",
+      content::ResourceType::kScript,
       /*served_file_name=*/FILE_PATH_LITERAL(""), "text/html", "127.0.0.1",
       /*was_cached=*/true, /*first_network_request=*/false, before, after));
   EXPECT_TRUE(observer.memory_cached_loaded_urls().empty());
@@ -997,7 +999,7 @@ class WebContentsSplitCacheBrowserTest : public WebContentsImplBrowserTest {
   // valid and return if the script was cached or not.
   bool TestResourceLoad(const GURL& url, const GURL& sub_frame) {
     // Kill the renderer to clear the in-memory cache.
-    NavigateToURL(shell(), GURL("chrome:crash"));
+    NavigateToURL(shell(), GetWebUIURL("crash"));
 
     // Observe network requests.
     ResourceLoadObserver observer(shell());
@@ -1198,7 +1200,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
       observer.resource_load_infos()[1]->network_info->network_accessed);
   observer.Reset();
 
-  NavigateToURL(shell(), GURL("chrome://gpu"));
+  NavigateToURL(shell(), GetWebUIURL("gpu"));
   ASSERT_LE(1U, observer.resource_load_infos().size());
   for (const mojom::ResourceLoadInfoPtr& resource_load_info :
        observer.resource_load_infos()) {
@@ -1677,8 +1679,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
 // Test that view source mode for a webui page can be opened.
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, ViewSourceWebUI) {
-  const std::string kUrl =
-      "view-source:chrome://" + std::string(kChromeUIGpuHost);
+  const std::string kUrl = "view-source:" + GetWebUIURLString(kChromeUIGpuHost);
   const GURL kGURL(kUrl);
   NavigateToURL(shell(), kGURL);
   EXPECT_EQ(base::ASCIIToUTF16(kUrl), shell()->web_contents()->GetTitle());

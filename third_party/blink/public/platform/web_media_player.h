@@ -31,6 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/blink/public/platform/web_callbacks.h"
@@ -38,6 +39,7 @@
 #include "third_party/blink/public/platform/web_media_source.h"
 #include "third_party/blink/public/platform/web_set_sink_id_callbacks.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/webaudiosourceprovider_impl.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
@@ -53,7 +55,6 @@ class GLES2Interface;
 
 namespace blink {
 
-class WebAudioSourceProvider;
 class WebContentDecryptionModule;
 class WebMediaPlayerSource;
 class WebString;
@@ -336,7 +337,9 @@ class WebMediaPlayer {
     return false;
   }
 
-  virtual WebAudioSourceProvider* GetAudioSourceProvider() { return nullptr; }
+  virtual scoped_refptr<WebAudioSourceProviderImpl> GetAudioSourceProvider() {
+    return nullptr;
+  }
 
   virtual void SetContentDecryptionModule(
       WebContentDecryptionModule* cdm,
@@ -418,6 +421,8 @@ class WebMediaPlayer {
   virtual base::Optional<viz::SurfaceId> GetSurfaceId() {
     return base::nullopt;
   }
+
+  virtual base::WeakPtr<WebMediaPlayer> AsWeakPtr() = 0;
 };
 
 }  // namespace blink

@@ -22,35 +22,6 @@
 
 namespace performance_manager {
 
-namespace {
-
-class LenientMockGraphObserver : public GraphObserver {
- public:
-  LenientMockGraphObserver() = default;
-  ~LenientMockGraphObserver() override = default;
-
-  virtual bool ShouldObserve(const NodeBase* node) {
-    return node->id().type == PageNodeImpl::Type();
-  }
-
-  MOCK_METHOD1(OnPageAlmostIdleChanged, void(PageNodeImpl*));
-
-  void ExpectOnPageAlmostIdleChanged(PageNodeImpl* page_node,
-                                     bool page_almost_idle) {
-    EXPECT_CALL(*this, OnPageAlmostIdleChanged(page_node))
-        .WillOnce(::testing::InvokeWithoutArgs([page_node, page_almost_idle]() {
-          EXPECT_EQ(page_almost_idle, page_node->page_almost_idle());
-        }));
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LenientMockGraphObserver);
-};
-
-using MockGraphObserver = ::testing::StrictMock<LenientMockGraphObserver>;
-
-}  // namespace
-
 class PageAlmostIdleDecoratorTest : public GraphTestHarness {
  protected:
   PageAlmostIdleDecoratorTest() = default;
@@ -113,7 +84,7 @@ void PageAlmostIdleDecoratorTest::TestPageAlmostIdleTransitions(bool timeout) {
 
   // Mark the page as idling. It should transition from kLoading directly
   // to kLoadedAndIdling after this.
-  frame_node->SetNetworkAlmostIdle(true);
+  frame_node->SetNetworkAlmostIdle();
   proc_node->SetMainThreadTaskLoadIsLow(true);
   page_node->SetIsLoading(false);
   EXPECT_EQ(LIS::kLoadedAndIdling, page_data->load_idle_state_);
@@ -129,7 +100,7 @@ void PageAlmostIdleDecoratorTest::TestPageAlmostIdleTransitions(bool timeout) {
 
   // Go back to not idling. We should transition back to kLoadedNotIdling, and
   // a timer should still be running.
-  frame_node->SetNetworkAlmostIdle(false);
+  frame_node->OnNavigationCommitted(GURL(), false);
   EXPECT_EQ(LIS::kLoadedNotIdling, page_data->load_idle_state_);
   EXPECT_TRUE(page_data->idling_timer_.IsRunning());
 
@@ -144,7 +115,7 @@ void PageAlmostIdleDecoratorTest::TestPageAlmostIdleTransitions(bool timeout) {
     EXPECT_FALSE(Data::GetForTesting(page_node));
   } else {
     // Go back to idling.
-    frame_node->SetNetworkAlmostIdle(true);
+    frame_node->SetNetworkAlmostIdle();
     EXPECT_EQ(LIS::kLoadedAndIdling, page_data->load_idle_state_);
     EXPECT_TRUE(page_data->idling_timer_.IsRunning());
 
@@ -160,7 +131,7 @@ void PageAlmostIdleDecoratorTest::TestPageAlmostIdleTransitions(bool timeout) {
   // Firing other signals should not change the state at all.
   proc_node->SetMainThreadTaskLoadIsLow(false);
   EXPECT_FALSE(Data::GetForTesting(page_node));
-  frame_node->SetNetworkAlmostIdle(false);
+  frame_node->OnNavigationCommitted(GURL(), false);
   EXPECT_FALSE(Data::GetForTesting(page_node));
 
   // Post a navigation. The state should reset.
@@ -210,7 +181,7 @@ TEST_F(PageAlmostIdleDecoratorTest, IsIdling) {
   EXPECT_FALSE(IsIdling(page_node));
 
   // Should return true when network is idle.
-  frame_node->SetNetworkAlmostIdle(true);
+  frame_node->SetNetworkAlmostIdle();
   EXPECT_TRUE(IsIdling(page_node));
 
   // Should toggle with main thread task low.
@@ -220,7 +191,7 @@ TEST_F(PageAlmostIdleDecoratorTest, IsIdling) {
   EXPECT_TRUE(IsIdling(page_node));
 
   // Should return false when network is no longer idle.
-  frame_node->SetNetworkAlmostIdle(false);
+  frame_node->OnNavigationCommitted(GURL(), false);
   EXPECT_FALSE(IsIdling(page_node));
 
   // And should stay false if main thread task also goes low again.

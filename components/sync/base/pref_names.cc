@@ -69,6 +69,7 @@ const char kSyncThemes[] = "sync.themes";
 const char kSyncTypedUrls[] = "sync.typed_urls";
 const char kSyncUserConsents[] = "sync.user_consents";
 const char kSyncUserEvents[] = "sync.user_events";
+const char kSyncWifiConfigurations[] = "sync.wifi_configurations";
 const char kSyncWifiCredentials[] = "sync.wifi_credentials";
 
 // Boolean used by enterprise configuration management in order to lock down
@@ -87,12 +88,6 @@ const char kSyncEncryptionBootstrapToken[] = "sync.encryption_bootstrap_token";
 // so we don't have to do a GetKey command at restart.
 const char kSyncKeystoreEncryptionBootstrapToken[] =
     "sync.keystore_encryption_bootstrap_token";
-
-#if defined(OS_CHROMEOS)
-// A string that is used to store first-time sync startup after once sync is
-// disabled. This will be refreshed every sign-in.
-const char kSyncSpareBootstrapToken[] = "sync.spare_bootstrap_token";
-#endif  // defined(OS_CHROMEOS)
 
 const char kSyncCacheGuid[] = "sync.cache_guid";
 const char kSyncBirthday[] = "sync.birthday";

@@ -6,6 +6,7 @@
 
 #include "base/mac/foundation_util.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
@@ -92,13 +93,28 @@ newAccountsController:(ios::ChromeBrowserState*)browserState
 }
 
 + (SettingsNavigationController*)
+    newGoogleServicesController:(ios::ChromeBrowserState*)browserState
+                       delegate:
+                           (id<SettingsNavigationControllerDelegate>)delegate {
+  // GoogleServicesSettings uses a coordinator to be presented, therefore the
+  // view controller is not accessible. Prefer creating a
+  // |SettingsNavigationController| with a nil root view controller and then
+  // use the coordinator to push the GoogleServicesSettings as the first
+  // root view controller.
+  SettingsNavigationController* nc = [[SettingsNavigationController alloc]
+      initWithRootViewController:nil
+                    browserState:browserState
+                        delegate:delegate];
+  [nc showGoogleServices];
+  return nc;
+}
+
++ (SettingsNavigationController*)
      newSyncController:(ios::ChromeBrowserState*)browserState
-allowSwitchSyncAccount:(BOOL)allowSwitchSyncAccount
               delegate:(id<SettingsNavigationControllerDelegate>)delegate {
   SyncSettingsTableViewController* controller =
-      [[SyncSettingsTableViewController alloc]
-            initWithBrowserState:browserState
-          allowSwitchSyncAccount:allowSwitchSyncAccount];
+      [[SyncSettingsTableViewController alloc] initWithBrowserState:browserState
+                                             allowSwitchSyncAccount:YES];
   controller.dispatcher = [delegate dispatcherForSettings];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
@@ -239,7 +255,12 @@ initWithRootViewController:(UIViewController*)rootViewController
   if (self) {
     mainBrowserState_ = browserState;
     delegate_ = delegate;
-    shouldCommitSyncChangesOnDismissal_ = YES;
+    // When Unified Consent is enabled, |self.googleServicesSettingsCoordinator|
+    // is responsible to commit the sync changes. Thus sync changes only need to
+    // be explicitly committed by this navigation controller when Unified
+    // Consent is disabled.
+    shouldCommitSyncChangesOnDismissal_ =
+        !unified_consent::IsUnifiedConsentFeatureEnabled();
     [self setModalPresentationStyle:UIModalPresentationFormSheet];
     [self setModalTransitionStyle:UIModalTransitionStyleCoverVertical];
   }
@@ -278,8 +299,12 @@ initWithRootViewController:(UIViewController*)rootViewController
   // existing settings.
   if (shouldCommitSyncChangesOnDismissal_) {
     SyncSetupServiceFactory::GetForBrowserState([self mainBrowserState])
-        ->CommitChanges();
+        ->PreUnityCommitChanges();
   }
+
+  // GoogleServicesSettingsCoordinator must be stopped before dismissing the
+  // sync settings view.
+  [self stopGoogleServicesSettingsCoordinator];
 
   // Reset the delegate to prevent any queued transitions from attempting to
   // close the settings.
@@ -323,12 +348,40 @@ initWithRootViewController:(UIViewController*)rootViewController
   return closeButton;
 }
 
+// Pushes a GoogleServicesSettingsViewController on this settings navigation
+// controller. Does nothing id the top view controller is already of type
+// |GoogleServicesSettingsViewController|.
+- (void)showGoogleServices {
+  if ([self.topViewController
+          isKindOfClass:[GoogleServicesSettingsViewController class]]) {
+    // The top view controller is already the Google services settings panel.
+    // No need to open it.
+    return;
+  }
+  self.googleServicesSettingsCoordinator =
+      [[GoogleServicesSettingsCoordinator alloc]
+          initWithBaseViewController:self
+                        browserState:mainBrowserState_
+                                mode:GoogleServicesSettingsModeSettings];
+  self.googleServicesSettingsCoordinator.dispatcher =
+      [delegate_ dispatcherForSettings];
+  self.googleServicesSettingsCoordinator.navigationController = self;
+  self.googleServicesSettingsCoordinator.delegate = self;
+  [self.googleServicesSettingsCoordinator start];
+}
+
+// Stops the underlying Google services settings coordinator if it exists.
+- (void)stopGoogleServicesSettingsCoordinator {
+  [self.googleServicesSettingsCoordinator stop];
+  self.googleServicesSettingsCoordinator = nil;
+}
+
 #pragma mark - GoogleServicesSettingsCoordinatorDelegate
 
 - (void)googleServicesSettingsCoordinatorDidRemove:
     (GoogleServicesSettingsCoordinator*)coordinator {
   DCHECK_EQ(self.googleServicesSettingsCoordinator, coordinator);
-  self.googleServicesSettingsCoordinator = nil;
+  [self stopGoogleServicesSettingsCoordinator];
 }
 
 #pragma mark - Accessibility
@@ -379,22 +432,7 @@ initWithRootViewController:(UIViewController*)rootViewController
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showGoogleServicesSettingsFromViewController:
     (UIViewController*)baseViewController {
-  if ([self.topViewController
-          isKindOfClass:[GoogleServicesSettingsViewController class]]) {
-    // The top view controller is already the Google services settings panel.
-    // No need to open it.
-    return;
-  }
-  self.googleServicesSettingsCoordinator =
-      [[GoogleServicesSettingsCoordinator alloc]
-          initWithBaseViewController:self
-                        browserState:mainBrowserState_
-                                mode:GoogleServicesSettingsModeSettings];
-  self.googleServicesSettingsCoordinator.dispatcher =
-      [delegate_ dispatcherForSettings];
-  self.googleServicesSettingsCoordinator.navigationController = self;
-  self.googleServicesSettingsCoordinator.delegate = self;
-  [self.googleServicesSettingsCoordinator start];
+  [self showGoogleServices];
 }
 
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.

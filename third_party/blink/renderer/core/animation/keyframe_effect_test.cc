@@ -20,7 +20,10 @@
 #include "third_party/blink/renderer/core/animation/optional_effect_timing.h"
 #include "third_party/blink/renderer/core/animation/timing.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -35,7 +38,8 @@ class KeyframeEffectTest : public PageTestBase {
   }
 
   KeyframeEffectModelBase* CreateEmptyEffectModel() {
-    return StringKeyframeEffectModel::Create(StringKeyframeVector());
+    return MakeGarbageCollected<StringKeyframeEffectModel>(
+        StringKeyframeVector());
   }
 
   Persistent<Element> element;
@@ -337,30 +341,132 @@ TEST_F(KeyframeEffectTest, TimeToEffectChange) {
   timing.start_delay = 100;
   timing.end_delay = 100;
   timing.fill_mode = Timing::FillMode::NONE;
-  KeyframeEffect* keyframe_effect =
-      KeyframeEffect::Create(nullptr, CreateEmptyEffectModel(), timing);
+  auto* keyframe_effect = MakeGarbageCollected<KeyframeEffect>(
+      nullptr, CreateEmptyEffectModel(), timing);
   Animation* animation = GetDocument().Timeline().Play(keyframe_effect);
   double inf = std::numeric_limits<double>::infinity();
 
+  // Beginning of the animation.
   EXPECT_EQ(100, keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(inf, keyframe_effect->TimeToReverseEffectChange());
 
+  // End of the before phase.
   animation->SetCurrentTimeInternal(100);
   EXPECT_EQ(100, keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(0, keyframe_effect->TimeToReverseEffectChange());
 
+  // Nearing the end of the active phase.
   animation->SetCurrentTimeInternal(199);
   EXPECT_EQ(1, keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(0, keyframe_effect->TimeToReverseEffectChange());
 
+  // End of the active phase.
   animation->SetCurrentTimeInternal(200);
-  // End-exclusive.
-  EXPECT_EQ(inf, keyframe_effect->TimeToForwardsEffectChange());
+  EXPECT_EQ(100, keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(0, keyframe_effect->TimeToReverseEffectChange());
 
+  // End of the animation.
   animation->SetCurrentTimeInternal(300);
   EXPECT_EQ(inf, keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(100, keyframe_effect->TimeToReverseEffectChange());
+}
+
+TEST_F(KeyframeEffectTest, CheckCanStartAnimationOnCompositorNoKeyframes) {
+  ASSERT_TRUE(element);
+
+  const double animation_playback_rate = 1;
+  Timing timing;
+
+  // No keyframes results in an invalid animation.
+  {
+    auto* keyframe_effect = MakeGarbageCollected<KeyframeEffect>(
+        element, CreateEmptyEffectModel(), timing);
+    EXPECT_TRUE(keyframe_effect->CheckCanStartAnimationOnCompositor(
+                    nullptr, animation_playback_rate) &
+                CompositorAnimations::kInvalidAnimationOrEffect);
+  }
+
+  // Keyframes but no properties results in an invalid animation.
+  {
+    StringKeyframeVector keyframes(2);
+    keyframes[0] = MakeGarbageCollected<StringKeyframe>();
+    keyframes[0]->SetOffset(0.0);
+    keyframes[1] = MakeGarbageCollected<StringKeyframe>();
+    keyframes[1]->SetOffset(1.0);
+    auto* effect_model =
+        MakeGarbageCollected<StringKeyframeEffectModel>(keyframes);
+
+    auto* keyframe_effect =
+        MakeGarbageCollected<KeyframeEffect>(element, effect_model, timing);
+    EXPECT_TRUE(keyframe_effect->CheckCanStartAnimationOnCompositor(
+                    nullptr, animation_playback_rate) &
+                CompositorAnimations::kInvalidAnimationOrEffect);
+  }
+}
+
+TEST_F(KeyframeEffectTest, CheckCanStartAnimationOnCompositorNoTarget) {
+  const double animation_playback_rate = 1;
+  Timing timing;
+
+  // No target results in an invalid animation.
+  StringKeyframeVector keyframes(2);
+  keyframes[0] = MakeGarbageCollected<StringKeyframe>();
+  keyframes[0]->SetOffset(0.0);
+  keyframes[0]->SetCSSPropertyValue(CSSPropertyID::kLeft, "0px",
+                                    SecureContextMode::kInsecureContext,
+                                    nullptr);
+  keyframes[1] = MakeGarbageCollected<StringKeyframe>();
+  keyframes[1]->SetOffset(1.0);
+  keyframes[1]->SetCSSPropertyValue(CSSPropertyID::kLeft, "10px",
+                                    SecureContextMode::kInsecureContext,
+                                    nullptr);
+  auto* effect_model =
+      MakeGarbageCollected<StringKeyframeEffectModel>(keyframes);
+
+  auto* keyframe_effect =
+      MakeGarbageCollected<KeyframeEffect>(nullptr, effect_model, timing);
+  EXPECT_TRUE(keyframe_effect->CheckCanStartAnimationOnCompositor(
+                  nullptr, animation_playback_rate) &
+              CompositorAnimations::kInvalidAnimationOrEffect);
+}
+
+TEST_F(KeyframeEffectTest, CheckCanStartAnimationOnCompositorBadTarget) {
+  const double animation_playback_rate = 1;
+  Timing timing;
+
+  StringKeyframeVector keyframes(2);
+  keyframes[0] = MakeGarbageCollected<StringKeyframe>();
+  keyframes[0]->SetOffset(0.0);
+  keyframes[0]->SetCSSPropertyValue(CSSPropertyID::kLeft, "0px",
+                                    SecureContextMode::kInsecureContext,
+                                    nullptr);
+  keyframes[1] = MakeGarbageCollected<StringKeyframe>();
+  keyframes[1]->SetOffset(1.0);
+  keyframes[1]->SetCSSPropertyValue(CSSPropertyID::kLeft, "10px",
+                                    SecureContextMode::kInsecureContext,
+                                    nullptr);
+  auto* effect_model =
+      MakeGarbageCollected<StringKeyframeEffectModel>(keyframes);
+  auto* keyframe_effect =
+      MakeGarbageCollected<KeyframeEffect>(element, effect_model, timing);
+
+  // If the target has a CSS offset we can't composite it.
+  element->SetInlineStyleProperty(CSSPropertyID::kOffsetPosition, "50px 50px");
+  UpdateAllLifecyclePhasesForTest();
+
+  ASSERT_TRUE(element->GetComputedStyle()->HasOffset());
+  EXPECT_TRUE(keyframe_effect->CheckCanStartAnimationOnCompositor(
+                  nullptr, animation_playback_rate) &
+              CompositorAnimations::kTargetHasCSSOffset);
+
+  // If the target has multiple transform properties we can't composite it.
+  element->SetInlineStyleProperty(CSSPropertyID::kRotate, "90deg");
+  element->SetInlineStyleProperty(CSSPropertyID::kScale, "2 1");
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_TRUE(keyframe_effect->CheckCanStartAnimationOnCompositor(
+                  nullptr, animation_playback_rate) &
+              CompositorAnimations::kTargetHasMultipleTransformProperties);
 }
 
 }  // namespace blink

@@ -483,12 +483,12 @@ void FrameTreeNode::DidStopLoading() {
   // the WebContents of the load progress change.
   DidChangeLoadProgress(kLoadingProgressDone);
 
+  // Notify the RenderFrameHostManager of the event.
+  render_manager()->OnDidStopLoading();
+
   // Notify the WebContents.
   if (!frame_tree_->IsLoading())
     navigator()->GetDelegate()->DidStopLoading();
-
-  // Notify the RenderFrameHostManager of the event.
-  render_manager()->OnDidStopLoading();
 
   // Notify accessibility that the user is no longer trying to load or
   // reload a page.
@@ -659,11 +659,16 @@ void FrameTreeNode::UpdateFramePolicyHeaders(
     render_manager()->OnDidSetFramePolicyHeaders();
 }
 
-// TODO(lanwei): Also transfer user activation in the frame trees in other
-// (i.e non-source non-destination) renderer processes. crbug.com/928838.
-void FrameTreeNode::TransferActivationFrom(FrameTreeNode* source) {
-  if (source)
-    user_activation_state_.TransferFrom(source->user_activation_state_);
+void FrameTreeNode::TransferUserActivationFrom(
+    RenderFrameHostImpl* source_rfh) {
+  user_activation_state_.TransferFrom(
+      source_rfh->frame_tree_node()->user_activation_state_);
+
+  // Notify proxies in non-source and non-target renderer processes to
+  // transfer the activation state from the source proxy to the target
+  // so the user activation state of those proxies matches the source
+  // renderer and the target renderer (which are separately updated).
+  render_manager_.TransferUserActivationFrom(source_rfh);
 }
 
 void FrameTreeNode::PruneChildFrameNavigationEntries(

@@ -80,10 +80,6 @@ class LoginScreenClient : public ash::mojom::LoginScreenClient {
   // Set the object which will handle calls coming from ash.
   void SetDelegate(Delegate* delegate);
 
-  // Set the object which will handle parent access related calls coming from
-  // ash.
-  void SetParentAccessDelegate(ParentAccessDelegate* delegate);
-
   // Returns an object which can be used to make calls to ash.
   ash::mojom::LoginScreenPtr& login_screen();
 
@@ -129,8 +125,6 @@ class LoginScreenClient : public ash::mojom::LoginScreenClient {
   void RequestPublicSessionKeyboardLayouts(const AccountId& account_id,
                                            const std::string& locale) override;
   void ShowFeedback() override;
-  void LaunchKioskApp(const std::string& app_id) override;
-  void LaunchArcKioskApp(const AccountId& account_id) override;
   void ShowResetScreen() override;
   void ShowAccountAccessHelpApp() override;
   void OnFocusLeavingSystemTray(bool reverse) override;
@@ -148,7 +142,6 @@ class LoginScreenClient : public ash::mojom::LoginScreenClient {
   // Binds this object to the client interface.
   mojo::Binding<ash::mojom::LoginScreenClient> binding_;
   Delegate* delegate_ = nullptr;
-  ParentAccessDelegate* parent_access_delegate_ = nullptr;
 
   // Captures authentication related user metrics for login screen.
   std::unique_ptr<chromeos::LoginAuthRecorder> auth_recorder_;

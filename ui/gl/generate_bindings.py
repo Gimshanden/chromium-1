@@ -619,8 +619,8 @@ GL_FUNCTIONS = [
   'arguments': 'GLenum target, GLenum attachment, GLuint texture, GLint level, '
                'GLint layer', },
 { 'return_type': 'void',
-  'versions': [{'name': 'glFramebufferTextureMultiviewLayeredANGLE',
-                'extensions': ['GL_ANGLE_multiview']}],
+  'versions': [{'name': 'glFramebufferTextureMultiviewOVR',
+                'extensions': ['GL_OVR_multiview2']}],
   'arguments': 'GLenum target, GLenum attachment, GLuint texture, GLint level, '
                'GLint baseViewIndex, GLsizei numViews', },
 { 'return_type': 'void',
@@ -957,7 +957,8 @@ GL_FUNCTIONS = [
   'arguments':
       'GLuint pipeline, GLenum pname, GLint* params', },
 { 'return_type': 'GLuint',
-  'names': ['glGetProgramResourceIndex'],
+  'versions': [{'name': 'glGetProgramResourceIndex',
+                'extensions': ['GL_ARB_program_interface_query']}],
   'arguments':
       'GLuint program, GLenum programInterface, const GLchar* name', },
 { 'return_type': 'void',

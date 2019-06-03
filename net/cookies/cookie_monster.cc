@@ -49,6 +49,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -62,6 +63,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "net/base/features.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_monster_change_dispatcher.h"
@@ -533,10 +535,6 @@ CookieChangeDispatcher& CookieMonster::GetChangeDispatcher() {
   return change_dispatcher_;
 }
 
-bool CookieMonster::IsEphemeral() {
-  return store_.get() == nullptr;
-}
-
 void CookieMonster::DumpMemoryStats(
     base::trace_event::ProcessMemoryDump* pmd,
     const std::string& parent_absolute_name) const {
@@ -689,7 +687,7 @@ void CookieMonster::SetCookieWithOptions(const GURL& url,
     return;
   }
 
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "SetCookie() line: " << cookie_line;
 
   CanonicalCookie::CookieInclusionStatus status;
@@ -699,7 +697,7 @@ void CookieMonster::SetCookieWithOptions(const GURL& url,
 
   if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
     DCHECK(!cc);
-    VLOG(net::cookie_util::kVlogSetCookies)
+    DVLOG(net::cookie_util::kVlogSetCookies)
         << "WARNING: Failed to allocate CanonicalCookie";
     MaybeRunCookieCallback(std::move(callback), status);
     return;
@@ -1166,9 +1164,10 @@ CookieMonster::CookieMap::iterator CookieMonster::InternalInsertCookie(
   auto inserted = cookies_.insert(CookieMap::value_type(key, std::move(cc)));
 
   // See InitializeHistograms() for details.
-  int32_t type_sample = cc_ptr->SameSite() != CookieSameSite::NO_RESTRICTION
-                            ? 1 << COOKIE_TYPE_SAME_SITE
-                            : 0;
+  int32_t type_sample =
+      cc_ptr->GetEffectiveSameSite() != CookieSameSite::NO_RESTRICTION
+          ? 1 << COOKIE_TYPE_SAME_SITE
+          : 0;
   type_sample |= cc_ptr->IsHttpOnly() ? 1 << COOKIE_TYPE_HTTPONLY : 0;
   type_sample |= cc_ptr->IsSecure() ? 1 << COOKIE_TYPE_SECURE : 0;
   histogram_cookie_type_->Add(type_sample);
@@ -1193,10 +1192,12 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
     return;
   }
 
-  if (cc->IsHttpOnly() && options.exclude_httponly()) {
-    MaybeRunCookieCallback(
-        std::move(callback),
-        CanonicalCookie::CookieInclusionStatus::EXCLUDE_HTTP_ONLY);
+  CanonicalCookie::CookieInclusionStatus status =
+      cc->IsSetPermittedInContext(options);
+  if (status != CanonicalCookie::CookieInclusionStatus::INCLUDE) {
+    // IsSetPermittedInContext already logs if it rejects a cookie, so
+    // CookieMonster doesn't need to.
+    MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
@@ -1204,6 +1205,22 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
     MaybeRunCookieCallback(
         std::move(callback),
         CanonicalCookie::CookieInclusionStatus::EXCLUDE_NONCOOKIEABLE_SCHEME);
+    return;
+  }
+
+  // If both SameSiteByDefaultCookies and CookiesWithoutSameSiteMustBeSecure
+  // are enabled, non-SameSite cookies without the Secure attribute will be
+  // rejected.
+  if (base::FeatureList::IsEnabled(features::kSameSiteByDefaultCookies) &&
+      base::FeatureList::IsEnabled(
+          features::kCookiesWithoutSameSiteMustBeSecure) &&
+      cc->GetEffectiveSameSite() == CookieSameSite::NO_RESTRICTION &&
+      !cc->IsSecure()) {
+    DVLOG(net::cookie_util::kVlogSetCookies)
+        << "SetCookie() rejecting insecure cookie with SameSite=None.";
+    status =
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_NONE_INSECURE;
+    MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
@@ -1218,7 +1235,7 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
 
   base::Time creation_date_to_inherit;
 
-  CanonicalCookie::CookieInclusionStatus status = DeleteAnyEquivalentCookie(
+  status = DeleteAnyEquivalentCookie(
       key, *cc, secure_source, options.exclude_httponly(), already_expired,
       &creation_date_to_inherit);
 
@@ -1228,12 +1245,12 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
         "SetCookie() not clobbering httponly cookie or secure cookie for "
         "insecure scheme";
 
-    VLOG(net::cookie_util::kVlogSetCookies) << error;
+    DVLOG(net::cookie_util::kVlogSetCookies) << error;
     MaybeRunCookieCallback(std::move(callback), status);
     return;
   }
 
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "SetCookie() key: " << key << " cc: " << cc->DebugString();
 
   // Realize that we might be setting an expired cookie, and the only point
@@ -1266,7 +1283,7 @@ void CookieMonster::SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cc,
 
     InternalInsertCookie(key, std::move(cc), true);
   } else {
-    VLOG(net::cookie_util::kVlogSetCookies)
+    DVLOG(net::cookie_util::kVlogSetCookies)
         << "SetCookie() not storing already expired cookie.";
   }
 
@@ -1345,7 +1362,7 @@ void CookieMonster::InternalDeleteCookie(CookieMap::iterator it,
                 "kChangeCauseMapping size should match DeletionCause size");
 
   CanonicalCookie* cc = it->second.get();
-  VLOG(net::cookie_util::kVlogSetCookies)
+  DVLOG(net::cookie_util::kVlogSetCookies)
       << "InternalDeleteCookie()"
       << ", cause:" << deletion_cause << ", cc: " << cc->DebugString();
 
@@ -1375,7 +1392,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
 
   // Collect garbage for this key, minding cookie priorities.
   if (cookies_.count(key) > kDomainMaxCookies) {
-    VLOG(net::cookie_util::kVlogGarbageCollection)
+    DVLOG(net::cookie_util::kVlogGarbageCollection)
         << "GarbageCollect() key: " << key;
 
     CookieItVector* cookie_its;
@@ -1386,7 +1403,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
         GarbageCollectExpired(current, cookies_.equal_range(key), cookie_its);
 
     if (cookie_its->size() > kDomainMaxCookies) {
-      VLOG(net::cookie_util::kVlogGarbageCollection)
+      DVLOG(net::cookie_util::kVlogGarbageCollection)
           << "Deep Garbage Collect domain.";
       size_t purge_goal =
           cookie_its->size() - (kDomainMaxCookies - kDomainPurgeCookies);
@@ -1465,7 +1482,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
   // Collect garbage for everything. With firefox style we want to preserve
   // cookies accessed in kSafeFromGlobalPurgeDays, otherwise evict.
   if (cookies_.size() > kMaxCookies && earliest_access_time_ < safe_date) {
-    VLOG(net::cookie_util::kVlogGarbageCollection)
+    DVLOG(net::cookie_util::kVlogGarbageCollection)
         << "GarbageCollect() everything";
     CookieItVector cookie_its;
 
@@ -1474,7 +1491,7 @@ size_t CookieMonster::GarbageCollect(const Time& current,
         &cookie_its);
 
     if (cookie_its.size() > kMaxCookies) {
-      VLOG(net::cookie_util::kVlogGarbageCollection)
+      DVLOG(net::cookie_util::kVlogGarbageCollection)
           << "Deep Garbage Collect everything.";
       size_t purge_goal = cookie_its.size() - (kMaxCookies - kPurgeCookies);
       DCHECK(purge_goal > kPurgeCookies);
@@ -1691,7 +1708,7 @@ bool CookieMonster::HasCookieableScheme(const GURL& url) {
   }
 
   // The scheme didn't match any in our whitelist.
-  VLOG(net::cookie_util::kVlogPerCookieMonster)
+  DVLOG(net::cookie_util::kVlogPerCookieMonster)
       << "WARNING: Unsupported cookie scheme: " << url.scheme();
   return false;
 }

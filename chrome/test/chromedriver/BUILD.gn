@@ -14,6 +14,7 @@ action("embed_js_in_cpp") {
     "js/call_function.js",
     "js/dispatch_touch_event.js",
     "js/execute_async_script.js",
+    "js/execute_script.js",
     "js/focus.js",
     "js/get_element_location.js",
     "js/get_element_region.js",
@@ -304,6 +305,7 @@ source_set("lib") {
 }
 
 executable("chromedriver") {
+  testonly = true
   sources = [
     "server/chromedriver_server.cc",
   ]
@@ -315,6 +317,8 @@ executable("chromedriver") {
     ":lib",
     "//build/win:default_exe_manifest",
     "//mojo/core/embedder",
+    "//net/server:http_server",
+    "//net/traffic_annotation:test_support",
     "//services/network/public/mojom",
   ]
 }

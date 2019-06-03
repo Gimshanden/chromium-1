@@ -15,11 +15,10 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_navigation_loader.h"
-#include "content/browser/service_worker/service_worker_request_handler.h"
+#include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/resource_type.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
-#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "url/gurl.h"
 
@@ -29,19 +28,21 @@ class ResourceRequestBody;
 
 namespace content {
 
+class ServiceWorkerContextCore;
+class ServiceWorkerProviderHost;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
 
 // Handles main resource requests for service worker clients (documents and
 // shared workers).
-class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
-    : public ServiceWorkerRequestHandler,
+// TODO(falken): Rename to ServiceWorkerNavigationLoaderInterceptor.
+class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final
+    : public NavigationLoaderInterceptor,
       public ServiceWorkerNavigationLoader::Delegate {
  public:
   ServiceWorkerControlleeRequestHandler(
       base::WeakPtr<ServiceWorkerContextCore> context,
       base::WeakPtr<ServiceWorkerProviderHost> provider_host,
-      base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
       network::mojom::FetchRequestMode request_mode,
       network::mojom::FetchCredentialsMode credentials_mode,
       network::mojom::FetchRedirectMode redirect_mode,
@@ -49,7 +50,6 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
       bool keepalive,
       ResourceType resource_type,
       blink::mojom::RequestContextType request_context_type,
-      network::mojom::RequestContextFrameType frame_type,
       scoped_refptr<network::ResourceRequestBody> body);
   ~ServiceWorkerControlleeRequestHandler() override;
 
@@ -107,7 +107,6 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
           disallow_controller);
 
   // ServiceWorkerNavigationLoader::Delegate implementation:
-  void OnPrepareToRestart() override;
   ServiceWorkerVersion* GetServiceWorkerVersion(
       ServiceWorkerMetrics::URLRequestJobResult* result) override;
   bool RequestStillValid(
@@ -122,6 +121,8 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // initial subresources load, if this handler was for a navigation.
   void MaybeScheduleUpdate();
 
+  const base::WeakPtr<ServiceWorkerContextCore> context_;
+  const base::WeakPtr<ServiceWorkerProviderHost> provider_host_;
   const ResourceType resource_type_;
   std::unique_ptr<ServiceWorkerNavigationLoaderWrapper> loader_wrapper_;
   network::mojom::FetchRequestMode request_mode_;
@@ -130,16 +131,11 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   std::string integrity_;
   const bool keepalive_;
   blink::mojom::RequestContextType request_context_type_;
-  network::mojom::RequestContextFrameType frame_type_;
   scoped_refptr<network::ResourceRequestBody> body_;
   ResourceContext* resource_context_;
   GURL stripped_url_;
   bool force_update_started_;
-
-  // True if the next time this request is started, the response should be
-  // delivered from the network, bypassing the ServiceWorker. Cleared after the
-  // next intercept opportunity, for main frame requests.
-  bool use_network_;
+  base::TimeTicks registration_lookup_start_time_;
 
   base::WeakPtrFactory<ServiceWorkerControlleeRequestHandler> weak_factory_;
 

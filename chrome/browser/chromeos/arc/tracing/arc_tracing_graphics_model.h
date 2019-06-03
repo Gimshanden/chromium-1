@@ -12,7 +12,7 @@
 
 #include "base/macros.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/arc/tracing/arc_cpu_model.h"
+#include "chrome/browser/chromeos/arc/tracing/arc_system_model.h"
 
 namespace arc {
 
@@ -78,15 +78,22 @@ class ArcTracingGraphicsModel {
     kChromeOSPresentationDone,  // 503
     kChromeOSSwapDone,          // 504
     kChromeOSJank,              // 505,
+
+    // Custom event.
+    kCustomEvent = 600,
   };
 
   struct BufferEvent {
     BufferEvent(BufferEventType type, int64_t timestamp);
+    BufferEvent(BufferEventType type,
+                int64_t timestamp,
+                const std::string& content);
 
     bool operator==(const BufferEvent& other) const;
 
     BufferEventType type;
-    int64_t timestamp;
+    uint64_t timestamp;
+    std::string content;
   };
 
   struct ViewId {
@@ -131,6 +138,15 @@ class ArcTracingGraphicsModel {
   ArcTracingGraphicsModel();
   ~ArcTracingGraphicsModel();
 
+  // Trims container events by |trim_timestamp|. All global events are discarded
+  // prior to |trim_timestamp|. Buffer events are discarded prior to
+  // |trim_timestamp| and on and after until event from |start_types| is
+  // detected.
+  static void TrimEventsContainer(
+      ArcTracingGraphicsModel::EventsContainer* container,
+      int64_t trim_timestamp,
+      const std::set<ArcTracingGraphicsModel::BufferEventType>& start_types);
+
   // Builds the model from the common tracing model |common_model|.
   bool Build(const ArcTracingModel& common_model);
 
@@ -154,8 +170,8 @@ class ArcTracingGraphicsModel {
 
   const EventsContainer& chrome_top_level() const { return chrome_top_level_; }
 
-  ArcCpuModel& cpu_model() { return cpu_model_; }
-  const ArcCpuModel& cpu_model() const { return cpu_model_; }
+  ArcSystemModel& system_model() { return system_model_; }
+  const ArcSystemModel& system_model() const { return system_model_; }
 
  private:
   // Normalizes timestamp for all events by subtracting the timestamp of the
@@ -164,6 +180,11 @@ class ArcTracingGraphicsModel {
 
   // Resets whole model.
   void Reset();
+
+  // Trims events before first VSYNC event. ARC tracing starts delayed in
+  // comparison with Chrome, memory and CPU events. That makes empty area for
+  // graphics buffer confusing.
+  void VsyncTrim();
 
   // Extracts task id from the Chrome buffer name. Returns -1 if task id cannot
   // be extracted.
@@ -178,7 +199,7 @@ class ArcTracingGraphicsModel {
   // Map Chrome buffer id to task id.
   std::map<std::string, int> chrome_buffer_id_to_task_id_;
   // CPU event model.
-  ArcCpuModel cpu_model_;
+  ArcSystemModel system_model_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcTracingGraphicsModel);
 };

@@ -28,14 +28,14 @@
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#include "ios/chrome/test/app/navigation_test_util.h"
-#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
+#import "ios/chrome/test/earl_grey/chrome_error_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
+#import "ios/web/common/features.h"
 #import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/reload_type.h"
 #import "ios/web/public/test/web_view_content_test_util.h"
@@ -399,7 +399,8 @@ void OpenPageSecurityInfoBubble() {
 void AssertIsShowingDistillablePageNoNativeContent(
     bool online,
     const GURL& distillable_url) {
-  [ChromeEarlGrey waitForWebViewContainingText:kContentToKeep];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey waitForWebStateContainingText:kContentToKeep]);
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           distillable_url.GetContent())]
@@ -407,11 +408,15 @@ void AssertIsShowingDistillablePageNoNativeContent(
 
   // Test that the offline and online pages are properly displayed.
   if (online) {
-    [ChromeEarlGrey waitForWebViewContainingText:kContentToRemove];
-    [ChromeEarlGrey waitForWebViewContainingText:kContentToKeep];
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateContainingText:kContentToRemove]);
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateContainingText:kContentToKeep]);
   } else {
-    [ChromeEarlGrey waitForWebViewNotContainingText:kContentToRemove];
-    [ChromeEarlGrey waitForWebViewContainingText:kContentToKeep];
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateNotContainingText:kContentToRemove]);
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateContainingText:kContentToKeep]);
   }
 
   // Test the presence of the omnibox offline chip.
@@ -429,7 +434,7 @@ void AssertIsShowingDistillablePageNativeContent(bool online,
   // There will be multiple reloads, wait for the page to be displayed.
   if (online) {
     // Due to the reloads, a timeout longer than what is provided in
-    // [ChromeEarlGrey waitForWebViewContainingText] is required, so call
+    // [ChromeEarlGrey waitForWebStateContainingText] is required, so call
     // WebViewContainingText directly.
     GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
                    kLoadOfflineTimeout,
@@ -440,7 +445,8 @@ void AssertIsShowingDistillablePageNativeContent(bool online,
                    }),
                @"Waiting for online page.");
   } else {
-    [ChromeEarlGrey waitForStaticHTMLViewContainingText:contentToKeep];
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForStaticHTMLViewContainingText:contentToKeep]);
   }
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
@@ -449,12 +455,15 @@ void AssertIsShowingDistillablePageNativeContent(bool online,
 
   // Test that the offline and online pages are properly displayed.
   if (online) {
-    [ChromeEarlGrey
-        waitForWebViewContainingText:base::SysNSStringToUTF8(contentToKeep)];
-    [ChromeEarlGrey waitForStaticHTMLViewNotContainingText:contentToKeep];
+    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey
+        waitForWebStateContainingText:base::SysNSStringToUTF8(contentToKeep)]);
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForStaticHTMLViewNotContainingText:contentToKeep]);
   } else {
-    [ChromeEarlGrey waitForWebViewNotContainingText:kContentToKeep];
-    [ChromeEarlGrey waitForStaticHTMLViewContainingText:contentToKeep];
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForWebStateNotContainingText:kContentToKeep]);
+    CHROME_EG_ASSERT_NO_ERROR(
+        [ChromeEarlGrey waitForStaticHTMLViewContainingText:contentToKeep]);
   }
 
   // Test the presence of the omnibox offline chip.
@@ -531,13 +540,13 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   GURL nonDistillablePageURL(self.testServer->GetURL(kNonDistillableURL));
   std::string pageTitle(kDistillableTitle);
   // Open http://potato
-  [ChromeEarlGrey loadURL:distillablePageURL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:distillablePageURL]);
 
   AddCurrentPageToReadingList();
 
   // Navigate to http://beans
-  [ChromeEarlGrey loadURL:nonDistillablePageURL];
-  [ChromeEarlGrey waitForPageToFinishLoading];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:nonDistillablePageURL]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForPageToFinishLoading]);
 
   // Verify that an entry with the correct title is present in the reading list.
   OpenReadingList();
@@ -575,13 +584,14 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   std::string pageTitle(kDistillableTitle);
   GURL distillableURL = self.testServer->GetURL(kDistillableURL);
   // Open http://potato
-  [ChromeEarlGrey loadURL:distillableURL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:distillableURL]);
 
   AddCurrentPageToReadingList();
 
   // Navigate to http://beans
-  [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)];
-  [ChromeEarlGrey waitForPageToFinishLoading];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForPageToFinishLoading]);
 
   // Verify that an entry with the correct title is present in the reading list.
   OpenReadingList();
@@ -612,14 +622,15 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   std::string pageTitle(kDistillableTitle);
   GURL distillableURL = self.testServer->GetURL(kDistillableURL);
   // Open http://potato
-  [ChromeEarlGrey loadURL:distillableURL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:distillableURL]);
 
   AddCurrentPageToReadingList();
 
   // Navigate to http://beans
 
-  [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)];
-  [ChromeEarlGrey waitForPageToFinishLoading];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForPageToFinishLoading]);
 
   // Verify that an entry with the correct title is present in the reading list.
   OpenReadingList();
@@ -638,6 +649,13 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   chrome_test_util::GetCurrentWebState()->GetNavigationManager()->Reload(
       web::ReloadType::NORMAL, false);
   AssertIsShowingDistillablePage(false, distillableURL);
+
+  // TODO(crbug.com/954248) This DCHECK's (but works) with slimnav disabled.
+  if (base::FeatureList::IsEnabled(web::features::kSlimNavigationManager)) {
+    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goBack]);
+    CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goForward]);
+    AssertIsShowingDistillablePage(false, distillableURL);
+  }
 
   // Start server to reload online error.
   self.serverRespondsWithContent = YES;
@@ -659,13 +677,14 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   std::string pageTitle(kDistillableTitle);
   GURL distillableURL = self.testServer->GetURL(kDistillableURL);
   // Open http://potato
-  [ChromeEarlGrey loadURL:distillableURL];
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey loadURL:distillableURL]);
 
   AddCurrentPageToReadingList();
 
   // Navigate to http://beans
-  [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)];
-  [ChromeEarlGrey waitForPageToFinishLoading];
+  CHROME_EG_ASSERT_NO_ERROR(
+      [ChromeEarlGrey loadURL:self.testServer->GetURL(kNonDistillableURL)]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey waitForPageToFinishLoading]);
 
   // Verify that an entry with the correct title is present in the reading
   OpenReadingList();
@@ -676,6 +695,10 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   // Open the entry.
   TapEntry(pageTitle);
 
+  AssertIsShowingDistillablePage(false, distillableURL);
+
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goBack]);
+  CHROME_EG_ASSERT_NO_ERROR([ChromeEarlGrey goForward]);
   AssertIsShowingDistillablePage(false, distillableURL);
 
   // Reload should load online page.

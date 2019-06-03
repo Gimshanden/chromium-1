@@ -61,6 +61,8 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
       case NativeTheme::kColorId_DialogBackground:
         return color_utils::AlphaBlend(SK_ColorWHITE, gfx::kGoogleGrey900,
                                        0.04f);
+      case NativeTheme::kColorId_BubbleFooterBackground:
+        return SkColorSetRGB(0x32, 0x36, 0x39);
       case NativeTheme::kColorId_ProminentButtonColor:
         return gfx::kGoogleBlue300;
       case NativeTheme::kColorId_TextOnProminentButtonColor:
@@ -159,6 +161,8 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
     case NativeTheme::kColorId_DialogBackground:
     case NativeTheme::kColorId_BubbleBackground:
       return SK_ColorWHITE;
+    case NativeTheme::kColorId_BubbleFooterBackground:
+      return gfx::kGoogleGrey050;
 
     // Buttons
     case NativeTheme::kColorId_ButtonEnabledColor:
@@ -297,7 +301,7 @@ SkColor GetAuraColor(NativeTheme::ColorId color_id,
 
     // FocusableBorder
     case NativeTheme::kColorId_FocusedBorderColor:
-      return gfx::kGoogleBlue500;
+      return SkColorSetA(gfx::kGoogleBlue500, 0x66);
     case NativeTheme::kColorId_UnfocusedBorderColor:
       return SkColorSetA(SK_ColorBLACK, 0x66);
 

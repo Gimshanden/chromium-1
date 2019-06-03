@@ -119,6 +119,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
     // There is no update because only the overlay is expected to change.
     RefreshCastButtonVisibilityWithoutUpdate();
   }
+  void ShowContextMenu() override {}
 
   // Called by the fullscreen buttons to toggle fulllscreen on/off.
   void EnterFullscreen();
@@ -158,6 +159,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
 
   // Accessors for UI elements.
   const MediaControlCurrentTimeDisplayElement& CurrentTimeDisplay() const;
+  const MediaControlRemainingTimeDisplayElement& RemainingTimeDisplay() const;
   MediaControlToggleClosedCaptionsButtonElement& ToggleClosedCaptions();
 
   void Trace(blink::Visitor*) override;
@@ -278,6 +280,9 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
 
   void ElementSizeChangedTimerFired(TimerBase*);
 
+  // Update any visible indicators of the current time.
+  void UpdateTimeIndicators();
+
   // Hide elements that don't fit, and show those things that we want which
   // do fit.  This requires that m_effectiveWidth and m_effectiveHeight are
   // current.
@@ -287,7 +292,6 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   void UpdateOverflowMenuWanted() const;
   void UpdateOverflowMenuItemCSSClass() const;
   void UpdateScrubbingMessageFits() const;
-  void UpdateOverflowAndTrackListCSSClassForPip() const;
   void UpdateSizingCSSClass();
   void MaybeRecordElementsDisplayed() const;
 
@@ -334,6 +338,8 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   void OnPlay();
   void OnPlaying();
   void OnPause();
+  void OnSeeking();
+  void OnSeeked();
   void OnTextTracksAddedOrRemoved();
   void OnTextTracksChanged();
   void OnError();
@@ -425,9 +431,6 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
 
   DISALLOW_COPY_AND_ASSIGN(MediaControlsImpl);
 };
-
-DEFINE_ELEMENT_TYPE_CASTS(MediaControlsImpl, IsMediaControls());
-
 }  // namespace blink
 
 #endif

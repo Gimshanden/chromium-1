@@ -17,6 +17,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/memory_pressure_monitor_chromeos.h"
+#include "base/memory/memory_pressure_monitor_notifying_chromeos.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/memory.h"
 #include "base/process/process_handle.h"  // kNullProcessHandle.
@@ -28,6 +29,8 @@
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/memory/memory_kills_monitor.h"
+#include "chrome/browser/resource_coordinator/lifecycle_unit.h"
+#include "chrome/browser/resource_coordinator/tab_activity_watcher.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_manager_stats_collector.h"
 #include "chrome/browser/resource_coordinator/utils.h"
@@ -82,11 +85,6 @@ void OnSetOomScoreAdj(bool success, const std::string& output) {
     LOG(WARNING) << "Set OOM score: " << output;
 }
 
-bool IsNewProcessTypesEnabled() {
-  return base::FeatureList::IsEnabled(features::kNewProcessTypes) &&
-         !base::FeatureList::IsEnabled(features::kTabRanker);
-}
-
 }  // namespace
 
 // static
@@ -98,14 +96,6 @@ std::ostream& operator<<(std::ostream& os, const ProcessType& type) {
       return os << "FOCUSED_TAB";
     case ProcessType::FOCUSED_APP:
       return os << "FOCUSED_APP";
-    case ProcessType::IMPORTANT_APP:
-      return os << "IMPORTANT_APP";
-    case ProcessType::BACKGROUND_APP:
-      return os << "BACKGROUND_APP";
-    case ProcessType::BACKGROUND_TAB:
-      return os << "BACKGROUND_TAB";
-    case ProcessType::PROTECTED_BACKGROUND_TAB:
-      return os << "PROTECTED_BACKGROUND_TAB";
     case ProcessType::UNKNOWN_TYPE:
       return os << "UNKNOWN_TYPE";
     case ProcessType::BACKGROUND:
@@ -138,39 +128,13 @@ bool TabManagerDelegate::Candidate::operator<(
     const TabManagerDelegate::Candidate& rhs) const {
   if (process_type() != rhs.process_type())
     return process_type() < rhs.process_type();
-  if (app() && rhs.app())
-    return *app() < *rhs.app();
-  if (lifecycle_unit() && rhs.lifecycle_unit())
-    return lifecycle_unit_sort_key_ > rhs.lifecycle_unit_sort_key_;
-  // When NewProcessTypes feature is turned off and using old ProcessType
-  // categories, tabs and apps are in separate categories so this is an
-  // impossible case. Otherwise, tabs and apps are compared using last active
-  // time.
-  if ((lifecycle_unit() && rhs.app()) || (app() && rhs.lifecycle_unit()))
-    return GetLastActiveTime() < rhs.GetLastActiveTime();
-
-  NOTREACHED() << "Undefined comparison between apps and tabs: process_type="
-               << process_type();
-  return app();
-}
-
-TimeTicks TabManagerDelegate::Candidate::GetLastActiveTime() const {
-  if (app())
-    return TimeTicks::FromUptimeMillis(app()->last_activity_time());
-  if (lifecycle_unit())
-    return lifecycle_unit()->GetLastFocusedTime();
-  return TimeTicks();
+  return LastActivityTime() > rhs.LastActivityTime();
 }
 
 ProcessType TabManagerDelegate::Candidate::GetProcessTypeInternal() const {
-  const bool use_new_proc_types = IsNewProcessTypesEnabled();
   if (app()) {
     if (app()->is_focused())
       return ProcessType::FOCUSED_APP;
-    if (!use_new_proc_types) {
-      return app()->IsImportant() ? ProcessType::IMPORTANT_APP
-                                  : ProcessType::BACKGROUND_APP;
-    }
     if (app()->IsBackgroundProtected())
       return ProcessType::PROTECTED_BACKGROUND;
     if (app()->IsCached())
@@ -178,19 +142,28 @@ ProcessType TabManagerDelegate::Candidate::GetProcessTypeInternal() const {
     return ProcessType::BACKGROUND;
   }
   if (lifecycle_unit()) {
-    if (lifecycle_unit_sort_key_.last_focused_time == base::TimeTicks::Max())
+    if (LastActivityTime() == base::TimeTicks::Max())
       return ProcessType::FOCUSED_TAB;
     DecisionDetails decision_details;
     if (!lifecycle_unit()->CanDiscard(
             ::mojom::LifecycleUnitDiscardReason::PROACTIVE,
             &decision_details)) {
-      return use_new_proc_types ? ProcessType::PROTECTED_BACKGROUND
-                                : ProcessType::PROTECTED_BACKGROUND_TAB;
+      return ProcessType::PROTECTED_BACKGROUND;
     }
-    return use_new_proc_types ? ProcessType::BACKGROUND
-                              : ProcessType::BACKGROUND_TAB;
+    return ProcessType::BACKGROUND;
   }
   return ProcessType::UNKNOWN_TYPE;
+}
+
+base::TimeTicks TabManagerDelegate::Candidate::LastActivityTime() const {
+  if (app()) {
+    return base::TimeTicks::FromUptimeMillis(app()->last_activity_time());
+  }
+  if (lifecycle_unit()) {
+    return lifecycle_unit()->GetLastFocusedTime();
+  }
+  NOTREACHED();
+  return base::TimeTicks();
 }
 
 // Holds the info of a newly focused tab or app window. The focused process is
@@ -264,11 +237,17 @@ int TabManagerDelegate::MemoryStat::ReadIntFromFile(const char* file_name,
 
 // static
 int TabManagerDelegate::MemoryStat::LowMemoryMarginKB() {
-  static const int kDefaultLowMemoryMarginMb = 50;
-  static const char kLowMemoryMarginConfig[] =
-      "/sys/kernel/mm/chromeos-low_mem/margin";
-  return ReadIntFromFile(kLowMemoryMarginConfig, kDefaultLowMemoryMarginMb) *
-         1024;
+  constexpr int kDefaultLowMemoryMarginMb = 50;
+
+  // A margin file can contain multiple values but the first one
+  // represents the critical memory threshold.
+  std::vector<int> margin_parts =
+      base::chromeos::MemoryPressureMonitorNotifying::GetMarginFileParts();
+  if (!margin_parts.empty()) {
+    return margin_parts[0] * 1024;
+  }
+
+  return kDefaultLowMemoryMarginMb * 1024;
 }
 
 // Target memory to free is the amount which brings available
@@ -472,10 +451,23 @@ void TabManagerDelegate::Observe(int type,
       // driven MemoryPressureMonitor will continue to produce timed events
       // on top. So the longer the cleanup phase takes, the more tabs will
       // get discarded in parallel.
-      base::chromeos::MemoryPressureMonitor* monitor =
-          base::chromeos::MemoryPressureMonitor::Get();
-      if (monitor)
-        monitor->ScheduleEarlyCheck();
+
+      // TODO(bgeffon): Once the notifying version has become the standard
+      // this can be removed, the reason the check is here and the type safe
+      // versions exist is because a FakeMemoryPressureMonitor can be used on
+      // chromeos for testing and ScheduleEarlyCheck() is not part of the
+      // base::MemoryPressureMonitor interface.
+      auto* monitor_legacy = base::chromeos::MemoryPressureMonitor::Get();
+      if (monitor_legacy) {
+        monitor_legacy->ScheduleEarlyCheck();
+      } else {
+        auto* monitor_notifying =
+            base::chromeos::MemoryPressureMonitorNotifying::Get();
+        if (monitor_notifying) {
+          monitor_notifying->ScheduleEarlyCheck();
+        }
+      }
+
       break;
     }
     case content::NOTIFICATION_RENDER_WIDGET_VISIBILITY_CHANGED: {
@@ -555,6 +547,44 @@ TabManagerDelegate::GetSortedCandidates(
   return candidates;
 }
 
+void TabManagerDelegate::SortLifecycleUnitWithTabRanker(
+    std::vector<Candidate>* candidates,
+    LifecycleUnitSorter sorter) {
+  const uint32_t num_of_tab_to_score = GetNumOldestTabsToScoreWithTabRanker();
+  if (num_of_tab_to_score <= 1)
+    return;
+
+  const ProcessType process_type =
+      static_cast<ProcessType>(GetProcessTypeToScoreWithTabRanker());
+
+  // Put the oldest num_of_tab_to_score lifecycle units into a vector.
+  LifecycleUnitVector oldest_lifecycle_units;
+  for (auto it = candidates->rbegin(); it != candidates->rend(); ++it) {
+    auto& candidate = *it;
+    if (oldest_lifecycle_units.size() == num_of_tab_to_score ||
+        candidate.process_type() < process_type)
+      break;
+    if (candidate.lifecycle_unit()) {
+      oldest_lifecycle_units.push_back(candidate.lifecycle_unit());
+    }
+  }
+
+  // Re-sort them with TabRanker.
+  std::move(sorter).Run(&oldest_lifecycle_units);
+
+  // Put the sorted lifecycle units back to their original vacancies.
+  for (auto it = candidates->rbegin(); it != candidates->rend(); ++it) {
+    const auto& candidate = *it;
+    if (oldest_lifecycle_units.empty() ||
+        candidate.process_type() < process_type)
+      break;
+    if (candidate.lifecycle_unit()) {
+      *it = Candidate(oldest_lifecycle_units.back());
+      oldest_lifecycle_units.pop_back();
+    }
+  }
+}
+
 bool TabManagerDelegate::IsRecentlyKilledArcProcess(
     const std::string& process_name,
     const TimeTicks& now) {
@@ -602,8 +632,15 @@ void TabManagerDelegate::LowMemoryKillImpl(
                   [](auto& proc) { return proc.IsPersistent(); });
   }
 
-  std::vector<TabManagerDelegate::Candidate> candidates =
+  std::vector<Candidate> candidates =
       GetSortedCandidates(GetLifecycleUnits(), arc_processes);
+
+  if (base::FeatureList::IsEnabled(features::kTabRanker)) {
+    SortLifecycleUnitWithTabRanker(
+        &candidates,
+        base::BindOnce(&TabActivityWatcher::SortLifecycleUnitWithTabRanker,
+                       base::Unretained(TabActivityWatcher::GetInstance())));
+  }
 
   // TODO(semenzato): decide if TargetMemoryToFreeKB is doing real
   // I/O and if it is, move to I/O thread (crbug.com/778703).
@@ -633,17 +670,11 @@ void TabManagerDelegate::LowMemoryKillImpl(
 
     const ProcessType process_type = it->process_type();
 
-    // Never kill selected tab, foreground app, and important apps regardless of
-    // whether they're in the active window. Since the user experience would be
-    // bad.
+    // Never kill selected tab and foreground app regardless of whether they're
+    // in the active window. Since the user experience would be bad.
     if (it->app()) {
       if (process_type == ProcessType::FOCUSED_APP) {
         MEMORY_LOG(ERROR) << "Skipped killing focused app "
-                          << it->app()->process_name();
-        continue;
-      }
-      if (process_type == ProcessType::IMPORTANT_APP) {
-        MEMORY_LOG(ERROR) << "Skipped killing important app "
                           << it->app()->process_name();
         continue;
       }
@@ -745,12 +776,11 @@ void TabManagerDelegate::AdjustOomPrioritiesImpl(
   int range_middle =
       (chrome::kLowestRendererOomScore + chrome::kHighestRendererOomScore) / 2;
 
-  // Find some pivot point. For now (roughly) apps are in the first half and
-  // tabs are in the second half.
+  // Find some pivot point. FOCUSED_TAB, FOCUSED_APP, and PROTECTED_BACKGROUND
+  // processes are in the first half and BACKGROUND and CACHED_APP processes
+  // are in the second half.
   auto lower_priority_part = candidates.end();
-  bool use_new_proc_types = IsNewProcessTypesEnabled();
-  ProcessType pivot_type = use_new_proc_types ? ProcessType::BACKGROUND
-                                              : ProcessType::BACKGROUND_TAB;
+  ProcessType pivot_type = ProcessType::BACKGROUND;
   for (auto it = candidates.begin(); it != candidates.end(); ++it) {
     if (it->process_type() >= pivot_type) {
       lower_priority_part = it;

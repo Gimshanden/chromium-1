@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/text/bidi_text_run.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
@@ -35,7 +36,7 @@ OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(
   ExecutionContext* execution_context = canvas->GetTopExecutionContext();
   if (auto* document = DynamicTo<Document>(execution_context)) {
     Settings* settings = document->GetSettings();
-    if (settings->GetDisableReadingFromCanvas())
+    if (settings && settings->GetDisableReadingFromCanvas())
       canvas->SetDisableReadingFromCanvasTrue();
     return;
   }
@@ -284,8 +285,8 @@ void OffscreenCanvasRenderingContext2D::setFont(const String& new_font) {
   if (new_font == GetState().UnparsedFont() && GetState().HasRealizedFont())
     return;
 
-  MutableCSSPropertyValueSet* style =
-      MutableCSSPropertyValueSet::Create(kHTMLStandardMode);
+  auto* style =
+      MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode);
   if (!style)
     return;
 
@@ -476,8 +477,9 @@ TextMetrics* OffscreenCanvasRenderingContext2D::measureText(
   else
     direction = ToTextDirection(GetState().GetDirection());
 
-  return TextMetrics::Create(font, direction, GetState().GetTextBaseline(),
-                             GetState().GetTextAlign(), text);
+  return MakeGarbageCollected<TextMetrics>(font, direction,
+                                           GetState().GetTextBaseline(),
+                                           GetState().GetTextAlign(), text);
 }
 
 const Font& OffscreenCanvasRenderingContext2D::AccessFont() {

@@ -397,11 +397,11 @@ void MapperMogaPro(const Gamepad& input, Gamepad* mapped) {
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
-void MapperAnalogGamepad(const Gamepad& input, Gamepad* mapped) {
-  enum AnalogGamepadButtons {
-    ANALOG_GAMEPAD_BUTTON_EXTRA = BUTTON_INDEX_COUNT,
-    ANALOG_GAMEPAD_BUTTON_EXTRA2,
-    ANALOG_GAMEPAD_BUTTON_COUNT
+void MapperStadiaController(const Gamepad& input, Gamepad* mapped) {
+  enum StadiaGamepadButtons {
+    STADIA_GAMEPAD_BUTTON_EXTRA = BUTTON_INDEX_COUNT,
+    STADIA_GAMEPAD_BUTTON_EXTRA2,
+    STADIA_GAMEPAD_BUTTON_COUNT
   };
   *mapped = input;
   mapped->buttons[BUTTON_INDEX_PRIMARY] = input.buttons[0];
@@ -417,12 +417,12 @@ void MapperAnalogGamepad(const Gamepad& input, Gamepad* mapped) {
   mapped->buttons[BUTTON_INDEX_LEFT_THUMBSTICK] = input.buttons[13];
   mapped->buttons[BUTTON_INDEX_RIGHT_THUMBSTICK] = input.buttons[14];
   mapped->buttons[BUTTON_INDEX_META] = input.buttons[11];
-  mapped->buttons[ANALOG_GAMEPAD_BUTTON_EXTRA] = input.buttons[16];
-  mapped->buttons[ANALOG_GAMEPAD_BUTTON_EXTRA2] = input.buttons[17];
+  mapped->buttons[STADIA_GAMEPAD_BUTTON_EXTRA] = input.buttons[16];
+  mapped->buttons[STADIA_GAMEPAD_BUTTON_EXTRA2] = input.buttons[17];
   mapped->axes[AXIS_INDEX_RIGHT_STICK_Y] = input.axes[5];
   DpadFromAxis(mapped, input.axes[9]);
 
-  mapped->buttons_length = ANALOG_GAMEPAD_BUTTON_COUNT;
+  mapped->buttons_length = STADIA_GAMEPAD_BUTTON_COUNT;
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
@@ -519,12 +519,27 @@ void MapperSwitchComposite(const Gamepad& input, Gamepad* mapped) {
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
-void MapperStadiaController(const Gamepad& input, Gamepad* mapped) {
-  const size_t kStadiaControllerExtraButtons = 2;
+void MapperXboxAdaptiveControllerBluetooth(const Gamepad& input,
+                                           Gamepad* mapped) {
   *mapped = input;
-  mapped->buttons[BUTTON_INDEX_LEFT_TRIGGER] = AxisToButton(input.axes[4]);
-  mapped->buttons[BUTTON_INDEX_RIGHT_TRIGGER] = AxisToButton(input.axes[5]);
-  mapped->buttons_length = BUTTON_INDEX_COUNT + kStadiaControllerExtraButtons;
+
+  mapped->buttons[BUTTON_INDEX_PRIMARY] = input.buttons[0];
+  mapped->buttons[BUTTON_INDEX_SECONDARY] = input.buttons[1];
+  mapped->buttons[BUTTON_INDEX_TERTIARY] = input.buttons[3];
+  mapped->buttons[BUTTON_INDEX_QUATERNARY] = input.buttons[4];
+  mapped->buttons[BUTTON_INDEX_LEFT_SHOULDER] = input.buttons[6];
+  mapped->buttons[BUTTON_INDEX_RIGHT_SHOULDER] = input.buttons[7];
+  mapped->buttons[BUTTON_INDEX_LEFT_TRIGGER] = AxisToButton(input.axes[10]);
+  mapped->buttons[BUTTON_INDEX_RIGHT_TRIGGER] = AxisToButton(input.axes[11]);
+  mapped->buttons[BUTTON_INDEX_BACK_SELECT] = input.buttons[31];
+  mapped->buttons[BUTTON_INDEX_START] = input.buttons[11];
+  mapped->buttons[BUTTON_INDEX_LEFT_THUMBSTICK] = input.buttons[13];
+  mapped->buttons[BUTTON_INDEX_RIGHT_THUMBSTICK] = input.buttons[14];
+  DpadFromAxis(mapped, input.axes[9]);
+  mapped->buttons[BUTTON_INDEX_META] = input.buttons[30];
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_Y] = input.axes[5];
+
+  mapped->buttons_length = BUTTON_INDEX_COUNT;
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
@@ -552,6 +567,10 @@ constexpr struct MappingData {
     {GamepadId::kMicrosoftProduct02fd, MapperXboxOneS2016Firmware},
     // Xbox 360 Wireless
     {GamepadId::kMicrosoftProduct0719, MapperXbox360Gamepad},
+    // Xbox Adaptive Controller (USB)
+    {GamepadId::kMicrosoftProduct0b0a, MapperXbox360Gamepad},
+    // Xbox Adaptive Controller (Bluetooth)
+    {GamepadId::kMicrosoftProduct0b0c, MapperXboxAdaptiveControllerBluetooth},
     // Logitech F310, D mode
     {GamepadId::kLogitechProductc216, MapperDirectInputStyle},
     // Logitech F510, D mode
@@ -606,8 +625,8 @@ constexpr struct MappingData {
     {GamepadId::kVendor2836Product0001, MapperOUYA},
     // boom PSX+N64 USB Converter
     {GamepadId::kPrototypeVendorProduct0667, MapperBoomN64Psx},
-    // Analog game controller
-    {GamepadId::kPrototypeVendorProduct9401, MapperAnalogGamepad},
+    // Stadia Controller prototype
+    {GamepadId::kPrototypeVendorProduct9401, MapperStadiaController},
 };
 
 }  // namespace

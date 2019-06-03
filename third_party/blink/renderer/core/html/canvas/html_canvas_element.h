@@ -75,13 +75,13 @@ class IntSize;
 
 #if defined(SUPPORT_WEBGL2_COMPUTE_CONTEXT)
 class
-    CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrWebGL2ComputeRenderingContextOrImageBitmapRenderingContextOrXRPresentationContext;
-typedef CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrWebGL2ComputeRenderingContextOrImageBitmapRenderingContextOrXRPresentationContext
+    CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrWebGL2ComputeRenderingContextOrImageBitmapRenderingContextOrGPUCanvasContext;
+typedef CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrWebGL2ComputeRenderingContextOrImageBitmapRenderingContextOrGPUCanvasContext
     RenderingContext;
 #else
 class
-    CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrImageBitmapRenderingContextOrXRPresentationContext;
-typedef CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrImageBitmapRenderingContextOrXRPresentationContext
+    CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrImageBitmapRenderingContextOrGPUCanvasContext;
+typedef CanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContextOrImageBitmapRenderingContextOrGPUCanvasContext
     RenderingContext;
 #endif
 
@@ -109,8 +109,6 @@ class CORE_EXPORT HTMLCanvasElement final
 
  public:
   using Node::GetExecutionContext;
-
-  DECLARE_NODE_FACTORY(HTMLCanvasElement);
 
   explicit HTMLCanvasElement(Document&);
   ~HTMLCanvasElement() override;
@@ -157,7 +155,9 @@ class CORE_EXPORT HTMLCanvasElement final
   void DidDraw(const FloatRect&) override;
   void DidDraw() override;
 
-  void Paint(GraphicsContext&, const LayoutRect&);
+  void Paint(GraphicsContext&,
+             const PhysicalRect&,
+             bool flatten_composited_layers);
 
   void DisableDeferral(DisableDeferralReason);
 
@@ -320,6 +320,8 @@ class CORE_EXPORT HTMLCanvasElement final
 
  private:
   void Dispose();
+
+  void PaintInternal(GraphicsContext&, const PhysicalRect&);
 
   using ContextFactoryVector =
       Vector<std::unique_ptr<CanvasRenderingContextFactory>>;

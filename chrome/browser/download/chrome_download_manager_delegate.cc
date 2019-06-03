@@ -36,13 +36,12 @@
 #include "chrome/browser/download/download_request_limiter.h"
 #include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/download/download_target_determiner.h"
+#include "chrome/browser/download/mixed_content_download_blocking.h"
 #include "chrome/browser/download/save_package_file_picker.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/common/buildflags.h"
@@ -53,6 +52,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
 #include "components/offline_pages/buildflags/buildflags.h"
@@ -79,7 +79,11 @@
 #include "chrome/browser/android/download/download_location_dialog_bridge_impl.h"
 #include "chrome/browser/android/download/download_manager_service.h"
 #include "chrome/browser/android/download/download_utils.h"
+#include "chrome/browser/android/feature_utilities.h"
 #include "chrome/browser/infobars/infobar_service.h"
+#else
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -595,15 +599,6 @@ bool ChromeDownloadManagerDelegate::InterceptDownloadIfApplicable(
   return false;
 }
 
-bool ChromeDownloadManagerDelegate::GenerateFileHash() {
-#if defined(FULL_SAFE_BROWSING)
-  return profile_->GetPrefs()->GetBoolean(prefs::kSafeBrowsingEnabled) &&
-      g_browser_process->safe_browsing_service()->DownloadBinHashNeeded();
-#else
-  return false;
-#endif
-}
-
 void ChromeDownloadManagerDelegate::GetSaveDir(
     content::BrowserContext* browser_context,
     base::FilePath* website_save_dir,
@@ -791,6 +786,14 @@ DownloadProtectionService*
   return nullptr;
 }
 
+void ChromeDownloadManagerDelegate::ShouldBlockDownload(
+    download::DownloadItem* download,
+    const base::FilePath& virtual_path,
+    const ShouldBlockDownloadCallback& callback) {
+  DCHECK(download);
+  callback.Run(ShouldBlockFileAsMixedContent(virtual_path, *download));
+}
+
 void ChromeDownloadManagerDelegate::NotifyExtensions(
     DownloadItem* download,
     const base::FilePath& virtual_path,
@@ -847,7 +850,8 @@ void ChromeDownloadManagerDelegate::RequestConfirmation(
 #if defined(OS_ANDROID)
   content::WebContents* web_contents =
       content::DownloadItemUtils::GetWebContents(download);
-  if (base::FeatureList::IsEnabled(features::kDownloadsLocationChange)) {
+  if (!chrome::android::IsNoTouchModeEnabled() &&
+      base::FeatureList::IsEnabled(features::kDownloadsLocationChange)) {
     if (reason == DownloadConfirmationReason::SAVE_AS) {
       // If this is a 'Save As' download, just run without confirmation.
       callback.Run(DownloadConfirmationResult::CONTINUE_WITHOUT_CONFIRMATION,
@@ -1237,6 +1241,16 @@ void ChromeDownloadManagerDelegate::OnDownloadTargetDetermined(
     target_info->result = download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED;
     // A dangerous type would take precendence over the blocking of the file.
     target_info->danger_type = download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS;
+  }
+
+  if (base::FeatureList::IsEnabled(
+          download::features::kPreventDownloadsWithSamePath)) {
+    // A separate reservation with the same target path may exist.
+    // If so, cancel the current reservation.
+    if (DownloadPathReservationTracker::CheckDownloadPathForExistingDownload(
+            target_info->target_path, item)) {
+      target_info->result = download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED;
+    }
   }
 
   callback.Run(target_info->target_path, target_info->target_disposition,

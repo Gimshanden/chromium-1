@@ -28,9 +28,9 @@ namespace base {
 
 namespace {
 
-bool PumpTypeUsesDoSomeWork(MessageLoopBase::Type type) {
+bool PumpTypeUsesDoSomeWork(MessageLoop::Type type) {
   switch (type) {
-    case MessageLoopBase::Type::TYPE_DEFAULT:
+    case MessagePump::Type::DEFAULT:
 #if defined(OS_IOS)
       // iOS uses a MessagePumpCFRunLoop instead of MessagePumpDefault for
       // TYPE_DEFAULT. TODO(gab): migrate MessagePumpCFRunLoop too.
@@ -39,12 +39,12 @@ bool PumpTypeUsesDoSomeWork(MessageLoopBase::Type type) {
       return true;
 #endif
 
-    case MessageLoopBase::Type::TYPE_UI:
+    case MessagePump::Type::UI:
 #if defined(OS_IOS)
       // iOS uses a MessagePumpDefault for UI in unit tests, ref.
       // test_support_ios.mm::CreateMessagePumpForUIForTests().
       return true;
-#elif defined(OS_WIN)
+#elif defined(OS_WIN) || defined(OS_ANDROID) || defined(USE_GLIB)
       return true;
 #elif defined(OS_POSIX) && !defined(OS_NACL_SFI)
       // MessagePumpLibevent was migrated (ref. message_pump_for_ui.h and
@@ -56,7 +56,7 @@ bool PumpTypeUsesDoSomeWork(MessageLoopBase::Type type) {
       return false;
 #endif
 
-    case MessageLoopBase::Type::TYPE_IO:
+    case MessagePump::Type::IO:
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
       return true;
 #elif defined(OS_POSIX) && !defined(OS_NACL_SFI)
@@ -69,10 +69,13 @@ bool PumpTypeUsesDoSomeWork(MessageLoopBase::Type type) {
       return false;
 #endif
 
-    case MessageLoopBase::Type::TYPE_CUSTOM:
+    case MessagePump::Type::CUSTOM:
 #if defined(OS_ANDROID)
-    case MessageLoopBase::Type::TYPE_JAVA:
+    case MessagePump::Type::JAVA:
 #endif  // defined(OS_ANDROID)
+#if defined(OS_MACOSX)
+    case MessagePump::Type::NS_RUNLOOP:
+#endif  // defined(OS_MACOSX)
       // Not tested in this file.
       NOTREACHED();
       return false;
@@ -96,10 +99,9 @@ class MockMessagePumpDelegate : public MessagePump::Delegate {
   DISALLOW_COPY_AND_ASSIGN(MockMessagePumpDelegate);
 };
 
-class MessagePumpTest : public ::testing::TestWithParam<MessageLoopBase::Type> {
+class MessagePumpTest : public ::testing::TestWithParam<MessageLoop::Type> {
  public:
-  MessagePumpTest()
-      : message_pump_(MessageLoop::CreateMessagePumpForType(GetParam())) {}
+  MessagePumpTest() : message_pump_(MessagePump::Create(GetParam())) {}
 
  protected:
   const bool pump_uses_do_some_work_ = PumpTypeUsesDoSomeWork(GetParam());

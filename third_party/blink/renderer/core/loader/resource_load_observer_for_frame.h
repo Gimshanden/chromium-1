@@ -33,10 +33,13 @@ class CORE_EXPORT ResourceLoadObserverForFrame final
                        const ResourceResponse& redirect_response,
                        ResourceType,
                        const FetchInitiatorInfo&) override;
+  void DidChangePriority(uint64_t identifier,
+                         ResourceLoadPriority,
+                         int intra_priority_value) override;
   void DidReceiveResponse(uint64_t identifier,
                           const ResourceRequest& request,
                           const ResourceResponse& response,
-                          Resource* resource,
+                          const Resource* resource,
                           ResponseSource) override;
   void DidReceiveData(uint64_t identifier,
                       base::span<const char> chunk) override;

@@ -89,8 +89,7 @@ AppDistributionProvider* ChromeBrowserProvider::GetAppDistributionProvider()
 }
 
 id<LogoVendor> ChromeBrowserProvider::CreateLogoVendor(
-    ios::ChromeBrowserState* browser_state,
-    id<UrlLoader> loader) const {
+    ios::ChromeBrowserState* browser_state) const {
   return nil;
 }
 
@@ -116,6 +115,10 @@ FullscreenProvider* ChromeBrowserProvider::GetFullscreenProvider() const {
 
 BrowserURLRewriterProvider*
 ChromeBrowserProvider::GetBrowserURLRewriterProvider() const {
+  return nullptr;
+}
+
+OverridesProvider* ChromeBrowserProvider::GetOverridesProvider() const {
   return nullptr;
 }
 

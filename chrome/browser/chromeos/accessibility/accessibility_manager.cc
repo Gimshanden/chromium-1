@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ash/accessibility/accessibility_controller.h"
+#include "ash/public/cpp/accelerators.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/interfaces/accessibility_focus_ring_controller.mojom.h"
 #include "ash/public/interfaces/constants.mojom.h"
@@ -24,7 +25,7 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -135,11 +136,13 @@ BrailleController* GetBrailleController() {
 }
 
 void EnableChromeVoxAfterSwitchAccessMetric(bool val) {
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosChromeVoxAfterSwitchAccess", val);
+  base::UmaHistogramBoolean("Accessibility.CrosChromeVoxAfterSwitchAccess",
+                            val);
 }
 
 void EnableSwitchAccessAfterChromeVoxMetric(bool val) {
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosSwitchAccessAfterChromeVox", val);
+  base::UmaHistogramBoolean("Accessibility.CrosSwitchAccessAfterChromeVox",
+                            val);
 }
 
 // Restarts (stops, then starts brltty). If |address| is empty, only stops.
@@ -157,6 +160,11 @@ void RestartBrltty(const std::string& address) {
 
   args.push_back(base::StringPrintf("ADDRESS=%s", address.c_str()));
   client->StartJob(kBrlttyUpstartJobName, args, EmptyVoidDBusMethodCallback());
+}
+
+bool VolumeAdjustSoundEnabled() {
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      chromeos::switches::kDisableVolumeAdjustSound);
 }
 
 }  // namespace
@@ -290,6 +298,11 @@ AccessibilityManager::AccessibilityManager()
   manager->Initialize(SOUND_STARTUP,
                       bundle.GetRawDataResource(IDR_SOUND_STARTUP_WAV));
 
+  if (VolumeAdjustSoundEnabled()) {
+    manager->Initialize(chromeos::SOUND_VOLUME_ADJUST,
+                        bundle.GetRawDataResource(IDR_SOUND_VOLUME_ADJUST_WAV));
+  }
+
   base::FilePath resources_path;
   if (!base::PathService::Get(chrome::DIR_RESOURCES, &resources_path))
     NOTREACHED();
@@ -326,6 +339,10 @@ AccessibilityManager::AccessibilityManager()
       ->BindInterface(media_session::mojom::kServiceName,
                       &audio_focus_manager_ptr_);
 
+  ash::AcceleratorController::SetVolumeAdjustmentSoundCallback(
+      base::BindRepeating(&AccessibilityManager::PlayVolumeAdjustSound,
+                          base::Unretained(this)));
+
   CrasAudioHandler::Get()->AddAudioObserver(this);
 }
 
@@ -341,6 +358,8 @@ AccessibilityManager::~AccessibilityManager() {
     chromevox_panel_->CloseNow();
     chromevox_panel_ = nullptr;
   }
+
+  ash::AcceleratorController::SetVolumeAdjustmentSoundCallback({});
 }
 
 bool AccessibilityManager::ShouldShowAccessibilityMenu() {
@@ -1096,9 +1115,12 @@ void AccessibilityManager::SetProfile(Profile* profile) {
         base::Bind(&AccessibilityManager::OnLocaleChanged,
                    base::Unretained(this)));
 
-    content::BrowserAccessibilityState::GetInstance()->AddHistogramCallback(
-        base::Bind(&AccessibilityManager::UpdateChromeOSAccessibilityHistograms,
-                   base::Unretained(this)));
+    // Compute these histograms on the main (UI) thread because they
+    // need to access PrefService.
+    content::BrowserAccessibilityState::GetInstance()
+        ->AddUIThreadHistogramCallback(base::BindOnce(
+            &AccessibilityManager::UpdateChromeOSAccessibilityHistograms,
+            base::Unretained(this)));
 
     extensions::ExtensionRegistry* registry =
         extensions::ExtensionRegistry::Get(profile);
@@ -1170,49 +1192,62 @@ void AccessibilityManager::NotifyAccessibilityStatusChanged(
 }
 
 void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosSpokenFeedback",
-                        IsSpokenFeedbackEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosHighContrast",
-                        IsHighContrastEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosVirtualKeyboard",
-                        IsVirtualKeyboardEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosStickyKeys", IsStickyKeysEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosSpokenFeedback",
+                            IsSpokenFeedbackEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosHighContrast",
+                            IsHighContrastEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosVirtualKeyboard",
+                            IsVirtualKeyboardEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosStickyKeys",
+                            IsStickyKeysEnabled());
   if (MagnificationManager::Get()) {
-    UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosScreenMagnifier",
-                          MagnificationManager::Get()->IsMagnifierEnabled());
+    base::UmaHistogramBoolean(
+        "Accessibility.CrosScreenMagnifier",
+        MagnificationManager::Get()->IsMagnifierEnabled());
+    base::UmaHistogramBoolean(
+        "Accessibility.CrosDockedMagnifier",
+        MagnificationManager::Get()->IsDockedMagnifierEnabled());
   }
   if (profile_) {
     const PrefService* const prefs = profile_->GetPrefs();
 
     bool large_cursor_enabled =
         prefs->GetBoolean(ash::prefs::kAccessibilityLargeCursorEnabled);
-    UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosLargeCursor",
-                          large_cursor_enabled);
+    base::UmaHistogramBoolean("Accessibility.CrosLargeCursor",
+                              large_cursor_enabled);
     if (large_cursor_enabled) {
-      UMA_HISTOGRAM_COUNTS_100(
+      base::UmaHistogramCounts100(
           "Accessibility.CrosLargeCursorSize",
           prefs->GetInteger(ash::prefs::kAccessibilityLargeCursorDipSize));
     }
 
-    UMA_HISTOGRAM_BOOLEAN(
+    base::UmaHistogramBoolean(
         "Accessibility.CrosAlwaysShowA11yMenu",
         prefs->GetBoolean(ash::prefs::kShouldAlwaysShowAccessibilityMenu));
 
     bool autoclick_enabled =
         prefs->GetBoolean(ash::prefs::kAccessibilityAutoclickEnabled);
-    UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosAutoclick", autoclick_enabled);
+    base::UmaHistogramBoolean("Accessibility.CrosAutoclick", autoclick_enabled);
   }
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosCaretHighlight",
-                        IsCaretHighlightEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosCursorHighlight",
-                        IsCursorHighlightEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosDictation", IsDictationEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosFocusHighlight",
-                        IsFocusHighlightEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosSelectToSpeak",
-                        IsSelectToSpeakEnabled());
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.CrosSwitchAccess",
-                        IsSwitchAccessEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosCaretHighlight",
+                            IsCaretHighlightEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosCursorHighlight",
+                            IsCursorHighlightEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosDictation",
+                            IsDictationEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosFocusHighlight",
+                            IsFocusHighlightEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosSelectToSpeak",
+                            IsSelectToSpeakEnabled());
+  base::UmaHistogramBoolean("Accessibility.CrosSwitchAccess",
+                            IsSwitchAccessEnabled());
+}
+
+void AccessibilityManager::PlayVolumeAdjustSound() {
+  if (VolumeAdjustSoundEnabled()) {
+    PlayEarcon(chromeos::SOUND_VOLUME_ADJUST,
+               chromeos::PlaySoundOption::ONLY_IF_SPOKEN_FEEDBACK_ENABLED);
+  }
 }
 
 void AccessibilityManager::Observe(

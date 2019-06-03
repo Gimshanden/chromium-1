@@ -485,7 +485,7 @@ class DescriberText(Describer):
 
   def _DescribeDeltaSizeInfo(self, diff):
     common_metadata = {k: v for k, v in diff.before.metadata.iteritems()
-                       if diff.after.metadata[k] == v}
+                       if diff.after.metadata.get(k) == v}
     before_metadata = {k: v for k, v in diff.before.metadata.iteritems()
                        if k not in common_metadata}
     after_metadata = {k: v for k, v in diff.after.metadata.iteritems()
@@ -588,6 +588,24 @@ def DescribeSizeInfoCoverage(size_info):
       syms = in_section.WhereHasFlag(flag)
       if len(syms):
         yield '* {} symbols are {}. {}'.format(len(syms), desc, size_msg(syms))
+
+    # These thresholds were found by experimenting with arm32 Chrome.
+    # E.g.: Set them to 0 and see what warnings get logged, then take max value.
+    spam_counter = 0
+    for i in xrange(len(in_section) - 1):
+      sym = in_section[i + 1]
+      if (not sym.full_name.startswith('*')
+          and not sym.source_path.endswith('.S')  # Assembly symbol are iffy.
+          and not sym.IsStringLiteral()
+          and ((sym.section in 'rd' and sym.padding >= 256) or
+               (sym.section in 't' and sym.padding >= 64))):
+        # TODO(crbug.com/959906): We should synthesize symbols for these gaps
+        #     rather than attribute them as padding.
+        spam_counter += 1
+        if spam_counter <= 5:
+          yield 'Large padding of {} between:'.format(sym.padding)
+          yield '  A) ' + repr(in_section[i])
+          yield '  B) ' + repr(sym)
 
 
 class DescriberCsv(Describer):

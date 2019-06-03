@@ -26,6 +26,7 @@
 namespace net {
 class CertVerifyResult;
 class DrainableIOBuffer;
+struct SHA256HashValue;
 class SourceStream;
 struct OCSPVerifyResult;
 }  // namespace net
@@ -96,9 +97,14 @@ class CONTENT_EXPORT SignedExchangeHandler {
       std::unique_ptr<SignedExchangeDevToolsProxy> devtools_proxy,
       SignedExchangeReporter* reporter,
       base::RepeatingCallback<int(void)> frame_tree_node_id_getter);
-  ~SignedExchangeHandler();
+  virtual ~SignedExchangeHandler();
 
   int64_t GetExchangeHeaderLength() const { return exchange_header_length_; }
+
+  // Returns the header integrity value of the loaded signed exchange if
+  // available. This is available after |headers_callback| is called.
+  // Otherwise returns nullopt.
+  virtual base::Optional<net::SHA256HashValue> ComputeHeaderIntegrity() const;
 
  protected:
   SignedExchangeHandler();
@@ -125,7 +131,8 @@ class CONTENT_EXPORT SignedExchangeHandler {
   void OnCertReceived(
       SignedExchangeLoadResult result,
       std::unique_ptr<SignedExchangeCertificateChain> cert_chain);
-  bool CheckCertExtension(const net::X509Certificate* verified_cert);
+  SignedExchangeLoadResult CheckCertRequirements(
+      const net::X509Certificate* verified_cert);
   bool CheckOCSPStatus(const net::OCSPVerifyResult& ocsp_result);
 
   void OnVerifyCert(int32_t error_code,
@@ -179,6 +186,7 @@ class SignedExchangeHandlerFactory {
   virtual ~SignedExchangeHandlerFactory() {}
 
   virtual std::unique_ptr<SignedExchangeHandler> Create(
+      const GURL& outer_url,
       std::unique_ptr<net::SourceStream> body,
       SignedExchangeHandler::ExchangeHeadersCallback headers_callback,
       std::unique_ptr<SignedExchangeCertFetcherFactory>

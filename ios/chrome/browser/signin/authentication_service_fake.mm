@@ -12,6 +12,7 @@
 #import "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
+#include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 
@@ -34,6 +35,9 @@ AuthenticationServiceFake::~AuthenticationServiceFake() {}
 
 void AuthenticationServiceFake::SignIn(ChromeIdentity* identity,
                                        const std::string& hosted_domain) {
+  // Needs to call PrepareForFirstSyncSetup to behave like
+  // AuthenticationService.
+  sync_setup_service_->PrepareForFirstSyncSetup();
   authenticated_identity_ = identity;
 }
 
@@ -59,10 +63,6 @@ bool AuthenticationServiceFake::IsAuthenticated() {
 
 ChromeIdentity* AuthenticationServiceFake::GetAuthenticatedIdentity() {
   return authenticated_identity_;
-}
-
-NSString* AuthenticationServiceFake::GetAuthenticatedUserEmail() {
-  return [authenticated_identity_ userEmail];
 }
 
 std::unique_ptr<KeyedService>

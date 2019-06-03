@@ -203,8 +203,7 @@ class TestPluginWebFrameClient : public frame_test_helpers::TestWebFrameClient {
                                   WebTreeScopeType scope,
                                   const WebString& name,
                                   const WebString& fallback_name,
-                                  WebSandboxFlags sandbox_flags,
-                                  const ParsedFeaturePolicy& container_policy,
+                                  const FramePolicy&,
                                   const WebFrameOwnerProperties&,
                                   FrameOwnerElementType owner_type) override {
     return CreateLocalChild(*parent, scope,
@@ -789,7 +788,7 @@ TEST_F(WebPluginContainerTest, GestureLongPressReachesPlugin) {
   WebGestureEvent event(WebInputEvent::kGestureLongPress,
                         WebInputEvent::kNoModifiers,
                         WebInputEvent::GetStaticTimeStampForTests(),
-                        kWebGestureDeviceTouchscreen);
+                        WebGestureDevice::kTouchscreen);
 
   // First, send an event that doesn't hit the plugin to verify that the
   // plugin doesn't receive it.

@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node_data.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_input_node.h"
+#include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -16,10 +17,11 @@ namespace blink {
 
 class NGBlockBreakToken;
 class NGConstraintSpace;
+class NGDirtyLines;
 class NGInlineChildLayoutContext;
+class NGInlineNodeLegacy;
 class NGLayoutResult;
 class NGOffsetMapping;
-class NGInlineNodeLegacy;
 struct MinMaxSize;
 struct NGInlineItemsData;
 
@@ -30,7 +32,7 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
   NGInlineNode(LayoutBlockFlow*);
 
   LayoutBlockFlow* GetLayoutBlockFlow() const {
-    return ToLayoutBlockFlow(box_);
+    return To<LayoutBlockFlow>(box_);
   }
   NGLayoutInputNode NextSibling() { return nullptr; }
 
@@ -46,8 +48,9 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
       const NGBreakToken*,
       NGInlineChildLayoutContext* context);
 
-  // Prepare to reuse fragments. Returns false if reuse is not possible.
-  bool PrepareReuseFragments(const NGConstraintSpace&);
+  // Find the container of reusable line boxes. Returns nullptr if there are no
+  // reusable line boxes.
+  const NGPaintFragment* ReusableLineBoxContainer(const NGConstraintSpace&);
 
   // Computes the value of min-content and max-content for this anonymous block
   // box. min-content is the inline size when lines wrap at every break
@@ -58,8 +61,11 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
 
   // Instruct to re-compute |PrepareLayout| on the next layout.
   void InvalidatePrepareLayoutForTest() {
-    GetLayoutBlockFlow()->ResetNGInlineNodeData();
+    LayoutBlockFlow* block_flow = GetLayoutBlockFlow();
+    block_flow->ResetNGInlineNodeData();
     DCHECK(!IsPrepareLayoutFinished());
+    // There shouldn't be paint fragment if NGInlineNodeData does not exist.
+    block_flow->SetPaintFragment(nullptr, nullptr);
   }
 
   const NGInlineItemsData& ItemsData(bool is_first_line) const {
@@ -99,28 +105,18 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
 
   String ToString() const;
 
-  // A helper function for NGInlineItemsBuilder.
-  static void ClearInlineFragment(LayoutObject* object) {
-    object->SetIsInLayoutNGInlineFormattingContext(true);
-    object->SetFirstInlineFragment(nullptr);
-  }
-
-  // A helper function for NGInlineItemsBuilder.
-  static void ClearNeedsLayout(LayoutObject* object) {
-    object->ClearNeedsLayout();
-    object->ClearNeedsCollectInlines();
-    ClearInlineFragment(object);
-  }
-
  protected:
   bool IsPrepareLayoutFinished() const;
 
   // Prepare inline and text content for layout. Must be called before
   // calling the Layout method.
   void PrepareLayoutIfNeeded();
+  void PrepareLayout(std::unique_ptr<NGInlineNodeData> previous_data,
+                     NGDirtyLines* dirty_lines);
 
   void CollectInlines(NGInlineNodeData*,
-                      NGInlineNodeData* previous_data = nullptr);
+                      NGInlineNodeData* previous_data = nullptr,
+                      NGDirtyLines* dirty_lines = nullptr);
   void SegmentText(NGInlineNodeData*);
   void SegmentScriptRuns(NGInlineNodeData*);
   void SegmentFontOrientation(NGInlineNodeData*);
@@ -130,20 +126,20 @@ class CORE_EXPORT NGInlineNode : public NGLayoutInputNode {
   void ShapeTextForFirstLineIfNeeded(NGInlineNodeData*);
   void AssociateItemsWithInlines(NGInlineNodeData*);
 
-  bool MarkLineBoxesDirty(LayoutBlockFlow*);
+  bool MarkLineBoxesDirty(LayoutBlockFlow*, const NGPaintFragment*);
 
   NGInlineNodeData* MutableData() {
-    return ToLayoutBlockFlow(box_)->GetNGInlineNodeData();
+    return To<LayoutBlockFlow>(box_)->GetNGInlineNodeData();
   }
   const NGInlineNodeData& Data() const {
     DCHECK(IsPrepareLayoutFinished() &&
            !GetLayoutBlockFlow()->NeedsCollectInlines());
-    return *ToLayoutBlockFlow(box_)->GetNGInlineNodeData();
+    return *To<LayoutBlockFlow>(box_)->GetNGInlineNodeData();
   }
   // Same as |Data()| but can access even when |NeedsCollectInlines()| is set.
   const NGInlineNodeData& MaybeDirtyData() const {
     DCHECK(IsPrepareLayoutFinished());
-    return *ToLayoutBlockFlow(box_)->GetNGInlineNodeData();
+    return *To<LayoutBlockFlow>(box_)->GetNGInlineNodeData();
   }
   const NGInlineNodeData& EnsureData();
 

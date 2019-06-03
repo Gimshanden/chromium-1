@@ -99,6 +99,8 @@ void ShowContentSettingsExceptionsForProfile(
 void ShowSiteSettings(Profile* profile, const GURL& url);
 void ShowSiteSettings(Browser* browser, const GURL& url);
 
+void ShowAppManagementPage(Profile* profile, const std::string& app_id);
+
 void ShowContentSettings(Browser* browser,
                          ContentSettingsType content_settings_type);
 void ShowSettingsSubPageInTabbedBrowser(Browser* browser,
@@ -108,6 +110,10 @@ void ShowPasswordManager(Browser* browser);
 void ShowImportDialog(Browser* browser);
 void ShowAboutChrome(Browser* browser);
 void ShowSearchEngineSettings(Browser* browser);
+
+#if defined(OS_CHROMEOS)
+void ShowManagementPageForProfile(Profile* profile);
+#endif
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 // Initiates signin in a new browser tab.

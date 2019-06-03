@@ -35,7 +35,6 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
@@ -917,23 +916,23 @@ static void SecureContextWorkerExposedRuntimeEnabledAttributeAttributeSetter(
   impl->setSecureContextWorkerExposedRuntimeEnabledAttribute(cpp_value);
 }
 
-static void ImplementsReadonlyStringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinReadonlyStringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueString(info, impl->implementsReadonlyStringAttribute(), info.GetIsolate());
+  V8SetReturnValueString(info, impl->mixinReadonlyStringAttribute(), info.GetIsolate());
 }
 
-static void ImplementsStringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinStringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueString(info, impl->implementsStringAttribute(), info.GetIsolate());
+  V8SetReturnValueString(info, impl->mixinStringAttribute(), info.GetIsolate());
 }
 
-static void ImplementsStringAttributeAttributeSetter(
+static void MixinStringAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -948,18 +947,18 @@ static void ImplementsStringAttributeAttributeSetter(
   if (!cpp_value.Prepare())
     return;
 
-  impl->setImplementsStringAttribute(cpp_value);
+  impl->setMixinStringAttribute(cpp_value);
 }
 
-static void ImplementsNodeAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinNodeAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueFast(info, WTF::GetPtr(impl->implementsNodeAttribute()), impl);
+  V8SetReturnValueFast(info, WTF::GetPtr(impl->mixinNodeAttribute()), impl);
 }
 
-static void ImplementsNodeAttributeAttributeSetter(
+static void MixinNodeAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -969,7 +968,7 @@ static void ImplementsNodeAttributeAttributeSetter(
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  ExceptionState exception_state(isolate, ExceptionState::kSetterContext, "TestInterface", "implementsNodeAttribute");
+  ExceptionState exception_state(isolate, ExceptionState::kSetterContext, "TestInterface", "mixinNodeAttribute");
 
   // Prepare the value to be set.
   Node* cpp_value = V8Node::ToImplWithTypeCheck(info.GetIsolate(), v8_value);
@@ -980,20 +979,20 @@ static void ImplementsNodeAttributeAttributeSetter(
     return;
   }
 
-  impl->setImplementsNodeAttribute(cpp_value);
+  impl->setMixinNodeAttribute(cpp_value);
 }
 
-static void ImplementsEventHandlerAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinEventHandlerAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  EventListener* cpp_value(WTF::GetPtr(impl->implementsEventHandlerAttribute()));
+  EventListener* cpp_value(WTF::GetPtr(impl->mixinEventHandlerAttribute()));
 
   V8SetReturnValue(info, JSEventHandler::AsV8Value(info.GetIsolate(), impl, cpp_value));
 }
 
-static void ImplementsEventHandlerAttributeAttributeSetter(
+static void MixinEventHandlerAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -1005,18 +1004,18 @@ static void ImplementsEventHandlerAttributeAttributeSetter(
 
   // Prepare the value to be set.
 
-  impl->setImplementsEventHandlerAttribute(JSEventHandler::CreateOrNull(v8_value, JSEventHandler::HandlerType::kEventHandler));
+  impl->setMixinEventHandlerAttribute(JSEventHandler::CreateOrNull(v8_value, JSEventHandler::HandlerType::kEventHandler));
 }
 
-static void ImplementsRuntimeEnabledNodeAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinRuntimeEnabledNodeAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueFast(info, WTF::GetPtr(impl->implementsRuntimeEnabledNodeAttribute()), impl);
+  V8SetReturnValueFast(info, WTF::GetPtr(impl->mixinRuntimeEnabledNodeAttribute()), impl);
 }
 
-static void ImplementsRuntimeEnabledNodeAttributeAttributeSetter(
+static void MixinRuntimeEnabledNodeAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -1026,7 +1025,7 @@ static void ImplementsRuntimeEnabledNodeAttributeAttributeSetter(
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  ExceptionState exception_state(isolate, ExceptionState::kSetterContext, "TestInterface", "implementsRuntimeEnabledNodeAttribute");
+  ExceptionState exception_state(isolate, ExceptionState::kSetterContext, "TestInterface", "mixinRuntimeEnabledNodeAttribute");
 
   // Prepare the value to be set.
   Node* cpp_value = V8Node::ToImplWithTypeCheck(info.GetIsolate(), v8_value);
@@ -1037,18 +1036,18 @@ static void ImplementsRuntimeEnabledNodeAttributeAttributeSetter(
     return;
   }
 
-  impl->setImplementsRuntimeEnabledNodeAttribute(cpp_value);
+  impl->setMixinRuntimeEnabledNodeAttribute(cpp_value);
 }
 
-static void Implements2StringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void Mixin2StringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueString(info, TestInterfaceMixin2::implements2StringAttribute(*impl), info.GetIsolate());
+  V8SetReturnValueString(info, TestInterfaceMixin2::mixin2StringAttribute(*impl), info.GetIsolate());
 }
 
-static void Implements2StringAttributeAttributeSetter(
+static void Mixin2StringAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -1063,18 +1062,18 @@ static void Implements2StringAttributeAttributeSetter(
   if (!cpp_value.Prepare())
     return;
 
-  TestInterfaceMixin2::setImplements2StringAttribute(*impl, cpp_value);
+  TestInterfaceMixin2::setMixin2StringAttribute(*impl, cpp_value);
 }
 
-static void Implements3StringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void Mixin3StringAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Local<v8::Object> holder = info.Holder();
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(holder);
 
-  V8SetReturnValueString(info, TestMixin3Implementation::implements3StringAttribute(*impl), info.GetIsolate());
+  V8SetReturnValueString(info, TestMixin3Implementation::mixin3StringAttribute(*impl), info.GetIsolate());
 }
 
-static void Implements3StringAttributeAttributeSetter(
+static void Mixin3StringAttributeAttributeSetter(
     v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   ALLOW_UNUSED_LOCAL(isolate);
@@ -1089,7 +1088,7 @@ static void Implements3StringAttributeAttributeSetter(
   if (!cpp_value.Prepare())
     return;
 
-  TestMixin3Implementation::setImplements3StringAttribute(*impl, cpp_value);
+  TestMixin3Implementation::setMixin3StringAttribute(*impl, cpp_value);
 }
 
 static void PartialLongAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -1670,6 +1669,12 @@ static void OriginTrialWindowExposedMethodMethod(const v8::FunctionCallbackInfo<
   impl->originTrialWindowExposedMethod();
 }
 
+static void OriginTrialWindowExposedMethod2Method(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  TestInterfaceImplementation* impl = V8TestInterface::ToImpl(info.Holder());
+
+  impl->originTrialWindowExposedMethod2();
+}
+
 static void AlwaysExposedStaticMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
   TestInterfaceImplementation::alwaysExposedStaticMethod();
 }
@@ -1736,7 +1741,7 @@ static void OverloadMethodWithExposedAndRuntimeEnabledFlagMethod(const v8::Funct
 
   switch (std::min(1, info.Length())) {
     case 1:
-      if (RuntimeEnabledFeatures::FeatureName2Enabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeature2Enabled()) {
         if (V8Window::HasInstance(info[0], info.GetIsolate())) {
           OverloadMethodWithExposedAndRuntimeEnabledFlag3Method(info);
           return;
@@ -1746,7 +1751,7 @@ static void OverloadMethodWithExposedAndRuntimeEnabledFlagMethod(const v8::Funct
         OverloadMethodWithExposedAndRuntimeEnabledFlag1Method(info);
         return;
       }
-      if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
         if (true) {
           OverloadMethodWithExposedAndRuntimeEnabledFlag2Method(info);
           return;
@@ -2021,14 +2026,14 @@ static void MethodWithNullableRecordsMethod(const v8::FunctionCallbackInfo<v8::V
   impl->methodWithNullableRecords(numbers, strings, elements, unions);
 }
 
-static void ImplementsVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void MixinVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(info.Holder());
 
-  impl->implementsVoidMethod();
+  impl->mixinVoidMethod();
 }
 
-static void ImplementsComplexMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  ExceptionState exception_state(info.GetIsolate(), ExceptionState::kExecutionContext, "TestInterface", "implementsComplexMethod");
+static void MixinComplexMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  ExceptionState exception_state(info.GetIsolate(), ExceptionState::kExecutionContext, "TestInterface", "mixinComplexMethod");
 
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(info.Holder());
 
@@ -2050,23 +2055,23 @@ static void ImplementsComplexMethodMethod(const v8::FunctionCallbackInfo<v8::Val
   }
 
   ExecutionContext* execution_context = ExecutionContext::ForRelevantRealm(info);
-  TestInterfaceEmpty* result = impl->implementsComplexMethod(execution_context, str_arg, test_interface_empty_arg, exception_state);
+  TestInterfaceEmpty* result = impl->mixinComplexMethod(execution_context, str_arg, test_interface_empty_arg, exception_state);
   if (exception_state.HadException()) {
     return;
   }
   V8SetReturnValue(info, result);
 }
 
-static void Implements2VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void Mixin2VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(info.Holder());
 
-  TestInterfaceMixin2::implements2VoidMethod(*impl);
+  TestInterfaceMixin2::mixin2VoidMethod(*impl);
 }
 
-static void Implements3VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
+static void Mixin3VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
   TestInterfaceImplementation* impl = V8TestInterface::ToImpl(info.Holder());
 
-  TestMixin3Implementation::implements3VoidMethod(*impl);
+  TestMixin3Implementation::mixin3VoidMethod(*impl);
 }
 
 static void PartialVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -2971,100 +2976,100 @@ void V8TestInterface::SecureContextWorkerExposedRuntimeEnabledAttributeAttribute
   test_interface_implementation_v8_internal::SecureContextWorkerExposedRuntimeEnabledAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::ImplementsReadonlyStringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsReadonlyStringAttribute_Getter");
+void V8TestInterface::MixinReadonlyStringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinReadonlyStringAttribute_Getter");
 
-  test_interface_implementation_v8_internal::ImplementsReadonlyStringAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::MixinReadonlyStringAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::ImplementsStringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsStringAttribute_Getter");
+void V8TestInterface::MixinStringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinStringAttribute_Getter");
 
-  test_interface_implementation_v8_internal::ImplementsStringAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::MixinStringAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::ImplementsStringAttributeAttributeSetterCallback(
+void V8TestInterface::MixinStringAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsStringAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinStringAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::ImplementsStringAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::MixinStringAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::ImplementsNodeAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsNodeAttribute_Getter");
+void V8TestInterface::MixinNodeAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinNodeAttribute_Getter");
 
-  test_interface_implementation_v8_internal::ImplementsNodeAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::MixinNodeAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::ImplementsNodeAttributeAttributeSetterCallback(
+void V8TestInterface::MixinNodeAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsNodeAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinNodeAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::ImplementsNodeAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::MixinNodeAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::ImplementsEventHandlerAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsEventHandlerAttribute_Getter");
+void V8TestInterface::MixinEventHandlerAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinEventHandlerAttribute_Getter");
 
-  test_interface_implementation_v8_internal::ImplementsEventHandlerAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::MixinEventHandlerAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::ImplementsEventHandlerAttributeAttributeSetterCallback(
+void V8TestInterface::MixinEventHandlerAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsEventHandlerAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinEventHandlerAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::ImplementsEventHandlerAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::MixinEventHandlerAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::ImplementsRuntimeEnabledNodeAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsRuntimeEnabledNodeAttribute_Getter");
+void V8TestInterface::MixinRuntimeEnabledNodeAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinRuntimeEnabledNodeAttribute_Getter");
 
-  test_interface_implementation_v8_internal::ImplementsRuntimeEnabledNodeAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::MixinRuntimeEnabledNodeAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::ImplementsRuntimeEnabledNodeAttributeAttributeSetterCallback(
+void V8TestInterface::MixinRuntimeEnabledNodeAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsRuntimeEnabledNodeAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinRuntimeEnabledNodeAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::ImplementsRuntimeEnabledNodeAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::MixinRuntimeEnabledNodeAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::Implements2StringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements2StringAttribute_Getter");
+void V8TestInterface::Mixin2StringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin2StringAttribute_Getter");
 
-  test_interface_implementation_v8_internal::Implements2StringAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::Mixin2StringAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::Implements2StringAttributeAttributeSetterCallback(
+void V8TestInterface::Mixin2StringAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements2StringAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin2StringAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::Implements2StringAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::Mixin2StringAttributeAttributeSetter(v8_value, info);
 }
 
-void V8TestInterface::Implements3StringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements3StringAttribute_Getter");
+void V8TestInterface::Mixin3StringAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin3StringAttribute_Getter");
 
-  test_interface_implementation_v8_internal::Implements3StringAttributeAttributeGetter(info);
+  test_interface_implementation_v8_internal::Mixin3StringAttributeAttributeGetter(info);
 }
 
-void V8TestInterface::Implements3StringAttributeAttributeSetterCallback(
+void V8TestInterface::Mixin3StringAttributeAttributeSetterCallback(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements3StringAttribute_Setter");
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin3StringAttribute_Setter");
 
   v8::Local<v8::Value> v8_value = info[0];
 
-  test_interface_implementation_v8_internal::Implements3StringAttributeAttributeSetter(v8_value, info);
+  test_interface_implementation_v8_internal::Mixin3StringAttributeAttributeSetter(v8_value, info);
 }
 
 void V8TestInterface::PartialLongAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -3343,6 +3348,12 @@ void V8TestInterface::OriginTrialWindowExposedMethodMethodCallback(const v8::Fun
   test_interface_implementation_v8_internal::OriginTrialWindowExposedMethodMethod(info);
 }
 
+void V8TestInterface::OriginTrialWindowExposedMethod2MethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_originTrialWindowExposedMethod2");
+
+  test_interface_implementation_v8_internal::OriginTrialWindowExposedMethod2Method(info);
+}
+
 void V8TestInterface::AlwaysExposedStaticMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
   RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_alwaysExposedStaticMethod");
 
@@ -3457,34 +3468,34 @@ void V8TestInterface::MethodWithNullableRecordsMethodCallback(const v8::Function
   test_interface_implementation_v8_internal::MethodWithNullableRecordsMethod(info);
 }
 
-void V8TestInterface::ImplementsVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsVoidMethod");
+void V8TestInterface::MixinVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinVoidMethod");
 
-  test_interface_implementation_v8_internal::ImplementsVoidMethodMethod(info);
+  test_interface_implementation_v8_internal::MixinVoidMethodMethod(info);
 }
 
-void V8TestInterface::ImplementsComplexMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsComplexMethod");
+void V8TestInterface::MixinComplexMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinComplexMethod");
 
-  test_interface_implementation_v8_internal::ImplementsComplexMethodMethod(info);
+  test_interface_implementation_v8_internal::MixinComplexMethodMethod(info);
 }
 
-void V8TestInterface::ImplementsCustomVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implementsCustomVoidMethod");
+void V8TestInterface::MixinCustomVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixinCustomVoidMethod");
 
-  V8TestInterface::ImplementsCustomVoidMethodMethodCustom(info);
+  V8TestInterface::MixinCustomVoidMethodMethodCustom(info);
 }
 
-void V8TestInterface::Implements2VoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements2VoidMethod");
+void V8TestInterface::Mixin2VoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin2VoidMethod");
 
-  test_interface_implementation_v8_internal::Implements2VoidMethodMethod(info);
+  test_interface_implementation_v8_internal::Mixin2VoidMethodMethod(info);
 }
 
-void V8TestInterface::Implements3VoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_implements3VoidMethod");
+void V8TestInterface::Mixin3VoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestInterfaceImplementation_mixin3VoidMethod");
 
-  test_interface_implementation_v8_internal::Implements3VoidMethodMethod(info);
+  test_interface_implementation_v8_internal::Mixin3VoidMethodMethod(info);
 }
 
 void V8TestInterface::PartialVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -3755,11 +3766,11 @@ static constexpr V8DOMConfiguration::AccessorConfiguration kV8TestInterfaceAcces
     { "alwaysExposedAttribute", V8TestInterface::AlwaysExposedAttributeAttributeGetterCallback, V8TestInterface::AlwaysExposedAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     { "lenientThisAttribute", V8TestInterface::LenientThisAttributeAttributeGetterCallback, V8TestInterface::LenientThisAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kDoNotCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     { "attributeWithSideEffectFreeGetter", V8TestInterface::AttributeWithSideEffectFreeGetterAttributeGetterCallback, V8TestInterface::AttributeWithSideEffectFreeGetterAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasNoSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    { "implementsReadonlyStringAttribute", V8TestInterface::ImplementsReadonlyStringAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    { "implementsStringAttribute", V8TestInterface::ImplementsStringAttributeAttributeGetterCallback, V8TestInterface::ImplementsStringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    { "implementsNodeAttribute", V8TestInterface::ImplementsNodeAttributeAttributeGetterCallback, V8TestInterface::ImplementsNodeAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    { "implementsEventHandlerAttribute", V8TestInterface::ImplementsEventHandlerAttributeAttributeGetterCallback, V8TestInterface::ImplementsEventHandlerAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    { "implements3StringAttribute", V8TestInterface::Implements3StringAttributeAttributeGetterCallback, V8TestInterface::Implements3StringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    { "mixinReadonlyStringAttribute", V8TestInterface::MixinReadonlyStringAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    { "mixinStringAttribute", V8TestInterface::MixinStringAttributeAttributeGetterCallback, V8TestInterface::MixinStringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    { "mixinNodeAttribute", V8TestInterface::MixinNodeAttributeAttributeGetterCallback, V8TestInterface::MixinNodeAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    { "mixinEventHandlerAttribute", V8TestInterface::MixinEventHandlerAttributeAttributeGetterCallback, V8TestInterface::MixinEventHandlerAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    { "mixin3StringAttribute", V8TestInterface::Mixin3StringAttributeAttributeGetterCallback, V8TestInterface::Mixin3StringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     { "partial2LongAttribute", V8TestInterface::Partial2LongAttributeAttributeGetterCallback, V8TestInterface::Partial2LongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     { "partial2StaticLongAttribute", V8TestInterface::Partial2StaticLongAttributeAttributeGetterCallback, V8TestInterface::Partial2StaticLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnInterface, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
 };
@@ -3779,10 +3790,10 @@ static constexpr V8DOMConfiguration::MethodConfiguration kV8TestInterfaceMethods
     {"sideEffectFreeMethod", V8TestInterface::SideEffectFreeMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasNoSideEffect, V8DOMConfiguration::kAllWorlds},
     {"methodWithNullableSequences", V8TestInterface::MethodWithNullableSequencesMethodCallback, 4, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
     {"methodWithNullableRecords", V8TestInterface::MethodWithNullableRecordsMethodCallback, 4, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
-    {"implementsVoidMethod", V8TestInterface::ImplementsVoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
-    {"implementsComplexMethod", V8TestInterface::ImplementsComplexMethodMethodCallback, 2, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
-    {"implementsCustomVoidMethod", V8TestInterface::ImplementsCustomVoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
-    {"implements3VoidMethod", V8TestInterface::Implements3VoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
+    {"mixinVoidMethod", V8TestInterface::MixinVoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
+    {"mixinComplexMethod", V8TestInterface::MixinComplexMethodMethodCallback, 2, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
+    {"mixinCustomVoidMethod", V8TestInterface::MixinCustomVoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
+    {"mixin3VoidMethod", V8TestInterface::Mixin3VoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
     {"voidMethodPartialOverload", V8TestInterface::VoidMethodPartialOverloadMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
     {"staticVoidMethodPartialOverload", V8TestInterface::StaticVoidMethodPartialOverloadMethodCallback, 0, v8::None, V8DOMConfiguration::kOnInterface, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
     {"promiseMethodPartialOverload", V8TestInterface::PromiseMethodPartialOverloadMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kDoNotCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds},
@@ -3814,8 +3825,8 @@ void V8TestInterface::InstallV8TestInterfaceTemplate(
     static constexpr V8DOMConfiguration::ConstantConfiguration kConstants[] = {
         {"UNSIGNED_LONG", V8DOMConfiguration::kConstantTypeUnsignedLong, static_cast<int>(0)},
         {"CONST_JAVASCRIPT", V8DOMConfiguration::kConstantTypeShort, static_cast<int>(1)},
-        {"IMPLEMENTS_CONSTANT_1", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(1)},
-        {"IMPLEMENTS_CONSTANT_2", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(2)},
+        {"MIXIN_CONSTANT_1", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(1)},
+        {"MIXIN_CONSTANT_2", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(2)},
         {"PARTIAL2_UNSIGNED_SHORT", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(0)},
     };
     V8DOMConfiguration::InstallConstants(
@@ -3881,7 +3892,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
   ALLOW_UNUSED_LOCAL(prototype_template);
 
   // Register IDL constants, attributes and operations.
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     static constexpr V8DOMConfiguration::ConstantConfiguration kConfigurations[] = {
         {"PARTIAL_UNSIGNED_SHORT", V8DOMConfiguration::kConstantTypeUnsignedShort, static_cast<int>(0)},
         {"PARTIAL_DOUBLE", V8DOMConfiguration::kConstantTypeDouble, static_cast<double>(3.14)},
@@ -3891,33 +3902,23 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
         kConfigurations, base::size(kConfigurations));
   }
 
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::Mixin2RuntimeFeatureEnabled()) {
     static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
-        { "conditionalReadOnlyLongAttribute", V8TestInterface::ConditionalReadOnlyLongAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-        { "staticConditionalReadOnlyLongAttribute", V8TestInterface::StaticConditionalReadOnlyLongAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnInterface, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-        { "conditionalLongAttribute", V8TestInterface::ConditionalLongAttributeAttributeGetterCallback, V8TestInterface::ConditionalLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+        { "mixin2StringAttribute", V8TestInterface::Mixin2StringAttributeAttributeGetterCallback, V8TestInterface::Mixin2StringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     };
     V8DOMConfiguration::InstallAccessors(
         isolate, world, instance_template, prototype_template, interface_template,
         signature, kConfigurations, base::size(kConfigurations));
   }
-  if (RuntimeEnabledFeatures::Implements2FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::MixinRuntimeFeatureEnabled()) {
     static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
-        { "implements2StringAttribute", V8TestInterface::Implements2StringAttributeAttributeGetterCallback, V8TestInterface::Implements2StringAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+        { "mixinRuntimeEnabledNodeAttribute", V8TestInterface::MixinRuntimeEnabledNodeAttributeAttributeGetterCallback, V8TestInterface::MixinRuntimeEnabledNodeAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
     };
     V8DOMConfiguration::InstallAccessors(
         isolate, world, instance_template, prototype_template, interface_template,
         signature, kConfigurations, base::size(kConfigurations));
   }
-  if (RuntimeEnabledFeatures::ImplementsFeatureNameEnabled()) {
-    static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
-        { "implementsRuntimeEnabledNodeAttribute", V8TestInterface::ImplementsRuntimeEnabledNodeAttributeAttributeGetterCallback, V8TestInterface::ImplementsRuntimeEnabledNodeAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
-    };
-    V8DOMConfiguration::InstallAccessors(
-        isolate, world, instance_template, prototype_template, interface_template,
-        signature, kConfigurations, base::size(kConfigurations));
-  }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
         { "partialCallWithExecutionContextLongAttribute", V8TestInterface::PartialCallWithExecutionContextLongAttributeAttributeGetterCallback, V8TestInterface::PartialCallWithExecutionContextLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
         { "partialLongAttribute", V8TestInterface::PartialLongAttributeAttributeGetterCallback, V8TestInterface::PartialLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
@@ -3928,13 +3929,23 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
         isolate, world, instance_template, prototype_template, interface_template,
         signature, kConfigurations, base::size(kConfigurations));
   }
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
+    static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
+        { "conditionalReadOnlyLongAttribute", V8TestInterface::ConditionalReadOnlyLongAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+        { "staticConditionalReadOnlyLongAttribute", V8TestInterface::StaticConditionalReadOnlyLongAttributeAttributeGetterCallback, nullptr, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::ReadOnly), V8DOMConfiguration::kOnInterface, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+        { "conditionalLongAttribute", V8TestInterface::ConditionalLongAttributeAttributeGetterCallback, V8TestInterface::ConditionalLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
+    };
+    V8DOMConfiguration::InstallAccessors(
+        isolate, world, instance_template, prototype_template, interface_template,
+        signature, kConfigurations, base::size(kConfigurations));
+  }
 
   // Custom signature
-  if (RuntimeEnabledFeatures::Implements2FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::Mixin2RuntimeFeatureEnabled()) {
     {
-      // Install implements2VoidMethod configuration
+      // Install mixin2VoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
-          {"implements2VoidMethod", V8TestInterface::Implements2VoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds}
+          {"mixin2VoidMethod", V8TestInterface::Mixin2VoidMethodMethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds}
       };
       for (const auto& config : kConfigurations) {
         V8DOMConfiguration::InstallMethod(
@@ -3943,7 +3954,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     {
       // Install partialVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -3956,7 +3967,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     {
       // Install partialStaticVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -3969,7 +3980,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     {
       // Install partialVoidMethodLongArg configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -3982,7 +3993,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     {
       // Install partialCallWithExecutionContextRaisesExceptionVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -3995,7 +4006,7 @@ void V8TestInterface::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
     {
       // Install partialVoidMethodPartialCallbackTypeArg configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -4047,6 +4058,45 @@ void V8TestInterface::InstallTestFeature(
 
 void V8TestInterface::InstallTestFeature(ScriptState* script_state) {
   InstallTestFeature(script_state, v8::Local<v8::Object>());
+}
+
+void V8TestInterface::InstallOriginTrialFeature(
+    v8::Isolate* isolate,
+    const DOMWrapperWorld& world,
+    v8::Local<v8::Object> instance,
+    v8::Local<v8::Object> prototype,
+    v8::Local<v8::Function> interface) {
+  v8::Local<v8::FunctionTemplate> interface_template =
+      V8TestInterface::GetWrapperTypeInfo()->DomTemplate(isolate, world);
+  v8::Local<v8::Signature> signature = v8::Signature::New(isolate, interface_template);
+  ALLOW_UNUSED_LOCAL(signature);
+  ExecutionContext* execution_context = ToExecutionContext(isolate->GetCurrentContext());
+  if (execution_context && (execution_context->IsDocument())) {
+    static constexpr V8DOMConfiguration::MethodConfiguration
+    kOriginTrialWindowExposedMethod2Configurations[] = {
+        {"originTrialWindowExposedMethod2", V8TestInterface::OriginTrialWindowExposedMethod2MethodCallback, 0, v8::None, V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kDoNotCheckAccess, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAllWorlds}
+    };
+    for (const auto& config : kOriginTrialWindowExposedMethod2Configurations) {
+      V8DOMConfiguration::InstallMethod(
+          isolate, world, instance, prototype,
+          interface, signature, config);
+    }
+  }
+}
+
+void V8TestInterface::InstallOriginTrialFeature(
+    ScriptState* script_state, v8::Local<v8::Object> instance) {
+  V8PerContextData* per_context_data = script_state->PerContextData();
+  v8::Local<v8::Object> prototype = per_context_data->PrototypeForType(
+      V8TestInterface::GetWrapperTypeInfo());
+  v8::Local<v8::Function> interface = per_context_data->ConstructorForType(
+      V8TestInterface::GetWrapperTypeInfo());
+  ALLOW_UNUSED_LOCAL(interface);
+  InstallOriginTrialFeature(script_state->GetIsolate(), script_state->World(), instance, prototype, interface);
+}
+
+void V8TestInterface::InstallOriginTrialFeature(ScriptState* script_state) {
+  InstallOriginTrialFeature(script_state, v8::Local<v8::Object>());
 }
 
 v8::Local<v8::FunctionTemplate> V8TestInterface::DomTemplate(
@@ -4110,7 +4160,7 @@ void V8TestInterface::InstallConditionalFeatures(
           isolate, world, instance_object, prototype_object, interface_object,
           signature, accessor_configurations,
           base::size(accessor_configurations));
-      if (RuntimeEnabledFeatures::PartialFeatureNameEnabled()) {
+      if (RuntimeEnabledFeatures::PartialRuntimeFeatureEnabled()) {
         static const V8DOMConfiguration::AccessorConfiguration accessor_configurations[] = {
             { "partialSecureContextLongAttribute", V8TestInterface::PartialSecureContextLongAttributeAttributeGetterCallback, V8TestInterface::PartialSecureContextLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
         };
@@ -4224,7 +4274,7 @@ void V8TestInterface::InstallConditionalFeatures(
       }
     }
     if (execution_context && (execution_context->IsDocument())) {
-      if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
         {
           // Install methodWithExposedAndRuntimeEnabledFlag configuration
           const V8DOMConfiguration::MethodConfiguration kConfigurations[] = {

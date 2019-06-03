@@ -44,19 +44,21 @@ void LearningTaskControllerHelper::CompleteObservation(
     base::UnguessableToken id,
     const ObservationCompletion& completion) {
   auto iter = pending_examples_.find(id);
-  DCHECK(iter != pending_examples_.end());
+  if (iter == pending_examples_.end())
+    return;
 
   iter->second.example.target_value = completion.target_value;
   iter->second.example.weight = completion.weight;
   iter->second.target_done = true;
+  iter->second.source_id = completion.source_id;
   ProcessExampleIfFinished(std::move(iter));
 }
 
 void LearningTaskControllerHelper::CancelObservation(
     base::UnguessableToken id) {
   auto iter = pending_examples_.find(id);
-  // If the example has already been completed, then we shouldn't be called.
-  DCHECK(iter != pending_examples_.end());
+  if (iter == pending_examples_.end())
+    return;
 
   // This would have to check for pending predictions, if we supported them, and
   // defer destruction until the features arrive.
@@ -97,7 +99,7 @@ void LearningTaskControllerHelper::ProcessExampleIfFinished(
   if (!iter->second.features_done || !iter->second.target_done)
     return;
 
-  add_example_cb_.Run(std::move(iter->second.example));
+  add_example_cb_.Run(std::move(iter->second.example), iter->second.source_id);
   pending_examples_.erase(iter);
 
   // TODO(liberato): If we receive FeatureVector f1 then f2, and start filling

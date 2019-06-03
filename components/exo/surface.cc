@@ -27,7 +27,6 @@
 #include "components/viz/common/resources/single_release_callback.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
-#include "services/ws/public/mojom/window_tree_constants.mojom.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/client/aura_constants.h"
@@ -50,6 +49,10 @@
 #include "ui/gfx/transform_util.h"
 #include "ui/views/widget/widget.h"
 
+#if defined(OS_CHROMEOS)
+#include "ash/wm/desks/desks_util.h"
+#endif  // defined(OS_CHROMEOS)
+
 DEFINE_UI_CLASS_PROPERTY_TYPE(exo::Surface*)
 
 namespace exo {
@@ -62,9 +65,6 @@ DEFINE_UI_CLASS_PROPERTY_KEY(Surface*, kSurfaceKey, nullptr)
 // A property key to store whether the surface should only consume
 // stylus input events.
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kStylusOnlyKey, false)
-
-// Surface Id set by the client.
-DEFINE_UI_CLASS_PROPERTY_KEY(int32_t, kClientSurfaceIdKey, 0)
 
 // Helper function that returns an iterator to the first entry in |list|
 // with |key|.
@@ -112,6 +112,14 @@ gfx::Size ToTransformedSize(const gfx::Size& size, Transform transform) {
   NOTREACHED();
 }
 
+bool IsDeskContainer(aura::Window* container) {
+#if defined(OS_CHROMEOS)
+  return ash::desks_util::IsDeskContainer(container);
+#else
+  return container->id() == ash::kShellWindowId_DefaultContainerDeprecated;
+#endif  // defined(OS_CHROMEOS)
+}
+
 class CustomWindowDelegate : public aura::WindowDelegate {
  public:
   explicit CustomWindowDelegate(Surface* surface) : surface_(surface) {}
@@ -132,9 +140,7 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   int GetNonClientComponent(const gfx::Point& point) const override {
     views::Widget* widget =
         views::Widget::GetTopLevelWidgetForNativeView(surface_->window());
-    if (widget &&
-        widget->GetNativeView()->parent()->id() ==
-            ash::kShellWindowId_DefaultContainer &&
+    if (widget && IsDeskContainer(widget->GetNativeView()->parent()) &&
         surface_->HitTest(point)) {
       return HTCLIENT;
     }
@@ -216,13 +222,15 @@ const std::string& GetApplicationId(aura::Window* window) {
 
 }  // namespace
 
+DEFINE_UI_CLASS_PROPERTY_KEY(int32_t, kClientSurfaceIdKey, 0)
+
 ////////////////////////////////////////////////////////////////////////////////
 // Surface, public:
 
 Surface::Surface()
-    : window_(std::make_unique<aura::Window>(new CustomWindowDelegate(this),
-                                             aura::client::WINDOW_TYPE_CONTROL,
-                                             WMHelper::GetInstance()->env())) {
+    : window_(
+          std::make_unique<aura::Window>(new CustomWindowDelegate(this),
+                                         aura::client::WINDOW_TYPE_CONTROL)) {
   window_->SetName("ExoSurface");
   window_->SetProperty(kSurfaceKey, this);
   window_->Init(ui::LAYER_NOT_DRAWN);
@@ -328,7 +336,6 @@ void Surface::AddSubSurface(Surface* sub_surface) {
                sub_surface->AsTracedValue());
 
   DCHECK(!sub_surface->window()->parent());
-  DCHECK(!sub_surface->window()->IsVisible());
   sub_surface->window()->SetBounds(
       gfx::Rect(sub_surface->window()->bounds().size()));
   window_->AddChild(sub_surface->window());
@@ -576,8 +583,8 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
 
     window_->SetEventTargetingPolicy(
         (state_.input_region.has_value() && state_.input_region->IsEmpty())
-            ? ws::mojom::EventTargetingPolicy::DESCENDANTS_ONLY
-            : ws::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
+            ? aura::EventTargetingPolicy::kDescendantsOnly
+            : aura::EventTargetingPolicy::kTargetAndDescendants);
 
     // We update contents if Attach() has been called since last commit.
     if (has_pending_contents_) {

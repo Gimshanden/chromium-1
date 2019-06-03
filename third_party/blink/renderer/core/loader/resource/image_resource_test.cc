@@ -44,6 +44,7 @@
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/instance_counters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_info.h"
@@ -357,10 +358,10 @@ void TestThatIsNotPlaceholderRequestAndServeResponse(
 
 ResourceFetcher* CreateFetcher() {
   auto* properties = MakeGarbageCollected<TestResourceFetcherProperties>();
-  return MakeGarbageCollected<ResourceFetcher>(
-      ResourceFetcherInit(*properties, MakeGarbageCollected<MockFetchContext>(),
-                          base::MakeRefCounted<scheduler::FakeTaskRunner>(),
-                          MakeGarbageCollected<TestLoaderFactory>()));
+  return MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
+      properties->MakeDetachable(), MakeGarbageCollected<MockFetchContext>(),
+      base::MakeRefCounted<scheduler::FakeTaskRunner>(),
+      MakeGarbageCollected<TestLoaderFactory>()));
 }
 
 TEST(ImageResourceTest, MultipartImage) {
@@ -385,7 +386,7 @@ TEST(ImageResourceTest, MultipartImage) {
   multipart_response.SetHttpHeaderField(
       http_names::kContentType, "multipart/x-mixed-replace; boundary=boundary");
   image_resource->Loader()->DidReceiveResponse(
-      WrappedResourceResponse(multipart_response), nullptr);
+      WrappedResourceResponse(multipart_response));
   EXPECT_FALSE(image_resource->ResourceBuffer());
   EXPECT_FALSE(image_resource->GetContent()->HasImage());
   EXPECT_EQ(0, observer->ImageChangedCount());
@@ -466,7 +467,7 @@ TEST(ImageResourceTest, BitmapMultipartImage) {
   multipart_response.SetHttpHeaderField(
       http_names::kContentType, "multipart/x-mixed-replace; boundary=boundary");
   image_resource->Loader()->DidReceiveResponse(
-      WrappedResourceResponse(multipart_response), nullptr);
+      WrappedResourceResponse(multipart_response));
   EXPECT_FALSE(image_resource->GetContent()->HasImage());
 
   const char kBoundary[] = "--boundary\n";
@@ -1291,7 +1292,7 @@ TEST(ImageResourceTest, CancelOnDecodeError) {
   resource_response.SetMimeType("image/jpeg");
   resource_response.SetExpectedContentLength(18);
   image_resource->Loader()->DidReceiveResponse(
-      WrappedResourceResponse(resource_response), nullptr);
+      WrappedResourceResponse(resource_response));
 
   EXPECT_EQ(0, observer->ImageChangedCount());
 
@@ -1318,7 +1319,7 @@ TEST(ImageResourceTest, DecodeErrorWithEmptyBody) {
   ResourceResponse resource_response(test_url);
   resource_response.SetMimeType("image/jpeg");
   image_resource->Loader()->DidReceiveResponse(
-      WrappedResourceResponse(resource_response), nullptr);
+      WrappedResourceResponse(resource_response));
 
   EXPECT_EQ(ResourceStatus::kPending, image_resource->GetStatus());
   EXPECT_FALSE(observer->ImageNotifyFinishedCalled());
@@ -1415,7 +1416,7 @@ TEST(ImageResourceTest, FetchAllowPlaceholderPostRequest) {
   KURL test_url(kTestURL);
   ScopedMockedURLLoad scoped_mocked_url_load(test_url, GetTestFilePath());
   ResourceRequest resource_request(test_url);
-  resource_request.SetHTTPMethod(http_names::kPOST);
+  resource_request.SetHttpMethod(http_names::kPOST);
   FetchParameters params(resource_request);
   params.SetAllowImagePlaceholder();
   ImageResource* image_resource = ImageResource::Fetch(params, CreateFetcher());
@@ -1869,18 +1870,20 @@ TEST(ImageResourceTest, PeriodicFlushTest) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       page_holder->GetFrame().GetTaskRunner(TaskType::kInternalTest);
   auto* context = MakeGarbageCollected<MockFetchContext>();
-  auto* properties = MakeGarbageCollected<TestResourceFetcherProperties>();
+  auto& properties =
+      MakeGarbageCollected<TestResourceFetcherProperties>()->MakeDetachable();
   auto* fetcher = MakeGarbageCollected<ResourceFetcher>(
-      ResourceFetcherInit(*properties, context, task_runner));
+      ResourceFetcherInit(properties, context, task_runner,
+                          MakeGarbageCollected<TestLoaderFactory>()));
   auto frame_scheduler = std::make_unique<scheduler::FakeFrameScheduler>();
   auto* scheduler = MakeGarbageCollected<ResourceLoadScheduler>(
-      ResourceLoadScheduler::ThrottlingPolicy::kNormal, *properties,
-      frame_scheduler.get(), *MakeGarbageCollected<NullConsoleLogger>());
+      ResourceLoadScheduler::ThrottlingPolicy::kNormal, properties,
+      frame_scheduler.get(), *MakeGarbageCollected<DetachableConsoleLogger>());
   ImageResource* image_resource = ImageResource::CreateForTest(test_url);
 
   // Ensure that |image_resource| has a loader.
-  ResourceLoader* loader =
-      ResourceLoader::Create(fetcher, scheduler, image_resource);
+  auto* loader =
+      MakeGarbageCollected<ResourceLoader>(fetcher, scheduler, image_resource);
   ALLOW_UNUSED_LOCAL(loader);
 
   image_resource->NotifyStartLoad();
@@ -1976,6 +1979,58 @@ TEST(ImageResourceTest, DeferredInvalidation) {
       ->Changed(image_resource->GetContent()->GetImage());
   EXPECT_EQ(obs->ImageChangedCount(), 3);
   EXPECT_EQ(obs->Defer(), ImageResourceObserver::CanDeferInvalidation::kYes);
+}
+
+// A lossy 2x2 WebP image.
+constexpr unsigned char kLossyWebPImage[] = {
+    0x52, 0x49, 0x46, 0x46, 0x40, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+    0x56, 0x50, 0x38, 0x20, 0x34, 0x00, 0x00, 0x00, 0xB0, 0x01, 0x00, 0x9D,
+    0x01, 0x2A, 0x02, 0x00, 0x02, 0x00, 0x00, 0xC0, 0x12, 0x25, 0x00, 0x4E,
+    0x80, 0x21, 0xDF, 0xC0, 0x5D, 0x80, 0x00, 0xFE, 0x9B, 0x87, 0xFA, 0x8F,
+    0xF8, 0xA0, 0x1E, 0xD7, 0xC8, 0x70, 0x88, 0x0B, 0x6C, 0x54, 0x7F, 0xC0,
+    0x7F, 0x12, 0xFE, 0xC0, 0xBC, 0x70, 0x65, 0xB6, 0xC1, 0x00, 0x00, 0x00};
+
+// A lossless 2x2 WebP image.
+constexpr unsigned char kLosslessWebPImage[] = {
+    0x52, 0x49, 0x46, 0x46, 0x3A, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42,
+    0x50, 0x56, 0x50, 0x38, 0x4C, 0x2E, 0x00, 0x00, 0x00, 0x2F, 0x01,
+    0x40, 0x00, 0x00, 0x1F, 0x20, 0x10, 0x20, 0x72, 0xCC, 0x09, 0x13,
+    0x27, 0x48, 0x40, 0x42, 0xB8, 0xE3, 0xB9, 0x95, 0x12, 0x12, 0x10,
+    0x2B, 0x0C, 0xB4, 0xD8, 0x1C, 0x75, 0xFE, 0x03, 0xDB, 0xBA, 0x09,
+    0x40, 0x26, 0x6D, 0x1B, 0x6A, 0xBB, 0x6B, 0x11, 0xFD, 0x8F, 0x1D};
+
+// An extended lossy 2x2 WebP image.
+constexpr unsigned char kExtendedWebPImage[] = {
+    0x52, 0x49, 0x46, 0x46, 0x60, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+    0x56, 0x50, 0x38, 0x58, 0x0A, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x41, 0x4C, 0x50, 0x48, 0x05, 0x00,
+    0x00, 0x00, 0x00, 0xFF, 0xFF, 0xE9, 0xAE, 0x00, 0x56, 0x50, 0x38, 0x20,
+    0x34, 0x00, 0x00, 0x00, 0xB0, 0x01, 0x00, 0x9D, 0x01, 0x2A, 0x02, 0x00,
+    0x02, 0x00, 0x00, 0xC0, 0x12, 0x25, 0x94, 0x02, 0x74, 0x01, 0x0E, 0xFE,
+    0x02, 0xEC, 0x00, 0xFE, 0x9B, 0x87, 0xFA, 0x8F, 0xF8, 0xA0, 0x1E, 0xD7,
+    0xC8, 0x70, 0x88, 0x0B, 0x6C, 0x54, 0x7A, 0xFB, 0xCA, 0x1D, 0x89, 0x90,
+    0xDD, 0x27, 0xEA, 0x7F, 0x28, 0x00, 0x00, 0x00};
+
+TEST(ImageResourceTest, WebPSniffing) {
+  KURL test_url(kTestURL);
+
+  // Test lossy WebP image.
+  ImageResource* image_resource = ImageResource::CreateForTest(test_url);
+  image_resource->AppendData(reinterpret_cast<const char*>(kLossyWebPImage),
+                             sizeof(kLossyWebPImage));
+  EXPECT_EQ(1, image_resource->GetContent()->GetCompressionFormat());
+
+  // Test lossless WebP image.
+  image_resource = ImageResource::CreateForTest(test_url);
+  image_resource->AppendData(reinterpret_cast<const char*>(kLosslessWebPImage),
+                             sizeof(kLosslessWebPImage));
+  EXPECT_EQ(2, image_resource->GetContent()->GetCompressionFormat());
+
+  // Test extended WebP image.
+  image_resource = ImageResource::CreateForTest(test_url);
+  image_resource->AppendData(reinterpret_cast<const char*>(kExtendedWebPImage),
+                             sizeof(kExtendedWebPImage));
+  EXPECT_EQ(1, image_resource->GetContent()->GetCompressionFormat());
 }
 
 }  // namespace

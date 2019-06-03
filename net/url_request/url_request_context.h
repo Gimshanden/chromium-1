@@ -35,19 +35,12 @@ class ProcessMemoryDump;
 }
 }
 
-namespace chromecast {
-namespace shell {
-class URLRequestContextFactory;
-}
-}  // namespace chromecast
-
 namespace safe_browsing {
 class SafeBrowsingURLRequestContextGetter;
 }  // namespace safe_browsing
 
 namespace net {
 class CertVerifier;
-class ChannelIDService;
 class CookieStore;
 class CTPolicyEnforcer;
 class CTVerifier;
@@ -133,15 +126,6 @@ class NET_EXPORT URLRequestContext
 
   void set_cert_verifier(CertVerifier* cert_verifier) {
     cert_verifier_ = cert_verifier;
-  }
-
-  ChannelIDService* channel_id_service() const {
-    return channel_id_service_;
-  }
-
-  void set_channel_id_service(
-      ChannelIDService* channel_id_service) {
-    channel_id_service_ = channel_id_service;
   }
 
   // Get the proxy service for this context.
@@ -311,7 +295,6 @@ class NET_EXPORT URLRequestContext
   // Whitelist legacy usage of now-deprecated CopyFrom().
   friend class ::ChromeBrowserStateImplIOData;
   friend class ::ProfileImplIOData;
-  friend class chromecast::shell::URLRequestContextFactory;
   friend class safe_browsing::SafeBrowsingURLRequestContextGetter;
 
   // Copies the state from |other| into this context.
@@ -333,7 +316,6 @@ class NET_EXPORT URLRequestContext
   NetLog* net_log_;
   HostResolver* host_resolver_;
   CertVerifier* cert_verifier_;
-  ChannelIDService* channel_id_service_;
   HttpAuthHandlerFactory* http_auth_handler_factory_;
   ProxyResolutionService* proxy_resolution_service_;
   ProxyDelegate* proxy_delegate_;

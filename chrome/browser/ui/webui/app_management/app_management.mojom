@@ -17,9 +17,11 @@ struct App {
 
   string? description;
   apps.mojom.OptionalBool is_pinned;
+  apps.mojom.OptionalBool is_policy_pinned;
   string? version;
   string? size;
   map<uint32, apps.mojom.Permission> permissions;
+  apps.mojom.InstallSource install_source;
 };
 
 // Extension-based apps primarily use install-time permissions that cannot be

@@ -54,36 +54,6 @@ class Smoke(IntegrationTest):
       histogram = t.GetHistogram('DataReductionProxy.BypassTypePrimary', 5)
       self.assertEqual(histogram, {})
 
-  # Ensure Chrome does not use DataSaver when disabled via feature.
-  @ChromeVersionEqualOrAfterM(74)
-  def testCheckPageWithDataSaverFeatureDisabled(self):
-    with TestDriver() as t:
-      t.AddChromeArg('--enable-spdy-proxy-auth')
-      t.AddChromeArg('--enable-features=NetworkService')
-      t.AddChromeArg(
-        '--disable-features=DataReductionProxyEnabledWithNetworkService')
-      t.LoadURL('http://check.googlezip.net/test.html')
-      responses = t.GetHTTPResponses()
-      self.assertNotEqual(0, len(responses))
-      num_chrome_proxy_request_headers = 0
-      num_chrome_proxy_response_headers = 0
-      for response in responses:
-        self.assertNotHasChromeProxyViaHeader(response)
-        if ('chrome-proxy' in response.request_headers):
-          num_chrome_proxy_request_headers += 1
-        if ('chrome-proxy' in response.response_headers):
-          num_chrome_proxy_response_headers += 1
-      self.assertEqual(num_chrome_proxy_request_headers, 0)
-      self.assertEqual(num_chrome_proxy_response_headers, 0)
-      self.assertEqual(t.GetHistogram(
-        'DataReductionProxy.ConfigService.FetchResponseCode'), {})
-      self.assertEqual(t.GetHistogram(
-        'DataReductionProxy.WarmupURL.FetchSuccessful'), {})
-      self.assertEqual(t.GetHistogram(
-        'DataReductionProxy.BlockTypePrimary'), {})
-      self.assertEqual(t.GetHistogram(
-        'DataReductionProxy.BypassTypePrimary'), {})
-
   # Ensure Chrome uses DataSaver in normal mode.
   def testCheckPageWithNormalMode(self):
     with TestDriver() as t:
@@ -93,7 +63,7 @@ class Smoke(IntegrationTest):
       self.assertNotEqual(0, len(responses))
       num_chrome_proxy_request_headers = 0
       for response in responses:
-        self.assertHasChromeProxyViaHeader(response)
+        self.assertHasProxyHeaders(response)
         if ('chrome-proxy' in response.request_headers):
           num_chrome_proxy_request_headers += 1
       t.SleepUntilHistogramHasEntry('PageLoad.Clients.DataReductionProxy.'
@@ -108,10 +78,11 @@ class Smoke(IntegrationTest):
       t.LoadURL('http://check.googlezip.net/test.html')
       t.LoadURL('http://check.googlezip.net/test.html')
       t.SleepUntilHistogramHasEntry("DataReductionProxy.Pingback.Succeeded")
+      t.SleepUntilHistogramHasEntry("DataReductionProxy.Pingback.Attempted")
       # Verify one pingback attempt that was successful.
-      attempted = t.GetHistogram('DataReductionProxy.Pingback.Attempted')
+      attempted = t.GetBrowserHistogram('DataReductionProxy.Pingback.Attempted')
       self.assertEqual(1, attempted['count'])
-      succeeded = t.GetHistogram('DataReductionProxy.Pingback.Succeeded')
+      succeeded = t.GetBrowserHistogram('DataReductionProxy.Pingback.Succeeded')
       self.assertEqual(1, succeeded['count'])
 
   # Ensure pageload metric pingback with DataSaver has the variations header.
@@ -161,7 +132,7 @@ class Smoke(IntegrationTest):
         for response in responses:
           if not response.request_headers:
             continue
-          self.assertHasChromeProxyViaHeader(response)
+          self.assertHasProxyHeaders(response)
           self.assertEqual(200, response.status)
           chrome_proxy_header = response.request_headers['chrome-proxy']
           chrome_proxy_directives = chrome_proxy_header.split(',')
@@ -194,7 +165,7 @@ class Smoke(IntegrationTest):
       responses = t.GetHTTPResponses()
       self.assertNotEqual(0, len(responses))
       for response in responses:
-        self.assertHasChromeProxyViaHeader(response)
+        self.assertHasProxyHeaders(response)
 
 if __name__ == '__main__':
   IntegrationTest.RunAllTests()

@@ -11,6 +11,7 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
+#include "chrome/browser/chromeos/login/screens/enable_debugging_screen.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/login_web_dialog.h"
 #include "chrome/browser/profiles/profile.h"
@@ -31,6 +32,8 @@
 
 namespace chromeos {
 
+constexpr StaticOobeScreenId EnableDebuggingScreenView::kScreenId;
+
 EnableDebuggingScreenHandler::EnableDebuggingScreenHandler(
     JSCallsContainer* js_calls_container)
     : BaseScreenHandler(kScreenId, js_calls_container),
@@ -38,8 +41,8 @@ EnableDebuggingScreenHandler::EnableDebuggingScreenHandler(
 }
 
 EnableDebuggingScreenHandler::~EnableDebuggingScreenHandler() {
-  if (delegate_)
-    delegate_->OnViewDestroyed(this);
+  if (screen_)
+    screen_->OnViewDestroyed(this);
 }
 
 void EnableDebuggingScreenHandler::ShowWithParams() {
@@ -69,8 +72,8 @@ void EnableDebuggingScreenHandler::Hide() {
   weak_ptr_factory_.InvalidateWeakPtrs();
 }
 
-void EnableDebuggingScreenHandler::SetDelegate(Delegate* delegate) {
-  delegate_ = delegate;
+void EnableDebuggingScreenHandler::SetDelegate(EnableDebuggingScreen* screen) {
+  screen_ = screen;
   if (page_is_ready())
     Initialize();
 }
@@ -120,7 +123,7 @@ void EnableDebuggingScreenHandler::RegisterPrefs(PrefRegistrySimple* registry) {
 }
 
 void EnableDebuggingScreenHandler::Initialize() {
-  if (!page_is_ready() || !delegate_)
+  if (!page_is_ready() || !screen_)
     return;
 
   if (show_on_init_) {
@@ -143,13 +146,13 @@ void EnableDebuggingScreenHandler::RegisterMessages() {
 }
 
 void EnableDebuggingScreenHandler::HandleOnCancel() {
-  if (delegate_)
-    delegate_->OnExit(false);
+  if (screen_)
+    screen_->OnExit(false);
 }
 
 void EnableDebuggingScreenHandler::HandleOnDone() {
-  if (delegate_)
-    delegate_->OnExit(true);
+  if (screen_)
+    screen_->OnExit(true);
 }
 
 void EnableDebuggingScreenHandler::HandleOnRemoveRootFSProtection() {

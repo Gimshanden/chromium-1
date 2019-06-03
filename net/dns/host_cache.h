@@ -19,6 +19,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/numerics/clamped_math.h"
+#include "base/observer_list_types.h"
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -141,6 +142,10 @@ class NET_EXPORT HostCache {
     Entry& operator=(Entry&& entry);
 
     int error() const { return error_; }
+    bool did_complete() const {
+      return error_ != ERR_NETWORK_CHANGED &&
+             error_ != ERR_HOST_RESOLVER_QUEUE_TOO_LARGE;
+    }
     void set_error(int error) { error_ = error; }
     const base::Optional<AddressList>& addresses() const { return addresses_; }
     void set_addresses(const base::Optional<AddressList>& addresses) {
@@ -218,8 +223,7 @@ class NET_EXPORT HostCache {
                       int network_changes,
                       EntryStaleness* out) const;
 
-    std::unique_ptr<base::Value> NetLogCallback(
-        NetLogCaptureMode capture_mode) const;
+    base::Value NetLogCallback(NetLogCaptureMode capture_mode) const;
     base::DictionaryValue GetAsValue(bool include_staleness) const;
 
     // The resolve results for this entry.
@@ -249,6 +253,14 @@ class NET_EXPORT HostCache {
     // Calling ScheduleWrite() signals that data has changed and should be
     // written to persistent storage. The write might be delayed.
     virtual void ScheduleWrite() = 0;
+  };
+
+  // Delegate to receive cache invalidation notifications. Get the Invalidator
+  // for a HostCache via HostCache::invalidator() or override for testing via
+  // HostCache::set_invalidator_for_testing().
+  class Invalidator : public base::CheckedObserver {
+   public:
+    virtual void Invalidate() = 0;
   };
 
   using EntryMap = std::map<Key, Entry>;
@@ -297,7 +309,8 @@ class NET_EXPORT HostCache {
                                        HostCache::EntryStaleness* stale_out);
 
   // Marks all entries as stale on account of a network change.
-  void OnNetworkChange();
+  void Invalidate();
+  Invalidator* invalidator() { return invalidator_; }
 
   void set_persistence_delegate(PersistenceDelegate* delegate);
 
@@ -332,6 +345,11 @@ class NET_EXPORT HostCache {
   size_t max_entries() const;
   int network_changes() const { return network_changes_; }
   const EntryMap& entries() const { return entries_; }
+
+  void set_invalidator_for_testing(Invalidator* invalidator) {
+    owned_invalidator_ = nullptr;
+    invalidator_ = invalidator;
+  }
 
   // Creates a default cache.
   static std::unique_ptr<HostCache> CreateDefaultCache();
@@ -383,6 +401,9 @@ class NET_EXPORT HostCache {
   PersistenceDelegate* delegate_;
   // Shared tick clock, overridden for testing.
   const base::TickClock* tick_clock_;
+
+  std::unique_ptr<Invalidator> owned_invalidator_;
+  Invalidator* invalidator_;
 
   THREAD_CHECKER(thread_checker_);
 

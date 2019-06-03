@@ -13,11 +13,10 @@
 #include "components/keyed_service/core/simple_keyed_service_factory.h"
 
 class SimpleFactoryKey;
-class PrefService;
 
 namespace image_fetcher {
-
 class ImageFetcherService;
+}  // namespace image_fetcher
 
 // Factory to create one CachedImageFetcherService per browser context.
 class ImageFetcherServiceFactory : public SimpleKeyedServiceFactory {
@@ -25,8 +24,7 @@ class ImageFetcherServiceFactory : public SimpleKeyedServiceFactory {
   // Return the cache path for the given profile.
   static base::FilePath GetCachePath(SimpleFactoryKey* key);
 
-  static ImageFetcherService* GetForKey(SimpleFactoryKey* key,
-                                        PrefService* prefs);
+  static image_fetcher::ImageFetcherService* GetForKey(SimpleFactoryKey* key);
   static ImageFetcherServiceFactory* GetInstance();
 
  private:
@@ -37,13 +35,10 @@ class ImageFetcherServiceFactory : public SimpleKeyedServiceFactory {
 
   // SimpleKeyedServiceFactory:
   std::unique_ptr<KeyedService> BuildServiceInstanceFor(
-      SimpleFactoryKey* key,
-      PrefService* prefs) const override;
+      SimpleFactoryKey* key) const override;
   SimpleFactoryKey* GetKeyToUse(SimpleFactoryKey* key) const override;
 
   DISALLOW_COPY_AND_ASSIGN(ImageFetcherServiceFactory);
 };
-
-}  // namespace image_fetcher
 
 #endif  // CHROME_BROWSER_IMAGE_FETCHER_IMAGE_FETCHER_SERVICE_FACTORY_H_

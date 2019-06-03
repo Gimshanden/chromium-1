@@ -39,6 +39,7 @@ class SessionSyncService;
 }  // namespace sync_sessions
 
 namespace syncer {
+class DeviceInfoSyncService;
 class ModelTypeStoreService;
 }  // namespace syncer
 
@@ -62,6 +63,7 @@ class BrowserSyncClient : public syncer::SyncClient {
   GetControllerDelegateForModelType(syncer::ModelType type) = 0;
 
   // DataType specific service getters.
+  virtual syncer::DeviceInfoSyncService* GetDeviceInfoSyncService() = 0;
   virtual bookmarks::BookmarkModel* GetBookmarkModel() = 0;
   virtual favicon::FaviconService* GetFaviconService() = 0;
   virtual history::HistoryService* GetHistoryService() = 0;

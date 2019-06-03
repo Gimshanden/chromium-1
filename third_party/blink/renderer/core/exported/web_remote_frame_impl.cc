@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/exported/web_remote_frame_impl.h"
 
+#include <utility>
+
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/platform/web_float_rect.h"
 #include "third_party/blink/public/platform/web_intrinsic_sizing_info.h"
@@ -38,6 +40,7 @@
 #include "third_party/blink/renderer/platform/geometry/float_quad.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -141,22 +144,21 @@ void WebRemoteFrameImpl::StopLoading() {
 WebLocalFrame* WebRemoteFrameImpl::CreateLocalChild(
     WebTreeScopeType scope,
     const WebString& name,
-    WebSandboxFlags sandbox_flags,
+    const FramePolicy& frame_policy,
     WebLocalFrameClient* client,
     blink::InterfaceRegistry* interface_registry,
     mojo::ScopedMessagePipeHandle document_interface_broker_handle,
     WebFrame* previous_sibling,
-    const ParsedFeaturePolicy& container_policy,
     const WebFrameOwnerProperties& frame_owner_properties,
     FrameOwnerElementType frame_owner_element_type,
     WebFrame* opener) {
-  WebLocalFrameImpl* child = WebLocalFrameImpl::Create(
+  auto* child = MakeGarbageCollected<WebLocalFrameImpl>(
       scope, client, interface_registry,
-      std::move(document_interface_broker_handle), opener);
+      std::move(document_interface_broker_handle));
+  child->SetOpener(opener);
   InsertAfter(child, previous_sibling);
   auto* owner = MakeGarbageCollected<RemoteFrameOwner>(
-      static_cast<SandboxFlags>(sandbox_flags), container_policy,
-      frame_owner_properties, frame_owner_element_type);
+      frame_policy, frame_owner_properties, frame_owner_element_type);
   child->InitializeCoreFrame(*GetFrame()->GetPage(), owner, name);
   DCHECK(child->GetFrame());
   return child;
@@ -165,7 +167,8 @@ WebLocalFrame* WebRemoteFrameImpl::CreateLocalChild(
 void WebRemoteFrameImpl::InitializeCoreFrame(Page& page,
                                              FrameOwner* owner,
                                              const AtomicString& name) {
-  SetCoreFrame(RemoteFrame::Create(frame_client_.Get(), page, owner));
+  SetCoreFrame(
+      MakeGarbageCollected<RemoteFrame>(frame_client_.Get(), page, owner));
   GetFrame()->CreateView();
   frame_->Tree().SetName(name);
 }
@@ -173,8 +176,7 @@ void WebRemoteFrameImpl::InitializeCoreFrame(Page& page,
 WebRemoteFrame* WebRemoteFrameImpl::CreateRemoteChild(
     WebTreeScopeType scope,
     const WebString& name,
-    WebSandboxFlags sandbox_flags,
-    const ParsedFeaturePolicy& container_policy,
+    const FramePolicy& frame_policy,
     FrameOwnerElementType frame_owner_element_type,
     WebRemoteFrameClient* client,
     WebFrame* opener) {
@@ -182,8 +184,7 @@ WebRemoteFrame* WebRemoteFrameImpl::CreateRemoteChild(
   child->SetOpener(opener);
   AppendChild(child);
   auto* owner = MakeGarbageCollected<RemoteFrameOwner>(
-      static_cast<SandboxFlags>(sandbox_flags), container_policy,
-      WebFrameOwnerProperties(), frame_owner_element_type);
+      frame_policy, WebFrameOwnerProperties(), frame_owner_element_type);
   child->InitializeCoreFrame(*GetFrame()->GetPage(), owner, name);
   return child;
 }
@@ -258,7 +259,7 @@ void WebRemoteFrameImpl::SetReplicatedFeaturePolicyHeaderAndOpenerPolicies(
 }
 
 void WebRemoteFrameImpl::ApplyReplicatedFeaturePolicyHeader() {
-  FeaturePolicy* parent_feature_policy = nullptr;
+  const FeaturePolicy* parent_feature_policy = nullptr;
   if (Parent()) {
     Frame* parent_frame = GetFrame()->Client()->Parent();
     parent_feature_policy =
@@ -266,7 +267,7 @@ void WebRemoteFrameImpl::ApplyReplicatedFeaturePolicyHeader() {
   }
   ParsedFeaturePolicy container_policy;
   if (GetFrame()->Owner())
-    container_policy = GetFrame()->Owner()->ContainerPolicy();
+    container_policy = GetFrame()->Owner()->GetFramePolicy().container_policy;
   const FeaturePolicy::FeatureState& opener_feature_state =
       frame_->OpenerFeatureState();
   GetFrame()->GetSecurityContext()->InitializeFeaturePolicy(
@@ -327,6 +328,14 @@ void WebRemoteFrameImpl::DidStartLoading() {
 
 void WebRemoteFrameImpl::DidStopLoading() {
   GetFrame()->SetIsLoading(false);
+
+  // When a subframe finishes loading, the parent should check if *all*
+  // subframes have finished loading (which may mean that the parent can declare
+  // that the parent itself has finished loading).  This remote-subframe-focused
+  // code has a local-subframe equivalent in FrameLoader::DidFinishNavigation.
+  Frame* parent = GetFrame()->Tree().Parent();
+  if (parent)
+    parent->CheckCompleted();
 }
 
 bool WebRemoteFrameImpl::IsIgnoredForHitTest() const {
@@ -370,6 +379,12 @@ void WebRemoteFrameImpl::UpdateUserActivationState(
   }
 }
 
+void WebRemoteFrameImpl::TransferUserActivationFrom(
+    blink::WebRemoteFrame* source_frame) {
+  GetFrame()->TransferUserActivationFrom(
+      ToWebRemoteFrameImpl(source_frame)->GetFrame());
+}
+
 void WebRemoteFrameImpl::ScrollRectToVisible(
     const WebRect& rect_to_scroll,
     const WebScrollIntoViewParams& params) {
@@ -383,11 +398,11 @@ void WebRemoteFrameImpl::ScrollRectToVisible(
   }
 
   // Schedule the scroll.
-  LayoutRect absolute_rect = EnclosingLayoutRect(
+  LayoutRect absolute_rect =
       owner_object
-          ->LocalToAncestorQuad(FloatRect(rect_to_scroll), owner_object->View(),
-                                kUseTransforms)
-          .BoundingBox());
+          ->LocalToAncestorRect(PhysicalRect(rect_to_scroll),
+                                owner_object->View())
+          .ToLayoutRect();
 
   if (!params.zoom_into_rect ||
       !owner_object->GetDocument().GetFrame()->LocalFrameRoot().IsMainFrame()) {
@@ -420,7 +435,7 @@ void WebRemoteFrameImpl::ScrollRectToVisible(
 }
 
 void WebRemoteFrameImpl::BubbleLogicalScroll(WebScrollDirection direction,
-                                             WebScrollGranularity granularity) {
+                                             ScrollGranularity granularity) {
   Frame* parent_frame = GetFrame()->Tree().Parent();
   DCHECK(parent_frame);
   DCHECK(parent_frame->IsLocalFrame());

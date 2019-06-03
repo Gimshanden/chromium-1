@@ -35,8 +35,6 @@ namespace views {
 class ImageView;
 }
 
-class LocationBarSeparatorView;
-
 // View used to draw a bubble, containing an icon and a label. We use this as a
 // base for the classes that handle the location icon (including the EV bubble),
 // tab-to-search UI, and content settings.
@@ -45,6 +43,30 @@ class IconLabelBubbleView : public views::InkDropObserver,
                             public ui::MaterialDesignControllerObserver {
  public:
   static constexpr int kTrailingPaddingPreMd = 2;
+
+  // A view that draws the separator.
+  class SeparatorView : public views::View {
+   public:
+    explicit SeparatorView(IconLabelBubbleView* owner);
+
+    // views::View:
+    void OnPaint(gfx::Canvas* canvas) override;
+
+    // Updates the opacity based on the ink drop's state.
+    void UpdateOpacity();
+
+    void set_disable_animation_for_test(bool disable_animation_for_test) {
+      disable_animation_for_test_ = disable_animation_for_test;
+    }
+
+   private:
+    // Weak.
+    IconLabelBubbleView* owner_;
+
+    bool disable_animation_for_test_ = false;
+
+    DISALLOW_COPY_AND_ASSIGN(SeparatorView);
+  };
 
   explicit IconLabelBubbleView(const gfx::FontList& font_list);
   ~IconLabelBubbleView() override;
@@ -67,7 +89,7 @@ class IconLabelBubbleView : public views::InkDropObserver,
   SkColor GetParentBackgroundColor() const;
 
   // Exposed for testing.
-  LocationBarSeparatorView* separator_view() const { return separator_view_; }
+  SeparatorView* separator_view() const { return separator_view_; }
 
   // Exposed for testing.
   bool is_animating_label() const { return slide_animation_.is_animating(); }
@@ -100,14 +122,11 @@ class IconLabelBubbleView : public views::InkDropObserver,
   // prevent the bubble from reshowing on a mouse release.
   virtual bool IsBubbleShowing() const;
 
-  // Sets the border padding around this view.
-  virtual void UpdateBorder();
-
   // views::LabelButton:
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* native_theme) override;
+  void OnThemeChanged() override;
   std::unique_ptr<views::InkDrop> CreateInkDrop() override;
   SkColor GetInkDropBaseColor() const override = 0;
   bool IsTriggerableEvent(const ui::Event& event) override;
@@ -180,10 +199,6 @@ class IconLabelBubbleView : public views::InkDropObserver,
   // separator width.
   int GetEndPaddingWithSeparator() const;
 
-  // The view has been activated by a user gesture such as spacebar.
-  // Returns true if some handling was performed.
-  bool OnActivate(const ui::Event& event);
-
   // views::View:
   const char* GetClassName() const override;
 
@@ -199,10 +214,11 @@ class IconLabelBubbleView : public views::InkDropObserver,
   // bounds and the separator visibility.
   void UpdateHighlightPath();
 
-  void UpdateSeparator();
+  // Sets the border padding around this view.
+  void UpdateBorder();
 
   // The contents of the bubble.
-  LocationBarSeparatorView* separator_view_;
+  SeparatorView* separator_view_;
 
   // The padding of the element that will be displayed after |this|. This value
   // is relevant for calculating the amount of space to reserve after the

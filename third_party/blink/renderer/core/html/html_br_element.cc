@@ -31,10 +31,8 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLBRElement::HTMLBRElement(Document& document)
+HTMLBRElement::HTMLBRElement(Document& document)
     : HTMLElement(kBrTag, document) {}
-
-DEFINE_NODE_FACTORY(HTMLBRElement)
 
 bool HTMLBRElement::IsPresentationAttribute(const QualifiedName& name) const {
   if (name == kClearAttr)

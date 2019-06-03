@@ -217,9 +217,7 @@ UScriptCode GetScriptOfFontPref(const char* pref_name) {
 // Returns the primary script used by the browser's UI locale.  For example, if
 // the locale is "ru", the function returns USCRIPT_CYRILLIC, and if the locale
 // is "en", the function returns USCRIPT_LATIN.
-UScriptCode GetScriptOfBrowserLocale() {
-  std::string locale = g_browser_process->GetApplicationLocale();
-
+UScriptCode GetScriptOfBrowserLocale(const std::string& locale) {
   // For Chinese locales, uscript_getCode() just returns USCRIPT_HAN but our
   // per-script fonts are for USCRIPT_SIMPLIFIED_HAN and
   // USCRIPT_TRADITIONAL_HAN.
@@ -332,7 +330,8 @@ PrefsTabHelper::~PrefsTabHelper() {
 
 // static
 void PrefsTabHelper::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
+    user_prefs::PrefRegistrySyncable* registry,
+    const std::string& locale) {
   WebPreferences pref_defaults;
   registry->RegisterBooleanPref(prefs::kWebKitJavascriptEnabled,
                                 pref_defaults.javascript_enabled);
@@ -375,7 +374,7 @@ void PrefsTabHelper::RegisterProfilePrefs(
 
   // Register font prefs that have defaults.
   std::set<std::string> fonts_with_defaults;
-  UScriptCode browser_script = GetScriptOfBrowserLocale();
+  UScriptCode browser_script = GetScriptOfBrowserLocale(locale);
   for (size_t i = 0; i < kFontDefaultsLength; ++i) {
     FontDefault pref = kFontDefaults[i];
 
@@ -412,10 +411,8 @@ void PrefsTabHelper::RegisterProfilePrefs(
 #if !defined(OS_ANDROID)
   RegisterFontFamilyPrefs(registry, fonts_with_defaults);
 
-  RegisterLocalizedFontPref(registry, prefs::kWebKitDefaultFontSize,
-                            IDS_DEFAULT_FONT_SIZE);
-  RegisterLocalizedFontPref(registry, prefs::kWebKitDefaultFixedFontSize,
-                            IDS_DEFAULT_FIXED_FONT_SIZE);
+  registry->RegisterIntegerPref(prefs::kWebKitDefaultFontSize, 16);
+  registry->RegisterIntegerPref(prefs::kWebKitDefaultFixedFontSize, 13);
   RegisterLocalizedFontPref(registry, prefs::kWebKitMinimumFontSize,
                             IDS_MINIMUM_FONT_SIZE);
   RegisterLocalizedFontPref(registry, prefs::kWebKitMinimumLogicalFontSize,

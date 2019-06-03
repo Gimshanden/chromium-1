@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_global_scope.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_messaging_proxy.h"
+#include "third_party/blink/renderer/modules/webaudio/base_audio_context_tracker.h"
 #include "third_party/blink/renderer/modules/webaudio/biquad_filter_node.h"
 #include "third_party/blink/renderer/modules/webaudio/channel_merger_node.h"
 #include "third_party/blink/renderer/modules/webaudio/channel_splitter_node.h"
@@ -55,6 +56,7 @@
 #include "third_party/blink/renderer/modules/webaudio/dynamics_compressor_node.h"
 #include "third_party/blink/renderer/modules/webaudio/gain_node.h"
 #include "third_party/blink/renderer/modules/webaudio/iir_filter_node.h"
+#include "third_party/blink/renderer/modules/webaudio/inspector_web_audio_agent.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_completion_event.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_context.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_destination_node.h"
@@ -62,6 +64,7 @@
 #include "third_party/blink/renderer/modules/webaudio/panner_node.h"
 #include "third_party/blink/renderer/modules/webaudio/periodic_wave.h"
 #include "third_party/blink/renderer/modules/webaudio/periodic_wave_constraints.h"
+#include "third_party/blink/renderer/modules/webaudio/realtime_audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webaudio/script_processor_node.h"
 #include "third_party/blink/renderer/modules/webaudio/stereo_panner_node.h"
 #include "third_party/blink/renderer/modules/webaudio/wave_shaper_node.h"
@@ -70,6 +73,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/uuid.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -118,9 +122,7 @@ void BaseAudioContext::Initialize() {
   if (IsDestinationInitialized())
     return;
 
-  FFTFrame::Initialize();
-
-  audio_worklet_ = AudioWorklet::Create(this);
+  audio_worklet_ = MakeGarbageCollected<AudioWorklet>(this);
 
   if (destination_node_) {
     destination_node_->Handler().Initialize();
@@ -134,7 +136,12 @@ void BaseAudioContext::Initialize() {
 
     // The AudioParams in the listener need access to the destination node, so
     // only create the listener if the destination node exists.
-    listener_ = AudioListener::Create(*this);
+    listener_ = MakeGarbageCollected<AudioListener>(*this);
+
+    if (Tracker())
+      Tracker()->DidCreateBaseAudioContext(this);
+
+    FFTFrame::Initialize(sampleRate());
   }
 }
 
@@ -151,6 +158,12 @@ void BaseAudioContext::Uninitialize() {
 
   if (!IsDestinationInitialized())
     return;
+
+  // BaseAudioContextTracker needs a valid AudioDestinationNode because it
+  // may use destination-related data (e.g. sample rate and channel count)
+  // to populate the devtool protocol object.
+  if (Tracker())
+    Tracker()->DidDestroyBaseAudioContext(this);
 
   // This stops the audio thread and all audio rendering.
   if (destination_node_)
@@ -176,6 +189,10 @@ void BaseAudioContext::Uninitialize() {
 
 void BaseAudioContext::ContextLifecycleStateChanged(
     mojom::FrameLifecycleState state) {
+  // Don't need to do anything for an offline context.
+  if (!HasRealtimeConstraint())
+    return;
+
   if (state == mojom::FrameLifecycleState::kRunning)
     destination()->GetAudioDestinationHandler().Resume();
   else if (state == mojom::FrameLifecycleState::kFrozen ||
@@ -326,9 +343,9 @@ ScriptPromise BaseAudioContext::decodeAudioData(
   } else {
     // If audioData is already detached (neutered) we need to reject the
     // promise with an error.
-    DOMException* error =
-        DOMException::Create(DOMExceptionCode::kDataCloneError,
-                             "Cannot decode detached ArrayBuffer");
+    auto* error = MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kDataCloneError,
+        "Cannot decode detached ArrayBuffer");
     resolver->Reject(error);
     if (error_callback) {
       error_callback->InvokeAndReportException(this, error);
@@ -352,8 +369,8 @@ void BaseAudioContext::HandleDecodeAudioData(
       success_callback->InvokeAndReportException(this, audio_buffer);
   } else {
     // Reject the promise and run the error callback
-    DOMException* error = DOMException::Create(DOMExceptionCode::kEncodingError,
-                                               "Unable to decode audio data");
+    auto* error = MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kEncodingError, "Unable to decode audio data");
     resolver->Reject(error);
     if (error_callback)
       error_callback->InvokeAndReportException(this, error);
@@ -633,6 +650,9 @@ void BaseAudioContext::SetContextState(AudioContextState new_state) {
         ->GetTaskRunner(TaskType::kMediaElementEvent)
         ->PostTask(FROM_HERE, WTF::Bind(&BaseAudioContext::NotifyStateChange,
                                         WrapPersistent(this)));
+
+    if (Tracker())
+      Tracker()->DidChangeBaseAudioContext(this);
   }
 }
 
@@ -661,9 +681,12 @@ void BaseAudioContext::NotifySourceNodeStartedProcessing(AudioNode* node) {
 
 void BaseAudioContext::ReleaseActiveSourceNodes() {
   DCHECK(IsMainThread());
+
+  GraphAutoLocker locker(this);
+
   for (auto source_handler :
        *GetDeferredTaskHandler().GetActiveSourceHandlers()) {
-    source_handler->BreakConnection();
+    source_handler->BreakConnectionWithLock();
   }
 }
 
@@ -703,7 +726,7 @@ void BaseAudioContext::PerformCleanupOnMainThread() {
   if (is_resolving_resume_promises_) {
     for (auto& resolver : resume_resolvers_) {
       if (context_state_ == kClosed) {
-        resolver->Reject(DOMException::Create(
+        resolver->Reject(MakeGarbageCollected<DOMException>(
             DOMExceptionCode::kInvalidStateError,
             "Cannot resume a context that has been closed"));
       } else {
@@ -723,16 +746,17 @@ void BaseAudioContext::ScheduleMainThreadCleanup() {
     return;
   PostCrossThreadTask(
       *task_runner_, FROM_HERE,
-      CrossThreadBind(&BaseAudioContext::PerformCleanupOnMainThread,
-                      WrapCrossThreadPersistent(this)));
+      CrossThreadBindOnce(&BaseAudioContext::PerformCleanupOnMainThread,
+                          WrapCrossThreadPersistent(this)));
   has_posted_cleanup_task_ = true;
 }
 
 void BaseAudioContext::RejectPendingDecodeAudioDataResolvers() {
   // Now reject any pending decodeAudioData resolvers
-  for (auto& resolver : decode_audio_resolvers_)
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                          "Audio context is going away"));
+  for (auto& resolver : decode_audio_resolvers_) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kInvalidStateError, "Audio context is going away"));
+  }
   decode_audio_resolvers_.clear();
 }
 
@@ -743,8 +767,8 @@ void BaseAudioContext::RejectPendingResolvers() {
   // pending.
 
   for (auto& resolver : resume_resolvers_) {
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                          "Audio context is going away"));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kInvalidStateError, "Audio context is going away"));
   }
   resume_resolvers_.clear();
   is_resolving_resume_promises_ = false;
@@ -813,10 +837,11 @@ void BaseAudioContext::NotifyWorkletIsReady() {
         audioWorklet()->GetMessagingProxy()->GetBackingWorkerThread();
   }
 
-  // If the context is running or suspended, restart the destination to switch
-  // the render thread with the worklet thread. Note that restarting can happen
-  // right after the context construction.
-  if (ContextState() != kClosed) {
+  // If the context is running, restart the destination to switch the render
+  // thread with the worklet thread. When the context is suspended, the next
+  // resume() call will start rendering with the worklet thread.
+  // Note that restarting can happen right after the context construction.
+  if (ContextState() == kRunning) {
     destination()->GetAudioDestinationHandler().RestartRendering();
   }
 }
@@ -834,6 +859,36 @@ void BaseAudioContext::UpdateWorkletGlobalScopeOnRenderingThread() {
 
     unlock();
   }
+}
+
+int32_t BaseAudioContext::MaxChannelCount() {
+  DCHECK(IsMainThread());
+
+  AudioDestinationNode* destination_node = destination();
+  if (!destination_node ||
+      !destination_node->GetAudioDestinationHandler().IsInitialized())
+    return -1;
+
+  return destination_node->GetAudioDestinationHandler().MaxChannelCount();
+}
+
+int32_t BaseAudioContext::CallbackBufferSize() {
+  DCHECK(IsMainThread());
+
+  AudioDestinationNode* destination_node = destination();
+  if (!destination_node ||
+      !destination_node->GetAudioDestinationHandler().IsInitialized() ||
+      !HasRealtimeConstraint())
+    return -1;
+
+  RealtimeAudioDestinationHandler& destination_handler =
+      static_cast<RealtimeAudioDestinationHandler&>(
+          destination_node->GetAudioDestinationHandler());
+  return destination_handler.GetCallbackBufferSize();
+}
+
+BaseAudioContextTracker* BaseAudioContext::Tracker() {
+  return BaseAudioContextTracker::FromDocument(*GetDocument());
 }
 
 }  // namespace blink

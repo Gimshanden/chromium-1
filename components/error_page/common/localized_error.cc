@@ -25,6 +25,7 @@
 #include "components/error_page/common/error_page_params.h"
 #include "components/error_page/common/error_page_switches.h"
 #include "components/error_page/common/net_error_info.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
@@ -251,12 +252,6 @@ const LocalizedErrorMap net_error_options[] = {
    IDS_ERRORPAGES_SUMMARY_BAD_SSL_CLIENT_AUTH_CERT,
    SUGGEST_CONTACT_ADMINISTRATOR,
    SHOW_NO_BUTTONS,
-  },
-  {net::ERR_SSL_VERSION_INTERFERENCE,
-   IDS_ERRORPAGES_HEADING_NOT_AVAILABLE,
-   IDS_ERRORPAGES_SUMMARY_CONNECTION_FAILED,
-   SUGGEST_CHECK_CONNECTION | SUGGEST_FIREWALL_CONFIG | SUGGEST_PROXY_CONFIG,
-   SHOW_BUTTON_RELOAD,
   },
   {net::ERR_TLS13_DOWNGRADE_DETECTED,
    IDS_ERRORPAGES_HEADING_NOT_AVAILABLE,
@@ -1047,7 +1042,7 @@ LocalizedError::PageState LocalizedError::GetPageState(
   if (!is_post && !result.reload_button_shown && !is_incognito &&
       failed_url.is_valid() && failed_url.SchemeIsHTTPOrHTTPS() &&
       IsOfflineError(error_domain, error_code)) {
-    if (!auto_fetch_feature_enabled) {
+    if (!auto_fetch_feature_enabled && offline_pages::IsOfflinePagesEnabled()) {
       result.download_button_shown = true;
       result.strings.SetPath({"downloadButton", "msg"},
                              base::Value(l10n_util::GetStringUTF16(

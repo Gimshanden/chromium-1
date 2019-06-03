@@ -175,16 +175,16 @@ class Buffer final : public ui::GbmBuffer {
     buffer->mmap_data_ = nullptr;
   }
 
-  gbm_bo* bo_ = nullptr;
+  gbm_bo* const bo_;
   void* mmap_data_ = nullptr;
 
-  uint32_t format_ = 0;
-  uint64_t format_modifier_ = 0;
-  uint32_t flags_ = 0;
+  const uint32_t format_;
+  const uint64_t format_modifier_;
+  const uint32_t flags_;
 
-  gfx::Size size_;
+  const gfx::Size size_;
 
-  gfx::NativePixmapHandle handle_;
+  const gfx::NativePixmapHandle handle_;
 
   DISALLOW_COPY_AND_ASSIGN(Buffer);
 };
@@ -217,8 +217,10 @@ std::unique_ptr<Buffer> CreateBufferForBO(struct gbm_bo* bo,
 
     handle.planes.emplace_back(
         gbm_bo_get_stride_for_plane(bo, i), gbm_bo_get_offset(bo, i),
-        GetSizeOfPlane(bo, format, size, i), std::move(fd), modifier);
+        GetSizeOfPlane(bo, format, size, i), std::move(fd));
   }
+
+  handle.modifier = modifier;
   return std::make_unique<Buffer>(bo, format, flags, modifier, size,
                                   std::move(handle));
 }
@@ -280,15 +282,13 @@ class Device final : public ui::GbmDevice {
     fd_data.height = size.height();
     fd_data.format = format;
     fd_data.num_fds = handle.planes.size();
-    fd_data.modifier = handle.planes[0].modifier;
+    fd_data.modifier = handle.modifier;
 
     DCHECK_LE(handle.planes.size(), 3u);
     for (size_t i = 0; i < handle.planes.size(); ++i) {
       fd_data.fds[i] = handle.planes[i < handle.planes.size() ? i : 0].fd.get();
       fd_data.strides[i] = handle.planes[i].stride;
       fd_data.offsets[i] = handle.planes[i].offset;
-      // Make sure the modifier is the same for all the planes.
-      DCHECK_EQ(fd_data.modifier, handle.planes[i].modifier);
     }
 
     // The fd passed to gbm_bo_import is not ref-counted and need to be
@@ -299,13 +299,12 @@ class Device final : public ui::GbmDevice {
       return nullptr;
     }
 
-    return std::make_unique<Buffer>(bo, format, gbm_flags,
-                                    handle.planes[0].modifier, size,
-                                    std::move(handle));
+    return std::make_unique<Buffer>(bo, format, gbm_flags, handle.modifier,
+                                    size, std::move(handle));
   }
 
  private:
-  gbm_device* device_;
+  gbm_device* const device_;
 
   DISALLOW_COPY_AND_ASSIGN(Device);
 };

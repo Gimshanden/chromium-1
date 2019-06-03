@@ -29,14 +29,33 @@ usage() {
   exit 1
 }
 
+# Build list of apt packages in dpkg --get-selections format.
+build_apt_package_list() {
+  echo "Building apt package list." >&2
+  apt-cache dumpavail | \
+    python -c '\
+      from __future__ import print_function; \
+      import re,sys; \
+      o = sys.stdin.read(); \
+      p = {"i386": ":i386"}; \
+      f = re.M | re.S; \
+      r = re.compile(r"^Package: (.+?)$.+?^Architecture: (.+?)$", f); \
+      m = ["%s%s" % (x, p.get(y, "")) for x, y in re.findall(r, o)]; \
+      print("\n".join(m))'
+}
+
 # Checks whether a particular package is available in the repos.
+# Uses pre-formatted ${apt_package_list}.
 # USAGE: $ package_exists <package name>
 package_exists() {
+  if [ -z "${apt_package_list}" ]; then
+    echo "Call build_apt_package_list() prior to calling package_exists()" >&2
+    apt_package_list=$(build_apt_package_list)
+  fi
   # 'apt-cache search' takes a regex string, so eg. the +'s in packages like
   # "libstdc++" need to be escaped.
   local escaped="$(echo $1 | sed 's/[\~\+\.\:-]/\\&/g')"
-  [ ! -z "$(apt-cache search --names-only "${escaped}" | \
-            awk '$1 == "'$1'" { print $1; }')" ]
+  [ ! -z "$(grep "^${escaped}$" <<< "${apt_package_list}")" ]
 }
 
 # These default to on because (some) bots need them and it keeps things
@@ -83,16 +102,16 @@ fi
 
 distro_codename=$(lsb_release --codename --short)
 distro_id=$(lsb_release --id --short)
-supported_codenames="(trusty|xenial|artful|bionic)"
+supported_codenames="(trusty|xenial|bionic|disco)"
 supported_ids="(Debian)"
 if [ 0 -eq "${do_unsupported-0}" ] && [ 0 -eq "${do_quick_check-0}" ] ; then
   if [[ ! $distro_codename =~ $supported_codenames &&
         ! $distro_id =~ $supported_ids ]]; then
     echo -e "ERROR: The only supported distros are\n" \
-      "\tUbuntu 14.04 LTS (trusty)\n" \
-      "\tUbuntu 16.04 LTS (xenial)\n" \
-      "\tUbuntu 17.10 (artful)\n" \
-      "\tUbuntu 18.04 LTS (bionic)\n" \
+      "\tUbuntu 14.04 LTS (trusty with EoL April 2022)\n" \
+      "\tUbuntu 16.04 LTS (xenial with EoL April 2024)\n" \
+      "\tUbuntu 18.04 LTS (bionic with EoL April 2028)\n" \
+      "\tUbuntu 19.04 (disco)\n" \
       "\tDebian 8 (jessie) or later" >&2
     exit 1
   fi
@@ -108,6 +127,14 @@ if [ "x$(id -u)" != x0 ] && [ 0 -eq "${do_quick_check-0}" ]; then
   echo "You might have to enter your password one or more times for 'sudo'."
   echo
 fi
+
+if [ "$do_inst_lib32" = "1" ] || [ "$do_inst_nacl" = "1" ]; then
+  sudo dpkg --add-architecture i386
+fi
+sudo apt-get update
+
+# Populate ${apt_package_list} for package_exists() parsing.
+apt_package_list=$(build_apt_package_list)
 
 # Packages needed for chromeos only
 chromeos_dev_list="libbluetooth-dev libxkbcommon-dev"
@@ -276,9 +303,7 @@ backwards_compatible_list="\
   language-pack-zh-hant
   libappindicator-dev
   libappindicator1
-  libappindicator3-1:i386
   libdconf-dev
-  libdconf-dev:i386
   libdconf1
   libdconf1:i386
   libexif-dev
@@ -372,9 +397,14 @@ case $distro_codename in
     arm_list+=" g++-4.8-multilib-arm-linux-gnueabihf
                 gcc-4.8-multilib-arm-linux-gnueabihf"
     ;;
-  xenial|artful|bionic)
+  xenial|bionic)
     arm_list+=" g++-5-multilib-arm-linux-gnueabihf
                 gcc-5-multilib-arm-linux-gnueabihf
+                gcc-arm-linux-gnueabihf"
+    ;;
+  disco)
+    arm_list+=" g++-9-multilib-arm-linux-gnueabihf
+                gcc-9-multilib-arm-linux-gnueabihf
                 gcc-arm-linux-gnueabihf"
     ;;
 esac
@@ -615,11 +645,6 @@ if [ 1 -eq "${do_quick_check-0}" ] ; then
   fi
   exit 0
 fi
-
-if [ "$do_inst_lib32" = "1" ] || [ "$do_inst_nacl" = "1" ]; then
-  sudo dpkg --add-architecture i386
-fi
-sudo apt-get update
 
 echo "Finding missing packages..."
 # Intentionally leaving $packages unquoted so it's more readable.

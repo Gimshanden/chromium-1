@@ -42,8 +42,8 @@ void CompositingLayerPropertyUpdater::Update(const LayoutObject& object) {
          // during printing.
          object.GetDocument().Printing());
 
-  LayoutPoint layout_snapped_paint_offset =
-      fragment_data.PaintOffset() - mapping->SubpixelAccumulation();
+  PhysicalOffset layout_snapped_paint_offset =
+      fragment_data.PaintOffset() - paint_layer->SubpixelAccumulation();
   IntPoint snapped_paint_offset = RoundedIntPoint(layout_snapped_paint_offset);
 
 #if DCHECK_IS_ON()
@@ -53,9 +53,12 @@ void CompositingLayerPropertyUpdater::Update(const LayoutObject& object) {
   // visible subtree can be non-composited despite we expected it to, this
   // resulted in the paint offset used by CompositedLayerMapping to mismatch.
   bool subpixel_accumulation_may_be_bogus = paint_layer->SubtreeIsInvisible();
-  if (!subpixel_accumulation_may_be_bogus) {
-    DCHECK_EQ(layout_snapped_paint_offset, snapped_paint_offset)
-        << object.DebugName();
+  if (!subpixel_accumulation_may_be_bogus &&
+      layout_snapped_paint_offset != PhysicalOffset(snapped_paint_offset)) {
+    // TODO(crbug.com/925377): Fix the root cause.
+    DLOG(ERROR) << "Paint offset pixel snapping error for " << object
+                << " expected: " << snapped_paint_offset
+                << " actual: " << layout_snapped_paint_offset;
   }
 #endif
 
@@ -172,8 +175,16 @@ void CompositingLayerPropertyUpdater::Update(const LayoutObject& object) {
 
   auto* main_graphics_layer = mapping->MainGraphicsLayer();
   if (main_graphics_layer->ContentsLayer()) {
-    main_graphics_layer->SetContentsPropertyTreeState(
-        fragment_data.ContentsProperties());
+    IntPoint offset;
+    // The offset should be zero when the layer has ReplacedContentTransform,
+    // because the offset has been baked into ReplacedContentTransform.
+    if (!fragment_data.PaintProperties() ||
+        !fragment_data.PaintProperties()->ReplacedContentTransform()) {
+      offset = main_graphics_layer->ContentsRect().Location() +
+               main_graphics_layer->GetOffsetFromTransformNode();
+    }
+    main_graphics_layer->SetContentsLayerState(
+        fragment_data.ContentsProperties(), offset);
   }
 
   if (auto* squashing_layer = mapping->SquashingLayer()) {

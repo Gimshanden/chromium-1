@@ -19,6 +19,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/url_constants.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace content {
@@ -47,7 +48,7 @@ bool WebContentsDelegate::ShouldPreserveAbortedURLs(WebContents* source) {
 
 bool WebContentsDelegate::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -143,6 +144,13 @@ std::unique_ptr<BluetoothChooser> WebContentsDelegate::RunBluetoothChooser(
   return nullptr;
 }
 
+std::unique_ptr<BluetoothScanningPrompt>
+WebContentsDelegate::ShowBluetoothScanningPrompt(
+    RenderFrameHost* frame,
+    const BluetoothScanningPrompt::EventHandler& event_handler) {
+  return nullptr;
+}
+
 bool WebContentsDelegate::EmbedsFullscreenWidget() const {
   return false;
 }
@@ -185,7 +193,7 @@ void WebContentsDelegate::RequestMediaAccessPermission(
   LOG(ERROR) << "WebContentsDelegate::RequestMediaAccessPermission: "
              << "Not supported.";
   std::move(callback).Run(blink::MediaStreamDevices(),
-                          blink::MEDIA_DEVICE_NOT_SUPPORTED,
+                          blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
                           std::unique_ptr<content::MediaStreamUI>());
 }
 

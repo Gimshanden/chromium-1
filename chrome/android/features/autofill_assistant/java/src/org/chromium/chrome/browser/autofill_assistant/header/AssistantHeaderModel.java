@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.autofill_assistant.header;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.chrome.browser.autofill_assistant.carousel.AssistantChip;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /**
@@ -14,14 +15,11 @@ import org.chromium.ui.modelutil.PropertyModel;
  */
 @JNINamespace("autofill_assistant")
 public class AssistantHeaderModel extends PropertyModel {
+    public static final WritableBooleanPropertyKey VISIBLE = new WritableBooleanPropertyKey();
+
     @VisibleForTesting
     public static final WritableObjectPropertyKey<String> STATUS_MESSAGE =
             new WritableObjectPropertyKey<>();
-
-    // TODO(crbug.com/806868): Change visibility to package-private once this is only set through
-    // native calls.
-    public static final WritableBooleanPropertyKey FEEDBACK_VISIBLE =
-            new WritableBooleanPropertyKey();
 
     static final WritableIntPropertyKey PROGRESS = new WritableIntPropertyKey();
 
@@ -34,9 +32,14 @@ public class AssistantHeaderModel extends PropertyModel {
     static final WritableObjectPropertyKey<Runnable> FEEDBACK_BUTTON_CALLBACK =
             new WritableObjectPropertyKey<>();
 
+    public static final WritableObjectPropertyKey<AssistantChip> CHIP =
+            new WritableObjectPropertyKey<>();
+
+    public static final WritableBooleanPropertyKey CHIP_VISIBLE = new WritableBooleanPropertyKey();
+
     public AssistantHeaderModel() {
-        super(STATUS_MESSAGE, FEEDBACK_VISIBLE, PROGRESS, PROGRESS_VISIBLE, SPIN_POODLE,
-                FEEDBACK_BUTTON_CALLBACK);
+        super(VISIBLE, STATUS_MESSAGE, PROGRESS, PROGRESS_VISIBLE, SPIN_POODLE,
+                FEEDBACK_BUTTON_CALLBACK, CHIP, CHIP_VISIBLE);
     }
 
     @CalledByNative

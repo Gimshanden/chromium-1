@@ -11,9 +11,10 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "chromeos/dbus/concierge/service.pb.h"
+#include "chromeos/dbus/concierge_client.h"
 #include "components/download/public/background_service/download_params.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/zlib/google/zip_reader.h"
 
 namespace download {
 class DownloadService;
@@ -24,18 +25,20 @@ class Profile;
 
 namespace plugin_vm {
 
-constexpr char kCrosvmDir[] = "crosvm";
-constexpr char kPvmDir[] = "pvm";
-constexpr char kPluginVmImageDir[] = "default";
-
 // PluginVmImageManager is responsible for management of PluginVm image
-// including downloading this image from url specified by user policy and
-// unzipping downloaded image archive to the specified location.
+// including downloading this image from url specified by the user policy,
+// and importing the downloaded image archive using concierge D-Bus services.
 //
 // Only one PluginVm image at a time is allowed to be processed.
-// IsProcessingImage() should be called to check whether any image is being
-// processed at the moment.
-class PluginVmImageManager : public KeyedService {
+// Methods StartDownload() and StartImport() should be
+// called in this order. Image processing might be interrupted by
+// calling the corresponding cancel methods. If one of the methods mentioned is
+// called not in the correct order or before the previous state is finished then
+// associated fail method will be called by the manager and image processing
+// will be interrupted.
+class PluginVmImageManager
+    : public KeyedService,
+      public chromeos::ConciergeClient::DiskImageObserver {
  public:
   // Observer class for the PluginVm image related events.
   class Observer {
@@ -49,39 +52,35 @@ class PluginVmImageManager : public KeyedService {
     virtual void OnDownloadCancelled() = 0;
     // TODO(https://crbug.com/904851): Add failure reasons.
     virtual void OnDownloadFailed() = 0;
-    virtual void OnUnzippingProgressUpdated(
-        int64_t bytes_unzipped,
-        int64_t plugin_vm_image_size,
-        int64_t unzipping_bytes_per_sec) = 0;
-    virtual void OnUnzipped() = 0;
-    virtual void OnUnzippingFailed() = 0;
+    virtual void OnImportProgressUpdated(uint64_t percent_completed,
+                                         int64_t import_percent_per_sec) = 0;
+    virtual void OnImported() = 0;
+    virtual void OnImportCancelled() = 0;
+    virtual void OnImportFailed() = 0;
   };
 
   explicit PluginVmImageManager(Profile* profile);
 
   // Returns true if manager is processing PluginVm image at the moment.
   bool IsProcessingImage();
-  // Doesn't start to download PluginVm image and calls OnDownloadFailed() in
-  // case IsProcessingImage() returns true otherwise starts processing PluginVm
-  // image by downloading it.
   void StartDownload();
   // Cancels the download of PluginVm image finishing the image processing.
   // Downloaded PluginVm image archive is being deleted.
   void CancelDownload();
 
-  // Should be called when download of PluginVm image has been completed
-  // successfully. If called in other cases - unzipping is not started
-  // and OnUnzipped(false /* success */) is called.
-  void StartUnzipping();
-  // Sets flag that indicates that unzipping is cancelled. This flag is further
-  // checked in PluginVmImageWriterDelegate and in cases it is set to true
-  // OnUnzipped(false /* success */) called.
-  void CancelUnzipping();
+  // Proceed with importing (unzipping and registering) of the VM image.
+  // Should be called when download of PluginVm image is successfully completed.
+  // If called in other cases - importing is not started and
+  // OnImported(false /* success */) is called.
+  void StartImport();
+  // Makes a call to concierge to cancel the import.
+  void CancelImport();
 
   void SetObserver(Observer* observer);
   void RemoveObserver();
 
-  // Called by PluginVmImageDownloadClient.
+  // Called by PluginVmImageDownloadClient, are not supposed to be used by other
+  // classes.
   void OnDownloadStarted();
   void OnDownloadProgressUpdated(uint64_t bytes_downloaded,
                                  int64_t content_length);
@@ -89,13 +88,13 @@ class PluginVmImageManager : public KeyedService {
   void OnDownloadCancelled();
   void OnDownloadFailed();
 
-  void OnUnzippingProgressUpdated(int new_bytes_unzipped);
-  // Finishes the processing of PluginVm image. Deletes downloaded PluginVm
-  // image archive. In case |success| is false also deletes PluginVm image.
-  void OnUnzipped(bool success);
+  // ConciergeClient::DiskImageObserver:
+  void OnDiskImageProgress(
+      const vm_tools::concierge::DiskImageStatusResponse& signal) override;
 
-  // Returns true in case downloaded PluginVm image archive passes verification
-  // and false otherwise.
+  // Helper function that returns true in case downloaded PluginVm image
+  // archive passes hash verification and false otherwise.
+  // Public for testing purposes.
   bool VerifyDownload(const std::string& downloaded_archive_hash);
 
   void SetDownloadServiceForTesting(
@@ -105,67 +104,82 @@ class PluginVmImageManager : public KeyedService {
   std::string GetCurrentDownloadGuidForTesting();
 
  private:
+  enum class State {
+    NOT_STARTED,
+    DOWNLOADING,
+    DOWNLOAD_CANCELLED,
+    DOWNLOADED,
+    IMPORTING,
+    IMPORT_CANCELLED,
+    CONFIGURED,
+    DOWNLOAD_FAILED,
+    IMPORT_FAILED,
+  };
+
   Profile* profile_ = nullptr;
   Observer* observer_ = nullptr;
   download::DownloadService* download_service_ = nullptr;
-  bool processing_image_ = false;
-  bool unzipping_cancelled_ = false;
+  State state_ = State::NOT_STARTED;
   std::string current_download_guid_;
   base::FilePath downloaded_plugin_vm_image_archive_;
-  base::FilePath plugin_vm_image_dir_;
+  // Used to identify our running import with concierge:
+  std::string current_import_command_uuid_;
   // -1 when is not yet determined.
-  int64_t plugin_vm_image_size_ = -1;
+  int64_t downloaded_plugin_vm_image_size_ = -1;
   base::TimeTicks download_start_tick_;
-  int64_t plugin_vm_image_bytes_unzipped_ = 0;
-  base::TimeTicks unzipping_start_tick_;
-
-  class PluginVmImageWriterDelegate : public zip::WriterDelegate {
-   public:
-    explicit PluginVmImageWriterDelegate(
-        PluginVmImageManager* manager,
-        const base::FilePath& output_file_path);
-
-    // zip::WriterDelegate implementation.
-    bool PrepareOutput() override;
-    // If unzipping is cancelled returns false so unzipping would fail.
-    bool WriteBytes(const char* data, int num_bytes) override;
-    void SetTimeModified(const base::Time& time) override;
-
-   private:
-    PluginVmImageManager* manager_;
-    base::FilePath output_file_path_;
-    base::File output_file_;
-
-    DISALLOW_COPY_AND_ASSIGN(PluginVmImageWriterDelegate);
-  };
+  base::TimeTicks import_start_tick_;
 
   ~PluginVmImageManager() override;
+
+  // Get string representation of state for logging purposes.
+  std::string GetStateName(State state);
 
   GURL GetPluginVmImageDownloadUrl();
   download::DownloadParams GetDownloadParams(const GURL& url);
 
   void OnStartDownload(const std::string& download_guid,
                        download::DownloadParams::StartResult start_result);
-  bool IsDownloading();
 
-  void CalculatePluginVmImageSize();
-  bool UnzipDownloadedPluginVmImageArchive();
-  bool IsUnzippingCancelled();
-  // Callback arguments for unzipping function.
-  std::unique_ptr<zip::WriterDelegate> CreatePluginVmImageWriterDelegate(
-      const base::FilePath& entry_path);
-  bool CreateDirectory(const base::FilePath& entry_path);
-  bool FilterFilesInPluginVmImageArchive(const base::FilePath& file);
+  // Callback when PluginVm dispatcher is started (together with supporting
+  // services such as concierge). This will then make the call to concierge's
+  // ImportDiskImage.
+  void OnPluginVmDispatcherStarted(bool success);
 
-  bool EnsureDownloadedPluginVmImageArchiveIsPresent();
-  // Creates directory for PluginVm image if one doesn't exists.
-  // Returns true in case directory has already existed or was successfully
-  // created and false otherwise.
-  bool EnsureDirectoryForPluginVmImageIsPresent();
+  // Callback which is called once we know if concierge is available.
+  void OnConciergeAvailable(bool success);
+
+  // Ran as a blocking task preparing the FD for the ImportDiskImage call.
+  base::Optional<base::ScopedFD> PrepareFD();
+
+  // Callback when the FD is prepared. Makes the call to ImportDiskImage.
+  void OnFDPrepared(base::Optional<base::ScopedFD> maybeFd);
+
+  // Callback for the concierge DiskImageImport call.
+  void OnImportDiskImage(
+      base::Optional<vm_tools::concierge::ImportDiskImageResponse> reply);
+
+  // After we get a signal that the import is finished successfully, we
+  // make one final call to concierge's DiskImageStatus method to get a
+  // final resolution.
+  void RequestFinalStatus();
+
+  // Callback for the final call to concierge's DiskImageStatus to
+  // get the final result of the disk import operation. This moves
+  // the manager to a finishing state, depending on the result of the
+  // query. Called when the signal for the command indicates that we
+  // are done with importing.
+  void OnFinalDiskImageStatus(
+      base::Optional<vm_tools::concierge::DiskImageStatusResponse> reply);
+
+  // Finishes the processing of PluginVm image.
+  void OnImported(bool success);
+
+  // Callback for the concierge CancelDiskImageOperation call.
+  void OnImportDiskImageCancelled(
+      base::Optional<vm_tools::concierge::CancelDiskImageResponse> reply);
+
   void RemoveTemporaryPluginVmImageArchiveIfExists();
   void OnTemporaryPluginVmImageArchiveRemoved(bool success);
-  void RemovePluginVmImageDirectoryIfExists();
-  void OnPluginVmImageDirectoryRemoved(bool success);
 
   base::WeakPtrFactory<PluginVmImageManager> weak_ptr_factory_;
 

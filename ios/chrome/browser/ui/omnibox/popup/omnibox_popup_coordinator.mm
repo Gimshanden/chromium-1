@@ -8,14 +8,19 @@
 #import "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/common/omnibox_features.h"
+#import "components/search_engines/template_url_service.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/favicon/ios_chrome_favicon_loader_factory.h"
+#include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/ntp/ntp_util.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_legacy_view_controller.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_mediator.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_presenter.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_controller.h"
 #include "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_ios.h"
 #include "ios/chrome/browser/ui/omnibox/popup/shortcuts/shortcuts_coordinator.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -58,12 +63,25 @@
       std::make_unique<image_fetcher::IOSImageDataFetcherWrapper>(
           self.browserState->GetSharedURLLoaderFactory());
 
-  self.mediator =
-      [[OmniboxPopupMediator alloc] initWithFetcher:std::move(imageFetcher)
-                                           delegate:_popupView.get()];
+  self.mediator = [[OmniboxPopupMediator alloc]
+      initWithFetcher:std::move(imageFetcher)
+        faviconLoader:IOSChromeFaviconLoaderFactory::GetForBrowserState(
+                          self.browserState)
+             delegate:_popupView.get()];
   self.mediator.dispatcher = (id<BrowserCommands>)self.dispatcher;
   self.mediator.webStateList = self.webStateList;
-  self.popupViewController = [[OmniboxPopupLegacyViewController alloc] init];
+  TemplateURLService* templateURLService =
+      ios::TemplateURLServiceFactory::GetForBrowserState(self.browserState);
+  self.mediator.defaultSearchEngineIsGoogle =
+      templateURLService && templateURLService->GetDefaultSearchProvider() &&
+      templateURLService->GetDefaultSearchProvider()->GetEngineType(
+          templateURLService->search_terms_data()) == SEARCH_ENGINE_GOOGLE;
+
+  if (base::FeatureList::IsEnabled(kNewOmniboxPopupLayout)) {
+    self.popupViewController = [[OmniboxPopupViewController alloc] init];
+  } else {
+    self.popupViewController = [[OmniboxPopupLegacyViewController alloc] init];
+  }
   self.popupViewController.incognito = self.browserState->IsOffTheRecord();
 
   BOOL isIncognito = self.browserState->IsOffTheRecord();
@@ -74,6 +92,7 @@
                  popupViewController:self.popupViewController
                            incognito:isIncognito];
   self.popupViewController.imageRetriever = self.mediator;
+  self.popupViewController.faviconRetriever = self.mediator;
   self.popupViewController.delegate = self.mediator;
   [self.dispatcher
       startDispatchingToTarget:self.popupViewController

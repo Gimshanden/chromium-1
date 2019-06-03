@@ -7,10 +7,10 @@
 
 #include <deque>
 #include <map>
+#include <string>
 
 #include "base/optional.h"
 #include "base/time/time.h"
-#include "chrome/browser/notifications/scheduler/internal_types.h"
 #include "chrome/browser/notifications/scheduler/notification_scheduler_types.h"
 
 namespace notifications {
@@ -32,12 +32,12 @@ struct Impression {
 
   // The user feedback on the notification, each notification will have at most
   // one feedback. Sets after the user interacts with the notification.
-  UserFeedback feedback = UserFeedback::kUnknown;
+  UserFeedback feedback = UserFeedback::kNoFeedback;
 
   // The impression type. The client of a notification type takes one or several
   // user feedbacks as input and generate a user impression, which will
   // eventually affect the rate to deliver notifications to the user.
-  ImpressionResult impression = ImpressionResult::kUnknown;
+  ImpressionResult impression = ImpressionResult::kInvalid;
 
   // If the user feedback is used in computing the current notification deliver
   // rate.
@@ -45,6 +45,14 @@ struct Impression {
 
   // The task start time when this impression is generated.
   SchedulerTaskTime task_start_time = SchedulerTaskTime::kUnknown;
+
+  // The unique identifier of the notification.
+  std::string guid;
+
+  // The type of the notification. Not persisted to disk, set after database
+  // initialized.
+  // TODO(xingliu): Consider to persist this as well.
+  SchedulerClientType type = SchedulerClientType::kUnknown;
 };
 
 // Contains details about supression and recovery after suppression expired.
@@ -54,6 +62,9 @@ struct SuppressionInfo {
   SuppressionInfo(const SuppressionInfo& other);
   ~SuppressionInfo() = default;
   bool operator==(const SuppressionInfo& other) const;
+
+  // Time that the suppression should release.
+  base::Time ReleaseTime() const;
 
   // The last supression trigger time.
   base::Time last_trigger_time;
@@ -71,7 +82,7 @@ struct SuppressionInfo {
 // client.
 struct ClientState {
   using Impressions = std::deque<Impression>;
-  explicit ClientState(SchedulerClientType type);
+  ClientState();
   explicit ClientState(const ClientState& other);
   ~ClientState();
 
@@ -81,7 +92,7 @@ struct ClientState {
   std::string DebugPrint() const;
 
   // The type of notification using the scheduler.
-  const SchedulerClientType type;
+  SchedulerClientType type;
 
   // The maximum number of notifications shown to the user for this type. May
   // change if the user interacts with the notification.

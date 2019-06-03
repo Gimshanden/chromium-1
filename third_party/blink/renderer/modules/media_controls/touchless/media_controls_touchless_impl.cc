@@ -14,15 +14,20 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/local_frame_client.h"
+#include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/track/text_track.h"
 #include "third_party/blink/renderer/core/html/track/text_track_list.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
+#include "third_party/blink/renderer/modules/media_controls/elements/media_control_elements_helper.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_orientation_lock_delegate.h"
+#include "third_party/blink/renderer/modules/media_controls/media_controls_shared_helper.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_text_track_manager.h"
+#include "third_party/blink/renderer/modules/media_controls/touchless/elements/media_controls_touchless_bottom_container_element.h"
 #include "third_party/blink/renderer/modules/media_controls/touchless/elements/media_controls_touchless_overlay_element.h"
-#include "third_party/blink/renderer/modules/media_controls/touchless/elements/media_controls_touchless_timeline_element.h"
+#include "third_party/blink/renderer/modules/media_controls/touchless/elements/media_controls_touchless_volume_container_element.h"
 #include "third_party/blink/renderer/modules/media_controls/touchless/media_controls_touchless_media_event_listener.h"
 #include "third_party/blink/renderer/modules/media_controls/touchless/media_controls_touchless_resource_loader.h"
 #include "third_party/blink/renderer/platform/keyboard_codes.h"
@@ -41,11 +46,7 @@ constexpr int kNumberOfSecondsToJumpForTouchless = 10;
 // Amount of volume to change when press up/down arrow.
 constexpr double kVolumeToChangeForTouchless = 0.05;
 
-// Amount of time that media controls are visible.
-constexpr WTF::TimeDelta kTimeToHideMediaControls =
-    TimeDelta::FromMilliseconds(3000);
-
-const char kTransparentCSSClass[] = "transparent";
+const char kInlineCSSClass[] = "inline";
 
 }  // namespace
 
@@ -60,17 +61,15 @@ MediaControlsTouchlessImpl::MediaControlsTouchlessImpl(
     HTMLMediaElement& media_element)
     : HTMLDivElement(media_element.GetDocument()),
       MediaControls(media_element),
+      overlay_(nullptr),
+      bottom_container_(nullptr),
       media_event_listener_(
           MakeGarbageCollected<MediaControlsTouchlessMediaEventListener>(
               media_element)),
       text_track_manager_(
           MakeGarbageCollected<MediaControlsTextTrackManager>(media_element)),
-      orientation_lock_delegate_(nullptr),
-      hide_media_controls_timer_(
-          media_element.GetDocument().GetTaskRunner(TaskType::kInternalMedia),
-          this,
-          &MediaControlsTouchlessImpl::HideMediaControlsTimerFired) {
-  SetShadowPseudoId(AtomicString("-internal-media-controls-touchless"));
+      orientation_lock_delegate_(nullptr) {
+  SetShadowPseudoId(AtomicString("-webkit-media-controls-touchless"));
   media_event_listener_->AddObserver(this);
 }
 
@@ -79,16 +78,24 @@ MediaControlsTouchlessImpl* MediaControlsTouchlessImpl::Create(
     ShadowRoot& shadow_root) {
   MediaControlsTouchlessImpl* controls =
       MakeGarbageCollected<MediaControlsTouchlessImpl>(media_element);
-  MediaControlsTouchlessOverlayElement* overlay_element =
+  controls->bottom_container_ =
+      MakeGarbageCollected<MediaControlsTouchlessBottomContainerElement>(
+          *controls);
+  controls->overlay_ =
       MakeGarbageCollected<MediaControlsTouchlessOverlayElement>(*controls);
-  MediaControlsTouchlessTimelineElement* timeline_element =
-      MakeGarbageCollected<MediaControlsTouchlessTimelineElement>(*controls);
+  controls->volume_container_ =
+      MakeGarbageCollected<MediaControlsTouchlessVolumeContainerElement>(
+          *controls);
 
-  controls->ParserAppendChild(overlay_element);
-  controls->ParserAppendChild(timeline_element);
+  controls->ParserAppendChild(controls->bottom_container_);
+  controls->ParserAppendChild(controls->overlay_);
+  controls->ParserAppendChild(controls->volume_container_);
 
   // Controls start hidden.
-  controls->MakeTransparent();
+  if (!media_element.paused())
+    controls->bottom_container_->MakeTransparent();
+  controls->overlay_->MakeTransparent();
+  controls->volume_container_->MakeTransparent();
 
   if (RuntimeEnabledFeatures::VideoFullscreenOrientationLockEnabled() &&
       media_element.IsHTMLVideoElement()) {
@@ -100,6 +107,9 @@ MediaControlsTouchlessImpl* MediaControlsTouchlessImpl::Create(
 
   MediaControlsTouchlessResourceLoader::
       InjectMediaControlsTouchlessUAStyleSheet();
+
+  if (!media_element.IsFullscreen())
+    controls->classList().Add(kInlineCSSClass);
 
   shadow_root.ParserAppendChild(controls);
   return controls;
@@ -126,20 +136,6 @@ void MediaControlsTouchlessImpl::RemovedFrom(ContainerNode& insertion_point) {
     orientation_lock_delegate_->Detach();
 }
 
-void MediaControlsTouchlessImpl::MakeOpaque() {
-  // show controls
-  classList().Remove(kTransparentCSSClass);
-
-  if (hide_media_controls_timer_.IsActive())
-    StopHideMediaControlsTimer();
-  StartHideMediaControlsTimer();
-}
-
-void MediaControlsTouchlessImpl::MakeTransparent() {
-  // hide controls
-  classList().Add(kTransparentCSSClass);
-}
-
 void MediaControlsTouchlessImpl::MaybeShow() {
   RemoveInlineStyleProperty(CSSPropertyID::kDisplay);
 }
@@ -148,33 +144,56 @@ void MediaControlsTouchlessImpl::Hide() {
   SetInlineStyleProperty(CSSPropertyID::kDisplay, CSSValueID::kNone);
 }
 
+LayoutObject* MediaControlsTouchlessImpl::PanelLayoutObject() {
+  return nullptr;
+}
+
+LayoutObject* MediaControlsTouchlessImpl::TimelineLayoutObject() {
+  return bottom_container_->TimelineLayoutObject();
+}
+
+LayoutObject* MediaControlsTouchlessImpl::ButtonPanelLayoutObject() {
+  return bottom_container_->TimeDisplayLayoutObject();
+}
+
+LayoutObject* MediaControlsTouchlessImpl::ContainerLayoutObject() {
+  return GetLayoutObject();
+}
+
 MediaControlsTouchlessMediaEventListener&
 MediaControlsTouchlessImpl::MediaEventListener() const {
   return *media_event_listener_;
 }
 
-void MediaControlsTouchlessImpl::HideMediaControlsTimerFired(TimerBase*) {
-  MakeTransparent();
-}
-
-void MediaControlsTouchlessImpl::StartHideMediaControlsTimer() {
-  hide_media_controls_timer_.StartOneShot(kTimeToHideMediaControls, FROM_HERE);
-}
-
-void MediaControlsTouchlessImpl::StopHideMediaControlsTimer() {
-  hide_media_controls_timer_.Stop();
-}
-
 void MediaControlsTouchlessImpl::OnFocusIn() {
-  if (MediaElement().ShouldShowControls())
-    MakeOpaque();
+  if (MediaElement().ShouldShowControls()) {
+    bottom_container_->MakeOpaque(!MediaElement().paused());
+    overlay_->MakeOpaque(true);
+  }
+}
+
+void MediaControlsTouchlessImpl::OnPlay() {
+  bottom_container_->MakeOpaque(true);
+}
+
+void MediaControlsTouchlessImpl::OnPause() {
+  bottom_container_->MakeOpaque(false);
+}
+
+void MediaControlsTouchlessImpl::OnEnterFullscreen() {
+  classList().Remove(kInlineCSSClass);
+}
+
+void MediaControlsTouchlessImpl::OnExitFullscreen() {
+  classList().Add(kInlineCSSClass);
 }
 
 void MediaControlsTouchlessImpl::OnKeyDown(KeyboardEvent* event) {
   bool handled = true;
   switch (event->keyCode()) {
     case VKEY_RETURN:
-      MakeOpaque();
+      volume_container_->MakeTransparent(true);
+      overlay_->MakeOpaque(true);
       MediaElement().TogglePlayState();
       break;
     case VKEY_LEFT:
@@ -252,9 +271,8 @@ void MediaControlsTouchlessImpl::ShowContextMenu() {
 
   WTF::Vector<mojom::blink::MenuItem> menu_items;
 
-  // TODO(jazzhsu, https://crbug.com/942577): Populate fullscreen list entry
-  // properly.
-  menu_items.push_back(mojom::blink::MenuItem::FULLSCREEN);
+  if (MediaControlsSharedHelpers::ShouldShowFullscreenButton(MediaElement()))
+    menu_items.push_back(mojom::blink::MenuItem::FULLSCREEN);
 
   if (MediaElement().HasAudio())
     menu_items.push_back(mojom::blink::MenuItem::MUTE);
@@ -272,7 +290,42 @@ void MediaControlsTouchlessImpl::ShowContextMenu() {
 }
 
 void MediaControlsTouchlessImpl::OnMediaMenuResult(
-    mojom::blink::MenuResponsePtr reponse) {}
+    mojom::blink::MenuResponsePtr response) {
+  if (response.is_null())
+    return;
+
+  switch (response->clicked) {
+    case mojom::blink::MenuItem::FULLSCREEN:
+      if (MediaElement().IsFullscreen())
+        Fullscreen::ExitFullscreen(GetDocument());
+      else
+        Fullscreen::RequestFullscreen(MediaElement());
+      break;
+    case mojom::blink::MenuItem::MUTE:
+      MediaElement().setMuted(!MediaElement().muted());
+      break;
+    case mojom::blink::MenuItem::DOWNLOAD:
+      Download();
+      break;
+    case mojom::blink::MenuItem::CAPTIONS:
+      text_track_manager_->DisableShowingTextTracks();
+      if (response->track_index >= 0)
+        text_track_manager_->ShowTextTrackAtIndex(response->track_index);
+      break;
+  }
+}
+
+void MediaControlsTouchlessImpl::Download() {
+  const KURL& url = MediaElement().currentSrc();
+  if (url.IsNull() || url.IsEmpty())
+    return;
+  ResourceRequest request(url);
+  request.SetSuggestedFilename(MediaElement().title());
+  request.SetRequestContext(mojom::RequestContextType::DOWNLOAD);
+  request.SetRequestorOrigin(SecurityOrigin::Create(GetDocument().Url()));
+  GetDocument().GetFrame()->Client()->DownloadURL(
+      request, DownloadCrossOriginRedirects::kFollow);
+}
 
 void MediaControlsTouchlessImpl::OnMediaControlsMenuHostConnectionError() {
   media_controls_host_.reset();
@@ -348,17 +401,27 @@ WebScreenOrientationType MediaControlsTouchlessImpl::GetOrientation() {
 
 void MediaControlsTouchlessImpl::HandleTopButtonPress() {
   MaybeChangeVolume(kVolumeToChangeForTouchless);
+  volume_container_->UpdateVolume();
+  overlay_->MakeTransparent(true);
+  volume_container_->MakeOpaque(true);
 }
 
 void MediaControlsTouchlessImpl::HandleBottomButtonPress() {
   MaybeChangeVolume(kVolumeToChangeForTouchless * -1);
+  volume_container_->UpdateVolume();
+  overlay_->MakeTransparent(true);
+  volume_container_->MakeOpaque(true);
 }
 
 void MediaControlsTouchlessImpl::HandleLeftButtonPress() {
+  if (!MediaElement().paused())
+    bottom_container_->MakeOpaque(true);
   MaybeJump(kNumberOfSecondsToJumpForTouchless * -1);
 }
 
 void MediaControlsTouchlessImpl::HandleRightButtonPress() {
+  if (!MediaElement().paused())
+    bottom_container_->MakeOpaque(true);
   MaybeJump(kNumberOfSecondsToJumpForTouchless);
 }
 
@@ -375,11 +438,23 @@ void MediaControlsTouchlessImpl::MaybeJump(int seconds) {
 }
 
 void MediaControlsTouchlessImpl::Trace(blink::Visitor* visitor) {
+  visitor->Trace(bottom_container_);
+  visitor->Trace(overlay_);
   visitor->Trace(media_event_listener_);
   visitor->Trace(text_track_manager_);
   visitor->Trace(orientation_lock_delegate_);
+  visitor->Trace(volume_container_);
   MediaControls::Trace(visitor);
   HTMLDivElement::Trace(visitor);
+}
+
+void MediaControlsTouchlessImpl::SetMediaControlsMenuHostForTesting(
+    mojom::blink::MediaControlsMenuHostPtr menu_host) {
+  media_controls_host_ = std::move(menu_host);
+}
+
+void MediaControlsTouchlessImpl::MenuHostFlushForTesting() {
+  media_controls_host_.FlushForTesting();
 }
 
 }  // namespace blink

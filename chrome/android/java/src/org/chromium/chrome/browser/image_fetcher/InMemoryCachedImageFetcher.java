@@ -19,7 +19,7 @@ import jp.tomorrowkey.android.gifplayer.BaseGifImage;
  * ImageFetcher implementation with an in-memory cache. Can also be configured to use a disk cache.
  */
 public class InMemoryCachedImageFetcher extends ImageFetcher {
-    private static final int DEFAULT_CACHE_SIZE = 20 * ConversionUtils.BYTES_PER_MEGABYTE; // 20mb
+    public static final int DEFAULT_CACHE_SIZE = 20 * ConversionUtils.BYTES_PER_MEGABYTE; // 20mb
     private static final float PORTION_OF_AVAILABLE_MEMORY = 1.f / 8.f;
 
     // Will do the work if the image isn't cached in memory.
@@ -85,11 +85,6 @@ public class InMemoryCachedImageFetcher extends ImageFetcher {
     }
 
     @Override
-    public void reportEvent(String clientName, @CachedImageFetcherEvent int eventId) {
-        mImageFetcher.reportEvent(clientName, eventId);
-    }
-
-    @Override
     public void fetchGif(String url, String clientName, Callback<BaseGifImage> callback) {
         mImageFetcher.fetchGif(url, clientName, callback);
     }
@@ -110,9 +105,14 @@ public class InMemoryCachedImageFetcher extends ImageFetcher {
                 callback.onResult(bitmap);
             });
         } else {
-            reportEvent(clientName, CachedImageFetcherEvent.JAVA_IN_MEMORY_CACHE_HIT);
+            reportEvent(clientName, ImageFetcherEvent.JAVA_IN_MEMORY_CACHE_HIT);
             callback.onResult(cachedBitmap);
         }
+    }
+
+    @Override
+    public void clear() {
+        mBitmapCache.clear();
     }
 
     @Override

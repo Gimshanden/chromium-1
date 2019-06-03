@@ -41,6 +41,7 @@
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/bindings/v8_value_cache.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/unified_heap_controller.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/leak_annotations.h"
@@ -161,6 +162,11 @@ void V8PerIsolateData::WillBeDestroyed(v8::Isolate* isolate) {
   // Clear any data that may have handles into the heap,
   // prior to calling ThreadState::detach().
   data->ClearEndOfScopeTasks();
+
+  if (data->profiler_group_) {
+    data->profiler_group_->WillBeDestroyed();
+    data->profiler_group_ = nullptr;
+  }
 
   data->active_script_wrappables_.Clear();
 
@@ -290,7 +296,7 @@ v8::Local<v8::Context> V8PerIsolateData::EnsureScriptRegexpContext() {
   if (!script_regexp_script_state_) {
     LEAK_SANITIZER_DISABLED_SCOPE;
     v8::Local<v8::Context> context(v8::Context::New(GetIsolate()));
-    script_regexp_script_state_ = ScriptState::Create(
+    script_regexp_script_state_ = MakeGarbageCollected<ScriptState>(
         context, DOMWrapperWorld::Create(GetIsolate(),
                                          DOMWrapperWorld::WorldType::kRegExp));
   }
@@ -374,6 +380,15 @@ void V8PerIsolateData::SetThreadDebugger(
 
 V8PerIsolateData::Data* V8PerIsolateData::ThreadDebugger() {
   return thread_debugger_.get();
+}
+
+void V8PerIsolateData::SetProfilerGroup(
+    V8PerIsolateData::GarbageCollectedData* profiler_group) {
+  profiler_group_ = profiler_group;
+}
+
+V8PerIsolateData::GarbageCollectedData* V8PerIsolateData::ProfilerGroup() {
+  return profiler_group_;
 }
 
 void V8PerIsolateData::AddActiveScriptWrappable(

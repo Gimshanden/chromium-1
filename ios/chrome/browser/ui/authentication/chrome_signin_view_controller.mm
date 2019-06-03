@@ -65,6 +65,9 @@
 
 namespace {
 
+// Controls whether the activity indicator should be added to the sign-in view.
+BOOL gChromeSigninViewControllerShowsActivityIndicator = YES;
+
 // Default animation duration.
 const CGFloat kAnimationDuration = 0.5f;
 
@@ -317,7 +320,12 @@ enum AuthenticationState {
   if (unifiedConsentService)
     unifiedConsentService->SetUrlKeyedAnonymizedDataCollectionEnabled(true);
   if (!_unifiedConsentCoordinator.settingsLinkWasTapped) {
-    SyncSetupServiceFactory::GetForBrowserState(_browserState)->CommitChanges();
+    // FirstSetupComplete flag should be only turned on when the user agrees
+    // to start Sync.
+    SyncSetupService* syncSetupService =
+        SyncSetupServiceFactory::GetForBrowserState(_browserState);
+    syncSetupService->SetFirstSetupComplete();
+    syncSetupService->CommitSyncChanges();
   }
   [self acceptSignInAndShowAccountsSettings:_unifiedConsentCoordinator
                                                 .settingsLinkWasTapped];
@@ -326,7 +334,8 @@ enum AuthenticationState {
 - (void)acceptSignInAndCommitSyncChanges {
   DCHECK(_didSignIn);
   DCHECK(!_unifiedConsentEnabled);
-  SyncSetupServiceFactory::GetForBrowserState(_browserState)->CommitChanges();
+  SyncSetupServiceFactory::GetForBrowserState(_browserState)
+      ->PreUnityCommitChanges();
   [self acceptSignInAndShowAccountsSettings:NO];
 }
 
@@ -585,6 +594,7 @@ enum AuthenticationState {
     }
   } else {
     [self changeToState:IDENTITY_PICKER_STATE];
+    [_unifiedConsentCoordinator resetSettingLinkTapped];
   }
 }
 
@@ -932,12 +942,15 @@ enum AuthenticationState {
   _secondaryButton.hidden = YES;
   [self.view addSubview:_secondaryButton];
 
-  _activityIndicator = [[MDCActivityIndicator alloc] initWithFrame:CGRectZero];
-  [_activityIndicator setDelegate:self];
-  [_activityIndicator setStrokeWidth:3];
-  [_activityIndicator
-      setCycleColors:@[ [[MDCPalette cr_bluePalette] tint500] ]];
-  [self.view addSubview:_activityIndicator];
+  if (gChromeSigninViewControllerShowsActivityIndicator) {
+    _activityIndicator =
+        [[MDCActivityIndicator alloc] initWithFrame:CGRectZero];
+    [_activityIndicator setDelegate:self];
+    [_activityIndicator setStrokeWidth:3];
+    [_activityIndicator
+        setCycleColors:@[ [[MDCPalette cr_bluePalette] tint500] ]];
+    [self.view addSubview:_activityIndicator];
+  }
 
   _gradientView = [[UIView alloc] initWithFrame:CGRectZero];
   _gradientLayer = [CAGradientLayer layer];
@@ -1228,6 +1241,12 @@ enum AuthenticationState {
   [self openAuthenticationDialogAddIdentity];
 }
 
+- (void)unifiedConsentCoordinatorNeedPrimaryButtonUpdate:
+    (UnifiedConsentCoordinator*)coordinator {
+  if (_currentState == IDENTITY_PICKER_STATE)
+    [self updatePrimaryButtonForIdentityPickerState];
+}
+
 @end
 
 @implementation ChromeSigninViewController (Testing)
@@ -1238,6 +1257,11 @@ enum AuthenticationState {
 
 - (void)setTimerGenerator:(TimerGeneratorBlock)timerGenerator {
   _timerGenerator = [timerGenerator copy];
+}
+
++ (std::unique_ptr<base::AutoReset<BOOL>>)hideActivityIndicatorForTesting {
+  return std::make_unique<base::AutoReset<BOOL>>(
+      &gChromeSigninViewControllerShowsActivityIndicator, NO);
 }
 
 @end

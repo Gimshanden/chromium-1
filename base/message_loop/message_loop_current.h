@@ -23,7 +23,6 @@ class TestWebThreadBundle;
 
 namespace base {
 
-class MessageLoopBase;
 class MessageLoopImpl;
 
 namespace sequence_manager {
@@ -106,9 +105,6 @@ class BASE_EXPORT MessageLoopCurrent {
   // DestructionObserver is receiving a notification callback.
   void RemoveDestructionObserver(DestructionObserver* destruction_observer);
 
-  // Returns the name for the thread associated with this object.
-  std::string GetThreadName() const;
-
   // Forwards to MessageLoop::task_runner().
   // DEPRECATED(https://crbug.com/616447): Use ThreadTaskRunnerHandle::Get()
   // instead of MessageLoopCurrent::Get()->task_runner().
@@ -172,7 +168,7 @@ class BASE_EXPORT MessageLoopCurrent {
     ~ScopedNestableTaskAllower();
 
    private:
-    MessageLoopBase* const loop_;
+    sequence_manager::internal::SequenceManagerImpl* const sequence_manager_;
     const bool old_state_;
   };
 
@@ -187,9 +183,12 @@ class BASE_EXPORT MessageLoopCurrent {
   bool IsIdleForTesting();
 
  protected:
-  explicit MessageLoopCurrent(MessageLoopBase* current) : current_(current) {}
+  explicit MessageLoopCurrent(
+      sequence_manager::internal::SequenceManagerImpl* sequence_manager)
+      : current_(sequence_manager) {}
 
-  static MessageLoopBase* GetCurrentMessageLoopBase();
+  static sequence_manager::internal::SequenceManagerImpl*
+  GetCurrentSequenceManagerImpl();
 
   friend class MessageLoopImpl;
   friend class MessagePumpLibeventTest;
@@ -199,7 +198,7 @@ class BASE_EXPORT MessageLoopCurrent {
   friend class MessageLoopTaskRunnerTest;
   friend class web::TestWebThreadBundle;
 
-  MessageLoopBase* current_;
+  sequence_manager::internal::SequenceManagerImpl* current_;
 };
 
 #if !defined(OS_NACL)
@@ -250,7 +249,8 @@ class BASE_EXPORT MessageLoopCurrentForUI : public MessageLoopCurrent {
 #endif
 
  private:
-  explicit MessageLoopCurrentForUI(MessageLoopBase* current)
+  explicit MessageLoopCurrentForUI(
+      sequence_manager::internal::SequenceManagerImpl* current)
       : MessageLoopCurrent(current) {}
 
   MessagePumpForUI* GetMessagePumpForUI() const;
@@ -306,7 +306,8 @@ class BASE_EXPORT MessageLoopCurrentForIO : public MessageLoopCurrent {
 #endif  // !defined(OS_NACL_SFI)
 
  private:
-  explicit MessageLoopCurrentForIO(MessageLoopBase* current)
+  explicit MessageLoopCurrentForIO(
+      sequence_manager::internal::SequenceManagerImpl* current)
       : MessageLoopCurrent(current) {}
 
   MessagePumpForIO* GetMessagePumpForIO() const;

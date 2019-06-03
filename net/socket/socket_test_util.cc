@@ -32,6 +32,7 @@
 #include "net/base/hex_utils.h"
 #include "net/base/ip_address.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
@@ -44,6 +45,7 @@
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/ssl/ssl_info.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -156,6 +158,12 @@ MockConnect::MockConnect(IoMode io_mode, int r, IPEndPoint addr) :
 }
 
 MockConnect::~MockConnect() = default;
+
+MockConfirm::MockConfirm() : mode(SYNCHRONOUS), result(OK) {}
+
+MockConfirm::MockConfirm(IoMode io_mode, int r) : mode(io_mode), result(r) {}
+
+MockConfirm::~MockConfirm() = default;
 
 bool SocketDataProvider::IsIdle() const {
   return true;
@@ -792,6 +800,22 @@ std::unique_ptr<SSLClientSocket> MockClientSocketFactory::CreateSSLClientSocket(
   }
   EXPECT_EQ(next_ssl_data->expected_ssl_version_min, ssl_config.version_min);
   EXPECT_EQ(next_ssl_data->expected_ssl_version_max, ssl_config.version_max);
+  if (next_ssl_data->expected_send_client_cert) {
+    EXPECT_EQ(*next_ssl_data->expected_send_client_cert,
+              ssl_config.send_client_cert);
+    DCHECK_EQ(*next_ssl_data->expected_send_client_cert,
+              next_ssl_data->expected_client_cert != nullptr);
+    if (next_ssl_data->expected_client_cert) {
+      EXPECT_TRUE(next_ssl_data->expected_client_cert->EqualsIncludingChain(
+          ssl_config.client_cert.get()));
+    } else {
+      EXPECT_FALSE(ssl_config.client_cert);
+    }
+  }
+  if (next_ssl_data->expected_false_start_enabled) {
+    EXPECT_EQ(*next_ssl_data->expected_false_start_enabled,
+              ssl_config.false_start_enabled);
+  }
   return std::unique_ptr<SSLClientSocket>(new MockSSLClientSocket(
       std::move(stream_socket), host_and_port, ssl_config, next_ssl_data));
 }
@@ -807,7 +831,6 @@ MockClientSocketFactory::CreateProxyClientSocket(
     bool using_spdy,
     NextProto negotiated_protocol,
     ProxyDelegate* proxy_delegate,
-    bool is_https_proxy,
     const NetworkTrafficAnnotationTag& traffic_annotation) {
   if (use_mock_proxy_client_sockets_) {
     ProxyClientSocketDataProvider* next_proxy_data = mock_proxy_data_.GetNext();
@@ -817,7 +840,7 @@ MockClientSocketFactory::CreateProxyClientSocket(
     return GetDefaultFactory()->CreateProxyClientSocket(
         std::move(stream_socket), user_agent, endpoint, proxy_server,
         http_auth_controller, tunnel, using_spdy, negotiated_protocol,
-        proxy_delegate, is_https_proxy, traffic_annotation);
+        proxy_delegate, traffic_annotation);
   }
 }
 
@@ -1461,6 +1484,8 @@ int MockSSLClientSocket::Write(
     int buf_len,
     CompletionOnceCallback callback,
     const NetworkTrafficAnnotationTag& traffic_annotation) {
+  if (!data_->is_confirm_data_consumed)
+    data_->write_called_before_confirm = true;
   return stream_socket_->Write(buf, buf_len, std::move(callback),
                                traffic_annotation);
 }
@@ -1484,6 +1509,28 @@ int MockSSLClientSocket::Connect(CompletionOnceCallback callback) {
 void MockSSLClientSocket::Disconnect() {
   if (stream_socket_ != nullptr)
     stream_socket_->Disconnect();
+}
+
+void MockSSLClientSocket::RunConfirmHandshakeCallback(
+    CompletionOnceCallback callback,
+    int result) {
+  data_->is_confirm_data_consumed = true;
+  std::move(callback).Run(result);
+}
+
+int MockSSLClientSocket::ConfirmHandshake(CompletionOnceCallback callback) {
+  DCHECK(stream_socket_->IsConnected());
+  if (data_->is_confirm_data_consumed)
+    return data_->confirm.result;
+  if (data_->confirm.mode == ASYNC) {
+    RunCallbackAsync(
+        base::BindOnce(&MockSSLClientSocket::RunConfirmHandshakeCallback,
+                       base::Unretained(this), std::move(callback)),
+        data_->confirm.result);
+    return ERR_IO_PENDING;
+  }
+  data_->is_confirm_data_consumed = true;
+  return data_->confirm.result;
 }
 
 bool MockSSLClientSocket::IsConnected() const {
@@ -2066,6 +2113,8 @@ MockTransportClientSocketPool::MockTransportClientSocketPool(
           max_sockets,
           max_sockets_per_group,
           base::TimeDelta::FromSeconds(10) /* unused_idle_socket_timeout */,
+          ProxyServer::Direct(),
+          false /* is_for_websockets */,
           common_connect_job_params,
           nullptr /* ssl_config_service */),
       client_socket_factory_(common_connect_job_params->client_socket_factory),
@@ -2078,6 +2127,7 @@ MockTransportClientSocketPool::~MockTransportClientSocketPool() = default;
 int MockTransportClientSocketPool::RequestSocket(
     const ClientSocketPool::GroupId& group_id,
     scoped_refptr<ClientSocketPool::SocketParams> socket_params,
+    const base::Optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
     RequestPriority priority,
     const SocketTag& socket_tag,
     RespectLimits respect_limits,
@@ -2092,7 +2142,7 @@ int MockTransportClientSocketPool::RequestSocket(
   MockConnectJob* job = new MockConnectJob(
       std::move(socket), handle, socket_tag, std::move(callback), priority);
   job_list_.push_back(base::WrapUnique(job));
-  handle->set_pool_id(1);
+  handle->set_group_generation(1);
   return job->Connect();
 }
 
@@ -2111,7 +2161,8 @@ void MockTransportClientSocketPool::SetPriority(
 
 void MockTransportClientSocketPool::CancelRequest(
     const ClientSocketPool::GroupId& group_id,
-    ClientSocketHandle* handle) {
+    ClientSocketHandle* handle,
+    bool cancel_connect_job) {
   for (std::unique_ptr<MockConnectJob>& it : job_list_) {
     if (it->CancelHandle(handle)) {
       cancel_count_++;
@@ -2123,8 +2174,8 @@ void MockTransportClientSocketPool::CancelRequest(
 void MockTransportClientSocketPool::ReleaseSocket(
     const ClientSocketPool::GroupId& group_id,
     std::unique_ptr<StreamSocket> socket,
-    int id) {
-  EXPECT_EQ(1, id);
+    int64_t generation) {
+  EXPECT_EQ(1, generation);
   release_count_++;
 }
 

@@ -207,6 +207,9 @@ function returnExperimentalFeatures(experimentalFeaturesData) {
     $('channel-promo-dev').hidden = false;
   }
 
+  $('promos').hidden = !experimentalFeaturesData.showBetaChannelPromotion &&
+      !experimentalFeaturesData.showDevChannelPromotion;
+
   bodyContainer.style.visibility = 'visible';
   var ownerWarningDiv = $('owner-warning');
   if (ownerWarningDiv) {
@@ -325,7 +328,8 @@ FlagSearch.prototype = {
         document.querySelectorAll('#tab-content-unavailable p');
 
     if (!this.initialized) {
-      this.searchBox_.addEventListener('keyup', this.debounceSearch.bind(this));
+      this.searchBox_.addEventListener('input', this.debounceSearch.bind(this));
+
       document.querySelector('.clear-search').addEventListener('click',
           this.clearSearch.bind(this));
 
@@ -457,9 +461,8 @@ FlagSearch.prototype = {
 
   /**
    * Performs a search against the experiment title, description, permalink.
-   * @param {Event} e
    */
-  doSearch: function(e) {
+  doSearch: function() {
     var searchTerm =
         this.searchBox_.value.trim().toLowerCase();
 
@@ -479,9 +482,8 @@ FlagSearch.prototype = {
   /**
    * Debounces the search to improve performance and prevent too many searches
    * from being initiated.
-   * @param {Event} e
    */
-  debounceSearch: function(e) {
+  debounceSearch: function() {
     // Don't search if the search term did not change.
     if (this.searchValue_ == this.searchBox_.value) {
       return;

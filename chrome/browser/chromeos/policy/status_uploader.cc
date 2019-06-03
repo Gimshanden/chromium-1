@@ -15,7 +15,7 @@
 #include "base/syslog_logging.h"
 #include "base/system/sys_info.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
-#include "chrome/browser/chromeos/policy/device_status_collector.h"
+#include "chrome/browser/chromeos/policy/status_collector/status_collector.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
@@ -41,7 +41,7 @@ namespace policy {
 
 StatusUploader::StatusUploader(
     CloudPolicyClient* client,
-    std::unique_ptr<DeviceStatusCollector> collector,
+    std::unique_ptr<StatusCollector> collector,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     base::TimeDelta default_upload_frequency)
     : client_(client),
@@ -53,7 +53,6 @@ StatusUploader::StatusUploader(
   // Track whether any media capture devices are in use - this changes what
   // type of information we are allowed to upload.
   MediaCaptureDevicesDispatcher::GetInstance()->AddObserver(this);
-
   // Listen for changes to the upload delay, and start sending updates to the
   // server.
   upload_frequency_observer_ =
@@ -126,7 +125,6 @@ void StatusUploader::RefreshUploadFrequency() {
     upload_frequency_ = base::TimeDelta::FromMilliseconds(
         std::max(kMinUploadDelayMs, frequency));
   }
-
   // Schedule a new upload with the new frequency - only do this if we've
   // already performed the initial upload, because we want the initial upload
   // to happen in a minute after startup and not get cancelled by settings
@@ -188,16 +186,15 @@ bool StatusUploader::ScheduleNextStatusUploadImmediately() {
 void StatusUploader::UploadStatus() {
   status_upload_in_progress_ = true;
   // Gather status in the background.
-  collector_->GetDeviceAndSessionStatusAsync(base::Bind(
-      &StatusUploader::OnStatusReceived, weak_factory_.GetWeakPtr()));
+  collector_->GetStatusAsync(base::Bind(&StatusUploader::OnStatusReceived,
+                                        weak_factory_.GetWeakPtr()));
 }
 
-void StatusUploader::OnStatusReceived(
-    std::unique_ptr<em::DeviceStatusReportRequest> device_status,
-    std::unique_ptr<em::SessionStatusReportRequest> session_status) {
-  bool have_device_status = device_status != nullptr;
-  bool have_session_status = session_status != nullptr;
-  if (!have_device_status && !have_session_status) {
+void StatusUploader::OnStatusReceived(StatusCollectorParams callback_params) {
+  bool has_device_status = callback_params.device_status != nullptr;
+  bool has_session_status = callback_params.session_status != nullptr;
+  bool has_child_status = callback_params.child_status != nullptr;
+  if (!has_device_status && !has_session_status && !has_child_status) {
     SYSLOG(INFO) << "Skipping status upload because no data to upload";
     // Don't have any status to upload - just set our timer for next time.
     last_upload_ = base::Time::NowFromSystemTime();
@@ -215,9 +212,12 @@ void StatusUploader::OnStatusReceived(
     return;
   }
 
-  SYSLOG(INFO) << "Starting status upload: have_device_status = "
-               << have_device_status;
-  client_->UploadDeviceStatus(device_status.get(), session_status.get(),
+  SYSLOG(INFO) << "Starting status upload: has_device_status = "
+               << has_device_status;
+
+  client_->UploadDeviceStatus(callback_params.device_status.get(),
+                              callback_params.session_status.get(),
+                              callback_params.child_status.get(),
                               base::Bind(&StatusUploader::OnUploadCompleted,
                                          weak_factory_.GetWeakPtr()));
 }

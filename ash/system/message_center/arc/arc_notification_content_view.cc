@@ -64,12 +64,6 @@ class ArcNotificationContentView::EventForwarder : public ui::EventHandler {
   ~EventForwarder() override = default;
 
  private:
-  // Some swipes are handled by Android alone. We don't want to capture swipe
-  // events if we started a swipe on the chrome side then moved into the Android
-  // swipe region. So, keep track of whether swipe has been 'captured' by
-  // Android.
-  bool swipe_captured_ = false;
-
   // ui::EventHandler
   void OnEvent(ui::Event* event) override {
     // Do not forward event targeted to the floating close button so that
@@ -79,6 +73,9 @@ class ArcNotificationContentView::EventForwarder : public ui::EventHandler {
             event->target()) {
       return;
     }
+
+    if (!owner_->item_ || !owner_->surface_)
+      return;
 
     views::Widget* widget = owner_->GetWidget();
     if (!widget)
@@ -113,8 +110,7 @@ class ArcNotificationContentView::EventForwarder : public ui::EventHandler {
         if ((event->type() == ui::ET_GESTURE_SCROLL_BEGIN ||
              event->type() == ui::ET_GESTURE_SCROLL_UPDATE ||
              event->type() == ui::ET_GESTURE_SCROLL_END ||
-             event->type() == ui::ET_GESTURE_SWIPE) &&
-            owner_->surface_) {
+             event->type() == ui::ET_GESTURE_SWIPE)) {
           gfx::RectF rect(owner_->item_->GetSwipeInputRect());
           owner_->surface_->GetContentWindow()->transform().TransformRect(
               &rect);
@@ -168,8 +164,7 @@ class ArcNotificationContentView::EventForwarder : public ui::EventHandler {
     // pass tab key event to focus manager of content view.
     // TODO(yawano): include elements inside Android notification in tab focus
     // traversal rather than skipping them.
-    if (owner_->surface_ &&
-        owner_->surface_->GetAXTreeId() != ui::AXTreeIDUnknown() &&
+    if (owner_->surface_->GetAXTreeId() != ui::AXTreeIDUnknown() &&
         event->IsKeyEvent()) {
       ui::KeyEvent* key_event = event->AsKeyEvent();
       if (key_event->key_code() == ui::VKEY_TAB &&
@@ -179,6 +174,12 @@ class ArcNotificationContentView::EventForwarder : public ui::EventHandler {
       }
     }
   }
+
+  // Some swipes are handled by Android alone. We don't want to capture swipe
+  // events if we started a swipe on the chrome side then moved into the Android
+  // swipe region. So, keep track of whether swipe has been 'captured' by
+  // Android.
+  bool swipe_captured_ = false;
 
   ArcNotificationContentView* const owner_;
   bool is_current_slide_handled_by_android_ = false;
@@ -199,35 +200,23 @@ class ArcNotificationContentView::SlideHelper {
   }
   virtual ~SlideHelper() = default;
 
-  void Update(base::Optional<bool> slide_in_progress) {
-    if (slide_in_progress.has_value())
-      slide_in_progress_ = slide_in_progress.value();
-
-    const bool has_animation =
-        GetSlideOutLayer()->GetAnimator()->is_animating();
-    const bool has_transform = !GetSlideOutLayer()->transform().IsIdentity();
-    const bool moving = (slide_in_progress_ && has_transform) || has_animation;
-
-    if (moving_ == moving)
+  void Update(bool slide_in_progress) {
+    if (slide_in_progress_ == slide_in_progress)
       return;
-    moving_ = moving;
 
-    if (moving_)
+    slide_in_progress_ = slide_in_progress;
+
+    if (slide_in_progress_)
       owner_->ShowCopiedSurface();
     else
       owner_->HideCopiedSurface();
   }
 
  private:
-  // This is a temporary hack to address https://crbug.com/718965
-  ui::Layer* GetSlideOutLayer() {
-    ui::Layer* layer = owner_->parent()->layer();
-    return layer ? layer : owner_->GetWidget()->GetLayer();
-  }
-
   ArcNotificationContentView* const owner_;
+
+  // True if the view is not at the original position.
   bool slide_in_progress_ = false;
-  bool moving_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(SlideHelper);
 };
@@ -358,6 +347,7 @@ void ArcNotificationContentView::UpdateCornerRadius(int top_radius,
 }
 
 void ArcNotificationContentView::OnSlideChanged(bool in_progress) {
+  slide_in_progress_ = in_progress;
   if (slide_helper_)
     slide_helper_->Update(in_progress);
 }
@@ -497,7 +487,7 @@ void ArcNotificationContentView::AttachSurface() {
   slide_helper_.reset(new SlideHelper(this));
 
   // Invokes Update() in case surface is attached during a slide.
-  slide_helper_->Update(base::nullopt);
+  slide_helper_->Update(slide_in_progress_);
 
   // (Re-)create the floating buttons after |surface_| is attached to a widget.
   MaybeCreateFloatingControlButtons();
@@ -847,7 +837,7 @@ void ArcNotificationContentView::OnItemContentChanged(
 
 void ArcNotificationContentView::OnNotificationSurfaceAdded(
     ArcNotificationSurface* surface) {
-  if (surface->GetNotificationKey() != notification_key_)
+  if (!item_ || surface->GetNotificationKey() != notification_key_)
     return;
 
   SetSurface(surface);

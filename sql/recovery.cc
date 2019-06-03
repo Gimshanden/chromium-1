@@ -14,11 +14,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "sql/database.h"
+#include "sql/recover_module/module.h"
 #include "sql/statement.h"
 #include "third_party/sqlite/sqlite3.h"
-
-// Needs to be included after "third_party/sqlite/sqlite.h".
-#include "third_party/sqlite/patched/src/recover.h"
 
 namespace sql {
 
@@ -239,7 +237,7 @@ bool Recovery::Init(const base::FilePath& db_path) {
   }
 
   // Enable the recover virtual table for this connection.
-  int rc = chrome_sqlite3_recoverVtableInit(recover_db_.db(InternalApiToken()));
+  int rc = EnableRecoveryExtension(&recover_db_, InternalApiToken());
   if (rc != SQLITE_OK) {
     RecordRecoveryEvent(RECOVERY_FAILED_VIRTUAL_TABLE_INIT);
     LOG(ERROR) << "Failed to initialize recover module: "
@@ -401,7 +399,7 @@ bool Recovery::AutoRecoverTable(const char* table_name,
   while (s.Step()) {
     const std::string column_name(s.ColumnString(1));
     const std::string column_type(s.ColumnString(2));
-    const ColumnType default_type = s.ColumnType(4);
+    const ColumnType default_type = s.GetColumnType(4);
     const bool default_is_null = (default_type == ColumnType::kNull);
     const int pk_column = s.ColumnInt(5);
 
@@ -796,6 +794,11 @@ bool Recovery::ShouldRecover(int extended_error) {
     default:
       return false;
   }
+}
+
+// static
+int Recovery::EnableRecoveryExtension(Database* db, InternalApiToken) {
+  return sql::recover::RegisterRecoverExtension(db->db(InternalApiToken()));
 }
 
 }  // namespace sql

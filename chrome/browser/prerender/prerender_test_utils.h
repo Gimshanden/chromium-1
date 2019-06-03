@@ -108,6 +108,7 @@ class TestPrerenderContents : public PrerenderContents,
                         Profile* profile,
                         const GURL& url,
                         const content::Referrer& referrer,
+                        const base::Optional<url::Origin>& initiator_origin,
                         Origin origin,
                         FinalStatus expected_final_status,
                         bool ignore_final_status);
@@ -288,6 +289,7 @@ class TestPrerenderContentsFactory : public PrerenderContents::Factory {
       Profile* profile,
       const GURL& url,
       const content::Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       Origin origin) override;
 
  private:
@@ -299,7 +301,7 @@ class TestPrerenderContentsFactory : public PrerenderContents::Factory {
     explicit ExpectedContents(bool ignore);
     ~ExpectedContents();
 
-    FinalStatus final_status = FINAL_STATUS_MAX;
+    FinalStatus final_status = FINAL_STATUS_UNKNOWN;
     bool ignore = false;
     base::WeakPtr<TestPrerender> handle = nullptr;
   };

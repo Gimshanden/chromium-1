@@ -55,7 +55,7 @@ TEST(ProtocolUtilsTest, MinimalValidScript) {
 
   ASSERT_THAT(scripts, SizeIs(1));
   EXPECT_EQ("path", scripts[0]->handle.path);
-  EXPECT_EQ("name", scripts[0]->handle.name);
+  EXPECT_EQ("name", scripts[0]->handle.chip.text());
   EXPECT_NE(nullptr, scripts[0]->precondition);
 }
 
@@ -73,7 +73,7 @@ TEST(ProtocolUtilsTest, OneFullyFeaturedScript) {
 
   ASSERT_THAT(scripts, SizeIs(1));
   EXPECT_EQ("path", scripts[0]->handle.path);
-  EXPECT_EQ("name", scripts[0]->handle.name);
+  EXPECT_EQ("name", scripts[0]->handle.chip.text());
   EXPECT_EQ("prompt", scripts[0]->handle.initial_prompt);
   EXPECT_TRUE(scripts[0]->handle.autostart);
   EXPECT_NE(nullptr, scripts[0]->precondition);
@@ -92,22 +92,24 @@ TEST(ProtocolUtilsTest, AllowInterruptsWithNoName) {
   ProtocolUtils::AddScript(script_proto, &scripts);
   ASSERT_THAT(scripts, SizeIs(1));
   EXPECT_EQ("path", scripts[0]->handle.path);
-  EXPECT_EQ("", scripts[0]->handle.name);
+  EXPECT_EQ("", scripts[0]->handle.chip.text());
   EXPECT_TRUE(scripts[0]->handle.interrupt);
 }
 
 TEST(ProtocolUtilsTest, CreateInitialScriptActionsRequest) {
-  std::map<std::string, std::string> parameters;
-  parameters["a"] = "b";
-  parameters["c"] = "d";
+  TriggerContext trigger_context;
+  trigger_context.script_parameters["a"] = "b";
+  trigger_context.script_parameters["c"] = "d";
+  trigger_context.experiment_ids = "1,2,3";
 
   ScriptActionRequestProto request;
   EXPECT_TRUE(
       request.ParseFromString(ProtocolUtils::CreateInitialScriptActionsRequest(
-          "script_path", GURL("http://example.com/"), parameters,
+          "script_path", GURL("http://example.com/"), trigger_context,
           "global_payload", "script_payload", CreateClientContextProto())));
 
   AssertClientContext(request.client_context());
+  EXPECT_THAT(request.client_context().experiment_ids(), Eq("1,2,3"));
 
   const InitialScriptActionsRequestProto& initial = request.initial_request();
   EXPECT_THAT(initial.query().script_path(), ElementsAre("script_path"));
@@ -121,16 +123,38 @@ TEST(ProtocolUtilsTest, CreateInitialScriptActionsRequest) {
   EXPECT_EQ("script_payload", request.script_payload());
 }
 
+TEST(ProtocolUtilsTest, CreateNextScriptActionsRequest) {
+  TriggerContext trigger_context;
+  trigger_context.script_parameters["a"] = "b";
+  trigger_context.script_parameters["c"] = "d";
+  trigger_context.experiment_ids = "1,2,3";
+
+  ScriptActionRequestProto request;
+  std::vector<ProcessedActionProto> processed_actions;
+  processed_actions.emplace_back(ProcessedActionProto());
+  EXPECT_TRUE(
+      request.ParseFromString(ProtocolUtils::CreateNextScriptActionsRequest(
+          trigger_context, "global_payload", "script_payload",
+          processed_actions, CreateClientContextProto())));
+
+  AssertClientContext(request.client_context());
+  EXPECT_THAT(request.client_context().experiment_ids(), Eq("1,2,3"));
+  EXPECT_EQ(1, request.next_request().processed_actions().size());
+}
+
 TEST(ProtocolUtilsTest, CreateGetScriptsRequest) {
-  std::map<std::string, std::string> parameters;
-  parameters["a"] = "b";
-  parameters["c"] = "d";
+  TriggerContext trigger_context;
+  trigger_context.script_parameters["a"] = "b";
+  trigger_context.script_parameters["c"] = "d";
+  trigger_context.experiment_ids = "1,2,3";
 
   SupportsScriptRequestProto request;
   EXPECT_TRUE(request.ParseFromString(ProtocolUtils::CreateGetScriptsRequest(
-      GURL("http://example.com/"), parameters, CreateClientContextProto())));
+      GURL("http://example.com/"), trigger_context,
+      CreateClientContextProto())));
 
   AssertClientContext(request.client_context());
+  EXPECT_THAT(request.client_context().experiment_ids(), Eq("1,2,3"));
 
   EXPECT_EQ("http://example.com/", request.url());
   ASSERT_EQ(2, request.script_parameters_size());
@@ -162,7 +186,7 @@ TEST(ProtocolUtilsTest, AddScriptValid) {
 
   EXPECT_NE(nullptr, script);
   EXPECT_EQ("path", script->handle.path);
-  EXPECT_EQ("name", script->handle.name);
+  EXPECT_EQ("name", script->handle.chip.text());
   EXPECT_EQ("prompt", script->handle.initial_prompt);
   EXPECT_TRUE(script->handle.autostart);
   EXPECT_NE(nullptr, script->precondition);
@@ -244,7 +268,7 @@ TEST(ProtocolUtilsTest, ParseActionsUpdateScriptListFullFeatured) {
   EXPECT_TRUE(should_update_scripts);
   EXPECT_THAT(scripts, SizeIs(1));
   EXPECT_THAT("a", Eq(scripts[0]->handle.path));
-  EXPECT_THAT("name", Eq(scripts[0]->handle.name));
+  EXPECT_THAT("name", Eq(scripts[0]->handle.chip.text()));
 }
 
 }  // namespace

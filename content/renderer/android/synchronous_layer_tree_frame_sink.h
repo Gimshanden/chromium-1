@@ -164,7 +164,7 @@ class SynchronousLayerTreeFrameSink
   bool did_submit_frame_ = false;
   scoped_refptr<FrameSwapMessageQueue> frame_swap_message_queue_;
 
-  base::CancelableClosure fallback_tick_;
+  base::CancelableOnceClosure fallback_tick_;
   bool fallback_tick_pending_ = false;
   bool fallback_tick_running_ = false;
 
@@ -176,6 +176,9 @@ class SynchronousLayerTreeFrameSink
     void DisplayDidReceiveCALayerParams(
         const gfx::CALayerParams& ca_layer_params) override {}
     void DisplayDidCompleteSwapWithSize(const gfx::Size& pixel_size) override {}
+    void SetPreferredFrameInterval(base::TimeDelta interval) override {}
+    base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
+        const viz::FrameSinkId& id) override;
   };
 
   // TODO(danakj): These don't to be stored in unique_ptrs when OutputSurface

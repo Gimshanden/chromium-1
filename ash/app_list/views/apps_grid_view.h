@@ -17,9 +17,9 @@
 #include "ash/app_list/model/app_list_model.h"
 #include "ash/app_list/model/app_list_model_observer.h"
 #include "ash/app_list/paged_view_structure.h"
-#include "ash/app_list/pagination_model.h"
-#include "ash/app_list/pagination_model_observer.h"
 #include "ash/app_list/views/app_list_view.h"
+#include "ash/public/cpp/pagination/pagination_model.h"
+#include "ash/public/cpp/pagination/pagination_model_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -35,6 +35,10 @@
 #include "ui/views/view.h"
 #include "ui/views/view_model.h"
 
+namespace ash {
+class PaginationController;
+}
+
 namespace views {
 class ButtonListener;
 }
@@ -49,7 +53,6 @@ class ApplicationDragAndDropHost;
 class AppListItemView;
 class AppsGridViewFolderDelegate;
 class ContentsView;
-class PaginationController;
 class PulsingBlockView;
 class GhostImageView;
 
@@ -77,7 +80,7 @@ struct GridIndex {
 class APP_LIST_EXPORT AppsGridView : public views::View,
                                      public views::ButtonListener,
                                      public AppListItemListObserver,
-                                     public PaginationModelObserver,
+                                     public ash::PaginationModelObserver,
                                      public AppListModelObserver,
                                      public ui::ImplicitAnimationObserver {
  public:
@@ -174,7 +177,7 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   const AppListItemView* drag_view() const { return drag_view_; }
 
   // Gets the PaginationModel used for the grid view.
-  PaginationModel* pagination_model() { return &pagination_model_; }
+  ash::PaginationModel* pagination_model() { return &pagination_model_; }
 
   // Overridden from views::View:
   gfx::Size CalculatePreferredSize() const override;
@@ -192,7 +195,7 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
 
   // Updates the visibility of app list items according to |app_list_state| and
   // |is_in_drag|.
-  void UpdateControlVisibility(AppListViewState app_list_state,
+  void UpdateControlVisibility(ash::AppListViewState app_list_state,
                                bool is_in_drag);
 
   // Overridden from ui::EventHandler:
@@ -258,6 +261,11 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // returns true if this scroll would change pages.
   bool HandleScrollFromAppListView(const gfx::Vector2d& offset,
                                    ui::EventType type);
+
+  // Moves |reparented_item| from its folder to the root AppsGridView in the
+  // direction of |key_code|.
+  void HandleKeyboardReparent(AppListItemView* reparented_view,
+                              ui::KeyboardCode key_code);
 
   // Returns the first app list item view in the selected page in the folder.
   AppListItemView* GetCurrentPageFirstItemViewInFolder();
@@ -402,8 +410,13 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
 
   // Updates |model_| to move item represented by |item_view| into a folder
   // containing item located at |target| slot, also update |view_model_| for
-  // the related view changes.
-  void MoveItemToFolder(AppListItemView* item_view, const GridIndex& target);
+  // the related view changes. Returns the preexisting or created folder as a
+  // result of the move, or nullptr if the move fails.
+  AppListItemView* MoveItemToFolder(AppListItemView* item_view,
+                                    const GridIndex& target);
+
+  // Sets up |item_view| to fade out and delete on animation end.
+  void FadeOutItemViewAndDelete(AppListItemView* item_view);
 
   // Updates both data model and view_model_ for re-parenting a folder item to a
   // new position in top level item list.
@@ -532,9 +545,19 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // Returns true if the grid view is under an OEM folder.
   bool IsUnderOEMFolder();
 
-  // Handles moving the |selected_view_|, triggered by Control+Arrow
-  // up/down/left/right.
-  void HandleKeyboardAppMovement(ui::KeyboardCode key_code);
+  // Handles keyboard app reordering, foldering, and reparenting. Operations
+  // effect |selected_view_|. |folder| is whether to move the app into or out of
+  // a folder.
+  void HandleKeyboardAppOperations(ui::KeyboardCode key_code, bool folder);
+
+  // Handles either creating a folder with |selected_view_| or moving
+  // |selected_view_| into an existing folder.
+  void HandleKeyboardFoldering(ui::KeyboardCode key_code);
+
+  // Returns whether |selected_view_| can be foldered to the item at
+  // |target_index| in the root AppsGridView.
+  bool CanMoveSelectedToTargetForKeyboardFoldering(
+      const GridIndex& target_index) const;
 
   // Handle vertical focus movement triggered by arrow up and down.
   bool HandleVerticalFocusMovement(bool arrow_up);
@@ -588,8 +611,14 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // Returns the target GridIndex for a keyboard move.
   GridIndex GetTargetGridIndexForKeyboardMove(ui::KeyboardCode key_code) const;
 
-  // Swaps |selected_view_| and the item at |target_index|.
-  void MoveAppListItemViewForKeyboardMove(const GridIndex& target_index);
+  // Returns the target GridIndex to move an item from a folder to the root
+  // AppsGridView.
+  GridIndex GetTargetGridIndexForKeyboardReparent(
+      ui::KeyboardCode key_code) const;
+
+  // Swaps |selected_view_| with the item in relative position specified by
+  // |key_code|.
+  void HandleKeyboardMove(ui::KeyboardCode key_code);
 
   // Records the total number of pages, and the number of pages with empty slots
   // for UMA histograms.
@@ -617,6 +646,12 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // folder or creating a folder with two apps.
   void MaybeCreateFolderDroppingAccessibilityEvent();
 
+  // Modifies the announcement view to verbalize |moving_view_title| is creating
+  // a folder or moving into an existing folder with |target_view_title|.
+  void AnnounceFolderDrop(const base::string16& moving_view_title,
+                          const base::string16& target_view_title,
+                          bool target_is_folder);
+
   // During an app drag, creates an a11y event to verbalize drop target
   // location.
   void MaybeCreateDragReorderAccessibilityEvent();
@@ -636,9 +671,9 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // This can be NULL. Only grid views inside folders have a folder delegate.
   AppsGridViewFolderDelegate* folder_delegate_ = nullptr;
 
-  PaginationModel pagination_model_;
+  ash::PaginationModel pagination_model_;
   // Must appear after |pagination_model_|.
-  std::unique_ptr<PaginationController> pagination_controller_;
+  std::unique_ptr<ash::PaginationController> pagination_controller_;
 
   // Created by AppListMainView, owned by views hierarchy.
   ContentsView* contents_view_ = nullptr;
@@ -762,6 +797,9 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
 
   GhostImageView* current_ghost_view_ = nullptr;
   GhostImageView* last_ghost_view_ = nullptr;
+
+  // If true, Layout() does nothing. See where set for details.
+  bool ignore_layout_ = false;
 
   // Records the presentation time for apps grid dragging.
   std::unique_ptr<ash::PresentationTimeRecorder> presentation_time_recorder_;

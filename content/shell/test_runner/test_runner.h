@@ -41,7 +41,6 @@ class Arguments;
 }
 
 namespace test_runner {
-
 class MockContentSettingsClient;
 class MockScreenOrientationClient;
 class SpellCheckClient;
@@ -87,8 +86,9 @@ class TestRunner : public WebTestRunner {
   bool IsRecursiveLayoutDumpRequested() override;
   std::string DumpLayout(blink::WebLocalFrame* frame) override;
   bool ShouldDumpSelectionRect() const override;
-  bool DumpPixelsAsync(
-      blink::WebLocalFrame* frame,
+  bool CanDumpPixelsFromRenderer() const override;
+  void DumpPixelsAsync(
+      content::RenderView* render_view,
       base::OnceCallback<void(const SkBitmap&)> callback) override;
   void ReplicateWebTestRuntimeFlagsChanges(
       const base::DictionaryValue& changed_values) override;
@@ -124,7 +124,6 @@ class TestRunner : public WebTestRunner {
   bool shouldDumpCreateView() const;
   bool canOpenWindows() const;
   bool shouldDumpResourceLoadCallbacks() const;
-  bool shouldDumpResourceResponseMIMETypes() const;
   bool shouldDumpSpellCheckCallbacks() const;
   bool shouldWaitUntilExternalURLLoad() const;
   const std::set<std::string>* httpHeadersToClear() const;

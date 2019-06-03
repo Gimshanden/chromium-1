@@ -10,9 +10,9 @@
 #include "chrome/browser/chromeos/arc/accessibility/accessibility_node_info_data_wrapper.h"
 #include "chrome/browser/chromeos/arc/accessibility/accessibility_window_info_data_wrapper.h"
 #include "chrome/browser/chromeos/arc/accessibility/arc_accessibility_util.h"
-#include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
+#include "extensions/browser/api/automation_internal/automation_event_router.h"
 #include "extensions/common/extension_messages.h"
 #include "ui/accessibility/platform/ax_android_constants.h"
 #include "ui/aura/window.h"
@@ -383,6 +383,10 @@ const gfx::Rect AXTreeSourceArc::GetBounds(ArcAccessibilityInfoData* info_data,
                                                    .y())));
   }
   return info_data_bounds;
+}
+
+void AXTreeSourceArc::InvalidateTree() {
+  current_tree_serializer_->Reset();
 }
 
 gfx::Rect AXTreeSourceArc::ComputeEnclosingBounds(

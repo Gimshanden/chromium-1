@@ -57,19 +57,17 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
       net::URLRequest::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN;
   original.is_prerendering = false;
   original.headers.SetHeader("Accept", "text/xml");
-  original.requested_with_header = "dummy_requested_with_header";
-  original.client_data_header = "dummy_client_data_header";
+  original.cors_exempt_headers.SetHeader("X-Requested-With", "ForTesting");
   original.load_flags = 3;
   original.allow_credentials = true;
   original.plugin_child_id = 5;
   original.resource_type = 2;
   original.priority = net::IDLE;
-  original.appcache_host_id = 3;
+  original.appcache_host_id = base::UnguessableToken::Create();
   original.should_reset_appcache = true;
   original.is_external_request = false;
   original.cors_preflight_policy =
       mojom::CorsPreflightPolicy::kConsiderPreflight;
-  original.service_worker_provider_id = -1;
   original.originated_from_service_worker = false;
   original.skip_service_worker = false;
   original.fetch_request_mode = mojom::FetchRequestMode::kNoCors;
@@ -77,7 +75,6 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
   original.fetch_redirect_mode = mojom::FetchRedirectMode::kFollow;
   original.fetch_integrity = "dummy_fetch_integrity";
   original.fetch_request_context_type = 0;
-  original.fetch_frame_type = mojom::RequestContextFrameType::kAuxiliary;
   original.keepalive = true;
   original.has_user_gesture = false;
   original.enable_load_timing = true;

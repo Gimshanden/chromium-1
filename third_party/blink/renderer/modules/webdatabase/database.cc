@@ -346,12 +346,13 @@ SQLTransactionBackend* Database::RunTransaction(SQLTransaction* transaction,
     return nullptr;
 
   SQLTransactionWrapper* wrapper = nullptr;
-  if (data)
-    wrapper =
-        ChangeVersionWrapper::Create(data->OldVersion(), data->NewVersion());
+  if (data) {
+    wrapper = MakeGarbageCollected<ChangeVersionWrapper>(data->OldVersion(),
+                                                         data->NewVersion());
+  }
 
-  SQLTransactionBackend* transaction_backend =
-      SQLTransactionBackend::Create(this, transaction, wrapper, read_only);
+  auto* transaction_backend = MakeGarbageCollected<SQLTransactionBackend>(
+      this, transaction, wrapper, read_only);
   transaction_queue_.push_back(transaction_backend);
   if (!transaction_in_progress_)
     ScheduleTransaction();
@@ -806,7 +807,7 @@ void Database::PerformTransaction(
 static void CallTransactionErrorCallback(
     SQLTransaction::OnErrorCallback* callback,
     std::unique_ptr<SQLErrorData> error_data) {
-  callback->OnError(SQLError::Create(*error_data));
+  callback->OnError(MakeGarbageCollected<SQLError>(*error_data));
 }
 
 void Database::RunTransaction(
@@ -850,9 +851,10 @@ void Database::RunTransaction(
 void Database::ScheduleTransactionCallback(SQLTransaction* transaction) {
   // The task is constructed in a database thread, and destructed in the
   // context thread.
-  PostCrossThreadTask(*GetDatabaseTaskRunner(), FROM_HERE,
-                      CrossThreadBind(&SQLTransaction::PerformPendingCallback,
-                                      WrapCrossThreadPersistent(transaction)));
+  PostCrossThreadTask(
+      *GetDatabaseTaskRunner(), FROM_HERE,
+      CrossThreadBindOnce(&SQLTransaction::PerformPendingCallback,
+                          WrapCrossThreadPersistent(transaction)));
 }
 
 Vector<String> Database::PerformGetTableNames() {

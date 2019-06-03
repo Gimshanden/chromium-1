@@ -8,7 +8,7 @@
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
-#include "content/browser/web_contents/web_contents_getter_registry.h"
+#include "content/browser/web_contents/frame_tree_node_id_registry.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/net/url_request_service_worker_data.h"
 #include "content/common/net/url_request_user_data.h"
@@ -57,9 +57,9 @@ void ResourceRequestInfo::AllocateForTesting(
     bool is_async,
     PreviewsState previews_state,
     std::unique_ptr<NavigationUIData> navigation_ui_data) {
-  // Make sure RESOURCE_TYPE_MAIN_FRAME is declared as being fetched as part of
+  // Make sure ResourceType::kMainFrame is declared as being fetched as part of
   // the main frame.
-  DCHECK(resource_type != RESOURCE_TYPE_MAIN_FRAME || is_main_frame);
+  DCHECK(resource_type != ResourceType::kMainFrame || is_main_frame);
 
   ResourceRequestInfoImpl* info = new ResourceRequestInfoImpl(
       ResourceRequesterInfo::CreateForRendererTesting(
@@ -74,7 +74,6 @@ void ResourceRequestInfo::AllocateForTesting(
       resource_type,                             // resource_type
       ui::PAGE_TRANSITION_LINK,                  // transition_type
       false,                                     // is_download
-      false,                                     // is_stream
       resource_intercept_policy,                 // resource_intercept_policy
       false,                                     // has_user_gesture
       false,                                     // enable load timing
@@ -137,7 +136,6 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     ResourceType resource_type,
     ui::PageTransition transition_type,
     bool is_download,
-    bool is_stream,
     ResourceInterceptPolicy resource_intercept_policy,
     bool has_user_gesture,
     bool enable_load_timing,
@@ -163,7 +161,6 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       is_main_frame_(is_main_frame),
       fetch_window_id_(fetch_window_id),
       is_download_(is_download),
-      is_stream_(is_stream),
       resource_intercept_policy_(resource_intercept_policy),
       has_user_gesture_(has_user_gesture),
       enable_load_timing_(enable_load_timing),
@@ -194,10 +191,11 @@ ResourceRequestInfo::WebContentsGetter
 ResourceRequestInfoImpl::GetWebContentsGetterForRequest() {
   // If we have a window id, try to use that.
   if (fetch_window_id_) {
-    ResourceRequestInfo::WebContentsGetter getter =
-        WebContentsGetterRegistry::GetInstance()->Get(fetch_window_id_);
-    if (getter)
+    if (auto getter =
+            FrameTreeNodeIdRegistry::GetInstance()->GetWebContentsGetter(
+                fetch_window_id_)) {
       return getter;
+    }
   }
 
   // Navigation requests are created with a valid FrameTreeNode ID and invalid

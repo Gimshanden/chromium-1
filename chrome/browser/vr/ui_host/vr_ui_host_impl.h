@@ -10,6 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "chrome/browser/media/webrtc/desktop_media_picker_manager.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/vr/model/capturing_state_model.h"
 #include "chrome/browser/vr/service/browser_xr_runtime.h"
@@ -27,7 +28,8 @@ class VRBrowserRendererThreadWin;
 class VRUiHostImpl : public VRUiHost,
                      public PermissionRequestManager::Observer,
                      public BrowserXRRuntimeObserver,
-                     public BubbleManager::BubbleManagerObserver {
+                     public BubbleManager::BubbleManagerObserver,
+                     public DesktopMediaPickerManager::DialogObserver {
  public:
   VRUiHostImpl(device::mojom::XRDeviceId device_id,
                device::mojom::XRCompositorHostPtr compositor);
@@ -39,6 +41,34 @@ class VRUiHostImpl : public VRUiHost,
       device::mojom::XRCompositorHostPtr compositor);
 
  private:
+  // This class manages the transience of each of a CapturingStateModel's flags.
+  class CapturingStateModelTransience {
+   public:
+    explicit CapturingStateModelTransience(CapturingStateModel* model);
+
+    void ResetStartTimes();
+
+    // Turns the flags in |model| on immediately, based on the given
+    // triggered_state.
+    void TurnFlagsOnBasedOnTriggeredState(
+        const CapturingStateModel& triggered_state);
+
+    // Any on flags stay on until every one of those flags has been on for
+    // longer than |period|.
+    void TurnOffAllFlagsTogetherWhenAllTransiencesExpire(
+        const base::TimeDelta& period);
+
+   private:
+    base::Time audio_indicator_start_;
+    base::Time video_indicator_start_;
+    base::Time screen_capture_indicator_start_;
+    base::Time location_indicator_start_;
+    base::Time bluetooth_indicator_start_;
+    base::Time usb_indicator_start_;
+    base::Time midi_indicator_start_;
+    CapturingStateModel* active_capture_state_model_;  // Not owned.
+  };
+
   // BrowserXRRuntimeObserver implementation.
   void SetWebXRWebContents(content::WebContents* contents) override;
   void SetVRDisplayInfo(device::mojom::VRDisplayInfoPtr display_info) override;
@@ -58,6 +88,12 @@ class VRUiHostImpl : public VRUiHost,
                       BubbleCloseReason reason) override;
   void OnBubbleShown(BubbleReference bubble) override;
 
+  // DesktopMediaPickerManager::DialogObserver
+  // These are dialogs displayed in response to getDisplayMedia()
+  void OnDialogOpened() override;
+  void OnDialogClosed() override;
+
+  void ShowExternalNotificationPrompt();
   void RemoveHeadsetNotificationPrompt();
   void SetLocationInfoOnUi();
 
@@ -76,10 +112,16 @@ class VRUiHostImpl : public VRUiHost,
 
   CapturingStateModel active_capturing_;
   CapturingStateModel potential_capturing_;
-  device::mojom::GeolocationConfigPtr geolocation_config_;
-  base::CancelableClosure poll_capturing_state_task_;
+  // Keeps track of the state flags that were set to true between
+  // consecutive polls of active_capturing_ above.
+  CapturingStateModel triggered_capturing_state_model_;
+  CapturingStateModelTransience triggered_capturing_transience_;
   base::Time indicators_shown_start_time_;
   bool indicators_visible_ = false;
+  bool indicators_showing_first_time_ = true;
+
+  device::mojom::GeolocationConfigPtr geolocation_config_;
+  base::CancelableClosure poll_capturing_state_task_;
 
   THREAD_CHECKER(thread_checker_);
 

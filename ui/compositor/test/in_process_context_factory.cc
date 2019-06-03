@@ -37,8 +37,8 @@
 #include "ui/display/display_switches.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/switches.h"
+#include "ui/gl/color_space_utils.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/gl/gl_utils.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 #if defined(OS_MACOSX)
@@ -93,7 +93,7 @@ class DirectOutputSurface : public viz::OutputSurface {
                bool use_stencil) override {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   }
   void SwapBuffers(viz::OutputSurfaceFrame frame) override {
     DCHECK(context_provider_.get());
@@ -117,8 +117,8 @@ class DirectOutputSurface : public viz::OutputSurface {
     auto* gl = static_cast<InProcessContextProvider*>(context_provider());
     return gl->GetCopyTextureInternalFormat();
   }
-  viz::OverlayCandidateValidator* GetOverlayCandidateValidator()
-      const override {
+  std::unique_ptr<viz::OverlayCandidateValidator>
+  TakeOverlayCandidateValidator() override {
     return nullptr;
   }
   bool IsDisplayedAsOverlayPlane() const override { return false; }
@@ -129,6 +129,12 @@ class DirectOutputSurface : public viz::OutputSurface {
   bool HasExternalStencilTest() const override { return false; }
   void ApplyExternalStencil() override {}
   unsigned UpdateGpuFence() override { return 0; }
+  void SetUpdateVSyncParametersCallback(
+      viz::UpdateVSyncParametersCallback callback) override {}
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
+  gfx::OverlayTransform GetDisplayTransform() override {
+    return gfx::OVERLAY_TRANSFORM_NONE;
+  }
 
  private:
   void OnSwapBuffersComplete() {
@@ -435,7 +441,7 @@ InProcessContextFactory::CreatePerCompositorData(ui::Compositor* compositor) {
             // If we ever provide a valid surface here, then GpuSurfaceTracker
             // can be more strict about enforcing it.
             ,
-            nullptr
+            nullptr, false /* can_be_used_with_surface_control */
 #endif
             ));
 #endif

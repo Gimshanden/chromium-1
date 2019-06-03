@@ -5,13 +5,26 @@
 #ifndef COMPONENTS_VIZ_SERVICE_SURFACES_SURFACE_CLIENT_H_
 #define COMPONENTS_VIZ_SERVICE_SURFACES_SURFACE_CLIENT_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
 #include "components/viz/service/viz_service_export.h"
 
+namespace base {
+class TimeTicks;
+}  // namespace base
+
+namespace gfx {
+struct PresentationFeedback;
+class Rect;
+}  // namespace gfx
+
 namespace viz {
 struct ReturnedResource;
+class CompositorFrame;
+class CopyOutputRequest;
+class LocalSurfaceId;
 class Surface;
 struct TransferableResource;
 
@@ -60,6 +73,11 @@ class VIZ_SERVICE_EXPORT SurfaceClient {
   // (where processed may mean the frame has been displayed, or discarded).
   virtual void OnSurfaceProcessed(Surface* surface) = 0;
 
+  // Notifies the client that a frame with |token| has been presented.
+  virtual void OnSurfacePresented(
+      uint32_t frame_token,
+      const gfx::PresentationFeedback& feedback) = 0;
+
   // This is called when |surface| or one of its descendents is determined to be
   // damaged at aggregation time.
   virtual void OnSurfaceAggregatedDamage(
@@ -68,6 +86,10 @@ class VIZ_SERVICE_EXPORT SurfaceClient {
       const CompositorFrame& frame,
       const gfx::Rect& damage_rect,
       base::TimeTicks expected_display_time) = 0;
+
+  // Returns whether a sync token should be generated before returning the
+  // resources to the client.
+  virtual bool NeedsSyncTokens() const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SurfaceClient);

@@ -27,16 +27,18 @@
 #include <limits.h>
 #include <string.h>
 
+#include "base/containers/span.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/numerics/checked_math.h"
 #include "build/build_config.h"
-#include "third_party/blink/renderer/platform/wtf/ascii_ctype.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/blink/renderer/platform/wtf/string_hasher.h"
+#include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_fast_path.h"
 #include "third_party/blink/renderer/platform/wtf/text/number_parsing_options.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hasher.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
@@ -84,10 +86,10 @@ class WTF_EXPORT StringImpl {
   void* operator new(size_t, void* ptr) { return ptr; }
   void operator delete(void*);
 
-  // Used to construct static strings, which have an special refCount that can
-  // never hit zero.  This means that the static string will never be
-  // destroyed, which is important because static strings will be shared
-  // across threads & ref-counted in a non-threadsafe manner.
+  // Used to construct static strings, which have a special ref_count_ that can
+  // never hit zero. This means that the static string will never be destroyed,
+  // which is important because static strings will be shared across threads &
+  // ref-counted in a non-threadsafe manner.
   enum ConstructEmptyStringTag { kConstructEmptyString };
   explicit StringImpl(ConstructEmptyStringTag)
       : ref_count_(1),
@@ -209,6 +211,14 @@ class WTF_EXPORT StringImpl {
     DCHECK(!Is8Bit());
     return reinterpret_cast<const UChar*>(this + 1);
   }
+  ALWAYS_INLINE base::span<const LChar> Span8() const {
+    DCHECK(Is8Bit());
+    return {reinterpret_cast<const LChar*>(this + 1), length_};
+  }
+  ALWAYS_INLINE base::span<const UChar> Span16() const {
+    DCHECK(!Is8Bit());
+    return {reinterpret_cast<const UChar*>(this + 1), length_};
+  }
   ALWAYS_INLINE const void* Bytes() const {
     return reinterpret_cast<const void*>(this + 1);
   }
@@ -269,7 +279,8 @@ class WTF_EXPORT StringImpl {
 #if DCHECK_IS_ON()
     DCHECK(IsStatic() || verifier_.OnRef(ref_count_)) << AsciiForDebugging();
 #endif
-    ++ref_count_;
+    if (!IsStatic())
+      ref_count_ = base::CheckAdd(ref_count_, 1).ValueOrDie();
   }
 
   ALWAYS_INLINE void Release() const {
@@ -277,7 +288,19 @@ class WTF_EXPORT StringImpl {
     DCHECK(IsStatic() || verifier_.OnDeref(ref_count_))
         << AsciiForDebugging() << " " << CurrentThread();
 #endif
-    if (!--ref_count_)
+
+    if (!IsStatic()) {
+#if DCHECK_IS_ON()
+      // In non-DCHECK builds, we can save a bit of time in micro-benchmarks by
+      // not checking the arithmetic. We hope that checking in DCHECK builds is
+      // enough to catch implementation bugs, and that implementation bugs are
+      // the only way we'd experience underflow.
+      ref_count_ = base::CheckSub(ref_count_, 1).ValueOrDie();
+#else
+      --ref_count_;
+#endif
+    }
+    if (ref_count_ == 0)
       DestroyIfNotStatic();
   }
 

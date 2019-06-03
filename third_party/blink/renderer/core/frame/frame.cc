@@ -46,7 +46,6 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
-#include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
@@ -118,8 +117,6 @@ void Frame::DisconnectOwnerElement() {
   if (owner_->ContentFrame() == this)
     owner_->ClearContentFrame();
 
-  owner_->SetNeedsOcclusionTracking(false);
-
   owner_ = nullptr;
 }
 
@@ -129,6 +126,13 @@ Page* Frame::GetPage() const {
 
 bool Frame::IsMainFrame() const {
   return !Tree().Parent();
+}
+
+bool Frame::IsCrossOriginSubframe() const {
+  const SecurityOrigin* security_origin =
+      GetSecurityContext()->GetSecurityOrigin();
+  return !security_origin->CanAccess(
+      Tree().Top().GetSecurityContext()->GetSecurityOrigin());
 }
 
 HTMLFrameOwnerElement* Frame::DeprecatedLocalOwner() const {
@@ -225,7 +229,7 @@ void Frame::ClearUserActivationInLocalTree() {
     node->user_activation_state_.Clear();
 }
 
-void Frame::TransferActivationFrom(Frame* other) {
+void Frame::TransferUserActivationFrom(Frame* other) {
   if (other)
     user_activation_state_.TransferFrom(other->user_activation_state_);
 }
@@ -276,6 +280,11 @@ Frame::Frame(FrameClient* client,
       devtools_frame_token_(client->GetDevToolsFrameToken()),
       create_stack_(base::debug::StackTrace()) {
   InstanceCounters::IncrementCounter(InstanceCounters::kFrameCounter);
+}
+
+void Frame::Initialize() {
+  // This frame must either be local or remote.
+  DCHECK_NE(IsLocalFrame(), IsRemoteFrame());
 
   if (owner_)
     owner_->SetContentFrame(*this);

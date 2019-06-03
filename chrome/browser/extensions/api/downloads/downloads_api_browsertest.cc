@@ -14,13 +14,13 @@
 #include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
@@ -50,6 +50,7 @@
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
@@ -74,6 +75,7 @@
 #include "storage/browser/fileapi/file_system_operation_runner.h"
 #include "storage/browser/fileapi/file_system_url.h"
 #include "ui/base/page_transition_types.h"
+#include "url/origin.h"
 
 using content::BrowserContext;
 using content::BrowserThread;
@@ -492,7 +494,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
           base::GenerateGUID(), download::DownloadItem::kInvalidId + 1 + i,
           downloads_directory().Append(history_info[i].filename),
           downloads_directory().Append(history_info[i].filename), url_chain,
-          GURL(), GURL(), GURL(), GURL(), std::string(),
+          GURL(), GURL(), GURL(), GURL(), url::Origin(), std::string(),
           std::string(),  // mime_type, original_mime_type
           current,
           current,  // start_time, end_time
@@ -672,6 +674,8 @@ class DownloadExtensionTest : public ExtensionApiTest {
           current_browser(), url, ui::PAGE_TRANSITION_LINK);
       function->set_extension(extension_);
       function->SetRenderFrameHost(tab->GetMainFrame());
+      function->set_source_process_id(
+          tab->GetMainFrame()->GetProcess()->GetID());
     }
   }
 
@@ -1810,7 +1814,7 @@ class CustomResponse : public net::test_server::HttpResponse {
 
     if (first_request_) {
       *callback_ = std::move(done);
-      *task_runner_ = base::MessageLoopCurrent::Get()->task_runner().get();
+      *task_runner_ = base::ThreadTaskRunnerHandle::Get().get();
       send.Run(response, base::BindRepeating([]() {}));
     } else {
       send.Run(response, std::move(done));

@@ -17,7 +17,7 @@
 namespace chromeos {
 
 // A stub implementation of ShillProfileClient.
-class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillProfileClient
+class COMPONENT_EXPORT(SHILL_CLIENT) FakeShillProfileClient
     : public ShillProfileClient,
       public ShillProfileClient::TestInterface {
  public:
@@ -25,7 +25,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeShillProfileClient
   ~FakeShillProfileClient() override;
 
   // ShillProfileClient overrides
-  void Init(dbus::Bus* bus) override;
   void AddPropertyChangedObserver(
       const dbus::ObjectPath& profile_path,
       ShillPropertyChangedObserver* observer) override;

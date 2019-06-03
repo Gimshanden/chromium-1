@@ -20,8 +20,6 @@
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/media/webrtc/permission_bubble_media_access_handler.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -38,6 +36,7 @@
 #include "extensions/common/constants.h"
 #include "media/base/media_switches.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/media/webrtc/display_media_access_handler.h"
@@ -186,8 +185,9 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(
   // bypassing blink side checks.
   if (request.video_type == blink::MEDIA_DISPLAY_VIDEO_CAPTURE &&
       !base::FeatureList::IsEnabled(blink::features::kRTCGetDisplayMedia)) {
-    std::move(callback).Run(blink::MediaStreamDevices(),
-                            blink::MEDIA_DEVICE_NOT_SUPPORTED, nullptr);
+    std::move(callback).Run(
+        blink::MediaStreamDevices(),
+        blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED, nullptr);
     return;
   }
 
@@ -202,7 +202,8 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(
     }
   }
   std::move(callback).Run(blink::MediaStreamDevices(),
-                          blink::MEDIA_DEVICE_NOT_SUPPORTED, nullptr);
+                          blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
+                          nullptr);
 }
 
 bool MediaCaptureDevicesDispatcher::CheckMediaAccessPermission(

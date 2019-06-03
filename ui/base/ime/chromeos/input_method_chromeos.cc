@@ -65,9 +65,7 @@ InputMethodChromeOS::InputMethodChromeOS(
       composition_changed_(false),
       handling_key_event_(false),
       weak_ptr_factory_(this) {
-  ui::IMEBridge::Get()->SetInputContextHandler(this);
-
-  UpdateContextFocusState();
+  ResetContext();
 }
 
 InputMethodChromeOS::~InputMethodChromeOS() {
@@ -80,6 +78,17 @@ InputMethodChromeOS::~InputMethodChromeOS() {
     ui::IMEBridge::Get()->SetInputContextHandler(nullptr);
   }
 }
+
+InputMethodChromeOS::PendingSetCompositionRange::PendingSetCompositionRange(
+    const gfx::Range& range,
+    const std::vector<ui::ImeTextSpan>& text_spans)
+    : range(range), text_spans(text_spans) {}
+
+InputMethodChromeOS::PendingSetCompositionRange::PendingSetCompositionRange(
+    const PendingSetCompositionRange& other) = default;
+
+InputMethodChromeOS::PendingSetCompositionRange::~PendingSetCompositionRange() =
+    default;
 
 void InputMethodChromeOS::DispatchKeyEventAsync(ui::KeyEvent* event,
                                                 AckCallback ack_callback) {
@@ -165,17 +174,13 @@ ui::EventDispatchDetails InputMethodChromeOS::DispatchKeyEventInternal(
   }
 
   handling_key_event_ = true;
-  if (GetEngine()->IsInterestedInKeyEvent()) {
-    ui::IMEEngineHandlerInterface::KeyEventDoneCallback callback =
-        base::BindOnce(&InputMethodChromeOS::KeyEventDoneCallback,
-                       weak_ptr_factory_.GetWeakPtr(),
-                       // Pass the ownership of the new copied event.
-                       base::Owned(new ui::KeyEvent(*event)),
-                       std::move(result_callback));
-    GetEngine()->ProcessKeyEvent(*event, std::move(callback));
-    return ui::EventDispatchDetails();
-  }
-  return ProcessKeyEventDone(event, std::move(result_callback), false);
+  GetEngine()->ProcessKeyEvent(
+      *event, base::BindOnce(&InputMethodChromeOS::KeyEventDoneCallback,
+                             weak_ptr_factory_.GetWeakPtr(),
+                             // Pass the ownership of the new copied event.
+                             base::Owned(new ui::KeyEvent(*event)),
+                             std::move(result_callback)));
+  return ui::EventDispatchDetails();
 }
 
 void InputMethodChromeOS::KeyEventDoneCallback(ui::KeyEvent* event,
@@ -229,13 +234,13 @@ void InputMethodChromeOS::OnTextInputTypeChanged(
 
   ui::IMEEngineHandlerInterface* engine = GetEngine();
   if (engine) {
-    // When focused input client is not changed, a text input type change should
-    // cause blur/focus events to engine.
-    // The focus in to or out from password field should also notify engine.
-    engine->FocusOut();
     ui::IMEEngineHandlerInterface::InputContext context(
         GetTextInputType(), GetTextInputMode(), GetTextInputFlags(),
         GetClientFocusReason(), GetClientShouldDoLearning());
+    // When focused input client is not changed, a text input type change
+    // should cause blur/focus events to engine. The focus in to or out from
+    // password field should also notify engine.
+    engine->FocusOut();
     engine->FocusIn(context);
   }
 
@@ -305,12 +310,12 @@ void InputMethodChromeOS::OnCaretBoundsChanged(const TextInputClient* client) {
   // Here SetSurroundingText accepts relative position of |surrounding_text|, so
   // we have to convert |selection_range| from node coordinates to
   // |surrounding_text| coordinates.
-  if (!GetEngine())
-    return;
-  GetEngine()->SetSurroundingText(base::UTF16ToUTF8(surrounding_text),
-                                  selection_range.start() - text_range.start(),
-                                  selection_range.end() - text_range.start(),
-                                  text_range.start());
+  if (GetEngine()) {
+    GetEngine()->SetSurroundingText(
+        base::UTF16ToUTF8(surrounding_text),
+        selection_range.start() - text_range.start(),
+        selection_range.end() - text_range.start(), text_range.start());
+  }
 }
 
 void InputMethodChromeOS::CancelComposition(const TextInputClient* client) {
@@ -361,6 +366,34 @@ void InputMethodChromeOS::OnDidChangeFocusedClient(
   OnCaretBoundsChanged(GetTextInputClient());
 }
 
+bool InputMethodChromeOS::SetCompositionRange(
+    uint32_t before,
+    uint32_t after,
+    const std::vector<ui::ImeTextSpan>& text_spans) {
+  if (IsTextInputTypeNone())
+    return false;
+
+  // The given range and spans are relative to the current selection.
+  gfx::Range range;
+  if (!GetTextInputClient()->GetEditableSelectionRange(&range))
+    return false;
+
+  const gfx::Range composition_range(range.start() - before,
+                                     range.end() + after);
+
+  // If we have pending key events, then delay the operation until
+  // |ProcessKeyEventPostIME|. Otherwise, process it immediately.
+  if (handling_key_event_) {
+    composition_changed_ = true;
+    pending_composition_range_ =
+        PendingSetCompositionRange{composition_range, text_spans};
+    return true;
+  } else {
+    return GetTextInputClient()->SetCompositionFromExistingText(
+        composition_range, text_spans);
+  }
+}
+
 void InputMethodChromeOS::ConfirmCompositionText() {
   TextInputClient* client = GetTextInputClient();
   if (client && client->HasCompositionText())
@@ -378,10 +411,6 @@ void InputMethodChromeOS::ResetContext() {
   composing_text_ = false;
   composition_changed_ = false;
 
-  // This function runs asynchronously.
-  // Note: some input method engines may not support reset method, such as
-  // ibus-anthy. But as we control all input method engines by ourselves, we can
-  // make sure that all of the engines we are using support it correctly.
   if (GetEngine())
     GetEngine()->Reset();
 
@@ -566,13 +595,22 @@ void InputMethodChromeOS::ProcessInputMethodResult(ui::KeyEvent* event,
     }
   }
 
+  // TODO(https://crbug.com/952757): Refactor this code to be clearer and less
+  // error-prone.
   if (composition_changed_ && !IsTextInputTypeNone()) {
+    if (pending_composition_range_) {
+      client->SetCompositionFromExistingText(
+          pending_composition_range_->range,
+          pending_composition_range_->text_spans);
+    }
     if (composition_.text.length()) {
       composing_text_ = true;
       client->SetCompositionText(composition_);
-    } else if (result_text_.empty()) {
+    } else if (result_text_.empty() && !pending_composition_range_) {
       client->ClearCompositionText();
     }
+
+    pending_composition_range_.reset();
   }
 
   // We should not clear composition text here, as it may belong to the next
@@ -669,7 +707,7 @@ void InputMethodChromeOS::UpdateCompositionText(const CompositionText& text,
 }
 
 void InputMethodChromeOS::HidePreeditText() {
-  if (composition_.text.empty() || IsTextInputTypeNone())
+  if (IsTextInputTypeNone())
     return;
 
   // Intentionally leaves |composing_text_| unchanged.

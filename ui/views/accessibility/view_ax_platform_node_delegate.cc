@@ -42,7 +42,7 @@ base::LazyInstance<std::vector<QueuedEvent>>::Leaky g_event_queue =
 bool g_is_queueing_events = false;
 
 bool IsAccessibilityFocusableWhenEnabled(View* view) {
-  return view->focus_behavior() != View::FocusBehavior::NEVER &&
+  return view->GetFocusBehavior() != View::FocusBehavior::NEVER &&
          view->IsDrawn();
 }
 
@@ -144,8 +144,6 @@ void ViewAXPlatformNodeDelegate::NotifyAccessibilityEvent(
     return;
   }
 
-  ax_platform_node_->NotifyAccessibilityEvent(event_type);
-
   // Some events have special handling.
   switch (event_type) {
     case ax::mojom::Event::kMenuStart:
@@ -171,6 +169,9 @@ void ViewAXPlatformNodeDelegate::NotifyAccessibilityEvent(
     default:
       break;
   }
+
+  // Fire events here now that our internal state is up-to-date.
+  ax_platform_node_->NotifyAccessibilityEvent(event_type);
 }
 
 #if defined(OS_MACOSX)
@@ -234,8 +235,8 @@ int ViewAXPlatformNodeDelegate::GetChildCount() {
   if (IsLeaf())
     return 0;
 
-  if (virtual_child_count())
-    return virtual_child_count();
+  if (!virtual_children().empty())
+    return int{virtual_children().size()};
 
   const auto child_widgets_result = GetChildWidgets();
   if (child_widgets_result.is_tab_modal_showing) {
@@ -253,8 +254,9 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::ChildAtIndex(int index) {
   if (IsLeaf())
     return nullptr;
 
-  if (virtual_child_count())
-    return virtual_child_at(index)->GetNativeObject();
+  size_t child_index = size_t{index};
+  if (!virtual_children().empty())
+    return virtual_children()[child_index]->GetNativeObject();
 
   // If this is a root view, our widget might have child widgets. Include
   const auto child_widgets_result = GetChildWidgets();
@@ -267,7 +269,6 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::ChildAtIndex(int index) {
     return child_widgets[0]->GetRootView()->GetNativeViewAccessible();
   }
 
-  size_t child_index = size_t{index};
   if (child_index < view()->children().size())
     return view()->children()[child_index]->GetNativeViewAccessible();
 
@@ -296,13 +297,19 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::GetParent() {
   return nullptr;
 }
 
-gfx::Rect ViewAXPlatformNodeDelegate::GetClippedScreenBoundsRect() const {
-  // We could optionally add clipping here if ever needed.
-  return view()->GetBoundsInScreen();
-}
-
-gfx::Rect ViewAXPlatformNodeDelegate::GetUnclippedScreenBoundsRect() const {
-  return view()->GetBoundsInScreen();
+gfx::Rect ViewAXPlatformNodeDelegate::GetBoundsRect(
+    const ui::AXCoordinateSystem coordinate_system,
+    const ui::AXClippingBehavior clipping_behavior,
+    ui::AXOffscreenResult* offscreen_result) const {
+  switch (coordinate_system) {
+    case ui::AXCoordinateSystem::kScreen:
+      // We could optionally add clipping here if ever needed.
+      return view()->GetBoundsInScreen();
+    case ui::AXCoordinateSystem::kRootFrame:
+    case ui::AXCoordinateSystem::kFrame:
+      NOTIMPLEMENTED();
+      return gfx::Rect();
+  }
 }
 
 gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::HitTestSync(int x,
@@ -332,7 +339,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::HitTestSync(int x,
   // do a recursive hit test if we return anything other than |this| or NULL.
   View* v = view();
   const auto is_point_in_child = [point, v](View* child) {
-    if (!child->visible())
+    if (!child->GetVisible())
       return false;
     gfx::Point point_in_child_coords = point;
     v->ConvertPointToTarget(v, child, &point_in_child_coords);
@@ -381,6 +388,17 @@ bool ViewAXPlatformNodeDelegate::IsOffscreen() const {
   return false;
 }
 
+base::string16 ViewAXPlatformNodeDelegate::GetAuthorUniqueId() const {
+  const View* v = view();
+  if (v) {
+    const int view_id = v->GetID();
+    if (view_id)
+      return base::WideToUTF16(L"view_") + base::NumberToString16(view_id);
+  }
+
+  return base::string16();
+}
+
 const ui::AXUniqueId& ViewAXPlatformNodeDelegate::GetUniqueId() const {
   return ViewAccessibility::GetUniqueId();
 }
@@ -398,13 +416,9 @@ ViewAXPlatformNodeDelegate::GetChildWidgets() const {
   Widget::GetAllOwnedWidgets(widget->GetNativeView(), &owned_widgets);
 
   std::vector<Widget*> visible_widgets;
-  const auto visible = [widget](const Widget* child) {
-    return child->IsVisible() &&
-           // TODO(dmazzoni): Shouldn't this be |child|?
-           !widget->GetNativeWindowProperty(kWidgetNativeViewHostKey);
-  };
   std::copy_if(owned_widgets.cbegin(), owned_widgets.cend(),
-               std::back_inserter(visible_widgets), visible);
+               std::back_inserter(visible_widgets),
+               [](const Widget* child) { return child->IsVisible(); });
 
   // Focused child widgets should take the place of the web page they cover in
   // the accessibility tree.

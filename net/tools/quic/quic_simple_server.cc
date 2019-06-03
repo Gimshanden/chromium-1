@@ -13,6 +13,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_source.h"
+#include "net/quic/address_utils.h"
 #include "net/socket/udp_server_socket.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_handshake.h"
 #include "net/third_party/quiche/src/quic/core/crypto/quic_random.h"
@@ -33,7 +34,7 @@ const size_t kNumSessionsToCreatePerSocketEvent = 16;
 
 // Allocate some extra space so we can send an error if the client goes over
 // the limit.
-const int kReadBufferSize = 2 * quic::kMaxPacketSize;
+const int kReadBufferSize = 2 * quic::kMaxOutgoingPacketSize;
 
 }  // namespace
 
@@ -62,6 +63,7 @@ QuicSimpleServer::QuicSimpleServer(
       read_buffer_(base::MakeRefCounted<IOBufferWithSize>(kReadBufferSize)),
       quic_simple_server_backend_(quic_simple_server_backend),
       weak_factory_(this) {
+  DCHECK(quic_simple_server_backend);
   Initialize();
 }
 
@@ -115,7 +117,7 @@ int QuicSimpleServer::Listen(const IPEndPoint& address) {
     return rc;
   }
 
-  rc = socket->SetSendBufferSize(20 * quic::kMaxPacketSize);
+  rc = socket->SetSendBufferSize(20 * quic::kMaxOutgoingPacketSize);
   if (rc < 0) {
     LOG(ERROR) << "SetSendBufferSize() failed: " << ErrorToString(rc);
     return rc;
@@ -210,10 +212,8 @@ void QuicSimpleServer::OnReadComplete(int result) {
 
   quic::QuicReceivedPacket packet(read_buffer_->data(), result,
                                   helper_->GetClock()->Now(), false);
-  dispatcher_->ProcessPacket(
-      quic::QuicSocketAddress(quic::QuicSocketAddressImpl(server_address_)),
-      quic::QuicSocketAddress(quic::QuicSocketAddressImpl(client_address_)),
-      packet);
+  dispatcher_->ProcessPacket(ToQuicSocketAddress(server_address_),
+                             ToQuicSocketAddress(client_address_), packet);
 
   StartReading();
 }

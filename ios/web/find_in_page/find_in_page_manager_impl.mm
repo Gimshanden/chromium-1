@@ -9,9 +9,9 @@
 #include "base/values.h"
 #import "ios/web/find_in_page/find_in_page_constants.h"
 #import "ios/web/public/find_in_page/find_in_page_manager_delegate.h"
-#import "ios/web/public/web_state/web_frame.h"
-#include "ios/web/public/web_state/web_frame_util.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
+#import "ios/web/public/js_messaging/web_frame.h"
+#include "ios/web/public/js_messaging/web_frame_util.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #include "ios/web/public/web_task_traits.h"
 #import "ios/web/web_state/web_state_impl.h"
 
@@ -19,8 +19,7 @@
 #error "This file requires ARC support."
 #endif
 
-namespace web {
-
+namespace {
 // Timeout for the find within JavaScript in milliseconds.
 const double kFindInPageFindTimeout = 100.0;
 
@@ -32,6 +31,9 @@ const int kFindInPagePending = -1;
 // restart again. If this timeout hits, then something went wrong with the find
 // and find in page should not continue.
 const double kJavaScriptFunctionCallTimeout = 200.0;
+}  // namespace
+
+namespace web {
 
 // static
 FindInPageManagerImpl::FindInPageManagerImpl(WebState* web_state)
@@ -61,160 +63,23 @@ void FindInPageManagerImpl::SetDelegate(FindInPageManagerDelegate* delegate) {
   delegate_ = delegate;
 }
 
-FindInPageManagerImpl::FindRequest::FindRequest() {}
-
-FindInPageManagerImpl::FindRequest::~FindRequest() {}
-
-void FindInPageManagerImpl::FindRequest::Reset(
-    NSString* new_query,
-    int new_pending_frame_call_count) {
-  unique_id++;
-  selected_frame_id = frame_order.end();
-  selected_match_index_in_selected_frame = -1;
-  query = [new_query copy];
-  pending_frame_call_count = new_pending_frame_call_count;
-  for (auto& pair : frame_match_count) {
-    pair.second = 0;
-  }
-}
-
-int FindInPageManagerImpl::FindRequest::GetTotalMatchCount() const {
-  int matches = 0;
-  for (auto pair : frame_match_count) {
-    matches += pair.second;
-  }
-  return matches;
-}
-
-int FindInPageManagerImpl::FindRequest::GetCurrentSelectedMatchIndex() {
-  if (selected_match_index_in_selected_frame == -1) {
-    return -1;
-  }
-  // Count all matches in frames that come before frame with id
-  // |selected_frame_id|.
-  int total_match_index = selected_match_index_in_selected_frame;
-  for (auto it = frame_order.begin(); it != selected_frame_id; ++it) {
-    total_match_index += frame_match_count[*it];
-  }
-  return total_match_index;
-}
-
-bool FindInPageManagerImpl::FindRequest::GoToFirstMatch() {
-  for (auto frame_id = frame_order.begin(); frame_id != frame_order.end();
-       ++frame_id) {
-    if (frame_match_count[*frame_id] > 0) {
-      selected_frame_id = frame_id;
-      selected_match_index_in_selected_frame = 0;
-      return true;
-    }
-  }
-  return false;
-}
-
-bool FindInPageManagerImpl::FindRequest::GoToNextMatch() {
-  if (GetTotalMatchCount() == 0) {
-    return false;
-  }
-  // No currently selected match, but there are matches. Move iterator to
-  // beginning. This can happen if a frame containing the currently selected
-  // match is removed from the page.
-  if (selected_frame_id == frame_order.end()) {
-    selected_frame_id = frame_order.begin();
-  }
-
-  bool next_match_is_in_selected_frame =
-      selected_match_index_in_selected_frame + 1 <
-      frame_match_count[*selected_frame_id];
-  if (next_match_is_in_selected_frame) {
-    selected_match_index_in_selected_frame++;
-  } else {
-    // Since the function returns early if there are no matches, an infinite
-    // loop should not be a risk.
-    do {
-      if (selected_frame_id == --frame_order.end()) {
-        selected_frame_id = frame_order.begin();
-      } else {
-        selected_frame_id++;
-      }
-    } while (frame_match_count[*selected_frame_id] == 0);
-    // Should have found new frame.
-    selected_match_index_in_selected_frame = 0;
-  }
-  return true;
-}
-
-bool FindInPageManagerImpl::FindRequest::GoToPreviousMatch() {
-  if (GetTotalMatchCount() == 0) {
-    return false;
-  }
-  // No currently selected match, but there are matches. Move iterator to
-  // beginning. This can happen if a frame containing the currently selected
-  // matchs is removed from the page.
-  if (selected_frame_id == frame_order.end()) {
-    selected_frame_id = frame_order.begin();
-  }
-
-  bool previous_match_is_in_selected_frame =
-      selected_match_index_in_selected_frame - 1 >= 0;
-  if (previous_match_is_in_selected_frame) {
-    selected_match_index_in_selected_frame--;
-  } else {
-    // Since the function returns early if there are no matches, an infinite
-    // loop should not be a risk.
-    do {
-      if (selected_frame_id == frame_order.begin()) {
-        selected_frame_id = --frame_order.end();
-      } else {
-        selected_frame_id--;
-      }
-    } while (frame_match_count[*selected_frame_id] == 0);
-    // Should have found new frame.
-    selected_match_index_in_selected_frame =
-        frame_match_count[*selected_frame_id] - 1;
-  }
-  return true;
-}
-
-void FindInPageManagerImpl::FindRequest::RemoveFrame(WebFrame* web_frame) {
-  if (IsSelectedFrame(web_frame)) {
-    // If currently selecting match in frame that will become unavailable,
-    // there will no longer be a selected match. Reset to unselected match
-    // state.
-    selected_frame_id = frame_order.end();
-    selected_match_index_in_selected_frame = -1;
-  }
-  frame_order.remove(web_frame->GetFrameId());
-  frame_match_count.erase(web_frame->GetFrameId());
-}
-
-bool FindInPageManagerImpl::FindRequest::IsSelectedFrame(WebFrame* web_frame) {
-  if (selected_frame_id == frame_order.end()) {
-    return false;
-  }
-  return *selected_frame_id == web_frame->GetFrameId();
-}
-
 void FindInPageManagerImpl::WebFrameDidBecomeAvailable(WebState* web_state,
                                                        WebFrame* web_frame) {
   const std::string frame_id = web_frame->GetFrameId();
-  last_find_request_.frame_match_count[frame_id] = 0;
-  if (web_frame->IsMainFrame()) {
-    // Main frame matches should show up first.
-    last_find_request_.frame_order.push_front(frame_id);
-  } else {
-    // The order of iframes is not important.
-    last_find_request_.frame_order.push_back(frame_id);
-  }
+  last_find_request_.AddFrame(web_frame);
 }
 
 void FindInPageManagerImpl::WebFrameWillBecomeUnavailable(WebState* web_state,
                                                           WebFrame* web_frame) {
-  last_find_request_.RemoveFrame(web_frame);
+  int match_count =
+      last_find_request_.GetMatchCountForFrame(web_frame->GetFrameId());
+  last_find_request_.RemoveFrame(web_frame->GetFrameId());
 
-  if (delegate_ && last_find_request_.query) {
+  // Only notify the delegate if the match count has changed.
+  if (delegate_ && last_find_request_.GetRequestQuery() && match_count > 0) {
     delegate_->DidHighlightMatches(web_state_,
                                    last_find_request_.GetTotalMatchCount(),
-                                   last_find_request_.query);
+                                   last_find_request_.GetRequestQuery());
   }
 }
 
@@ -224,6 +89,8 @@ void FindInPageManagerImpl::WebStateDestroyed(WebState* web_state) {
 }
 
 void FindInPageManagerImpl::Find(NSString* query, FindInPageOptions options) {
+  DCHECK(CanSearchContent());
+
   switch (options) {
     case FindInPageOptions::FindInPageSearch:
       DCHECK(query);
@@ -259,12 +126,13 @@ void FindInPageManagerImpl::StartSearch(NSString* query) {
         kFindInPageSearch, params,
         base::BindOnce(&FindInPageManagerImpl::ProcessFindInPageResult,
                        weak_factory_.GetWeakPtr(), frame->GetFrameId(),
-                       last_find_request_.unique_id),
-        base::TimeDelta::FromSeconds(kJavaScriptFunctionCallTimeout));
+                       last_find_request_.GetRequestId()),
+        base::TimeDelta::FromMilliseconds(kJavaScriptFunctionCallTimeout));
     if (!result) {
       // Calling JavaScript function failed or the frame does not support
       // messaging.
-      if (--last_find_request_.pending_frame_call_count == 0) {
+      last_find_request_.DidReceiveFindResponseFromOneFrame();
+      if (last_find_request_.AreAllFindResponsesReturned()) {
         // Call asyncronously to match behavior if find was done in frames.
         base::PostTaskWithTraits(
             FROM_HERE, {WebThread::UI},
@@ -275,13 +143,30 @@ void FindInPageManagerImpl::StartSearch(NSString* query) {
   }
 }
 
-void FindInPageManagerImpl::StopFinding() {}
+void FindInPageManagerImpl::StopFinding() {
+  last_find_request_.Reset(/*new_query=*/nil,
+                           /*new_pending_frame_call_count=*/0);
+
+  std::vector<base::Value> params;
+  for (WebFrame* frame : GetAllWebFrames(web_state_)) {
+    frame->CallJavaScriptFunction(kFindInPageStop, params);
+  }
+  if (delegate_) {
+    delegate_->DidHighlightMatches(web_state_,
+                                   last_find_request_.GetTotalMatchCount(),
+                                   last_find_request_.GetRequestQuery());
+  }
+}
+
+bool FindInPageManagerImpl::CanSearchContent() {
+  return web_state_->ContentIsHTML();
+}
 
 void FindInPageManagerImpl::ProcessFindInPageResult(const std::string& frame_id,
                                                     const int unique_id,
                                                     const base::Value* result) {
-  if (unique_id != last_find_request_.unique_id) {
-    // New find was started.
+  if (unique_id != last_find_request_.GetRequestId()) {
+    // New find was started or current find was stopped.
     return;
   }
   if (!web_state_) {
@@ -294,7 +179,7 @@ void FindInPageManagerImpl::ProcessFindInPageResult(const std::string& frame_id,
     // The frame no longer exists or the function call timed out. In both cases,
     // result will be null.
     // Zero out count to ensure every frame is updated for every find.
-    last_find_request_.frame_match_count[frame_id] = 0;
+    last_find_request_.SetMatchCountForFrame(0, frame_id);
   } else {
     int match_count = 0;
     if (result->is_double()) {
@@ -311,13 +196,14 @@ void FindInPageManagerImpl::ProcessFindInPageResult(const std::string& frame_id,
           kFindInPagePump, params,
           base::BindOnce(&FindInPageManagerImpl::ProcessFindInPageResult,
                          weak_factory_.GetWeakPtr(), frame_id, unique_id),
-          base::TimeDelta::FromSeconds(kJavaScriptFunctionCallTimeout));
+          base::TimeDelta::FromMilliseconds(kJavaScriptFunctionCallTimeout));
       return;
     }
 
-    last_find_request_.frame_match_count[frame_id] = match_count;
+    last_find_request_.SetMatchCountForFrame(match_count, frame_id);
   }
-  if (--last_find_request_.pending_frame_call_count == 0) {
+  last_find_request_.DidReceiveFindResponseFromOneFrame();
+  if (last_find_request_.AreAllFindResponsesReturned()) {
     LastFindRequestCompleted();
   }
 }
@@ -326,7 +212,7 @@ void FindInPageManagerImpl::LastFindRequestCompleted() {
   if (delegate_) {
     delegate_->DidHighlightMatches(web_state_,
                                    last_find_request_.GetTotalMatchCount(),
-                                   last_find_request_.query);
+                                   last_find_request_.GetRequestQuery());
   }
   int total_matches = last_find_request_.GetTotalMatchCount();
   if (total_matches == 0) {
@@ -338,11 +224,31 @@ void FindInPageManagerImpl::LastFindRequestCompleted() {
   }
 }
 
-void FindInPageManagerImpl::NotifyDelegateDidSelectMatch(
-    const base::Value* result) {
+void FindInPageManagerImpl::SelectDidFinish(const base::Value* result) {
+  if (result && result->is_dict()) {
+    // Get updated match count.
+    const base::Value* matches = result->FindKey(kSelectAndScrollResultMatches);
+    if (matches && matches->is_double()) {
+      int match_count = static_cast<int>(matches->GetDouble());
+      if (match_count != last_find_request_.GetMatchCountForSelectedFrame()) {
+        last_find_request_.SetMatchCountForSelectedFrame(match_count);
+        if (delegate_) {
+          delegate_->DidHighlightMatches(
+              web_state_, last_find_request_.GetTotalMatchCount(),
+              last_find_request_.GetRequestQuery());
+        }
+      }
+    }
+    // Get updated currently selected index.
+    const base::Value* index = result->FindKey(kSelectAndScrollResultIndex);
+    if (index && index->is_double()) {
+      int current_index = static_cast<int>(index->GetDouble());
+      last_find_request_.SetCurrentSelectedMatchFrameIndex(current_index);
+    }
+  }
   if (delegate_) {
     delegate_->DidSelectMatch(
-        web_state_, last_find_request_.GetCurrentSelectedMatchIndex());
+        web_state_, last_find_request_.GetCurrentSelectedMatchPageIndex());
   }
 }
 
@@ -360,16 +266,16 @@ void FindInPageManagerImpl::SelectPreviousMatch() {
 
 void FindInPageManagerImpl::SelectCurrentMatch() {
   web::WebFrame* frame =
-      GetWebFrameWithId(web_state_, *last_find_request_.selected_frame_id);
+      GetWebFrameWithId(web_state_, last_find_request_.GetSelectedFrameId());
   if (frame) {
     std::vector<base::Value> params;
     params.push_back(
-        base::Value(last_find_request_.selected_match_index_in_selected_frame));
+        base::Value(last_find_request_.GetCurrentSelectedMatchFrameIndex()));
     frame->CallJavaScriptFunction(
-        kFindInPageHighlightMatch, params,
-        base::BindOnce(&FindInPageManagerImpl::NotifyDelegateDidSelectMatch,
+        kFindInPageSelectAndScrollToMatch, params,
+        base::BindOnce(&FindInPageManagerImpl::SelectDidFinish,
                        weak_factory_.GetWeakPtr()),
-        base::TimeDelta::FromSeconds(kJavaScriptFunctionCallTimeout));
+        base::TimeDelta::FromMilliseconds(kJavaScriptFunctionCallTimeout));
   }
 }
 

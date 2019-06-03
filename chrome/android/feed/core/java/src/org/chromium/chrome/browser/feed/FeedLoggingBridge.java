@@ -6,17 +6,19 @@ package org.chromium.chrome.browser.feed;
 
 import android.support.annotation.NonNull;
 
-import com.google.android.libraries.feed.api.stream.ScrollListener;
-import com.google.android.libraries.feed.host.logging.ActionType;
-import com.google.android.libraries.feed.host.logging.BasicLoggingApi;
-import com.google.android.libraries.feed.host.logging.ContentLoggingData;
-import com.google.android.libraries.feed.host.logging.ElementLoggingData;
-import com.google.android.libraries.feed.host.logging.InternalFeedError;
-import com.google.android.libraries.feed.host.logging.RequestReason;
-import com.google.android.libraries.feed.host.logging.ScrollType;
-import com.google.android.libraries.feed.host.logging.SessionEvent;
-import com.google.android.libraries.feed.host.logging.SpinnerType;
-import com.google.android.libraries.feed.host.logging.ZeroStateShowReason;
+import com.google.android.libraries.feed.api.client.stream.Stream.ScrollListener;
+import com.google.android.libraries.feed.api.host.logging.ActionType;
+import com.google.android.libraries.feed.api.host.logging.BasicLoggingApi;
+import com.google.android.libraries.feed.api.host.logging.ContentLoggingData;
+import com.google.android.libraries.feed.api.host.logging.ElementLoggingData;
+import com.google.android.libraries.feed.api.host.logging.InternalFeedError;
+import com.google.android.libraries.feed.api.host.logging.RequestReason;
+import com.google.android.libraries.feed.api.host.logging.ScrollType;
+import com.google.android.libraries.feed.api.host.logging.SessionEvent;
+import com.google.android.libraries.feed.api.host.logging.SpinnerType;
+import com.google.android.libraries.feed.api.host.logging.Task;
+import com.google.android.libraries.feed.api.host.logging.ZeroStateShowReason;
+import com.google.search.now.ui.action.FeedActionProto;
 
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.chrome.browser.ntp.NewTabPageUma;
@@ -133,23 +135,20 @@ public class FeedLoggingBridge implements BasicLoggingApi {
     }
 
     @Override
-    public void onNotInterestedInSource(ContentLoggingData data, boolean wasCommitted) {
+    public void onNotInterestedIn(int interestType, ContentLoggingData data, boolean wasCommitted) {
         // Bridge could have been destroyed for policy when this is called.
         // See https://crbug.com/901414.
         if (mNativeFeedLoggingBridge == 0) return;
 
-        nativeOnNotInterestedInSource(
-                mNativeFeedLoggingBridge, data.getPositionInStream(), wasCommitted);
-    }
-
-    @Override
-    public void onNotInterestedInTopic(ContentLoggingData data, boolean wasCommitted) {
-        // Bridge could have been destroyed for policy when this is called.
-        // See https://crbug.com/901414.
-        if (mNativeFeedLoggingBridge == 0) return;
-
-        nativeOnNotInterestedInTopic(
-                mNativeFeedLoggingBridge, data.getPositionInStream(), wasCommitted);
+        // TODO(crbug.com/935602): Fail to compile when new values are added to NotInterestedInData.
+        if (interestType == FeedActionProto.NotInterestedInData.RecordedInterestType.TOPIC_VALUE) {
+            nativeOnNotInterestedInTopic(
+                    mNativeFeedLoggingBridge, data.getPositionInStream(), wasCommitted);
+        } else if (interestType
+                == FeedActionProto.NotInterestedInData.RecordedInterestType.SOURCE_VALUE) {
+            nativeOnNotInterestedInSource(
+                    mNativeFeedLoggingBridge, data.getPositionInStream(), wasCommitted);
+        }
     }
 
     @Override
@@ -271,6 +270,12 @@ public class FeedLoggingBridge implements BasicLoggingApi {
     @Override
     public void onScroll(@ScrollType int scrollType, int distanceScrolled) {
         // TODO(https://crbug.com/924739): Implementation.
+    }
+
+    @Override
+    public void onTaskFinished(@Task int task, int delayTime, int taskTime) {
+        if (mNativeFeedLoggingBridge == 0) return;
+        nativeOnTaskFinished(mNativeFeedLoggingBridge, task, delayTime, taskTime);
     }
 
     /**
@@ -398,6 +403,8 @@ public class FeedLoggingBridge implements BasicLoggingApi {
             long nativeFeedLoggingBridge, int zeroStateShowReason);
     private native void nativeOnZeroStateRefreshCompleted(
             long nativeFeedLoggingBridge, int newContentCount, int newTokenCount);
+    private native void nativeOnTaskFinished(
+            long nativeFeedLoggingBridge, int task, int delayTimeMs, int taskTimeMs);
     private native void nativeOnContentTargetVisited(
             long nativeFeedLoggingBridge, long visitTimeMs, boolean isOffline, boolean returnToNtp);
     private native void nativeReportScrolledAfterOpen(long nativeFeedLoggingBridge);

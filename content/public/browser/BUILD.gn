@@ -43,6 +43,7 @@ jumbo_source_set("browser_sources") {
     "audio_loopback_stream_creator.h",
     "audio_service_info.cc",
     "audio_service_info.h",
+    "authenticator_environment.h",
     "authenticator_request_client_delegate.cc",
     "authenticator_request_client_delegate.h",
     "ax_event_notification_details.cc",
@@ -63,6 +64,8 @@ jumbo_source_set("browser_sources") {
     "blob_handle.h",
     "bluetooth_chooser.cc",
     "bluetooth_chooser.h",
+    "bluetooth_scanning_prompt.cc",
+    "bluetooth_scanning_prompt.h",
     "browser_accessibility_state.h",
     "browser_associated_interface.h",
     "browser_child_process_host.h",
@@ -99,6 +102,7 @@ jumbo_source_set("browser_sources") {
     "child_process_data.h",
     "child_process_launcher_utils.h",
     "child_process_security_policy.h",
+    "child_process_termination_info.cc",
     "child_process_termination_info.h",
     "clear_site_data_utils.h",
     "client_certificate_delegate.h",
@@ -108,9 +112,10 @@ jumbo_source_set("browser_sources") {
     "content_browser_client.cc",
     "content_browser_client.h",
     "cookie_store_factory.h",
+    "cors_exempt_headers.cc",
+    "cors_exempt_headers.h",
     "cors_origin_pattern_setter.cc",
     "cors_origin_pattern_setter.h",
-    "delegate_to_browser_gpu_service_accelerator_factory.h",
     "desktop_capture.cc",
     "desktop_capture.h",
     "desktop_media_id.cc",
@@ -121,6 +126,7 @@ jumbo_source_set("browser_sources") {
     "devtools_agent_host_client.h",
     "devtools_agent_host_observer.cc",
     "devtools_agent_host_observer.h",
+    "devtools_background_services_context.h",
     "devtools_external_agent_proxy.h",
     "devtools_external_agent_proxy_delegate.h",
     "devtools_frontend_host.h",
@@ -209,6 +215,7 @@ jumbo_source_set("browser_sources") {
     "notification_observer.h",
     "notification_registrar.cc",
     "notification_registrar.h",
+    "notification_resource_data.h",
     "notification_service.h",
     "notification_source.h",
     "notification_types.h",
@@ -280,6 +287,7 @@ jumbo_source_set("browser_sources") {
     "site_instance.h",
     "site_isolation_policy.cc",
     "site_isolation_policy.h",
+    "sms_service.h",
     "speech_recognition_event_listener.h",
     "speech_recognition_manager.h",
     "speech_recognition_manager_delegate.h",
@@ -297,9 +305,6 @@ jumbo_source_set("browser_sources") {
     "storage_usage_info.h",
     "stored_payment_app.cc",
     "stored_payment_app.h",
-    "stream_handle.h",
-    "stream_info.cc",
-    "stream_info.h",
     "swap_metrics_driver.h",
     "touch_selection_controller_client_manager.h",
     "trace_uploader.h",
@@ -368,11 +373,11 @@ jumbo_source_set("browser_sources") {
   public_deps = [
     "//components/download/public/common:public",
     "//content/public/common:common_sources",
-    "//device/usb/public/mojom",
     "//ipc",
     "//media/mojo/interfaces:remoting",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
+    "//services/device/public/mojom:usb",
     "//services/media_session/public/cpp",
     "//services/media_session/public/mojom",
     "//services/network/public/mojom",
@@ -387,7 +392,6 @@ jumbo_source_set("browser_sources") {
 
     # We expose storage headers for quota and blob storage context in the public API.
     "//storage/browser",
-    "//third_party/blink/public:mojo_bindings",
   ]
   deps = [
     "//cc",
@@ -437,10 +441,7 @@ jumbo_source_set("browser_sources") {
   }
 
   if (is_mac) {
-    sources += [
-      "ns_view_bridge_factory_host.h",
-      "ns_view_bridge_factory_impl.h",
-    ]
+    sources += [ "remote_cocoa.h" ]
   }
 
   if (!is_android) {
@@ -448,5 +449,10 @@ jumbo_source_set("browser_sources") {
       "host_zoom_map.h",
       "zoom_level_delegate.h",
     ]
+  }
+
+  if (is_chromeos) {
+    sources +=
+        [ "chromeos/delegate_to_browser_gpu_service_accelerator_factory.h" ]
   }
 }

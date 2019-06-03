@@ -31,6 +31,7 @@
 
 #include <memory>
 #include <vector>
+#include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
 #include "base/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
@@ -46,6 +47,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/response_body_loader_client.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -69,16 +71,11 @@ class PLATFORM_EXPORT ResourceLoader final
   USING_PRE_FINALIZER(ResourceLoader, Dispose);
 
  public:
-  static ResourceLoader* Create(ResourceFetcher*,
-                                ResourceLoadScheduler*,
-                                Resource*,
-                                uint32_t inflight_keepalive_bytes = 0);
-
   // Assumes ResourceFetcher and Resource are non-null.
   ResourceLoader(ResourceFetcher*,
                  ResourceLoadScheduler*,
                  Resource*,
-                 uint32_t inflight_keepalive_bytes);
+                 uint32_t inflight_keepalive_bytes = 0);
   ~ResourceLoader() override;
   void Trace(blink::Visitor*) override;
 
@@ -128,8 +125,6 @@ class PLATFORM_EXPORT ResourceLoader final
   void DidSendData(uint64_t bytes_sent,
                    uint64_t total_bytes_to_be_sent) override;
   void DidReceiveResponse(const WebURLResponse&) override;
-  void DidReceiveResponse(const WebURLResponse&,
-                          std::unique_ptr<WebDataConsumerHandle>) override;
   void DidReceiveCachedMetadata(const char* data, int length) override;
   void DidReceiveData(const char*, int) override;
   void DidReceiveTransferSizeUpdate(int transfer_size_diff) override;
@@ -148,7 +143,7 @@ class PLATFORM_EXPORT ResourceLoader final
                int64_t decoded_body_length) override;
 
   blink::mojom::CodeCacheType GetCodeCacheType() const;
-  void SendCachedCodeToResource(const char* data, int size);
+  void SendCachedCodeToResource(base::span<const uint8_t> data);
   void ClearCachedCode();
 
   void HandleError(const ResourceError&);
@@ -196,8 +191,7 @@ class PLATFORM_EXPORT ResourceLoader final
   void RequestAsynchronously(const ResourceRequest&);
   void Dispose();
 
-  void DidReceiveResponseInternal(const ResourceResponse&,
-                                  std::unique_ptr<WebDataConsumerHandle>);
+  void DidReceiveResponseInternal(const ResourceResponse&);
 
   void CancelTimerFired(TimerBase*);
 
@@ -258,6 +252,9 @@ class PLATFORM_EXPORT ResourceLoader final
   bool defers_handling_data_url_ = false;
 
   TaskRunnerTimer<ResourceLoader> cancel_timer_;
+
+  FrameScheduler::SchedulingAffectingFeatureHandle
+      feature_handle_for_scheduler_;
 };
 
 }  // namespace blink

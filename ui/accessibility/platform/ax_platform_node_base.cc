@@ -123,7 +123,7 @@ void AXPlatformNodeBase::NotifyAccessibilityEvent(ax::mojom::Event event_type) {
 }
 
 #if defined(OS_MACOSX)
-void AXPlatformNodeBase::AnnounceText(base::string16& text) {}
+void AXPlatformNodeBase::AnnounceText(const base::string16& text) {}
 #endif
 
 AXPlatformNodeDelegate* AXPlatformNodeBase::GetDelegate() const {
@@ -290,6 +290,79 @@ bool AXPlatformNodeBase::GetString16Attribute(
   return GetData().GetString16Attribute(attribute, value);
 }
 
+bool AXPlatformNodeBase::HasInheritedStringAttribute(
+    ax::mojom::StringAttribute attribute) const {
+  const AXPlatformNodeBase* current_node = this;
+
+  do {
+    if (!current_node->delegate_) {
+      return false;
+    }
+
+    if (current_node->GetData().HasStringAttribute(attribute)) {
+      return true;
+    }
+
+    current_node = FromNativeViewAccessible(current_node->GetParent());
+  } while (current_node);
+
+  return false;
+}
+
+const std::string& AXPlatformNodeBase::GetInheritedStringAttribute(
+    ax::mojom::StringAttribute attribute) const {
+  const AXPlatformNodeBase* current_node = this;
+
+  do {
+    if (!current_node->delegate_) {
+      return base::EmptyString();
+    }
+
+    if (current_node->GetData().HasStringAttribute(attribute)) {
+      return current_node->GetData().GetStringAttribute(attribute);
+    }
+
+    current_node = FromNativeViewAccessible(current_node->GetParent());
+  } while (current_node);
+
+  return base::EmptyString();
+}
+
+base::string16 AXPlatformNodeBase::GetInheritedString16Attribute(
+    ax::mojom::StringAttribute attribute) const {
+  return base::UTF8ToUTF16(GetInheritedStringAttribute(attribute));
+}
+
+bool AXPlatformNodeBase::GetInheritedStringAttribute(
+    ax::mojom::StringAttribute attribute,
+    std::string* value) const {
+  const AXPlatformNodeBase* current_node = this;
+
+  do {
+    if (!current_node->delegate_) {
+      return false;
+    }
+
+    if (current_node->GetData().GetStringAttribute(attribute, value)) {
+      return true;
+    }
+
+    current_node = FromNativeViewAccessible(current_node->GetParent());
+  } while (current_node);
+
+  return false;
+}
+
+bool AXPlatformNodeBase::GetInheritedString16Attribute(
+    ax::mojom::StringAttribute attribute,
+    base::string16* value) const {
+  std::string value_utf8;
+  if (!GetInheritedStringAttribute(attribute, &value_utf8))
+    return false;
+  *value = base::UTF8ToUTF16(value_utf8);
+  return true;
+}
+
 bool AXPlatformNodeBase::HasIntListAttribute(
     ax::mojom::IntListAttribute attribute) const {
   if (!delegate_)
@@ -320,16 +393,11 @@ AXPlatformNodeBase* AXPlatformNodeBase::FromNativeViewAccessible(
       AXPlatformNode::FromNativeViewAccessible(accessible));
 }
 
-bool AXPlatformNodeBase::SetTextSelection(int start_offset, int end_offset) {
+bool AXPlatformNodeBase::SetHypertextSelection(int start_offset,
+                                               int end_offset) {
   if (!delegate_)
     return false;
-
-  AXActionData action_data;
-  action_data.action = ax::mojom::Action::kSetSelection;
-  action_data.anchor_node_id = action_data.focus_node_id = GetData().id;
-  action_data.anchor_offset = start_offset;
-  action_data.focus_offset = end_offset;
-  return delegate_->AccessibilityPerformAction(action_data);
+  return delegate_->SetHypertextSelection(start_offset, end_offset);
 }
 
 bool AXPlatformNodeBase::IsDocument() const {
@@ -363,6 +431,10 @@ bool AXPlatformNodeBase::IsPlainTextField() const {
 bool AXPlatformNodeBase::IsRichTextField() const {
   return GetBoolAttribute(ax::mojom::BoolAttribute::kEditableRoot) &&
          GetData().HasState(ax::mojom::State::kRichlyEditable);
+}
+
+base::string16 AXPlatformNodeBase::GetHypertext() const {
+  return base::string16();
 }
 
 base::string16 AXPlatformNodeBase::GetInnerText() const {
@@ -425,7 +497,9 @@ base::string16 AXPlatformNodeBase::GetRangeValueText() const {
 
 base::string16 AXPlatformNodeBase::GetRoleDescription() const {
   if (GetData().GetImageAnnotationStatus() ==
-      ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation) {
+          ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation ||
+      GetData().GetImageAnnotationStatus() ==
+          ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation) {
     return GetDelegate()->GetLocalizedRoleDescriptionForUnlabeledImage();
   }
 
@@ -684,10 +758,6 @@ bool AXPlatformNodeBase::IsVerticallyScrollable() const {
              GetIntAttribute(ax::mojom::IntAttribute::kScrollYMax);
 }
 
-base::string16 AXPlatformNodeBase::GetText() const {
-  return GetInnerText();
-}
-
 base::string16 AXPlatformNodeBase::GetValue() const {
   // Expose slider value.
   if (IsRangeValueSupported(GetData()))
@@ -804,7 +874,6 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
         break;
       case ax::mojom::HasPopup::kGrid:
         AddAttributeToList("haspopup", "grid", attributes);
-        break;
         break;
       case ax::mojom::HasPopup::kDialog:
         AddAttributeToList("haspopup", "dialog", attributes);
@@ -950,16 +1019,15 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
   }
 
   // Expose dropeffect attribute.
-  std::string drop_effect;
-  if (GetData().GetHtmlAttribute("aria-dropeffect", &drop_effect)) {
-    AddAttributeToList("dropeffect", drop_effect, attributes);
+  // aria-dropeffect is deprecated in WAI-ARIA 1.1.
+  if (GetData().HasIntAttribute(ax::mojom::IntAttribute::kDropeffect)) {
+    std::string dropeffect = GetData().DropeffectBitfieldToString();
+    AddAttributeToList("dropeffect", dropeffect, attributes);
   }
 
   // Expose grabbed attribute.
-  std::string grabbed;
-  if (GetData().GetHtmlAttribute("aria-grabbed", &grabbed)) {
-    AddAttributeToList("grabbed", grabbed, attributes);
-  }
+  // aria-grabbed is deprecated in WAI-ARIA 1.1.
+  AddAttributeToList(ax::mojom::BoolAttribute::kGrabbed, "grabbed", attributes);
 
   // Expose class attribute.
   std::string class_attr;
@@ -1110,6 +1178,42 @@ int32_t AXPlatformNodeBase::GetSetSize() const {
   return delegate_->GetSetSize();
 }
 
+bool AXPlatformNodeBase::ScrollToNode(ScrollType scroll_type) {
+  // ax::mojom::Action::kScrollToMakeVisible wants a target rect in *local*
+  // coords.
+  gfx::Rect r = gfx::ToEnclosingRect(GetData().relative_bounds.bounds);
+  r -= r.OffsetFromOrigin();
+  switch (scroll_type) {
+    case ScrollType::TopLeft:
+      r = gfx::Rect(r.x(), r.y(), 0, 0);
+      break;
+    case ScrollType::BottomRight:
+      r = gfx::Rect(r.right(), r.bottom(), 0, 0);
+      break;
+    case ScrollType::TopEdge:
+      r = gfx::Rect(r.x(), r.y(), r.width(), 0);
+      break;
+    case ScrollType::BottomEdge:
+      r = gfx::Rect(r.x(), r.bottom(), r.width(), 0);
+      break;
+    case ScrollType::LeftEdge:
+      r = gfx::Rect(r.x(), r.y(), 0, r.height());
+      break;
+    case ScrollType::RightEdge:
+      r = gfx::Rect(r.right(), r.y(), 0, r.height());
+      break;
+    case ScrollType::Anywhere:
+      break;
+  }
+
+  ui::AXActionData action_data;
+  action_data.target_node_id = GetData().id;
+  action_data.action = ax::mojom::Action::kScrollToMakeVisible;
+  action_data.target_rect = r;
+  GetDelegate()->AccessibilityPerformAction(action_data);
+  return true;
+}
+
 // static
 void AXPlatformNodeBase::SanitizeStringAttribute(const std::string& input,
                                                  std::string* output) {
@@ -1183,7 +1287,7 @@ int32_t AXPlatformNodeBase::GetHypertextOffsetFromChild(
           FromNativeViewAccessible(GetDelegate()->ChildAtIndex(i)));
       DCHECK(sibling);
       if (sibling->IsTextOnlyObject()) {
-        hypertext_offset += (int32_t)sibling->GetText().size();
+        hypertext_offset += (int32_t)sibling->GetHypertext().size();
       } else {
         ++hypertext_offset;
       }
@@ -1282,7 +1386,7 @@ int AXPlatformNodeBase::GetHypertextOffsetFromEndpoint(
   if (endpoint_index_in_common_parent < index_in_common_parent)
     return 0;
   if (endpoint_index_in_common_parent > index_in_common_parent)
-    return static_cast<int32_t>(GetText().size());
+    return static_cast<int32_t>(GetHypertext().size());
 
   NOTREACHED();
   return -1;
@@ -1366,4 +1470,166 @@ void AXPlatformNodeBase::GetSelectionOffsets(int* selection_start,
   }
 }
 
+bool AXPlatformNodeBase::IsSameHypertextCharacter(
+    const AXHypertext& old_hypertext,
+    size_t old_char_index,
+    size_t new_char_index) {
+  if (old_char_index >= old_hypertext.hypertext.size() ||
+      new_char_index >= hypertext_.hypertext.size()) {
+    return false;
+  }
+
+  // For anything other than the "embedded character", we just compare the
+  // characters directly.
+  base::char16 old_ch = old_hypertext.hypertext[old_char_index];
+  base::char16 new_ch = hypertext_.hypertext[new_char_index];
+  if (old_ch != new_ch)
+    return false;
+  if (new_ch != kEmbeddedCharacter)
+    return true;
+
+  // If it's an embedded character, they're only identical if the child id
+  // the hyperlink points to is the same.
+  const std::map<int32_t, int32_t>& old_offset_to_index =
+      old_hypertext.hyperlink_offset_to_index;
+  const std::vector<int32_t>& old_hyperlinks = old_hypertext.hyperlinks;
+  int32_t old_hyperlinkscount = static_cast<int32_t>(old_hyperlinks.size());
+  auto iter = old_offset_to_index.find(static_cast<int32_t>(old_char_index));
+  int old_index = (iter != old_offset_to_index.end()) ? iter->second : -1;
+  int old_child_id = (old_index >= 0 && old_index < old_hyperlinkscount)
+                         ? old_hyperlinks[old_index]
+                         : -1;
+
+  const std::map<int32_t, int32_t>& new_offset_to_index =
+      hypertext_.hyperlink_offset_to_index;
+  const std::vector<int32_t>& new_hyperlinks = hypertext_.hyperlinks;
+  int32_t new_hyperlinkscount = static_cast<int32_t>(new_hyperlinks.size());
+  iter = new_offset_to_index.find(static_cast<int32_t>(new_char_index));
+  int new_index = (iter != new_offset_to_index.end()) ? iter->second : -1;
+  int new_child_id = (new_index >= 0 && new_index < new_hyperlinkscount)
+                         ? new_hyperlinks[new_index]
+                         : -1;
+
+  return old_child_id == new_child_id;
+}
+
+// Return true if the index represents a text character.
+bool AXPlatformNodeBase::IsText(const base::string16& text,
+                                size_t index,
+                                bool is_indexed_from_end) {
+  size_t text_len = text.size();
+  if (index == text_len)
+    return false;
+  auto ch = text[is_indexed_from_end ? text_len - index - 1 : index];
+  return ch != kEmbeddedCharacter;
+}
+
+void AXPlatformNodeBase::ComputeHypertextRemovedAndInserted(
+    const AXHypertext& old_hypertext,
+    size_t* start,
+    size_t* old_len,
+    size_t* new_len) {
+  *start = 0;
+  *old_len = 0;
+  *new_len = 0;
+
+  // Do not compute for static text objects, otherwise redundant text change
+  // announcements will occur in live regions, as the parent hypertext also
+  // changes.
+  if (GetData().role == ax::mojom::Role::kStaticText)
+    return;
+
+  const base::string16& old_text = old_hypertext.hypertext;
+  const base::string16& new_text = hypertext_.hypertext;
+
+  // TODO(accessibility) Plumb through which part of text changed so we don't
+  // have to guess what changed based on character differences. This can be
+  // wrong in some cases as follows:
+  // -- EDITABLE --
+  // If editable: when part of the text node changes, assume only that part
+  // changed, and not the entire thing. For example, if "car" changes to
+  // "cat", assume only 1 letter changed. This code compares common characters
+  // to guess what has changed.
+  // -- NOT EDITABLE --
+  // When part of the text changes, assume the entire node's text changed. For
+  // example, if "car" changes to "cat" then assume all 3 letters changed.
+  // Note, it is possible (though rare) that CharacterData methods are used to
+  // remove, insert, replace or append a substring.
+  bool allow_partial_text_node_changes =
+      GetData().HasState(ax::mojom::State::kEditable);
+  size_t prefix_index = 0;
+  size_t common_prefix = 0;
+  while (prefix_index < old_text.size() && prefix_index < new_text.size() &&
+         IsSameHypertextCharacter(old_hypertext, prefix_index, prefix_index)) {
+    ++prefix_index;
+    if (allow_partial_text_node_changes ||
+        (!IsText(old_text, prefix_index) && !IsText(new_text, prefix_index))) {
+      common_prefix = prefix_index;
+    }
+  }
+
+  size_t suffix_index = 0;
+  size_t common_suffix = 0;
+  while (common_prefix + suffix_index < old_text.size() &&
+         common_prefix + suffix_index < new_text.size() &&
+         IsSameHypertextCharacter(old_hypertext,
+                                  old_text.size() - suffix_index - 1,
+                                  new_text.size() - suffix_index - 1)) {
+    ++suffix_index;
+    if (allow_partial_text_node_changes ||
+        (!IsText(old_text, suffix_index, true) &&
+         !IsText(new_text, suffix_index, true))) {
+      common_suffix = suffix_index;
+    }
+  }
+
+  *start = common_prefix;
+  *old_len = old_text.size() - common_prefix - common_suffix;
+  *new_len = new_text.size() - common_prefix - common_suffix;
+}
+
+int AXPlatformNodeBase::FindTextBoundary(
+    AXTextBoundary boundary,
+    int offset,
+    TextBoundaryDirection direction,
+    ax::mojom::TextAffinity affinity) const {
+  base::Optional<int> boundary_offset =
+      GetDelegate()->FindTextBoundary(boundary, offset, direction, affinity);
+  if (boundary_offset.has_value())
+    return *boundary_offset;
+
+  std::vector<int32_t> unused_line_start_offsets;
+  return static_cast<int>(
+      FindAccessibleTextBoundary(GetHypertext(), unused_line_start_offsets,
+                                 boundary, offset, direction, affinity));
+}
+
+int AXPlatformNodeBase::NearestTextIndexToPoint(gfx::Point point) {
+  // For text objects, find the text position nearest to the point.The nearest
+  // index of a non-text object is implicitly 0. Text fields such as textarea
+  // have an embedded div inside them that holds all the text,
+  // GetRangeBoundsRect will correctly handle these nodes
+  int nearest_index = 0;
+  const AXCoordinateSystem coordinate_system = AXCoordinateSystem::kScreen;
+  const AXClippingBehavior clipping_behavior = AXClippingBehavior::kUnclipped;
+
+  // Manhattan Distance  is used to provide faster distance estimates.
+  // get the distance from the point to the bounds of each character.
+  float shortest_distance = GetDelegate()
+                                ->GetInnerTextRangeBoundsRect(
+                                    0, 1, coordinate_system, clipping_behavior)
+                                .ManhattanDistanceToPoint(point);
+  for (int i = 1, text_length = GetInnerText().length(); i < text_length; ++i) {
+    float current_distance =
+        GetDelegate()
+            ->GetInnerTextRangeBoundsRect(i, i + 1, coordinate_system,
+                                          clipping_behavior)
+            .ManhattanDistanceToPoint(point);
+    if (current_distance < shortest_distance) {
+      shortest_distance = current_distance;
+      nearest_index = i;
+    }
+  }
+  return nearest_index;
+}
 }  // namespace ui

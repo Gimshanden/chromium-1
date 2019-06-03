@@ -31,25 +31,23 @@ void SetupAccessibilityDisplayOptionsNotifier() {
   // so ensure that we setup the notification on the correct thread.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (@available(macOS 10.10, *)) {
-    // Listen to accessibility display options changing, so that we can update
-    // the renderer for the prefers reduced motion settings.
-    //
-    // BrowserAccessibilityStateImpl is a deliberately leaked singleton, so we
-    // don't need to record the notification token for later cleanup.
-    [[[NSWorkspace sharedWorkspace] notificationCenter]
-        addObserverForName:
-            NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
-                    object:nil
-                     queue:nil
-                usingBlock:^(NSNotification* notification) {
-                  gfx::Animation::UpdatePrefersReducedMotion();
-                  for (WebContentsImpl* wc :
-                       WebContentsImpl::GetAllWebContents()) {
-                    wc->GetRenderViewHost()->OnWebkitPreferencesChanged();
-                  }
-                }];
-  }
+  // Listen to accessibility display options changing, so that we can update
+  // the renderer for the prefers reduced motion settings.
+  //
+  // BrowserAccessibilityStateImpl is a deliberately leaked singleton, so we
+  // don't need to record the notification token for later cleanup.
+  [[[NSWorkspace sharedWorkspace] notificationCenter]
+      addObserverForName:
+          NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+                  object:nil
+                   queue:nil
+              usingBlock:^(NSNotification* notification) {
+                gfx::Animation::UpdatePrefersReducedMotion();
+                for (WebContentsImpl* wc :
+                     WebContentsImpl::GetAllWebContents()) {
+                  wc->GetRenderViewHost()->OnWebkitPreferencesChanged();
+                }
+              }];
 }
 }  // namespace
 
@@ -59,8 +57,8 @@ void BrowserAccessibilityStateImpl::PlatformInitialize() {
       base::BindOnce(&SetupAccessibilityDisplayOptionsNotifier));
 }
 
-void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
-  // NOTE: This function is running on the file thread.
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnUIThread() {
   NSWorkspace* workspace = [NSWorkspace sharedWorkspace];
 
   SEL sel = @selector(accessibilityDisplayShouldIncreaseContrast);
@@ -85,5 +83,8 @@ void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
                           workspace.accessibilityDisplayShouldReduceMotion);
   }
 }
+
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnOtherThread() {}
 
 }  // namespace content

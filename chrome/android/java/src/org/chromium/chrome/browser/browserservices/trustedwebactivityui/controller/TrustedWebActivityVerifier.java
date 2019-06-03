@@ -4,27 +4,33 @@
 
 package org.chromium.chrome.browser.browserservices.trustedwebactivityui.controller;
 
+import android.os.Bundle;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.customtabs.CustomTabsService;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.browserservices.Origin;
 import org.chromium.chrome.browser.browserservices.OriginVerifier;
+import org.chromium.chrome.browser.browserservices.TrustedWebActivityClient;
+import org.chromium.chrome.browser.browserservices.permissiondelegation.NotificationPermissionUpdater;
 import org.chromium.chrome.browser.browserservices.trustedwebactivityui.TrustedWebActivityModel;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
-import org.chromium.chrome.browser.customtabs.TabObserverRegistrar;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
 import org.chromium.chrome.browser.dependency_injection.ActivityScope;
-import org.chromium.chrome.browser.init.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.Destroyable;
 import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
+import org.chromium.chrome.browser.lifecycle.SaveInstanceStateObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tab.TabObserverRegistrar;
 import org.chromium.content_public.browser.NavigationHandle;
 
 import java.lang.annotation.Retention;
@@ -42,9 +48,13 @@ import dagger.Lazy;
  * {@link TrustedWebActivityModel} accordingly.
  */
 @ActivityScope
-public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyable {
+public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyable,
+        SaveInstanceStateObserver {
     /** The Digital Asset Link relationship used for Trusted Web Activities. */
     private final static int RELATIONSHIP = CustomTabsService.RELATION_HANDLE_ALL_URLS;
+
+    /** Used in activity instance state */
+    private static final String KEY_CLIENT_PACKAGE = "twaClientPackageName";
 
     private final Lazy<ClientAppDataRecorder> mClientAppDataRecorder;
     private final CustomTabsConnection mCustomTabsConnection;
@@ -53,9 +63,12 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
     private final TabObserverRegistrar mTabObserverRegistrar;
     private final String mClientPackageName;
     private final OriginVerifier mOriginVerifier;
+    private final NotificationPermissionUpdater mNotificationPermissionUpdater;
 
     // These origins need to be verified via OriginVerifier#start, bypassing cache.
     private final Set<Origin> mOriginsToVerify = new HashSet<>();
+    // These origins have already been registered so we don't need to do so again.
+    private final Set<Origin> mRegisteredOrigins = new HashSet<>();
 
     @Nullable private VerificationState mState;
 
@@ -112,14 +125,22 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
             ActivityLifecycleDispatcher lifecycleDispatcher,
             TabObserverRegistrar tabObserverRegistrar,
             OriginVerifier.Factory originVerifierFactory,
-            CustomTabActivityTabProvider tabProvider) {
+            CustomTabActivityTabProvider tabProvider,
+            ChromeActivity activity,
+            NotificationPermissionUpdater permissionUpdater) {
         mClientAppDataRecorder = clientAppDataRecorder;
         mCustomTabsConnection = customTabsConnection;
         mIntentDataProvider = intentDataProvider;
         mTabProvider = tabProvider;
         mTabObserverRegistrar =  tabObserverRegistrar;
-        mClientPackageName = customTabsConnection.getClientPackageNameForSession(
-                intentDataProvider.getSession());
+        mNotificationPermissionUpdater = permissionUpdater;
+        Bundle savedInstanceState = activity.getSavedInstanceState();
+        if (savedInstanceState != null) {
+            mClientPackageName = savedInstanceState.getString(KEY_CLIENT_PACKAGE);
+        } else {
+            mClientPackageName = customTabsConnection.getClientPackageNameForSession(
+                    intentDataProvider.getSession());
+        }
         assert mClientPackageName != null;
 
         mOriginVerifier = originVerifierFactory.create(mClientPackageName, RELATIONSHIP);
@@ -205,9 +226,13 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
         }
     }
 
+    /**
+     * Is called as a result of a verification request to OriginVerifier. Is not called if the
+     * client called |validateRelationship| before launching the TWA and we found that verification
+     * in the cache.
+     */
     private void onVerificationResult(Origin origin, boolean verified) {
         mOriginsToVerify.remove(origin);
-        if (verified) registerClientAppData(origin);
         Tab tab = mTabProvider.getTab();
         boolean stillOnSameOrigin = tab != null && origin.equals(new Origin(tab.getUrl()));
         if (stillOnSameOrigin) {
@@ -216,6 +241,10 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
     }
 
     private void updateState(Origin origin, @VerificationStatus int status) {
+        if (status == VerificationStatus.SUCCESS) {
+            registerClientAppForOrigin(origin);
+        }
+
         mState = new VerificationState(origin, status);
         for (Runnable observer : mObservers) {
             observer.run();
@@ -229,7 +258,7 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
     }
 
     /**
-     * Register that we have Chrome data relevant to the Client app.
+     * Registers to various stores that the client app is linked with the origin.
      *
      * We do this here, when the Trusted Web Activity UI is shown instead of in OriginVerifier when
      * verification completes because when an origin is being verified, we don't know whether it is
@@ -247,7 +276,23 @@ public class TrustedWebActivityVerifier implements NativeInitObserver, Destroyab
      * for PostMessage). Only at step 4 do we know that Chrome should associate the browsing data
      * for that origin with that app.
      */
-    private void registerClientAppData(Origin origin) {
+    private void registerClientAppForOrigin(Origin origin) {
+        if (mRegisteredOrigins.contains(origin)) return;
+
+        // Register that we should wipe data for this origin when the client app is uninstalled.
         mClientAppDataRecorder.get().register(mClientPackageName, origin);
+        // Register that we trust the client app to forward notifications from this origin to.
+        TrustedWebActivityClient.registerClient(
+                ContextUtils.getApplicationContext(), origin, mClientPackageName);
+        // Update Chrome's notification permission for the website to that of the client app.
+        mNotificationPermissionUpdater.onOriginVerified(origin, mClientPackageName);
+
+        mRegisteredOrigins.add(origin);
+    }
+
+    @Override
+    public void onSaveInstanceState(Bundle outState) {
+        // TODO(pshmakov): address this problem in a more general way, http://crbug.com/952221
+        outState.putString(KEY_CLIENT_PACKAGE, mClientPackageName);
     }
 }

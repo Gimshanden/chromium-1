@@ -29,6 +29,7 @@
 #include "components/sync/test/engine/mock_connection_manager.h"
 #include "components/sync/test/engine/mock_nudge_handler.h"
 #include "components/sync/test/mock_invalidation.h"
+#include "net/http/http_status_code.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -96,7 +97,7 @@ class SyncSchedulerImplTest : public testing::Test {
   SyncSchedulerImplTest()
       : task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::ASYNC,
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::ASYNC,
             base::test::ScopedTaskEnvironment::NowSource::
                 MAIN_THREAD_MOCK_TIME),
         syncer_(nullptr),
@@ -142,7 +143,7 @@ class SyncSchedulerImplTest : public testing::Test {
         std::vector<SyncEngineEventListener*>(), nullptr,
         model_type_registry_.get(),
         true,  // enable keystore encryption
-        "fake_invalidator_client_id",
+        "fake_invalidator_client_id", "fake_birthday", "fake_bag_of_chips",
         /*poll_interval=*/base::TimeDelta::FromMinutes(30));
     context_->set_notifications_enabled(true);
     context_->set_account_name("Test");
@@ -514,12 +515,12 @@ TEST_F(SyncSchedulerImplTest, ConfigWithStop) {
   ASSERT_EQ(0, ready_counter.times_called());
 }
 
-// Verify that in the absence of valid auth token the command will fail.
-TEST_F(SyncSchedulerImplTest, ConfigNoAuthToken) {
+// Verify that in the absence of valid access token the command will fail.
+TEST_F(SyncSchedulerImplTest, ConfigNoAccessToken) {
   SyncShareTimes times;
   const ModelTypeSet model_types(THEMES);
 
-  connection()->ResetAuthToken();
+  connection()->ResetAccessToken();
 
   StartSyncConfiguration();
 
@@ -532,14 +533,14 @@ TEST_F(SyncSchedulerImplTest, ConfigNoAuthToken) {
   ASSERT_EQ(0, ready_counter.times_called());
 }
 
-// Verify that in the absence of valid auth token the command will pass if local
-// sync backend is used.
-TEST_F(SyncSchedulerImplTest, ConfigNoAuthTokenLocalSync) {
+// Verify that in the absence of valid access token the command will pass if
+// local sync backend is used.
+TEST_F(SyncSchedulerImplTest, ConfigNoAccessTokenLocalSync) {
   SyncShareTimes times;
   const ModelTypeSet model_types(THEMES);
 
   NewSchedulerForLocalBackend();
-  connection()->ResetAuthToken();
+  connection()->ResetAccessToken();
 
   EXPECT_CALL(*syncer(), ConfigureSyncShare(_, _, _))
       .WillOnce(DoAll(Invoke(test_util::SimulateConfigureSuccess),
@@ -1657,7 +1658,8 @@ TEST_F(SyncSchedulerImplTest, PollFromCanaryAfterAuthError) {
           DoAll(Invoke(test_util::SimulatePollSuccess),
                 RecordSyncShareMultiple(&times, kMinNumSamples, true)));
 
-  connection()->SetServerStatus(HttpResponse::SYNC_AUTH_ERROR);
+  connection()->SetServerResponse(
+      HttpResponse::ForHttpError(net::HTTP_UNAUTHORIZED));
   StartSyncScheduler(base::Time());
 
   // Run to wait for polling.
@@ -1670,7 +1672,7 @@ TEST_F(SyncSchedulerImplTest, PollFromCanaryAfterAuthError) {
       .WillOnce(DoAll(Invoke(test_util::SimulatePollSuccess),
                       RecordSyncShare(&times, true)));
   scheduler()->OnCredentialsUpdated();
-  connection()->SetServerStatus(HttpResponse::SERVER_CONNECTION_OK);
+  connection()->SetServerResponse(HttpResponse::ForSuccess());
   RunLoop();
   StopSyncScheduler();
 }

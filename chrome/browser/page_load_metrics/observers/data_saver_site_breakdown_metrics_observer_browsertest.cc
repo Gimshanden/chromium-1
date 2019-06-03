@@ -60,11 +60,7 @@ class DataSaverSiteBreakdownMetricsObserverBrowserTest
  protected:
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {data_reduction_proxy::features::
-             kDataSaverSiteBreakdownUsingPageLoadMetrics,
-         previews::features::kClientLoFi, features::kLazyImageLoading},
-        {});
-
+        {previews::features::kClientLoFi, features::kLazyImageLoading}, {});
     InProcessBrowserTest::SetUp();
   }
 
@@ -151,7 +147,7 @@ IN_PROC_BROWSER_TEST_F(DataSaverSiteBreakdownMetricsObserverBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DataSaverSiteBreakdownMetricsObserverBrowserTest,
-                       LazyImagesDataSavings) {
+                       DISABLED_LazyImagesDataSavings) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL test_url(
@@ -230,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(DataSaverSiteBreakdownMetricsObserverBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DataSaverSiteBreakdownMetricsObserverBrowserTest,
-                       LoFiTest) {
+                       DISABLED_LoFiTest) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitWithFeatures(
       {previews::features::kPreviews,

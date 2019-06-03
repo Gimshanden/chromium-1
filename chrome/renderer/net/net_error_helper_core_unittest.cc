@@ -177,7 +177,7 @@ class NetErrorHelperCoreTest : public testing::Test,
         default_url_(GURL(kFailedUrl)),
         error_url_(GURL(content::kUnreachableWebDataURL)),
         tracking_request_count_(0) {
-    SetUpCore(false, false, true);
+    SetUpCore(false, true);
   }
 
   ~NetErrorHelperCoreTest() override {
@@ -186,13 +186,11 @@ class NetErrorHelperCoreTest : public testing::Test,
   }
 
   void SetUpCore(bool auto_reload_enabled,
-                 bool auto_reload_visible_only,
                  bool visible) {
     // The old value of timer_, if any, will be freed by the old core_ being
     // destructed, since core_ takes ownership of the timer.
     timer_ = new base::MockOneShotTimer();
-    core_.reset(new NetErrorHelperCore(this, auto_reload_enabled,
-                                       auto_reload_visible_only, visible));
+    core_.reset(new NetErrorHelperCore(this, auto_reload_enabled, visible));
     core_->set_timer_for_testing(base::WrapUnique(timer_));
   }
 
@@ -2085,7 +2083,7 @@ class NetErrorHelperCoreAutoReloadTest : public NetErrorHelperCoreTest {
  public:
   void SetUp() override {
     NetErrorHelperCoreTest::SetUp();
-    SetUpCore(true, false, true);
+    SetUpCore(true, true);
   }
 };
 
@@ -2407,7 +2405,7 @@ TEST_F(NetErrorHelperCoreAutoReloadTest, ShouldSuppressErrorPage) {
 }
 
 TEST_F(NetErrorHelperCoreAutoReloadTest, HiddenAndShown) {
-  SetUpCore(true, true, true);
+  SetUpCore(true, true);
   DoErrorLoad(net::ERR_CONNECTION_RESET);
   EXPECT_TRUE(timer()->IsRunning());
   core()->OnWasHidden();
@@ -2417,7 +2415,7 @@ TEST_F(NetErrorHelperCoreAutoReloadTest, HiddenAndShown) {
 }
 
 TEST_F(NetErrorHelperCoreAutoReloadTest, HiddenWhileOnline) {
-  SetUpCore(true, true, true);
+  SetUpCore(true, true);
   core()->NetworkStateChanged(false);
   DoErrorLoad(net::ERR_CONNECTION_RESET);
   EXPECT_FALSE(timer()->IsRunning());
@@ -2439,7 +2437,7 @@ TEST_F(NetErrorHelperCoreAutoReloadTest, HiddenWhileOnline) {
 }
 
 TEST_F(NetErrorHelperCoreAutoReloadTest, ShownWhileNotReloading) {
-  SetUpCore(true, true, false);
+  SetUpCore(true, false);
   DoErrorLoad(net::ERR_CONNECTION_RESET);
   EXPECT_FALSE(timer()->IsRunning());
   core()->OnWasShown();
@@ -2447,7 +2445,7 @@ TEST_F(NetErrorHelperCoreAutoReloadTest, ShownWhileNotReloading) {
 }
 
 TEST_F(NetErrorHelperCoreAutoReloadTest, ManualReloadShowsError) {
-  SetUpCore(true, true, true);
+  SetUpCore(true, true);
   DoErrorLoad(net::ERR_CONNECTION_RESET);
   core()->OnStartLoad(NetErrorHelperCore::MAIN_FRAME,
                       NetErrorHelperCore::ERROR_PAGE);
@@ -2674,7 +2672,8 @@ TEST_F(NetErrorHelperCoreTest, Download) {
   EXPECT_EQ(1, download_count());
 }
 
-const char kDataURI[] = "data:image/png;base64,abc";
+const char kThumbnailDataURI[] = "data:image/png;base64,abc";
+const char kFaviconDataURI[] = "data:image/png;base64,def";
 
 // Creates a couple of fake AvailableOfflineContent instances.
 std::vector<chrome::mojom::AvailableOfflineContentPtr>
@@ -2682,10 +2681,11 @@ GetFakeAvailableContent() {
   std::vector<chrome::mojom::AvailableOfflineContentPtr> content;
   content.push_back(chrome::mojom::AvailableOfflineContent::New(
       "ID", "name_space", "title", "snippet", "date_modified", "attribution",
-      GURL(kDataURI), chrome::mojom::AvailableContentType::kPrefetchedPage));
+      GURL(kThumbnailDataURI), GURL(kFaviconDataURI),
+      chrome::mojom::AvailableContentType::kPrefetchedPage));
   content.push_back(chrome::mojom::AvailableOfflineContent::New(
       "ID2", "name_space2", "title2", "snippet2", "date_modified2",
-      "attribution2", GURL(kDataURI),
+      "attribution2", GURL(kThumbnailDataURI), GURL(kFaviconDataURI),
       chrome::mojom::AvailableContentType::kOtherPage));
   return content;
 }
@@ -2704,6 +2704,7 @@ const std::string GetExpectedAvailableContentAsJson() {
       "attribution_base64": "AGEAdAB0AHIAaQBiAHUAdABpAG8Abg==",
       "content_type": 0,
       "date_modified": "date_modified",
+      "favicon_data_uri": "data:image/png;base64,def",
       "name_space": "name_space",
       "snippet_base64": "AHMAbgBpAHAAcABlAHQ=",
       "thumbnail_data_uri": "data:image/png;base64,abc",
@@ -2714,6 +2715,7 @@ const std::string GetExpectedAvailableContentAsJson() {
       "attribution_base64": "AGEAdAB0AHIAaQBiAHUAdABpAG8AbgAy",
       "content_type": 3,
       "date_modified": "date_modified2",
+      "favicon_data_uri": "data:image/png;base64,def",
       "name_space": "name_space2",
       "snippet_base64": "AHMAbgBpAHAAcABlAHQAMg==",
       "thumbnail_data_uri": "data:image/png;base64,abc",

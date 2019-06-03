@@ -11,11 +11,14 @@
 #include "base/memory/ptr_util.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
 #include "media/base/waiting.h"
 #include "media/gpu/gpu_video_decode_accelerator_factory.h"
+#if defined(OS_LINUX)
 #include "media/gpu/linux/platform_video_frame_utils.h"
+#endif
 #include "media/gpu/macros.h"
 #include "media/gpu/test/video_player/frame_renderer.h"
 #include "media/gpu/test/video_player/video.h"
@@ -23,6 +26,11 @@
 
 namespace media {
 namespace test {
+
+namespace {
+// Size of the timestamp cache, needs to be large enough for frame-reordering.
+constexpr size_t kTimestampCacheSize = 128;
+}  // namespace
 
 TestVDAVideoDecoder::TestVDAVideoDecoder(
     AllocationMode allocation_mode,
@@ -33,6 +41,7 @@ TestVDAVideoDecoder::TestVDAVideoDecoder(
                        : VideoDecodeAccelerator::Config::OutputMode::IMPORT),
       target_color_space_(target_color_space),
       frame_renderer_(frame_renderer),
+      decode_start_timestamps_(kTimestampCacheSize),
       weak_this_factory_(this) {
   DETACH_FROM_SEQUENCE(vda_wrapper_sequence_checker_);
 
@@ -43,6 +52,8 @@ TestVDAVideoDecoder::TestVDAVideoDecoder(
   weak_this_ = weak_this_factory_.GetWeakPtr();
 }
 
+TestVDAVideoDecoder::~TestVDAVideoDecoder() = default;
+
 void TestVDAVideoDecoder::Destroy() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(vda_wrapper_sequence_checker_);
 
@@ -50,15 +61,21 @@ void TestVDAVideoDecoder::Destroy() {
   weak_this_factory_.InvalidateWeakPtrs();
 
   // Delete all video frames and related textures.
-  frame_renderer_->AcquireGLContext();
   video_frames_.clear();
-  frame_renderer_->ReleaseGLContext();
+}
+
+std::string TestVDAVideoDecoder::GetDisplayName() const {
+  return "TestVDAVideoDecoder";
+}
+
+bool TestVDAVideoDecoder::IsPlatformDecoder() const {
+  return true;
 }
 
 void TestVDAVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                      bool low_delay,
                                      CdmContext* cdm_context,
-                                     const InitCB& init_cb,
+                                     InitCB init_cb,
                                      const OutputCB& output_cb,
                                      const WaitingCB& waiting_cb) {
   output_cb_ = output_cb;
@@ -82,7 +99,7 @@ void TestVDAVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   if (!decoder_factory) {
     LOG_ASSERT(decoder_) << "Failed to create VideoDecodeAccelerator factory";
-    init_cb.Run(false);
+    std::move(init_cb).Run(false);
     return;
   }
 
@@ -103,35 +120,54 @@ void TestVDAVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   if (!decoder_) {
     LOG_ASSERT(decoder_) << "Failed to create VideoDecodeAccelerator factory";
-    init_cb.Run(false);
+    std::move(init_cb).Run(false);
     return;
   }
 
-  init_cb.Run(true);
+  std::move(init_cb).Run(true);
 }
 
 void TestVDAVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
-                                 const DecodeCB& decode_cb) {
+                                 DecodeCB decode_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(vda_wrapper_sequence_checker_);
 
   // If the |buffer| is an EOS buffer the decoder must be flushed.
   if (buffer->end_of_stream()) {
-    flush_cb_ = decode_cb;
+    flush_cb_ = std::move(decode_cb);
     decoder_->Flush();
     return;
   }
 
   int32_t bitstream_buffer_id = GetNextBitstreamBufferId();
-  decode_cbs_[bitstream_buffer_id] = decode_cb;
+  decode_cbs_[bitstream_buffer_id] = std::move(decode_cb);
+
+  // Record picture buffer decode start time. A cache is used because not each
+  // bitstream buffer decode will result in a call to PictureReady(). Pictures
+  // can be delivered in a different order than the decode operations, so we
+  // don't know when it's safe to purge old decode timestamps. Instead we use
+  // a cache with a large enough size to account for frame reordering.
+  decode_start_timestamps_.Put(bitstream_buffer_id, buffer->timestamp());
 
   decoder_->Decode(std::move(buffer), bitstream_buffer_id);
 }
 
-void TestVDAVideoDecoder::Reset(const base::RepeatingClosure& reset_cb) {
+void TestVDAVideoDecoder::Reset(base::OnceClosure reset_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(vda_wrapper_sequence_checker_);
 
-  reset_cb_ = reset_cb;
+  reset_cb_ = std::move(reset_cb);
   decoder_->Reset();
+}
+
+bool TestVDAVideoDecoder::NeedsBitstreamConversion() const {
+  return false;
+}
+
+bool TestVDAVideoDecoder::CanReadWithoutStalling() const {
+  return true;
+}
+
+int TestVDAVideoDecoder::GetMaxDecodeRequests() const {
+  return 4;
 }
 
 void TestVDAVideoDecoder::ProvidePictureBuffers(
@@ -160,12 +196,20 @@ void TestVDAVideoDecoder::ProvidePictureBuffers(
       // Create a video frame for each of the picture buffers and provide memory
       // handles to the video frame's data to the decoder.
       for (const PictureBuffer& picture_buffer : picture_buffers) {
-        scoped_refptr<VideoFrame> video_frame =
-            CreatePlatformVideoFrame(pixel_format, size);
+        scoped_refptr<VideoFrame> video_frame;
+#if defined(OS_LINUX)
+        video_frame = CreatePlatformVideoFrame(
+            pixel_format, size, gfx::Rect(size), size, base::TimeDelta(),
+            gfx::BufferUsage::SCANOUT_VDA_WRITE);
+#endif
         LOG_ASSERT(video_frame) << "Failed to create video frame";
         video_frames_.emplace(picture_buffer.id(), video_frame);
-        gfx::GpuMemoryBufferHandle handle =
-            CreateGpuMemoryBufferHandle(video_frame.get());
+        gfx::GpuMemoryBufferHandle handle;
+#if defined(OS_LINUX)
+        handle = CreateGpuMemoryBufferHandle(video_frame.get());
+#else
+        NOTREACHED();
+#endif
         LOG_ASSERT(!handle.is_null()) << "Failed to create GPU memory handle";
         decoder_->ImportBufferForPicture(picture_buffer.id(), pixel_format,
                                          std::move(handle));
@@ -197,8 +241,10 @@ void TestVDAVideoDecoder::ProvidePictureBuffers(
 }
 
 void TestVDAVideoDecoder::DismissPictureBuffer(int32_t picture_buffer_id) {
-  // TODO(dstaessens@) support dismissing picture buffers.
-  NOTIMPLEMENTED();
+  // Drop reference to the video frame associated with the picture buffer, so
+  // the video frame and related texture are automatically destroyed once the
+  // renderer and video frame processors are done using them.
+  ASSERT_EQ(video_frames_.erase(picture_buffer_id), 1u);
 }
 
 void TestVDAVideoDecoder::PictureReady(const Picture& picture) {
@@ -208,6 +254,12 @@ void TestVDAVideoDecoder::PictureReady(const Picture& picture) {
   auto it = video_frames_.find(picture.picture_buffer_id());
   LOG_ASSERT(it != video_frames_.end());
   scoped_refptr<VideoFrame> video_frame = it->second;
+
+  // Look up the time at which the decode started.
+  auto timestamp_it =
+      decode_start_timestamps_.Peek(picture.bitstream_buffer_id());
+  ASSERT_NE(timestamp_it, decode_start_timestamps_.end());
+  video_frame->set_timestamp(timestamp_it->second);
 
   // When using import mode, we wrap the video frame in another video frame that
   // calls ReusePictureBufferTask() upon destruction. When the renderer and
@@ -219,7 +271,7 @@ void TestVDAVideoDecoder::PictureReady(const Picture& picture) {
                        picture.picture_buffer_id()));
 
     scoped_refptr<VideoFrame> wrapped_video_frame = VideoFrame::WrapVideoFrame(
-        video_frame, video_frame->format(), video_frame->visible_rect(),
+        *video_frame, video_frame->format(), video_frame->visible_rect(),
         video_frame->visible_rect().size());
     wrapped_video_frame->AddDestructionObserver(std::move(reuse_cb));
 
@@ -259,7 +311,7 @@ void TestVDAVideoDecoder::NotifyEndOfBitstreamBuffer(
       << "Couldn't find decode callback for picture buffer with id "
       << bitstream_buffer_id;
 
-  it->second.Run(DecodeStatus::OK);
+  std::move(it->second).Run(DecodeStatus::OK);
   decode_cbs_.erase(it);
 }
 

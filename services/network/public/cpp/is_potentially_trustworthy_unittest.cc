@@ -6,19 +6,30 @@
 
 #include "base/test/scoped_command_line.h"
 #include "services/network/public/cpp/network_switches.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace network {
 
-bool IsAllowlistedAsSecureOrigin(const url::Origin& origin) {
-  return IsAllowlistedAsSecureOrigin(origin,
-                                     network::GetSecureOriginAllowlist());
+bool IsOriginAllowlisted(const url::Origin& origin) {
+  return SecureOriginAllowlist::GetInstance().IsOriginAllowlisted(origin);
+}
+
+bool IsOriginAllowlisted(const char* str) {
+  return IsOriginAllowlisted(url::Origin::Create(GURL(str)));
 }
 
 bool IsPotentiallyTrustworthy(const char* str) {
   return network::IsUrlPotentiallyTrustworthy(GURL(str));
+}
+
+std::vector<std::string> CanonicalizeAllowlist(
+    const std::vector<std::string>& allowlist,
+    std::vector<std::string>* rejected_patterns) {
+  return SecureOriginAllowlist::CanonicalizeAllowlistForTesting(
+      allowlist, rejected_patterns);
 }
 
 TEST(IsPotentiallyTrustworthy, MainTest) {
@@ -89,15 +100,13 @@ TEST(IsPotentiallyTrustworthy, MainTest) {
 class SecureOriginAllowlistTest : public testing::Test {
   void TearDown() override {
     // Ensure that we reset the allowlisted origins without any flags applied.
-    ResetSecureOriginAllowlistForTesting();
+    SecureOriginAllowlist::GetInstance().ResetForTesting();
   }
 };
 
 TEST_F(SecureOriginAllowlistTest, UnsafelyTreatInsecureOriginAsSecure) {
-  EXPECT_FALSE(IsAllowlistedAsSecureOrigin(
-      url::Origin::Create(GURL("http://example.com/a.html"))));
-  EXPECT_FALSE(IsAllowlistedAsSecureOrigin(
-      url::Origin::Create(GURL("http://127.example.com/a.html"))));
+  EXPECT_FALSE(IsOriginAllowlisted("http://example.com/a.html"));
+  EXPECT_FALSE(IsOriginAllowlisted("http://127.example.com/a.html"));
   EXPECT_FALSE(IsPotentiallyTrustworthy("http://example.com/a.html"));
   EXPECT_FALSE(IsPotentiallyTrustworthy("http://127.example.com/a.html"));
 
@@ -108,13 +117,11 @@ TEST_F(SecureOriginAllowlistTest, UnsafelyTreatInsecureOriginAsSecure) {
   command_line->AppendSwitchASCII(
       switches::kUnsafelyTreatInsecureOriginAsSecure,
       "http://example.com,http://127.example.com");
-  ResetSecureOriginAllowlistForTesting();
+  SecureOriginAllowlist::GetInstance().ResetForTesting();
 
   // They should be now allow-listed.
-  EXPECT_TRUE(IsAllowlistedAsSecureOrigin(
-      url::Origin::Create(GURL("http://example.com/a.html"))));
-  EXPECT_TRUE(IsAllowlistedAsSecureOrigin(
-      url::Origin::Create(GURL("http://127.example.com/a.html"))));
+  EXPECT_TRUE(IsOriginAllowlisted("http://example.com/a.html"));
+  EXPECT_TRUE(IsOriginAllowlisted("http://127.example.com/a.html"));
   EXPECT_TRUE(IsPotentiallyTrustworthy("http://example.com/a.html"));
   EXPECT_TRUE(IsPotentiallyTrustworthy("http://127.example.com/a.html"));
 
@@ -122,6 +129,10 @@ TEST_F(SecureOriginAllowlistTest, UnsafelyTreatInsecureOriginAsSecure) {
   EXPECT_FALSE(IsPotentiallyTrustworthy("http://128.example.com/a.html"));
   EXPECT_FALSE(
       IsPotentiallyTrustworthy("http://foobar.127.example.com/a.html"));
+
+  // When port is not specified, default port is assumed.
+  EXPECT_TRUE(IsOriginAllowlisted("http://example.com:80/a.html"));
+  EXPECT_FALSE(IsOriginAllowlisted("http://example.com:8080/a.html"));
 }
 
 TEST_F(SecureOriginAllowlistTest, HostnamePatterns) {
@@ -151,6 +162,17 @@ TEST_F(SecureOriginAllowlistTest, HostnamePatterns) {
       {"test*.foo.com", "http://testblah.foo.com", false},
       {"*foo.com", "http://testfoo.com", false},
       {"foo*.com", "http://footest.com", false},
+      // With Hostname pattern, all ports are allowed.
+      {"*.foo.com", "http://bar.foo.com:80", true},
+      {"*.foo.com", "http://bar.foo.com:1234", true},
+      // With Hostname pattern, all schemes are allowed.
+      {"*.foo.com", "ws://bar.foo.com", true},
+      {"*.foo.com", "blob:http://bar.foo.com/guid-goes-here", true},
+      // Hostname pattern works on IP addresses, but wildcards must be beyond
+      // eTLD+1.
+      {"*.20.30.40", "http://10.20.30.40", true},
+      {"*.30.40", "http://10.20.30.40", true},
+      {"*.40", "http://10.20.30.40", false},
   };
 
   for (const auto& test : kTestCases) {
@@ -159,12 +181,63 @@ TEST_F(SecureOriginAllowlistTest, HostnamePatterns) {
         scoped_command_line.GetProcessCommandLine();
     command_line->AppendSwitchASCII(
         switches::kUnsafelyTreatInsecureOriginAsSecure, test.pattern);
-    ResetSecureOriginAllowlistForTesting();
+    SecureOriginAllowlist::GetInstance().ResetForTesting();
     GURL input_url(test.test_input);
     url::Origin input_origin = url::Origin::Create(input_url);
-    EXPECT_EQ(test.expected_secure, IsAllowlistedAsSecureOrigin(input_origin));
+    EXPECT_EQ(test.expected_secure, IsOriginAllowlisted(input_origin));
     EXPECT_EQ(test.expected_secure, IsPotentiallyTrustworthy(test.test_input));
   }
+}
+
+TEST_F(SecureOriginAllowlistTest, MixOfOriginAndHostnamePatterns) {
+  base::test::ScopedCommandLine scoped_command_line;
+  base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
+  command_line->AppendSwitchASCII(
+      switches::kUnsafelyTreatInsecureOriginAsSecure,
+      "http://example.com,*.foo.com,http://10.20.30.40");
+  SecureOriginAllowlist::GetInstance().ResetForTesting();
+
+  EXPECT_TRUE(IsOriginAllowlisted("http://example.com/a.html"));
+  EXPECT_TRUE(IsOriginAllowlisted("http://bar.foo.com/b.html"));
+  EXPECT_TRUE(IsOriginAllowlisted("http://10.20.30.40/c.html"));
+}
+
+TEST_F(SecureOriginAllowlistTest, Canonicalization) {
+  std::vector<std::string> canonicalized;
+  std::vector<std::string> rejected;
+
+  // Basic test.
+  rejected.clear();
+  canonicalized = CanonicalizeAllowlist({"*.foo.com"}, &rejected);
+  EXPECT_THAT(rejected, ::testing::IsEmpty());
+  EXPECT_THAT(canonicalized, ::testing::ElementsAre("*.foo.com"));
+
+  // Okay to pass |nullptr| as a 2nd arg.
+  rejected.clear();
+  canonicalized = CanonicalizeAllowlist({"null", "*.com"}, nullptr);
+  EXPECT_THAT(canonicalized, ::testing::IsEmpty());
+
+  // Opaque origins or invalid urls should be rejected.
+  rejected.clear();
+  canonicalized = CanonicalizeAllowlist({"null", "invalid"}, &rejected);
+  EXPECT_THAT(rejected, ::testing::ElementsAre("null", "invalid"));
+  EXPECT_THAT(canonicalized, ::testing::IsEmpty());
+
+  // Wildcard shouldn't appear in eTLD+1.
+  rejected.clear();
+  canonicalized = CanonicalizeAllowlist({"*.com"}, &rejected);
+  EXPECT_THAT(rejected, ::testing::ElementsAre("*.com"));
+  EXPECT_THAT(canonicalized, ::testing::IsEmpty());
+
+  // Replacing '*' with a hostname component should form a valid hostname (so,
+  // schemes or ports or paths should not be part of a wildcards;  only valid
+  // hostname characters are allowed).
+  rejected.clear();
+  canonicalized = CanonicalizeAllowlist(
+      {"*.example.com", "*.example.com:1234", "!@#$%^&---.*.com"}, &rejected);
+  EXPECT_THAT(rejected,
+              ::testing::ElementsAre("*.example.com:1234", "!@#$%^&---.*.com"));
+  EXPECT_THAT(canonicalized, ::testing::ElementsAre("*.example.com"));
 }
 
 }  // namespace network

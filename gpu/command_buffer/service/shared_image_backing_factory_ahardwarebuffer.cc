@@ -33,6 +33,7 @@
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/ipc/common/android/android_image_reader_utils.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
+#include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_util.h"
@@ -41,6 +42,7 @@
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gl/android/android_surface_control_compat.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_fence_android_native_fence_sync.h"
 #include "ui/gl/gl_gl_api_implementation.h"
@@ -57,33 +59,32 @@ enum class RepresentationAccessMode {
   kWrite,
 };
 
-void DestroySemaphore(VkDevice vk_device,
-                      VkQueue vk_queue,
-                      VkSemaphore semaphore) {
-  if (semaphore == VK_NULL_HANDLE)
-    return;
-
-  // TODO(vikassoni): Need to do better semaphore cleanup management. Waiting
-  // on device to be idle to delete the semaphore is costly. Instead use a
-  // fence to get signal when semaphore submission is done.
-  VkResult result = vkQueueWaitIdle(vk_queue);
-  if (result != VK_SUCCESS) {
-    LOG(ERROR) << "vkQueueWaitIdle failed: " << result;
-    return;
+std::ostream& operator<<(std::ostream& os, RepresentationAccessMode mode) {
+  switch (mode) {
+    case RepresentationAccessMode::kNone:
+      os << "kNone";
+      break;
+    case RepresentationAccessMode::kRead:
+      os << "kRead";
+      break;
+    case RepresentationAccessMode::kWrite:
+      os << "kWrite";
+      break;
   }
-
-  vkDestroySemaphore(vk_device, semaphore, nullptr);
+  return os;
 }
 
-sk_sp<SkPromiseImageTexture> BeginVulkanAccess(
-    gpu::VulkanImplementation* vk_implementation,
-    VkDevice vk_device,
-    VkPhysicalDevice vk_physical_device,
-    VkQueue vk_queue,
+sk_sp<SkPromiseImageTexture> CreatePromiseTexture(
+    viz::VulkanContextProvider* context_provider,
     base::android::ScopedHardwareBufferHandle ahb_handle,
     gfx::Size size,
-    viz::ResourceFormat format,
-    VkSemaphore semaphore_to_clean) {
+    viz::ResourceFormat format) {
+  VulkanImplementation* vk_implementation =
+      context_provider->GetVulkanImplementation();
+  VkDevice vk_device = context_provider->GetDeviceQueue()->GetVulkanDevice();
+  VkPhysicalDevice vk_physical_device =
+      context_provider->GetDeviceQueue()->GetVulkanPhysicalDevice();
+
   // Create a VkImage and import AHB.
   VkImage vk_image;
   VkImageCreateInfo vk_image_info;
@@ -102,7 +103,8 @@ sk_sp<SkPromiseImageTexture> BeginVulkanAccess(
                            vk_image_info.tiling,
                            vk_image_info.initialLayout,
                            vk_image_info.format,
-                           vk_image_info.mipLevels};
+                           vk_image_info.mipLevels,
+                           VK_QUEUE_FAMILY_EXTERNAL};
   // TODO(bsalomon): Determine whether it makes sense to attempt to reuse this
   // if the vk_info stays the same on subsequent calls.
   auto promise_texture = SkPromiseImageTexture::Make(
@@ -113,66 +115,23 @@ sk_sp<SkPromiseImageTexture> BeginVulkanAccess(
     return nullptr;
   }
 
-  DestroySemaphore(vk_device, vk_queue, semaphore_to_clean);
-
   return promise_texture;
 }
 
-void EndVulkanAccess(gpu::VulkanImplementation* vk_implementation,
-                     VkDevice vk_device,
-                     VkQueue vk_queue,
-                     SkSurface** surface,
-                     base::ScopedFD* sync_fd) {
-  // Create a vk semaphore which can be exported.
-  VkExportSemaphoreCreateInfo export_info;
-  export_info.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
-  export_info.pNext = nullptr;
-  export_info.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+void DestroyVkPromiseTexture(viz::VulkanContextProvider* context_provider,
+                             sk_sp<SkPromiseImageTexture> promise_texture) {
+  DCHECK(promise_texture);
+  DCHECK(promise_texture->unique());
 
-  VkSemaphore vk_semaphore;
-  VkSemaphoreCreateInfo sem_info;
-  sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-  sem_info.pNext = &export_info;
-  sem_info.flags = 0;
-  VkResult result =
-      vkCreateSemaphore(vk_device, &sem_info, nullptr, &vk_semaphore);
-  if (result != VK_SUCCESS) {
-    LOG(ERROR) << "vkCreateSemaphore failed";
-    (*surface) = nullptr;
-    return;
-  }
-  GrBackendSemaphore gr_semaphore;
-  gr_semaphore.initVulkan(vk_semaphore);
+  GrVkImageInfo vk_image_info;
+  bool result =
+      promise_texture->backendTexture().getVkImageInfo(&vk_image_info);
+  DCHECK(result);
 
-  // If GrSemaphoresSubmitted::kNo is returned, the GPU back-end did not
-  // create or add any semaphores to signal on the GPU; the caller should not
-  // instruct the GPU to wait on any of the semaphores.
-  if ((*surface)->flushAndSignalSemaphores(1, &gr_semaphore) ==
-      GrSemaphoresSubmitted::kNo) {
-    vkDestroySemaphore(vk_device, vk_semaphore, nullptr);
-    (*surface) = nullptr;
-    return;
-  }
-  // TODO(ericrk): Keep the surface around for re-use.
-  (*surface) = nullptr;
-
-  // Export a sync fd from the semaphore.
-  SemaphoreHandle semaphore_handle =
-      vk_implementation->GetSemaphoreHandle(vk_device, vk_semaphore);
-  *sync_fd = semaphore_handle.TakeHandle();
-
-  // TODO(vikassoni): We need to wait for the queue submission to complete
-  // before we can destroy the semaphore. This will decrease the performance.
-  // Add a future patch to handle this in more efficient way. Keep semaphores
-  // in a STL queue instead of destroying it. Later use a fence to check if
-  // the batch that refers the semaphore has completed execution. Delete the
-  // semaphore once the fence is signalled.
-  result = vkQueueWaitIdle(vk_queue);
-  if (result != VK_SUCCESS) {
-    LOG(ERROR) << "vkQueueWaitIdle failed: " << result;
-    return;
-  }
-  vkDestroySemaphore(vk_device, vk_semaphore, nullptr);
+  VulkanFenceHelper* fence_helper =
+      context_provider->GetDeviceQueue()->GetFenceHelper();
+  fence_helper->EnqueueImageCleanupForSubmittedWork(
+      vk_image_info.fImage, vk_image_info.fAlloc.fMemory);
 }
 
 }  // namespace
@@ -317,11 +276,13 @@ class SharedImageRepresentationSkiaGLAHB
   SharedImageRepresentationSkiaGLAHB(
       SharedImageManager* manager,
       SharedImageBacking* backing,
-      sk_sp<SkPromiseImageTexture> cached_promise_image_texture,
+      scoped_refptr<SharedContextState> context_state,
+      sk_sp<SkPromiseImageTexture> promise_texture,
       MemoryTypeTracker* tracker,
       gles2::Texture* texture)
       : SharedImageRepresentationSkia(manager, backing, tracker),
-        promise_texture_(cached_promise_image_texture),
+        context_state_(std::move(context_state)),
+        promise_texture_(std::move(promise_texture)),
         texture_(std::move(texture)) {
 #if DCHECK_IS_ON()
     context_ = gl::GLContext::GetCurrent();
@@ -329,27 +290,23 @@ class SharedImageRepresentationSkiaGLAHB
   }
 
   ~SharedImageRepresentationSkiaGLAHB() override {
-    if (mode_ == RepresentationAccessMode::kRead) {
-      EndReadAccess();
-    } else if (mode_ == RepresentationAccessMode::kWrite) {
-      EndWriteAccessInternal();
-    }
-
+    DCHECK_EQ(RepresentationAccessMode::kNone, mode_);
     DCHECK(!surface_);
-
     if (texture_)
       texture_->RemoveLightweightRef(has_context());
   }
 
   sk_sp<SkSurface> BeginWriteAccess(
-      GrContext* gr_context,
       int final_msaa_count,
-      const SkSurfaceProps& surface_props) override {
+      const SkSurfaceProps& surface_props,
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kNone);
     CheckContext();
+
     // if there is already a surface_, it means previous BeginWriteAccess
     // doesn't have a corresponding EndWriteAccess.
-    if (surface_)
-      return nullptr;
+    DCHECK(!surface_);
 
     base::ScopedFD sync_fd;
     if (!ahb_backing()->BeginWrite(&sync_fd))
@@ -358,14 +315,13 @@ class SharedImageRepresentationSkiaGLAHB
     if (!InsertEglFenceAndWait(std::move(sync_fd)))
       return nullptr;
 
-    if (!promise_texture_) {
+    if (!promise_texture_)
       return nullptr;
-    }
 
     SkColorType sk_color_type = viz::ResourceFormatToClosestSkColorType(
         /*gpu_compositing=*/true, format());
     auto surface = SkSurface::MakeFromBackendTextureAsRenderTarget(
-        gr_context, promise_texture_->backendTexture(),
+        context_state_->gr_context(), promise_texture_->backendTexture(),
         kTopLeft_GrSurfaceOrigin, final_msaa_count, sk_color_type,
         backing()->color_space().ToSkColorSpace(), &surface_props);
     surface_ = surface.get();
@@ -374,17 +330,19 @@ class SharedImageRepresentationSkiaGLAHB
   }
 
   void EndWriteAccess(sk_sp<SkSurface> surface) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kWrite);
     DCHECK(surface_);
     DCHECK_EQ(surface.get(), surface_);
     DCHECK(surface->unique());
-    // TODO(ericrk): Keep the surface around for re-use.
-    surface_ = nullptr;
-
-    EndWriteAccessInternal();
+    EndAccess(false /* readonly */);
   }
 
-  sk_sp<SkPromiseImageTexture> BeginReadAccess(SkSurface* sk_surface) override {
+  sk_sp<SkPromiseImageTexture> BeginReadAccess(
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kNone);
     CheckContext();
+
     base::ScopedFD write_sync_fd;
     if (!ahb_backing()->BeginRead(this, &write_sync_fd))
       return nullptr;
@@ -397,12 +355,9 @@ class SharedImageRepresentationSkiaGLAHB
   }
 
   void EndReadAccess() override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kRead);
     CheckContext();
-
-    base::ScopedFD sync_fd = CreateEglFenceAndExportFd();
-    ahb_backing()->EndRead(this, std::move(sync_fd));
-
-    mode_ = RepresentationAccessMode::kNone;
+    EndAccess(true /* readonly */);
   }
 
  private:
@@ -416,22 +371,26 @@ class SharedImageRepresentationSkiaGLAHB
 #endif
   }
 
-  void EndWriteAccessInternal() {
+  void EndAccess(bool readonly) {
     CheckContext();
-    DCHECK_EQ(RepresentationAccessMode::kWrite, mode_);
 
     // Insert a gl fence to signal the write completion.
     base::ScopedFD sync_fd = CreateEglFenceAndExportFd();
-    ahb_backing()->EndWrite(std::move(sync_fd));
+    if (readonly)
+      ahb_backing()->EndRead(this, std::move(sync_fd));
+    else
+      ahb_backing()->EndWrite(std::move(sync_fd));
 
-    if (texture_) {
+    if (texture_ && !readonly) {
       if (texture_->IsLevelCleared(texture_->target(), 0))
         backing()->SetCleared();
     }
 
     mode_ = RepresentationAccessMode::kNone;
+    surface_ = nullptr;
   }
 
+  scoped_refptr<SharedContextState> context_state_;
   sk_sp<SkPromiseImageTexture> promise_texture_;
   gles2::Texture* texture_;
   SkSurface* surface_ = nullptr;
@@ -448,139 +407,71 @@ class SharedImageRepresentationSkiaVkAHB
   SharedImageRepresentationSkiaVkAHB(
       SharedImageManager* manager,
       SharedImageBacking* backing,
-      scoped_refptr<SharedContextState> context_state)
-      : SharedImageRepresentationSkia(manager, backing, nullptr),
-        context_state_(context_state) {
-    SharedImageBackingAHB* ahb_backing =
-        static_cast<SharedImageBackingAHB*>(backing);
-    DCHECK(ahb_backing);
+      scoped_refptr<SharedContextState> context_state,
+      sk_sp<SkPromiseImageTexture> promise_texture,
+      MemoryTypeTracker* tracker)
+      : SharedImageRepresentationSkia(manager, backing, tracker),
+        promise_texture_(std::move(promise_texture)),
+        context_state_(std::move(context_state)) {
+    DCHECK(promise_texture_);
     DCHECK(context_state_);
     DCHECK(context_state_->vk_context_provider());
   }
 
   ~SharedImageRepresentationSkiaVkAHB() override {
-    if (mode_ == RepresentationAccessMode::kRead) {
-      EndReadAccess();
-    } else if (mode_ == RepresentationAccessMode::kWrite) {
-      EndWriteAccessInternal();
-    }
-
+    DestroyVkPromiseTexture(context_state_->vk_context_provider(),
+                            std::move(promise_texture_));
+    DCHECK_EQ(mode_, RepresentationAccessMode::kNone);
     DCHECK(!surface_);
   }
 
   sk_sp<SkSurface> BeginWriteAccess(
-      GrContext* gr_context,
       int final_msaa_count,
-      const SkSurfaceProps& surface_props) override {
-    // If previous access has not ended.
-    if (surface_)
-      return nullptr;
+      const SkSurfaceProps& surface_props,
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kNone);
+    DCHECK(!surface_);
 
-    base::ScopedFD sync_fd;
-    if (!ahb_backing()->BeginWrite(&sync_fd))
-      return nullptr;
-    DCHECK(sync_fd.is_valid());
-
-    VkSemaphore semaphore = vk_implementation()->ImportSemaphoreHandle(
-        vk_device(),
-        SemaphoreHandle(VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
-                        std::move(sync_fd)));
-    if (semaphore == VK_NULL_HANDLE) {
-      return nullptr;
-    }
-
-    // Submit wait semaphore to the queue. Note that Skia uses the same queue
-    // exposed by vk_queue(), so this will work due to Vulkan queue ordering.
-    if (!SubmitWaitVkSemaphore(vk_queue(), semaphore)) {
-      DestroySemaphore(vk_device(), vk_queue(), semaphore);
-      return nullptr;
-    }
-
-    promise_texture_ = BeginVulkanAccess(
-        vk_implementation(), vk_device(), vk_phy_device(), vk_queue(),
-        ahb_backing()->GetAhbHandle(), size(), format(), semaphore);
-    if (!promise_texture_)
+    if (!BeginAccess(false /* readonly */, begin_semaphores, end_semaphores))
       return nullptr;
 
     SkColorType sk_color_type = viz::ResourceFormatToClosestSkColorType(
         /*gpu_compositing=*/true, format());
     auto surface = SkSurface::MakeFromBackendTextureAsRenderTarget(
-        gr_context, promise_texture_->backendTexture(),
+        context_state_->gr_context(), promise_texture_->backendTexture(),
         kTopLeft_GrSurfaceOrigin, final_msaa_count, sk_color_type, nullptr,
         &surface_props);
-
-    // Cache the sk surface in the representation so that it can be used in the
-    // EndWriteAccess. Also make sure previous surface_ have been consumed by
-    // EndWriteAccess() call.
+    DCHECK(surface);
     surface_ = surface.get();
-
-    mode_ = RepresentationAccessMode::kWrite;
-
     return surface;
   }
 
   void EndWriteAccess(sk_sp<SkSurface> surface) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kWrite);
     DCHECK_EQ(surface.get(), surface_);
     DCHECK(surface->unique());
-    EndWriteAccessInternal();
+
+    EndAccess(false /* readonly */);
+    surface_ = nullptr;
   }
 
-  sk_sp<SkPromiseImageTexture> BeginReadAccess(SkSurface* sk_surface) override {
-    // If previous access has not ended.
-    if (surface_)
+  sk_sp<SkPromiseImageTexture> BeginReadAccess(
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
+    DCHECK_EQ(mode_, RepresentationAccessMode::kNone);
+    DCHECK(!surface_);
+
+    if (!BeginAccess(true /* readonly */, begin_semaphores, end_semaphores))
       return nullptr;
-    DCHECK(sk_surface);
-
-    // Synchronise the read access with the writes.
-    base::ScopedFD sync_fd;
-    if (!ahb_backing()->BeginRead(this, &sync_fd))
-      return nullptr;
-
-    VkSemaphore semaphore = VK_NULL_HANDLE;
-    // We need to wait only if there is a valid fd.
-    if (sync_fd.is_valid()) {
-      // Import the above sync fd into a semaphore.
-      semaphore = vk_implementation()->ImportSemaphoreHandle(
-          vk_device(),
-          SemaphoreHandle(VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
-                          std::move(sync_fd)));
-      if (semaphore == VK_NULL_HANDLE)
-        return nullptr;
-
-      // Submit wait semaphore to the queue. Note that Skia uses the same queue
-      // exposed by vk_queue(), so this will work due to Vulkan queue ordering.
-      if (!SubmitWaitVkSemaphore(vk_queue(), semaphore)) {
-        vkDestroySemaphore(vk_device(), semaphore, nullptr);
-        return nullptr;
-      }
-    }
-
-    auto promise_texture = BeginVulkanAccess(
-        vk_implementation(), vk_device(), vk_phy_device(), vk_queue(),
-        ahb_backing()->GetAhbHandle(), size(), format(), std::move(semaphore));
-
-    // Cache the sk surface in the representation so that it can be used in the
-    // EndReadAccess. Also make sure previous surface_ have been consumed by
-    // EndReadAccess() call.
-    surface_ = sk_surface;
-
-    mode_ = RepresentationAccessMode::kRead;
-
-    return promise_texture;
+    return promise_texture_;
   }
 
   void EndReadAccess() override {
-    // There should be a surface_ from the BeginReadAccess().
-    DCHECK_EQ(RepresentationAccessMode::kRead, mode_);
-    DCHECK(surface_);
+    DCHECK_EQ(mode_, RepresentationAccessMode::kRead);
+    DCHECK(!surface_);
 
-    base::ScopedFD sync_fd;
-    EndVulkanAccess(vk_implementation(), vk_device(), vk_queue(), &surface_,
-                    &sync_fd);
-    // pass this sync fd to the backing.
-    ahb_backing()->EndRead(this, std::move(sync_fd));
-
-    mode_ = RepresentationAccessMode::kNone;
+    EndAccess(true /* readonly */);
   }
 
  private:
@@ -610,23 +501,85 @@ class SharedImageRepresentationSkiaVkAHB
         ->GetVulkanQueue();
   }
 
-  void EndWriteAccessInternal() {
-    // There should be a surface_ from the BeginWriteAccess().
-    DCHECK_EQ(RepresentationAccessMode::kWrite, mode_);
-    DCHECK(surface_);
+  bool BeginAccess(bool readonly,
+                   std::vector<GrBackendSemaphore>* begin_semaphores,
+                   std::vector<GrBackendSemaphore>* end_semaphores) {
+    DCHECK(begin_semaphores);
+    DCHECK(end_semaphores);
+    DCHECK(end_access_semaphore_ == VK_NULL_HANDLE);
 
+    // Synchronise the read access with the writes.
     base::ScopedFD sync_fd;
-    EndVulkanAccess(vk_implementation(), vk_device(), vk_queue(), &surface_,
-                    &sync_fd);
-    ahb_backing()->EndWrite(std::move(sync_fd));
+    if (readonly) {
+      if (!ahb_backing()->BeginRead(this, &sync_fd))
+        return false;
+    } else {
+      if (!ahb_backing()->BeginWrite(&sync_fd))
+        return false;
+    }
 
+    VkSemaphore begin_access_semaphore = VK_NULL_HANDLE;
+    if (sync_fd.is_valid()) {
+      begin_access_semaphore = vk_implementation()->ImportSemaphoreHandle(
+          vk_device(),
+          SemaphoreHandle(VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+                          std::move(sync_fd)));
+      if (begin_access_semaphore == VK_NULL_HANDLE) {
+        DLOG(ERROR) << "Failed to import semaphore from sync_fd.";
+        return false;
+      }
+    }
+
+    end_access_semaphore_ =
+        vk_implementation()->CreateExternalSemaphore(vk_device());
+
+    if (end_access_semaphore_ == VK_NULL_HANDLE) {
+      DLOG(ERROR) << "Failed to create the external semaphore.";
+      if (begin_access_semaphore != VK_NULL_HANDLE) {
+        vkDestroySemaphore(vk_device(), begin_access_semaphore,
+                           nullptr /* pAllocator */);
+      }
+      return false;
+    }
+
+    if (begin_access_semaphore != VK_NULL_HANDLE) {
+      begin_semaphores->emplace_back();
+      begin_semaphores->back().initVulkan(begin_access_semaphore);
+    }
+    end_semaphores->emplace_back();
+    end_semaphores->back().initVulkan(end_access_semaphore_);
+
+    mode_ = readonly ? RepresentationAccessMode::kRead
+                     : RepresentationAccessMode::kWrite;
+    return true;
+  }
+
+  void EndAccess(bool readonly) {
+    // There should be a surface_ from the BeginWriteAccess().
+    DCHECK(end_access_semaphore_ != VK_NULL_HANDLE);
+
+    SemaphoreHandle semaphore_handle = vk_implementation()->GetSemaphoreHandle(
+        vk_device(), end_access_semaphore_);
+    auto sync_fd = semaphore_handle.TakeHandle();
+    DCHECK(sync_fd.is_valid());
+    if (readonly)
+      ahb_backing()->EndRead(this, std::move(sync_fd));
+    else
+      ahb_backing()->EndWrite(std::move(sync_fd));
+    VulkanFenceHelper* fence_helper = context_state_->vk_context_provider()
+                                          ->GetDeviceQueue()
+                                          ->GetFenceHelper();
+    fence_helper->EnqueueSemaphoreCleanupForSubmittedWork(
+        end_access_semaphore_);
+    end_access_semaphore_ = VK_NULL_HANDLE;
     mode_ = RepresentationAccessMode::kNone;
   }
 
   sk_sp<SkPromiseImageTexture> promise_texture_;
   RepresentationAccessMode mode_ = RepresentationAccessMode::kNone;
   SkSurface* surface_ = nullptr;
-  scoped_refptr<SharedContextState> context_state_ = nullptr;
+  scoped_refptr<SharedContextState> context_state_;
+  VkSemaphore end_access_semaphore_ = VK_NULL_HANDLE;
 };
 
 SharedImageBackingAHB::SharedImageBackingAHB(
@@ -725,10 +678,16 @@ SharedImageBackingAHB::ProduceSkia(
 
   // Check whether we are in Vulkan mode OR GL mode and accordingly create
   // Skia representation.
-  if (context_state->use_vulkan_gr_context()) {
-    return std::make_unique<SharedImageRepresentationSkiaVkAHB>(manager, this,
-                                                                context_state);
+  if (context_state->GrContextIsVulkan()) {
+    sk_sp<SkPromiseImageTexture> promise_texture = CreatePromiseTexture(
+        context_state->vk_context_provider(), GetAhbHandle(), size(), format());
+    if (!promise_texture)
+      return nullptr;
+    return std::make_unique<SharedImageRepresentationSkiaVkAHB>(
+        manager, this, std::move(context_state), std::move(promise_texture),
+        tracker);
   }
+  DCHECK(context_state->GrContextIsGL());
 
   auto* texture = GenGLTexture();
   if (!texture)
@@ -741,7 +700,8 @@ SharedImageBackingAHB::ProduceSkia(
   sk_sp<SkPromiseImageTexture> promise_texture =
       SkPromiseImageTexture::Make(backend_texture);
   return std::make_unique<SharedImageRepresentationSkiaGLAHB>(
-      manager, this, promise_texture, tracker, std::move(texture));
+      manager, this, std::move(context_state), std::move(promise_texture),
+      tracker, std::move(texture));
 }
 
 bool SharedImageBackingAHB::BeginWrite(base::ScopedFD* fd_to_wait_on) {
@@ -1029,6 +989,8 @@ SharedImageBackingFactoryAHB::CreateSharedImage(
   // flags based on the usage params in the current function call.
   hwb_desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
                    AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
+  if (usage & SHARED_IMAGE_USAGE_SCANOUT)
+    hwb_desc.usage |= gl::SurfaceControl::RequiredUsage();
 
   // Number of images in an image array.
   hwb_desc.layers = 1;
@@ -1062,6 +1024,11 @@ SharedImageBackingFactoryAHB::CreateSharedImage(
     base::span<const uint8_t> pixel_data) {
   NOTIMPLEMENTED();
   return nullptr;
+}
+
+bool SharedImageBackingFactoryAHB::CanImportGpuMemoryBuffer(
+    gfx::GpuMemoryBufferType memory_buffer_type) {
+  return false;
 }
 
 SharedImageBackingFactoryAHB::FormatInfo::FormatInfo() = default;

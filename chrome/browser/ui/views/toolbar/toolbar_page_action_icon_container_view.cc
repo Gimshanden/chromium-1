@@ -4,20 +4,31 @@
 
 #include "chrome/browser/ui/views/toolbar/toolbar_page_action_icon_container_view.h"
 
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/views/autofill/local_card_migration_icon_view.h"
-#include "chrome/browser/ui/views/autofill/save_card_icon_view.h"
+#include "chrome/browser/ui/browser_command_controller.h"
+#include "chrome/browser/ui/views/autofill/payments/local_card_migration_icon_view.h"
+#include "chrome/browser/ui/views/autofill/payments/save_card_icon_view.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
+#include "chrome/browser/ui/views/passwords/manage_passwords_icon_views.h"
+#include "chrome/browser/ui/views/profiles/avatar_toolbar_button.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/widget/widget.h"
 
 ToolbarPageActionIconContainerView::ToolbarPageActionIconContainerView(
-    CommandUpdater* command_updater,
     Browser* browser)
-    : ToolbarIconContainerView(), browser_(browser) {
+    : ToolbarIconContainerView(
+          /*uses_highlight=*/!browser->profile()->IsIncognitoProfile()),
+      browser_(browser) {
+  manage_passwords_icon_views_ =
+      new ManagePasswordsIconViews(browser->command_controller(), this);
+  page_action_icons_.push_back(manage_passwords_icon_views_);
+
   local_card_migration_icon_view_ = new autofill::LocalCardMigrationIconView(
-      command_updater, browser, this,
+      browser->command_controller(), browser, this,
       // TODO(crbug.com/932818): The font list and the icon color may not be
       // what we want here. Put placeholders for now.
       views::style::GetFont(CONTEXT_TOOLBAR_BUTTON,
@@ -25,7 +36,7 @@ ToolbarPageActionIconContainerView::ToolbarPageActionIconContainerView(
   page_action_icons_.push_back(local_card_migration_icon_view_);
 
   save_card_icon_view_ = new autofill::SaveCardIconView(
-      command_updater, browser, this,
+      browser->command_controller(), browser, this,
       // TODO(crbug.com/932818): The font list and the icon color may not be
       // what we want here. Put placeholders for now.
       views::style::GetFont(CONTEXT_TOOLBAR_BUTTON,
@@ -34,16 +45,34 @@ ToolbarPageActionIconContainerView::ToolbarPageActionIconContainerView(
 
   for (PageActionIconView* icon_view : page_action_icons_) {
     icon_view->SetVisible(false);
+    icon_view->AddButtonObserver(this);
+    icon_view->views::View::AddObserver(this);
     AddChildView(icon_view);
+  }
+
+  avatar_ = new AvatarToolbarButton(browser);
+  AddMainView(avatar_);
+}
+
+ToolbarPageActionIconContainerView::~ToolbarPageActionIconContainerView() {
+  for (PageActionIconView* icon_view : page_action_icons_) {
+    icon_view->RemoveButtonObserver(this);
+    icon_view->views::View::RemoveObserver(this);
   }
 }
 
-ToolbarPageActionIconContainerView::~ToolbarPageActionIconContainerView() =
-    default;
-
 void ToolbarPageActionIconContainerView::UpdateAllIcons() {
-  for (PageActionIconView* icon_view : page_action_icons_)
+  const ui::ThemeProvider* theme_provider = GetThemeProvider();
+  const SkColor icon_color =
+      theme_provider->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+
+  for (PageActionIconView* icon_view : page_action_icons_) {
+    icon_view->SetIconColor(icon_color);
     icon_view->Update();
+  }
+
+  if (avatar_)
+    avatar_->UpdateIcon();
 }
 
 PageActionIconView* ToolbarPageActionIconContainerView::GetIconView(
@@ -53,6 +82,8 @@ PageActionIconView* ToolbarPageActionIconContainerView::GetIconView(
       return local_card_migration_icon_view_;
     case PageActionIconType::kSaveCard:
       return save_card_icon_view_;
+    case PageActionIconType::kManagePasswords:
+      return manage_passwords_icon_views_;
     default:
       NOTREACHED();
       return nullptr;
@@ -76,8 +107,7 @@ void ToolbarPageActionIconContainerView::UpdatePageActionIcon(
 }
 
 SkColor ToolbarPageActionIconContainerView::GetPageActionInkDropColor() const {
-  return GetNativeTheme()->GetSystemColor(
-      ui::NativeTheme::kColorId_TextfieldDefaultColor);
+  return GetToolbarInkDropBaseColor(this);
 }
 
 content::WebContents*
@@ -85,9 +115,14 @@ ToolbarPageActionIconContainerView::GetWebContentsForPageActionIconView() {
   return browser_->tab_strip_model()->GetActiveWebContents();
 }
 
+void ToolbarPageActionIconContainerView::OnThemeChanged() {
+  // Update icon color.
+  UpdateAllIcons();
+}
+
 bool ToolbarPageActionIconContainerView::FocusInactiveBubbleForIcon(
     PageActionIconView* icon_view) {
-  if (!icon_view->visible() || !icon_view->GetBubble())
+  if (!icon_view->GetVisible() || !icon_view->GetBubble())
     return false;
 
   views::Widget* widget = icon_view->GetBubble()->GetWidget();

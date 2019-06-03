@@ -102,6 +102,8 @@ mojom::StackMode GetStackModeForStartup() {
   } else {
     stack_mode = base::GetFieldTrialParamValueByFeature(
         kOOPHeapProfilingFeature, kOOPHeapProfilingFeatureStackMode);
+    if (stack_mode.empty())
+      stack_mode = kMemlogStackModeNative;
   }
 
   return ConvertStringToStackMode(stack_mode);
@@ -143,11 +145,6 @@ uint32_t GetSamplingRateForStartup() {
   return base::GetFieldTrialParamByFeatureAsInt(
       kOOPHeapProfilingFeature, kOOPHeapProfilingFeatureSamplingRate,
       kDefaultSamplingRate);
-}
-
-bool IsInProcessModeEnabled() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-             kMemlogInProcess) != kMemlogInProcessDisabled;
 }
 
 bool IsBackgroundHeapProfilingEnabled() {

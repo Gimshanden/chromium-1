@@ -8,14 +8,14 @@
 #include "ash/login/ui/lock_screen.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wallpaper/wallpaper_controller.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
@@ -38,7 +38,7 @@ bool IsSystemTrayForWindowVisible(WindowType index) {
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   RootWindowController* controller =
       RootWindowController::ForWindow(root_windows[index]);
-  return controller->GetStatusAreaWidget()->unified_system_tray()->visible();
+  return controller->GetStatusAreaWidget()->unified_system_tray()->GetVisible();
 }
 
 TEST_F(LoginScreenControllerTest, RequestAuthentication) {

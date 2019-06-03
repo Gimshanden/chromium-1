@@ -76,6 +76,13 @@ class JSChecker {
       bool enabled,
       std::initializer_list<base::StringPiece> element_ids);
 
+  // Waiter that waits until the specified element's class list contains, or
+  // doesn't contain the specified class.
+  std::unique_ptr<TestConditionWaiter> CreateHasClassWaiter(
+      bool has_class,
+      const std::string& css_class,
+      std::initializer_list<base::StringPiece> element_ids);
+
   // Expects that indicated UI element is not hidden.
   // NOTE: This only checks hidden property - it might not work for elements
   // hidden by "display: none" style.
@@ -107,7 +114,14 @@ class JSChecker {
   void ExpectHasNoClass(const std::string& css_class,
                         std::initializer_list<base::StringPiece> element_ids);
 
-  // Tap on indicated UI element.
+  // Fires a native 'click' event on the indicated UI element. Prefer using
+  // native 'click' event as it works on both polymer and native UI elements.
+  void ClickOnPath(std::initializer_list<base::StringPiece> element_ids);
+  void ClickOn(const std::string& element_id);
+
+  // Fires a synthetic 'tap' event on the indicated UI element. Provided as
+  // backwards compatibility with some OOBE UI elements that only listen to
+  // tap events.
   void TapOnPath(std::initializer_list<base::StringPiece> element_ids);
   void TapOn(const std::string& element_id);
 

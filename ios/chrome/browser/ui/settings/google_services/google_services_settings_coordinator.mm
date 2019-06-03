@@ -5,20 +5,25 @@
 #import "ios/chrome/browser/ui/settings/google_services/google_services_settings_coordinator.h"
 
 #include "base/mac/foundation_util.h"
+#include "components/google/core/common/google_util.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/signin/authentication_service.h"
 #import "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
+#include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/ui/authentication/authentication_flow.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/settings/google_services/accounts_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/google_services/google_services_settings_command_handler.h"
 #import "ios/chrome/browser/ui/settings/google_services/google_services_settings_mediator.h"
 #import "ios/chrome/browser/ui/settings/google_services/google_services_settings_view_controller.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_coordinator.h"
+#import "ios/chrome/browser/ui/settings/sync/sync_encryption_passphrase_table_view_controller.h"
 #import "ios/chrome/browser/ui/signin_interaction/signin_interaction_coordinator.h"
 #include "ios/chrome/browser/ui/ui_feature_flags.h"
 
@@ -49,6 +54,8 @@
 // Coordinator to present the manage sync settings.
 @property(nonatomic, strong)
     ManageSyncSettingsCoordinator* manageSyncSettingsCoordinator;
+// YES if stop has been called.
+@property(nonatomic, assign) BOOL stopDone;
 
 @end
 
@@ -63,6 +70,11 @@
     _mode = mode;
   }
   return self;
+}
+
+- (void)dealloc {
+  // -[GoogleServicesSettingsCoordinator stop] needs to be called explicitly.
+  DCHECK(self.stopDone);
 }
 
 - (void)start {
@@ -95,6 +107,35 @@
   DCHECK(self.navigationController);
   [self.navigationController pushViewController:self.viewController
                                        animated:YES];
+}
+
+- (void)stop {
+  if (self.stopDone) {
+    return;
+  }
+  // Sync changes should only be commited if the user is authenticated and
+  // there is no sign-in progress.
+  if (self.authService->IsAuthenticated() &&
+      !self.signinInteractionCoordinator) {
+    SyncSetupService* syncSetupService =
+        SyncSetupServiceFactory::GetForBrowserState(self.browserState);
+    if (self.mode == GoogleServicesSettingsModeSettings &&
+        syncSetupService->GetSyncServiceState() ==
+            SyncSetupService::kSyncSettingsNotConfirmed) {
+      // If Sync is still in aborted state, this means the user didn't turn on
+      // sync, and wants Sync off. To acknowledge, Sync has to be turned off.
+      syncSetupService->SetSyncEnabled(false);
+    }
+    syncSetupService->CommitSyncChanges();
+  }
+  if (self.signinInteractionCoordinator) {
+    [self.signinInteractionCoordinator cancel];
+    // |self.signinInteractionCoordinator| is set to nil by
+    // the completion block called by -[GoogleServicesSettingsCoordinator
+    // signInInteractionCoordinatorDidComplete]
+    DCHECK(!self.signinInteractionCoordinator);
+  }
+  self.stopDone = YES;
 }
 
 #pragma mark - Private
@@ -154,8 +195,11 @@
 }
 
 - (void)openPassphraseDialog {
-  [self.dispatcher
-      showSyncPassphraseSettingsFromViewController:self.viewController];
+  SyncEncryptionPassphraseTableViewController* controller =
+      [[SyncEncryptionPassphraseTableViewController alloc]
+          initWithBrowserState:self.browserState];
+  controller.dispatcher = self.dispatcher;
+  [self.navigationController pushViewController:controller animated:YES];
 }
 
 - (void)showSignIn {
@@ -196,6 +240,14 @@
       self.navigationController;
   self.manageSyncSettingsCoordinator.delegate = self;
   [self.manageSyncSettingsCoordinator start];
+}
+
+- (void)openManageGoogleAccountWebPage {
+  GURL url = google_util::AppendGoogleLocaleParam(
+      GURL(kManageYourGoogleAccountURL),
+      GetApplicationContext()->GetApplicationLocale());
+  OpenNewTabCommand* command = [OpenNewTabCommand commandWithURLFromChrome:url];
+  [self.dispatcher closeSettingsUIAndOpenURL:command];
 }
 
 #pragma mark - GoogleServicesSettingsViewControllerPresentationDelegate

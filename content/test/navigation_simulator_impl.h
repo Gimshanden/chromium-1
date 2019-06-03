@@ -58,6 +58,11 @@ class NavigationSimulatorImpl : public NavigationSimulator,
   static std::unique_ptr<NavigationSimulatorImpl> CreateFromPending(
       WebContents* contents);
 
+  // Creates a NavigationSimulator for an already-started navigation happening
+  // in |frame_tree_node|. Can be used to drive the navigation to completion.
+  static std::unique_ptr<NavigationSimulatorImpl> CreateFromPendingInFrame(
+      FrameTreeNode* frame_tree_node);
+
   // NavigationSimulator implementation.
   void Start() override;
   void Redirect(const GURL& new_url) override;
@@ -81,12 +86,14 @@ class NavigationSimulatorImpl : public NavigationSimulator,
   void SetIsFormSubmission(bool is_form_submission) override;
   void SetReferrer(const Referrer& referrer) override;
   void SetSocketAddress(const net::IPEndPoint& remote_endpoint) override;
+  void SetWasFetchedViaCache(bool was_fetched_via_cache) override;
   void SetIsSignedExchangeInnerResponse(
       bool is_signed_exchange_inner_response) override;
   void SetInterfaceProviderRequest(
       service_manager::mojom::InterfaceProviderRequest request) override;
   void SetContentsMimeType(const std::string& contents_mime_type) override;
   void SetAutoAdvance(bool auto_advance) override;
+  void SetSSLInfo(const net::SSLInfo& ssl_info) override;
 
   NavigationThrottle::ThrottleCheckResult GetLastThrottleCheckResult() override;
   NavigationHandleImpl* GetNavigationHandle() const override;
@@ -120,11 +127,15 @@ class NavigationSimulatorImpl : public NavigationSimulator,
     should_replace_current_entry_ = should_replace_current_entry;
   }
 
+  // Manually force the value of intended_as_new_entry flag in DidCommit*Params
+  // to |intended_as_new_entry|.
+  void set_intended_as_new_entry(bool intended_as_new_entry) {
+    intended_as_new_entry_ = intended_as_new_entry;
+  }
+
   void set_http_connection_info(net::HttpResponseInfo::ConnectionInfo info) {
     http_connection_info_ = info;
   }
-
-  void set_ssl_info(net::SSLInfo ssl_info) { ssl_info_ = ssl_info; }
 
   // Whether to drop the swap out ack of the previous RenderFrameHost during
   // cross-process navigations. By default this is false, set to true if you
@@ -139,6 +150,12 @@ class NavigationSimulatorImpl : public NavigationSimulator,
   void set_block_on_before_unload_ack(bool block_on_before_unload_ack) {
     block_on_before_unload_ack_ = block_on_before_unload_ack;
   }
+
+  void set_page_state(const PageState& page_state) { page_state_ = page_state; }
+
+  void set_origin(const url::Origin& origin) { origin_ = origin; }
+
+  void SetIsPostWithId(int64_t post_id);
 
  private:
   NavigationSimulatorImpl(const GURL& original_url,
@@ -240,8 +257,10 @@ class NavigationSimulatorImpl : public NavigationSimulator,
 
   // Note: additional parameters to modify the navigation should be properly
   // initialized (if needed) in InitializeFromStartedRequest.
+  GURL original_url_;
   GURL navigation_url_;
   net::IPEndPoint remote_endpoint_;
+  bool was_fetched_via_cache_ = false;
   bool is_signed_exchange_inner_response_ = false;
   std::string initial_method_;
   bool is_form_submission_ = false;
@@ -262,6 +281,9 @@ class NavigationSimulatorImpl : public NavigationSimulator,
   net::HttpResponseInfo::ConnectionInfo http_connection_info_ =
       net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN;
   base::Optional<net::SSLInfo> ssl_info_;
+  base::Optional<PageState> page_state_;
+  base::Optional<url::Origin> origin_;
+  int64_t post_id_ = -1;
 
   bool auto_advance_ = true;
   bool drop_swap_out_ack_ = false;
@@ -272,8 +294,9 @@ class NavigationSimulatorImpl : public NavigationSimulator,
   NavigationController::LoadURLParams* load_url_params_;
 
   bool history_list_was_cleared_ = false;
-  base::Optional<bool> did_create_new_entry_;
   bool should_replace_current_entry_ = false;
+  base::Optional<bool> did_create_new_entry_;
+  base::Optional<bool> intended_as_new_entry_;
 
   // These are used to sanity check the content/public/ API calls emitted as
   // part of the navigation.

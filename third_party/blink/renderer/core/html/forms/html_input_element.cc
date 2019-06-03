@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 
+#include "third_party/blink/public/mojom/choosers/date_time_chooser.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_scroll_into_view_params.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_event_listener.h"
@@ -61,6 +62,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/input_type.h"
 #include "third_party/blink/renderer/core/html/forms/search_input_type.h"
+#include "third_party/blink/renderer/core/html/forms/text_input_type.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
 #include "third_party/blink/renderer/core/html/html_image_loader.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
@@ -71,6 +73,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
@@ -83,9 +86,6 @@ using namespace html_names;
 
 class ListAttributeTargetObserver : public IdTargetObserver {
  public:
-  static ListAttributeTargetObserver* Create(const AtomicString& id,
-                                             HTMLInputElement*);
-
   ListAttributeTargetObserver(const AtomicString& id, HTMLInputElement*);
 
   void Trace(Visitor*) override;
@@ -119,21 +119,17 @@ HTMLInputElement::HTMLInputElement(Document& document,
       // constructing unnecessarily a text InputType and its shadow subtree,
       // just to destroy them when the |type| attribute gets set by the parser
       // to something else than 'text'.
-      input_type_(flags.IsCreatedByParser() ? nullptr
-                                            : InputType::CreateText(*this)),
+      input_type_(flags.IsCreatedByParser()
+                      ? nullptr
+                      : MakeGarbageCollected<TextInputType>(*this)),
       input_type_view_(input_type_ ? input_type_->CreateView() : nullptr) {
   SetHasCustomStyleCallbacks();
-}
 
-HTMLInputElement* HTMLInputElement::Create(Document& document,
-                                           const CreateElementFlags flags) {
-  auto* input_element = MakeGarbageCollected<HTMLInputElement>(document, flags);
   if (!flags.IsCreatedByParser()) {
-    DCHECK(input_element->input_type_view_->NeedsShadowSubtree());
-    input_element->CreateUserAgentShadowRoot();
-    input_element->CreateShadowSubtree();
+    DCHECK(input_type_view_->NeedsShadowSubtree());
+    CreateUserAgentShadowRoot();
+    CreateShadowSubtree();
   }
-  return input_element;
 }
 
 void HTMLInputElement::Trace(Visitor* visitor) {
@@ -415,7 +411,7 @@ void HTMLInputElement::UpdateType() {
 
   input_type_view_->DestroyShadowSubtree();
   DropInnerEditorElement();
-  LazyReattachIfAttached();
+  SetForceReattachLayoutTree();
 
   if (input_type_->SupportsRequired() != new_type->SupportsRequired() &&
       IsRequired()) {
@@ -439,6 +435,10 @@ void HTMLInputElement::UpdateType() {
       input_type_->SupportsPlaceholder() != new_type->SupportsPlaceholder();
 
   has_been_password_field_ |= new_type_name == input_type_names::kPassword;
+
+  // 7. Let previouslySelectable be true if setRangeText() previously applied
+  // to the element, and false otherwise.
+  const bool previously_selectable = input_type_->SupportsSelectionAPI();
 
   input_type_ = new_type;
   input_type_view_ = input_type_->CreateView();
@@ -544,12 +544,24 @@ void HTMLInputElement::UpdateType() {
   // UA Shadow tree was recreated. We need to set selection again. We do it
   // later in order to avoid force layout.
   if (GetDocument().FocusedElement() == this)
-    GetDocument().UpdateFocusAppearanceLater();
+    GetDocument().UpdateFocusAppearanceAfterLayout();
 
   // TODO(tkent): Should we dispatch a change event?
   ClearValueBeforeFirstUserEdit();
 
+  // 5. Signal a type change for the element. (The Radio Button state uses
+  // this, in particular.)
   AddToRadioButtonGroup();
+
+  // 8. Let nowSelectable be true if setRangeText() now applies to the element,
+  // and false otherwise.
+  const bool now_selectable = input_type_->SupportsSelectionAPI();
+
+  // 9. If previouslySelectable is false and nowSelectable is true, set the
+  // element's text entry cursor position to the beginning of the text control,
+  // and set its selection direction to "none".
+  if (!previously_selectable && now_selectable)
+    SetSelectionRange(0, 0, kSelectionHasNoDirection);
 
   SetNeedsValidityCheck();
   if ((could_be_successful_submit_button || CanBeSuccessfulSubmitButton()) &&
@@ -1695,7 +1707,7 @@ void HTMLInputElement::ResetListAttributeTargetObserver() {
   const AtomicString& value = FastGetAttribute(kListAttr);
   if (!value.IsNull() && isConnected()) {
     SetListAttributeTargetObserver(
-        ListAttributeTargetObserver::Create(value, this));
+        MakeGarbageCollected<ListAttributeTargetObserver>(value, this));
   } else {
     SetListAttributeTargetObserver(nullptr);
   }
@@ -1813,12 +1825,6 @@ void HTMLInputElement::setWidth(unsigned width) {
   SetUnsignedIntegralAttribute(kWidthAttr, width);
 }
 
-ListAttributeTargetObserver* ListAttributeTargetObserver::Create(
-    const AtomicString& id,
-    HTMLInputElement* element) {
-  return MakeGarbageCollected<ListAttributeTargetObserver>(id, element);
-}
-
 ListAttributeTargetObserver::ListAttributeTargetObserver(
     const AtomicString& id,
     HTMLInputElement* element)
@@ -1902,16 +1908,16 @@ bool HTMLInputElement::SetupDateTimeChooserParameters(
       if (option->value().IsEmpty() || option->IsDisabledFormControl() ||
           !IsValidValue(option->value()))
         continue;
-      DateTimeSuggestion suggestion;
-      suggestion.value =
+      auto suggestion = mojom::blink::DateTimeSuggestion::New();
+      suggestion->value =
           input_type_->ParseToNumber(option->value(), Decimal::Nan())
               .ToDouble();
-      if (std::isnan(suggestion.value))
+      if (std::isnan(suggestion->value))
         continue;
-      suggestion.localized_value = LocalizeValue(option->value());
-      suggestion.label =
+      suggestion->localized_value = LocalizeValue(option->value());
+      suggestion->label =
           option->value() == option->label() ? String() : option->label();
-      parameters.suggestions.push_back(suggestion);
+      parameters.suggestions.push_back(std::move(suggestion));
     }
   }
   return true;
@@ -1925,7 +1931,12 @@ void HTMLInputElement::SetShouldRevealPassword(bool value) {
   if (!!should_reveal_password_ == value)
     return;
   should_reveal_password_ = value;
-  LazyReattachIfAttached();
+  if (HTMLElement* inner_editor = InnerEditorElement()) {
+    // Update -webkit-text-security style.
+    inner_editor->SetNeedsStyleRecalc(
+        kLocalStyleChange,
+        StyleChangeReasonForTracing::Create(style_change_reason::kControl));
+  }
 }
 
 bool HTMLInputElement::IsInteractiveContent() const {

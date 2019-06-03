@@ -18,12 +18,12 @@
 #include "chrome/browser/chromeos/customization/customization_document.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
-#include "chrome/browser/chromeos/login/screens/welcome_view.h"
 #include "chrome/browser/chromeos/login/ui/input_events_blocker.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/system/timezone_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
+#include "chrome/browser/ui/webui/chromeos/login/welcome_screen_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -47,12 +47,12 @@ namespace chromeos {
 // static
 WelcomeScreen* WelcomeScreen::Get(ScreenManager* manager) {
   return static_cast<WelcomeScreen*>(
-      manager->GetScreen(OobeScreen::SCREEN_OOBE_WELCOME));
+      manager->GetScreen(WelcomeView::kScreenId));
 }
 
 WelcomeScreen::WelcomeScreen(WelcomeView* view,
                              const base::RepeatingClosure& exit_callback)
-    : BaseScreen(OobeScreen::SCREEN_OOBE_WELCOME),
+    : BaseScreen(WelcomeView::kScreenId),
       view_(view),
       exit_callback_(exit_callback),
       weak_factory_(this) {

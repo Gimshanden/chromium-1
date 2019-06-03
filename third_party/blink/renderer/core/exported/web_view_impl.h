@@ -93,6 +93,8 @@ class WebSettingsImpl;
 class WebViewClient;
 class WebWidgetClient;
 
+using PaintHoldingCommitTrigger = cc::PaintHoldingCommitTrigger;
+
 class CORE_EXPORT WebViewImpl final : public WebView,
                                       private WebWidget,
                                       public RefCounted<WebViewImpl>,
@@ -106,6 +108,11 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // Returns true if popup menus should be rendered by the browser, false if
   // they should be rendered by WebKit (which is the default).
   static bool UseExternalPopupMenus();
+
+  // Returns whether frames under this WebView are backed by a compositor. When
+  // false there may be no WebWidgetClient present. When true, there must be a
+  // WebWidgetClient while a local main frame is attached.
+  bool does_composite() const { return does_composite_; }
 
   // WebView methods:
   void DidAttachLocalMainFrame(WebWidgetClient*) override;
@@ -176,10 +183,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   uint64_t CreateUniqueIdentifierForRequest() override;
   void EnableDeviceEmulation(const WebDeviceEmulationParams&) override;
   void DisableDeviceEmulation() override;
-  void SetSelectionColors(unsigned active_background_color,
-                          unsigned active_foreground_color,
-                          unsigned inactive_background_color,
-                          unsigned inactive_foreground_color) override;
   void PerformCustomContextMenuAction(unsigned action) override;
   void DidCloseContextMenu() override;
   void CancelPagePopup() override;
@@ -195,6 +198,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void SetBaseBackgroundColorOverride(SkColor) override;
   void ClearBaseBackgroundColorOverride() override;
   void SetInsidePortal(bool inside_portal) override;
+  void PaintContent(cc::PaintCanvas*, const gfx::Rect&) override;
 
   void DidUpdateFullscreenSize();
 
@@ -361,8 +365,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // changed.
   void DidUpdateBrowserControls();
 
-  void SetOverscrollBehavior(const cc::OverscrollBehavior&);
-
   void ForceNextWebGLContextCreationToFail() override;
   void ForceNextDrawingBufferCreationToFail() override;
 
@@ -405,7 +407,7 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void DeferMainFrameUpdateForTesting();
 
   void StartDeferringCommits(base::TimeDelta timeout);
-  void StopDeferringCommits();
+  void StopDeferringCommits(PaintHoldingCommitTrigger);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(WebFrameTest, DivScrollIntoEditableTest);
@@ -446,9 +448,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void RecordEndOfFrameMetrics(base::TimeTicks frame_begin_time) override;
   void UpdateLifecycle(LifecycleUpdate requested_update,
                        LifecycleUpdateReason reason) override;
-  void RequestPresentationCallbackForTesting(
-      base::OnceClosure callback) override;
-  void PaintContent(cc::PaintCanvas*, const WebRect&) override;
   void ThemeChanged() override;
   WebInputEventResult HandleInputEvent(const WebCoalescedInputEvent&) override;
   WebInputEventResult DispatchBufferedTouchEvents() override;
@@ -689,6 +688,10 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   WebDisplayMode display_mode_ = kWebDisplayModeBrowser;
 
   FloatSize elastic_overscroll_;
+
+  // When overriding the default page scale constraints, store the original so
+  // we can revert to them when the override is removed.
+  base::Optional<PageScaleConstraints> pre_override_default_constraints_;
 
   Persistent<EventListener> popup_mouse_wheel_event_listener_;
 

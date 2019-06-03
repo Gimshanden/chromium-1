@@ -141,7 +141,8 @@ TEST_F(UiTest, WebVrToastTransience) {
   browser_ui->SetCapturingState(CapturingStateModel(), CapturingStateModel(),
                                 CapturingStateModel());
   EXPECT_TRUE(IsVisible(kWebVrExclusiveScreenToast));
-  EXPECT_TRUE(RunForSeconds(kToastTimeoutSeconds + kSmallDelaySeconds));
+  EXPECT_TRUE(
+      RunForSeconds(kWmrInitialIndicatorsTimeoutSeconds + kSmallDelaySeconds));
   EXPECT_FALSE(IsVisible(kWebVrExclusiveScreenToast));
 
   browser_ui->SetWebVrMode(false);
@@ -181,6 +182,10 @@ TEST_F(UiTest, CaptureToasts) {
 
   for (auto& spec : GetIndicatorSpecs()) {
     for (int i = 0; i < 3; ++i) {
+#if !defined(OS_ANDROID)
+      if (i == 1)  // Skip background tabs for non-Android platforms.
+        continue;
+#endif
       browser_ui->SetWebVrMode(true);
       ui_->GetSchedulerUiPtr()->OnWebXrFrameAvailable();
 
@@ -189,15 +194,36 @@ TEST_F(UiTest, CaptureToasts) {
       CapturingStateModel potential_capturing;
       active_capturing.*spec.signal = i == 0;
       // High accuracy location cannot be used in a background tab.
+      // Also, capturing USB and Midi cannot be done in background tab.
       background_capturing.*spec.signal =
-          i == 1 && spec.name != kLocationAccessIndicator;
-      potential_capturing.*spec.signal = true;
+          i == 1 && spec.name != kLocationAccessIndicator &&
+          spec.name != kUsbConnectedIndicator &&
+          spec.name != kMidiConnectedIndicator;
+      potential_capturing.*spec.signal =
+          i == 2 && spec.name != kUsbConnectedIndicator;
+
+      int string_id = 0;
+      switch (i) {
+        case 0:
+          string_id = spec.resource_string;
+          break;
+        case 1:
+          string_id = spec.background_resource_string;
+          break;
+        case 2:
+          string_id = spec.potential_resource_string;
+          break;
+        default:
+          NOTREACHED();
+          break;
+      }
 
       browser_ui->SetCapturingState(active_capturing, background_capturing,
                                     potential_capturing);
       EXPECT_TRUE(IsVisible(kWebVrExclusiveScreenToast));
-      EXPECT_TRUE(IsVisible(spec.webvr_name));
-      EXPECT_TRUE(RunForSeconds(kToastTimeoutSeconds + kSmallDelaySeconds));
+      EXPECT_TRUE(IsVisible(spec.webvr_name) == (string_id != 0));
+      EXPECT_TRUE(RunForSeconds(kWmrInitialIndicatorsTimeoutSeconds +
+                                kSmallDelaySeconds));
       EXPECT_FALSE(IsVisible(kWebVrExclusiveScreenToast));
 
       browser_ui->SetWebVrMode(false);
@@ -624,6 +650,8 @@ TEST_F(UiTest, UiUpdatesForWebVR) {
   model_->active_capturing.screen_capture_enabled = true;
   model_->active_capturing.location_access_enabled = true;
   model_->active_capturing.bluetooth_connected = true;
+  model_->active_capturing.usb_connected = true;
+  model_->active_capturing.midi_connected = true;
 
   VerifyOnlyElementsVisible("Elements hidden",
                             std::set<UiElementName>{kWebVrBackground});
@@ -653,6 +681,8 @@ TEST_F(UiTest, UiUpdateTransitionToWebVR) {
   model_->active_capturing.screen_capture_enabled = true;
   model_->active_capturing.location_access_enabled = true;
   model_->active_capturing.bluetooth_connected = true;
+  model_->active_capturing.usb_connected = true;
+  model_->active_capturing.midi_connected = true;
 
   // Transition to WebVR mode
   ui_->GetBrowserUiWeakPtr()->SetWebVrMode(true);
@@ -680,6 +710,8 @@ TEST_F(UiTest, CaptureIndicatorsVisibility) {
   model_->active_capturing.screen_capture_enabled = true;
   model_->active_capturing.location_access_enabled = true;
   model_->active_capturing.bluetooth_connected = true;
+  model_->active_capturing.usb_connected = true;
+  model_->active_capturing.midi_connected = true;
   EXPECT_TRUE(VerifyVisibility(indicators, true));
   EXPECT_TRUE(VerifyRequiresLayout(indicators, true));
 
@@ -701,6 +733,8 @@ TEST_F(UiTest, CaptureIndicatorsVisibility) {
   model_->active_capturing.screen_capture_enabled = false;
   model_->active_capturing.location_access_enabled = false;
   model_->active_capturing.bluetooth_connected = false;
+  model_->active_capturing.usb_connected = false;
+  model_->active_capturing.midi_connected = false;
   EXPECT_TRUE(VerifyRequiresLayout(indicators, false));
 }
 

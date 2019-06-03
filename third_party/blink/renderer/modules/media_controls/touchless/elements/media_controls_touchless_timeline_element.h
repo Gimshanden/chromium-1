@@ -11,15 +11,13 @@
 namespace blink {
 
 class MediaControlsTouchlessTimelineElement
-    : public HTMLDivElement,
-      public MediaControlsTouchlessElement {
-  USING_GARBAGE_COLLECTED_MIXIN(MediaControlsTouchlessTimelineElement);
-
+    : public MediaControlsTouchlessElement {
  public:
   explicit MediaControlsTouchlessTimelineElement(MediaControlsTouchlessImpl&);
 
   // MediaControlsTouchlessMediaEventListenerObserver overrides
   void OnTimeUpdate() override;
+  void OnSeeking() override;
   void OnDurationChange() override;
   void OnLoadingProgress() override;
 

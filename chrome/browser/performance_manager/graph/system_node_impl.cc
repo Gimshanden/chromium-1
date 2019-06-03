@@ -4,30 +4,30 @@
 
 #include "chrome/browser/performance_manager/graph/system_node_impl.h"
 
-#include "chrome/browser/performance_manager/graph/frame_node_impl.h"
-#include "chrome/browser/performance_manager/graph/page_node_impl.h"
-#include "chrome/browser/performance_manager/graph/process_node_impl.h"
-
 #include <algorithm>
 #include <iterator>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/process/process_handle.h"
+#include "chrome/browser/performance_manager/graph/frame_node_impl.h"
+#include "chrome/browser/performance_manager/graph/graph_impl.h"
+#include "chrome/browser/performance_manager/graph/page_node_impl.h"
+#include "chrome/browser/performance_manager/graph/process_node_impl.h"
 
 namespace performance_manager {
+
+SystemNodeImplObserver::SystemNodeImplObserver() = default;
+SystemNodeImplObserver::~SystemNodeImplObserver() = default;
 
 ProcessResourceMeasurement::ProcessResourceMeasurement() = default;
 ProcessResourceMeasurementBatch::ProcessResourceMeasurementBatch() = default;
 ProcessResourceMeasurementBatch::~ProcessResourceMeasurementBatch() = default;
 
-SystemNodeImpl::SystemNodeImpl(Graph* graph) : TypedNodeBase(graph) {}
+SystemNodeImpl::SystemNodeImpl(GraphImpl* graph) : TypedNodeBase(graph) {}
 
 SystemNodeImpl::~SystemNodeImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-}
-
-void SystemNodeImpl::OnProcessCPUUsageReady() {
-  SendEvent(resource_coordinator::mojom::Event::kProcessCPUUsageReady);
 }
 
 void SystemNodeImpl::DistributeMeasurementBatch(
@@ -57,7 +57,7 @@ void SystemNodeImpl::DistributeMeasurementBatch(
 
   // Keep track of the pages updated with CPU cost for the second pass,
   // where their memory usage is updated.
-  std::set<PageNodeImpl*> pages;
+  base::flat_set<PageNodeImpl*> pages;
   std::vector<ProcessNodeImpl*> found_processes;
   for (const auto& measurement : measurement_batch->measurements) {
     ProcessNodeImpl* process = graph()->GetProcessNodeByPid(measurement.pid);
@@ -68,7 +68,7 @@ void SystemNodeImpl::DistributeMeasurementBatch(
 
       // Distribute the CPU delta to the pages that own the frames in this
       // process.
-      std::set<FrameNodeImpl*> frames = process->GetFrameNodes();
+      base::flat_set<FrameNodeImpl*> frames = process->GetFrameNodes();
       if (!frames.empty()) {
         // To make sure we don't systemically truncate the remainder of the
         // delta, simply subtract the remainder and "hold it back" from the
@@ -154,14 +154,11 @@ void SystemNodeImpl::DistributeMeasurementBatch(
     DCHECK_EQ(last_measurement_end_time_, page->usage_estimate_time());
   }
 
-  // Fire the end update signal.
-  OnProcessCPUUsageReady();
+  for (auto& observer : observers())
+    observer.OnProcessCPUUsageReady(this);
 }
 
-void SystemNodeImpl::OnEventReceived(resource_coordinator::mojom::Event event) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : observers())
-    observer.OnSystemEventReceived(this, event);
-}
+SystemNodeImpl::ObserverDefaultImpl::ObserverDefaultImpl() = default;
+SystemNodeImpl::ObserverDefaultImpl::~ObserverDefaultImpl() = default;
 
 }  // namespace performance_manager

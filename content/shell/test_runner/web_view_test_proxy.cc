@@ -36,7 +36,6 @@ blink::WebView* WebViewTestProxy::CreateView(
     const blink::WebWindowFeatures& features,
     const blink::WebString& frame_name,
     blink::WebNavigationPolicy policy,
-    bool suppress_opener,
     blink::WebSandboxFlags sandbox_flags,
     const blink::FeaturePolicy::FeatureState& opener_feature_state,
     const blink::SessionStorageNamespaceId& session_storage_namespace_id) {
@@ -53,9 +52,9 @@ blink::WebView* WebViewTestProxy::CreateView(
     delegate()->PrintMessage(std::string("createView(") +
                              URLDescription(request.Url()) + ")\n");
   }
-  return RenderViewImpl::CreateView(
-      creator, request, features, frame_name, policy, suppress_opener,
-      sandbox_flags, opener_feature_state, session_storage_namespace_id);
+  return RenderViewImpl::CreateView(creator, request, features, frame_name,
+                                    policy, sandbox_flags, opener_feature_state,
+                                    session_storage_namespace_id);
 }
 
 void WebViewTestProxy::PrintPage(blink::WebLocalFrame* frame) {
@@ -92,6 +91,11 @@ blink::WebScreenInfo WebViewTestProxy::GetScreenInfo() {
 }
 
 void WebViewTestProxy::Reset() {
+  // TODO(https://crbug.com/961499): There is a race condition where Reset()
+  // can be called after GetWidget() has been nulled, but before this is
+  // destructed.
+  if (!GetWidget())
+    return;
   accessibility_controller_.Reset();
   // text_input_controller_ doesn't have any state to reset.
   view_test_runner_.Reset();

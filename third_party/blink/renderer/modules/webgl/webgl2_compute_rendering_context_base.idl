@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-[
-    NoInterfaceObject
-] interface WebGL2ComputeRenderingContextBase {
+interface mixin WebGL2ComputeRenderingContextBase {
     // TODO(jiajia.qin@intel.com): add more enums and apis
     const GLenum COMPUTE_SHADER                         = 0x91B9;
     const GLenum UNIFORM                                = 0x92E1;
@@ -104,5 +102,5 @@
     void memoryBarrier(GLbitfield barriers);
     void memoryBarrierByRegion(GLbitfield barriers);
 };
-WebGL2ComputeRenderingContextBase implements WebGLRenderingContextBase;
-WebGL2ComputeRenderingContextBase implements WebGL2RenderingContextBase;
+WebGL2ComputeRenderingContextBase includes WebGLRenderingContextBase;
+WebGL2ComputeRenderingContextBase includes WebGL2RenderingContextBase;

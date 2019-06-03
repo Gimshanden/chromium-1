@@ -4,30 +4,49 @@
 
 import("//net/features.gni")
 
-source_set("network_public") {
+source_set("network_impl") {
   sources = [
     "net/network_chromium.h",
-  ]
-
-  deps = [
-    "//base",
-  ]
-}
-
-source_set("network") {
-  sources = [
     "net/network_impl.cc",
     "net/network_impl.h",
   ]
 
-  visibility = [ ":*" ]
-
   deps = [
-    ":network_public",
+    ":update_client",
     "//base",
     "//net",
     "//services/network/public/cpp:cpp",
     "//url",
+  ]
+}
+
+source_set("unzip_impl") {
+  sources = [
+    "unzip/unzip_impl.cc",
+    "unzip/unzip_impl.h",
+  ]
+  deps = [
+    ":update_client",
+    "//components/services/unzip/public/cpp",
+  ]
+}
+
+source_set("patch_impl") {
+  sources = [
+    "patch/patch_impl.cc",
+    "patch/patch_impl.h",
+  ]
+  deps = [
+    ":update_client",
+    "//components/services/patch/public/cpp",
+  ]
+}
+
+group("common_impl") {
+  public_deps = [
+    ":network_impl",
+    ":patch_impl",
+    ":unzip_impl",
   ]
 }
 
@@ -55,6 +74,7 @@ static_library("update_client") {
     "crx_update_item.h",
     "network.cc",
     "network.h",
+    "patcher.h",
     "persisted_data.cc",
     "persisted_data.h",
     "ping_manager.cc",
@@ -79,6 +99,7 @@ static_library("update_client") {
     "task_traits.h",
     "task_update.cc",
     "task_update.h",
+    "unzipper.h",
     "update_checker.cc",
     "update_checker.h",
     "update_client.cc",
@@ -101,30 +122,15 @@ static_library("update_client") {
     "utils.h",
   ]
 
-  # Allows callers to include the network factory through "update_client" deps.
-  public_deps = [
-    ":network_public",
-  ]
-
   deps = [
-    ":network",
-    ":network_public",
     "//base",
     "//components/client_update_protocol",
     "//components/crx_file",
-    "//components/data_use_measurement/core",
     "//components/prefs",
-    "//components/services/patch/public/cpp",
-    "//components/services/unzip/public/cpp",
     "//components/version_info:version_info",
     "//courgette:courgette_lib",
     "//crypto",
     "//url",
-  ]
-
-  allow_circular_includes_from = [
-    ":network",
-    ":network_public",
   ]
 }
 
@@ -144,6 +150,9 @@ static_library("test_support") {
   ]
 
   deps = [
+    ":network_impl",
+    ":patch_impl",
+    ":unzip_impl",
     "//base",
     "//components/prefs",
     "//components/services/patch:lib",
@@ -209,9 +218,11 @@ source_set("unit_tests") {
   }
 
   deps = [
-    ":network",
+    ":network_impl",
+    ":patch_impl",
     ":test_support",
     ":unit_tests_bundle_data",
+    ":unzip_impl",
     ":update_client",
     "//base",
     "//components/crx_file",

@@ -24,8 +24,7 @@ namespace content {
 std::unique_ptr<ServiceWorkerNetworkProviderForWorker>
 ServiceWorkerNetworkProviderForWorker::Create(
     blink::mojom::ServiceWorkerProviderInfoForWorkerPtr info,
-    network::mojom::URLLoaderFactoryAssociatedPtrInfo
-        script_loader_factory_info,
+    network::mojom::URLLoaderFactoryPtr script_loader_factory,
     blink::mojom::ControllerServiceWorkerInfoPtr controller_info,
     scoped_refptr<network::SharedURLLoaderFactory> fallback_loader_factory,
     bool is_secure_context,
@@ -34,14 +33,12 @@ ServiceWorkerNetworkProviderForWorker::Create(
   auto provider = base::WrapUnique(new ServiceWorkerNetworkProviderForWorker(
       is_secure_context, std::move(response_override)));
   provider->context_ = base::MakeRefCounted<ServiceWorkerProviderContext>(
-      info->provider_id,
       blink::mojom::ServiceWorkerProviderType::kForSharedWorker,
       std::move(info->client_request), std::move(info->host_ptr_info),
       std::move(controller_info), std::move(fallback_loader_factory));
-  if (script_loader_factory_info.is_valid()) {
-    provider->script_loader_factory_.Bind(
-        std::move(script_loader_factory_info));
-  }
+  if (script_loader_factory)
+    provider->script_loader_factory_ = std::move(script_loader_factory);
+
   return provider;
 }
 
@@ -54,7 +51,6 @@ ServiceWorkerNetworkProviderForWorker::
 void ServiceWorkerNetworkProviderForWorker::WillSendRequest(
     blink::WebURLRequest& request) {
   auto extra_data = std::make_unique<RequestExtraData>();
-  extra_data->set_service_worker_provider_id(provider_id());
   extra_data->set_initiated_in_secure_context(is_secure_context_);
   if (response_override_) {
     DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
@@ -112,12 +108,6 @@ int64_t ServiceWorkerNetworkProviderForWorker::ControllerServiceWorkerID() {
 }
 
 void ServiceWorkerNetworkProviderForWorker::DispatchNetworkQuiet() {}
-
-int ServiceWorkerNetworkProviderForWorker::provider_id() const {
-  if (!context_)
-    return blink::kInvalidServiceWorkerProviderId;
-  return context_->provider_id();
-}
 
 ServiceWorkerNetworkProviderForWorker::ServiceWorkerNetworkProviderForWorker(
     bool is_secure_context,

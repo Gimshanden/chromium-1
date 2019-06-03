@@ -9,12 +9,14 @@ import android.preference.Preference;
 import android.util.AttributeSet;
 import android.view.View;
 
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.night_mode.NightModeMetrics;
 import org.chromium.chrome.browser.preferences.themes.ThemePreferences.ThemeSetting;
 import org.chromium.chrome.browser.widget.RadioButtonWithDescription;
 
-import java.util.Arrays;
-import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
 
 /**
  * A radio button group Preference used for Themes. Currently, it has 3 options: System default,
@@ -23,15 +25,16 @@ import java.util.List;
 public class RadioButtonGroupThemePreference
         extends Preference implements RadioButtonWithDescription.OnCheckedChangeListener {
     private @ThemeSetting int mSetting;
-
-    private RadioButtonWithDescription mSystemDefault;
-    private RadioButtonWithDescription mLight;
-    private RadioButtonWithDescription mDark;
+    private ArrayList<RadioButtonWithDescription> mButtons;
 
     public RadioButtonGroupThemePreference(Context context, AttributeSet attrs) {
         super(context, attrs);
         // Inflating from XML.
         setLayoutResource(R.layout.radio_button_group_theme_preference);
+
+        // Initialize entries with null objects so that calling ArrayList#set() would not throw
+        // java.lang.IndexOutOfBoundsException.
+        mButtons = new ArrayList<>(Collections.nCopies(ThemeSetting.NUM_ENTRIES, null));
     }
 
     /**
@@ -45,45 +48,38 @@ public class RadioButtonGroupThemePreference
     protected void onBindView(View view) {
         super.onBindView(view);
 
-        mSystemDefault = view.findViewById(R.id.system_default);
-        mLight = view.findViewById(R.id.light);
-        mDark = view.findViewById(R.id.dark);
+        assert ThemeSetting.NUM_ENTRIES == 3;
+        mButtons.set(ThemeSetting.SYSTEM_DEFAULT, view.findViewById(R.id.system_default));
+        mButtons.set(ThemeSetting.LIGHT, view.findViewById(R.id.light));
+        mButtons.set(ThemeSetting.DARK, view.findViewById(R.id.dark));
 
-        List<RadioButtonWithDescription> radioGroup = Arrays.asList(mSystemDefault, mLight, mDark);
-        for (RadioButtonWithDescription option : radioGroup) {
-            option.setRadioButtonGroup(radioGroup);
-            option.setOnCheckedChangeListener(this);
+        for (int i = 0; i < ThemeSetting.NUM_ENTRIES; i++) {
+            mButtons.get(i).setRadioButtonGroup(mButtons);
+            mButtons.get(i).setOnCheckedChangeListener(this);
         }
 
-        RadioButtonWithDescription radioButton = findRadioButton(mSetting);
-        if (radioButton != null) radioButton.setChecked(true);
+        mButtons.get(mSetting).setChecked(true);
     }
 
     @Override
     public void onCheckedChanged() {
-        if (mSystemDefault.isChecked()) {
-            mSetting = ThemeSetting.SYSTEM_DEFAULT;
-        } else if (mLight.isChecked()) {
-            mSetting = ThemeSetting.LIGHT;
-        } else if (mDark.isChecked()) {
-            mSetting = ThemeSetting.DARK;
+        for (int i = 0; i < ThemeSetting.NUM_ENTRIES; i++) {
+            if (mButtons.get(i).isChecked()) {
+                mSetting = i;
+                break;
+            }
         }
-
         callChangeListener(mSetting);
+        NightModeMetrics.recordThemePreferencesChanged(mSetting);
     }
 
-    /**
-     * @param setting The setting to find RadioButton for.
-     */
-    private RadioButtonWithDescription findRadioButton(@ThemeSetting int setting) {
-        if (setting == ThemeSetting.SYSTEM_DEFAULT) {
-            return mSystemDefault;
-        } else if (setting == ThemeSetting.LIGHT) {
-            return mLight;
-        } else if (setting == ThemeSetting.DARK) {
-            return mDark;
-        } else {
-            return null;
-        }
+    @VisibleForTesting
+    public int getSetting() {
+        return mSetting;
+    }
+
+    @VisibleForTesting
+    ArrayList getButtonsForTesting() {
+        return mButtons;
     }
 }

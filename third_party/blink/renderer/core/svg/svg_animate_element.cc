@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/svg/svg_number.h"
 #include "third_party/blink/renderer/core/svg/svg_string.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -98,6 +99,9 @@ QualifiedName ConstructQualifiedName(const SVGElement& svg_element,
 
 }  // unnamed namespace
 
+SVGAnimateElement::SVGAnimateElement(Document& document)
+    : SVGAnimateElement(svg_names::kAnimateTag, document) {}
+
 SVGAnimateElement::SVGAnimateElement(const QualifiedName& tag_name,
                                      Document& document)
     : SVGAnimationElement(tag_name, document),
@@ -106,11 +110,6 @@ SVGAnimateElement::SVGAnimateElement(const QualifiedName& tag_name,
       from_property_value_type_(kRegularPropertyValue),
       to_property_value_type_(kRegularPropertyValue),
       attribute_type_(kAttributeTypeAuto) {}
-
-SVGAnimateElement* SVGAnimateElement::Create(Document& document) {
-  return MakeGarbageCollected<SVGAnimateElement>(svg_names::kAnimateTag,
-                                                 document);
-}
 
 SVGAnimateElement::~SVGAnimateElement() = default;
 
@@ -252,24 +251,24 @@ SVGPropertyBase* SVGAnimateElement::CreatePropertyForCSSAnimation(
   // The instance will not have full context info. (e.g. SVGLengthMode)
   switch (type_) {
     case kAnimatedColor:
-      return SVGColorProperty::Create(value);
+      return MakeGarbageCollected<SVGColorProperty>(value);
     case kAnimatedNumber: {
-      SVGNumber* property = SVGNumber::Create();
+      auto* property = MakeGarbageCollected<SVGNumber>();
       property->SetValueAsString(value);
       return property;
     }
     case kAnimatedLength: {
-      SVGLength* property = SVGLength::Create();
+      auto* property = MakeGarbageCollected<SVGLength>();
       property->SetValueAsString(value);
       return property;
     }
     case kAnimatedLengthList: {
-      SVGLengthList* property = SVGLengthList::Create();
+      auto* property = MakeGarbageCollected<SVGLengthList>();
       property->SetValueAsString(value);
       return property;
     }
     case kAnimatedString: {
-      SVGString* property = SVGString::Create();
+      auto* property = MakeGarbageCollected<SVGString>();
       property->SetValueAsString(value);
       return property;
     }
@@ -318,9 +317,9 @@ SVGPropertyBase* SVGAnimateElement::AdjustForInheritance(
   // value type directly to avoid the String parsing.
   DCHECK(targetElement());
   Element* parent = targetElement()->parentElement();
-  if (!parent || !parent->IsSVGElement())
+  auto* svg_parent = DynamicTo<SVGElement>(parent);
+  if (!svg_parent)
     return property_value;
-  SVGElement* svg_parent = ToSVGElement(parent);
   // Replace 'inherit' by its computed property value.
   String value = ComputeCSSPropertyValue(svg_parent, css_property_id_);
   return CreatePropertyForAnimation(value);

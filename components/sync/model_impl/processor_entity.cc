@@ -80,7 +80,12 @@ void ProcessorEntity::SetStorageKey(const std::string& storage_key) {
   storage_key_ = storage_key;
 }
 
-void ProcessorEntity::SetCommitData(EntityData* data) {
+void ProcessorEntity::ClearStorageKey() {
+  DCHECK(metadata_.is_deleted());
+  storage_key_.clear();
+}
+
+void ProcessorEntity::SetCommitData(std::unique_ptr<EntityData> data) {
   DCHECK(data);
   // Update data's fields from metadata.
   data->client_tag_hash = metadata_.client_tag_hash();
@@ -90,17 +95,17 @@ void ProcessorEntity::SetCommitData(EntityData* data) {
   data->modification_time = ProtoTimeToTime(metadata_.modification_time());
 
   commit_data_.reset();
-  CacheCommitData(data->PassToPtr());
+  CacheCommitData(std::move(data));
 }
 
-void ProcessorEntity::CacheCommitData(const EntityDataPtr& data_ptr) {
+void ProcessorEntity::CacheCommitData(std::unique_ptr<EntityData> data) {
   DCHECK(RequiresCommitData());
-  commit_data_ = data_ptr;
+  commit_data_ = std::move(data);
   DCHECK(HasCommitData());
 }
 
 bool ProcessorEntity::HasCommitData() const {
-  return !commit_data_->client_tag_hash.empty();
+  return commit_data_ && !commit_data_->client_tag_hash.empty();
 }
 
 bool ProcessorEntity::MatchesData(const EntityData& data) const {
@@ -109,6 +114,15 @@ bool ProcessorEntity::MatchesData(const EntityData& data) const {
   if (data.is_deleted())
     return false;
   return MatchesSpecificsHash(data.specifics);
+}
+
+bool ProcessorEntity::MatchesOwnBaseData() const {
+  DCHECK(IsUnsynced());
+  if (metadata_.is_deleted()) {
+    return false;
+  }
+  DCHECK(!metadata_.specifics_hash().empty());
+  return metadata_.specifics_hash() == metadata_.base_specifics_hash();
 }
 
 bool ProcessorEntity::MatchesBaseData(const EntityData& data) const {
@@ -140,7 +154,7 @@ bool ProcessorEntity::UpdateIsReflection(int64_t update_version) const {
 }
 
 void ProcessorEntity::RecordEntityUpdateLatency(int64_t update_version,
-                                                const ModelType& type) {
+                                                ModelType type) {
   auto first_greater =
       unsynced_time_per_committed_server_version_.upper_bound(update_version);
   if (first_greater == unsynced_time_per_committed_server_version_.begin()) {
@@ -173,7 +187,7 @@ void ProcessorEntity::RecordIgnoredUpdate(const UpdateResponseData& update) {
   // update id in cached commit data.
   if (HasCommitData() && commit_data_->id != metadata_.server_id()) {
     DCHECK(commit_data_->id.empty());
-    commit_data_ = commit_data_->UpdateId(metadata_.server_id());
+    commit_data_->id = metadata_.server_id();
   }
 }
 
@@ -212,9 +226,8 @@ void ProcessorEntity::MakeLocalChange(std::unique_ptr<EntityData> data) {
   metadata_.set_modification_time(TimeToProtoTime(modification_time));
   metadata_.set_is_deleted(false);
 
-  // SetCommitData will update data's fields from metadata and wrap it into
-  // immutable EntityDataPtr.
-  SetCommitData(data.get());
+  // SetCommitData will update data's fields from metadata.
+  SetCommitData(std::move(data));
 }
 
 bool ProcessorEntity::Delete() {
@@ -244,16 +257,16 @@ void ProcessorEntity::InitializeCommitRequestData(CommitRequestData* request) {
     DCHECK(HasCommitData());
     DCHECK_EQ(commit_data_->client_tag_hash, metadata_.client_tag_hash());
     DCHECK_EQ(commit_data_->id, metadata_.server_id());
-    request->entity = commit_data_;
+    request->entity = std::move(commit_data_);
   } else {
     // Make an EntityData with empty specifics to indicate deletion. This is
     // done lazily here to simplify loading a pending deletion on startup.
-    EntityData data;
-    data.client_tag_hash = metadata_.client_tag_hash();
-    data.id = metadata_.server_id();
-    data.creation_time = ProtoTimeToTime(metadata_.creation_time());
-    data.modification_time = ProtoTimeToTime(metadata_.modification_time());
-    request->entity = data.PassToPtr();
+    auto data = std::make_unique<syncer::EntityData>();
+    data->client_tag_hash = metadata_.client_tag_hash();
+    data->id = metadata_.server_id();
+    data->creation_time = ProtoTimeToTime(metadata_.creation_time());
+    data->modification_time = ProtoTimeToTime(metadata_.modification_time());
+    request->entity = std::move(data);
   }
 
   request->sequence_number = metadata_.sequence_number();
@@ -264,7 +277,8 @@ void ProcessorEntity::InitializeCommitRequestData(CommitRequestData* request) {
 }
 
 void ProcessorEntity::ReceiveCommitResponse(const CommitResponseData& data,
-                                            bool commit_only) {
+                                            bool commit_only,
+                                            ModelType type_for_uma) {
   DCHECK_EQ(metadata_.client_tag_hash(), data.client_tag_hash);
   DCHECK_GT(data.sequence_number, metadata_.acked_sequence_number());
   // Version is not valid for commit only types, as it's stripped before being
@@ -294,9 +308,18 @@ void ProcessorEntity::ReceiveCommitResponse(const CommitResponseData& data,
     // update id in cached commit data.
     if (HasCommitData() && commit_data_->id != metadata_.server_id()) {
       DCHECK(commit_data_->id.empty());
-      commit_data_ = commit_data_->UpdateId(metadata_.server_id());
+      commit_data_->id = metadata_.server_id();
     }
   }
+
+  // |unsynced_time_| can be null if the commit spanned a browser restart,
+  // since we don't currently persist this field. In such cases, we assume
+  // it takes longer than 3 minutes (saturation bucket).
+  base::UmaHistogramMediumTimes(std::string("Sync.CommitLatency.") +
+                                    ModelTypeToHistogramSuffix(type_for_uma),
+                                unsynced_time_.is_null()
+                                    ? base::TimeDelta::Max()
+                                    : base::Time::Now() - unsynced_time_);
 }
 
 void ProcessorEntity::ClearTransientSyncState() {

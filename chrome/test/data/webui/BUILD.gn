@@ -54,6 +54,7 @@ js2gtest("browser_tests_js_webui") {
     "history/history_browsertest.js",
     "js2gtest_browsertest.js",
     "load_time_data_browsertest.js",
+    "management/a11y/management_a11y_test.js",
     "media_router/media_router_elements_browsertest.js",
     "mock4js_browsertest.js",
     "net_internals/chromeos_view.js",
@@ -87,27 +88,38 @@ js2gtest("browser_tests_js_webui") {
     "settings/test_password_manager_proxy.js",
     "settings/passwords_and_autofill_fake_data.js",
     "//chrome/browser/resources/signin/dice_sync_confirmation/sync_confirmation_browser_proxy.js",
+    "//chrome/browser/ui/webui/chromeos/account_migration_proxy_test.js",
   ]
 
   if (is_chromeos) {
     sources += [
+      "../../../browser/ui/webui/chromeos/account_migration_welcome_test.js",
       "../../../browser/ui/webui/chromeos/bluetooth_pairing_dialog_browsertest.js",
       "../../../browser/ui/webui/chromeos/certificate_manager_dialog_browsertest.js",
       "../chromeos/oobe_webui_browsertest.js",
       "certificate_viewer_dialog_test.js",
-      "md_set_time_browsertest.js",
+      "set_time_dialog_browsertest.js",
+      "settings/a11y/crostini_accessibility_test.js",
+      "settings/a11y/crostini_settings_details_a11y_test.js",
+      "settings/a11y/crostini_settings_export_import_a11y_test.js",
+      "settings/a11y/crostini_settings_shared_paths_a11y_test.js",
+      "settings/a11y/crostini_settings_shared_usb_devices_a11y_test.js",
+      "settings/a11y/crostini_settings_subpage_a11y_test.js",
       "settings/a11y/manage_accessibility_a11y_test.js",
       "settings/a11y/multidevice_a11y_test.js",
       "settings/a11y/multidevice_features_a11y_test.js",
       "settings/a11y/tts_subpage_a11y_test.js",
+      "settings/chromeos/os_settings_browsertest.js",
+      "settings/chromeos/os_settings_ui_browsertest.js",
       "sys_internals/sys_internals_browsertest.js",
     ]
   } else {
     sources += [
-      "md_user_manager/user_manager_browsertest.js",
       "settings/a11y/manage_profile_a11y_test.js",
       "settings/a11y/sign_out_a11y_test.js",
       "signin/signin_browsertest.js",
+      "user_manager/user_manager_browsertest.js",
+      "welcome/a11y_tests.js",
       "welcome/onboarding_welcome_browsertest.js",
     ]
   }
@@ -123,7 +135,7 @@ js2gtest("browser_tests_js_webui") {
     ]
   }
   if (enable_print_preview) {
-    sources += [ "print_preview/new_print_preview_ui_browsertest.js" ]
+    sources += [ "print_preview/print_preview_ui_browsertest.js" ]
   }
   deps = [
     "//chrome/browser/ui",
@@ -142,6 +154,11 @@ js2gtest("browser_tests_js_mojo_lite_webui") {
     "engagement/site_engagement_browsertest.js",
     "interventions_internals_browsertest.js",
     "media/media_engagement_browsertest.js",
+    "usb_internals_browsertest.js",
+  ]
+
+  deps = [
+    "//chrome/browser/ui",
   ]
 
   if (is_win || is_mac || is_desktop_linux || is_chromeos) {
@@ -149,12 +166,12 @@ js2gtest("browser_tests_js_mojo_lite_webui") {
   }
 
   if (is_chromeos) {
-    sources += [ "multidevice_setup/multidevice_setup_browsertest.js" ]
+    sources += [
+      "chromeos/machine_learning_internals_browsertest.js",
+      "multidevice_setup/multidevice_setup_browsertest.js",
+    ]
+    deps += [ "//chromeos/services/machine_learning/public/cpp:test_support" ]
   }
-
-  deps = [
-    "//chrome/browser/ui",
-  ]
 
   extra_js_files = [ "//chrome/browser/resources/downloads/constants.js" ]
 
@@ -178,20 +195,24 @@ js2gtest("unit_tests_js") {
   if (is_chromeos) {
     sources += [
       "../../../browser/resources/chromeos/braille_ime/braille_ime_unittest.gtestjs",
+      "../../../browser/resources/chromeos/machine_learning/machine_learning_internals_utils_unittest.gtestjs",
       "../../../browser/resources/chromeos/select_to_speak/node_utils_unittest.gtestjs",
       "../../../browser/resources/chromeos/select_to_speak/paragraph_utils_unittest.gtestjs",
       "../../../browser/resources/chromeos/select_to_speak/rect_utils_unittest.gtestjs",
       "../../../browser/resources/chromeos/select_to_speak/select_to_speak_unittest.gtestjs",
       "../../../browser/resources/chromeos/select_to_speak/word_utils_unittest.gtestjs",
+      "../../../browser/resources/chromeos/switch_access/rect_helper_unittest.gtestjs",
     ]
     extra_js_files += [
       "../../../browser/resources/chromeos/braille_ime/braille_ime.js",
+      "../../../browser/resources/chromeos/machine_learning/machine_learning_internals_utils.js",
       "../../../browser/resources/chromeos/select_to_speak/paragraph_utils.js",
       "../../../browser/resources/chromeos/select_to_speak/rect_utils.js",
       "../../../browser/resources/chromeos/select_to_speak/select_to_speak.js",
       "../../../browser/resources/chromeos/select_to_speak/test_support.js",
       "../../../browser/resources/chromeos/select_to_speak/word_utils.js",
       "../../../browser/resources/chromeos/select_to_speak/node_utils.js",
+      "../../../browser/resources/chromeos/switch_access/rect_helper.js",
     ]
   }
 }

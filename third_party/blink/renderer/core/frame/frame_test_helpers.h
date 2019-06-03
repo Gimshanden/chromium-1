@@ -83,6 +83,10 @@
     EXPECT_FLOAT_EQ((expected).Height(), (actual).Height()); \
   } while (false)
 
+namespace base {
+class TickClock;
+}
+
 namespace cc {
 class AnimationHost;
 }
@@ -109,7 +113,8 @@ void LoadFrame(WebLocalFrame*, const std::string& url);
 // Same as above, but for WebLocalFrame::LoadHTMLString().
 void LoadHTMLString(WebLocalFrame*,
                     const std::string& html,
-                    const WebURL& base_url);
+                    const WebURL& base_url,
+                    const base::TickClock* clock = nullptr);
 // Same as above, but for WebLocalFrame::RequestFromHistoryItem/Load.
 void LoadHistoryItem(WebLocalFrame*,
                      const WebHistoryItem&,
@@ -204,9 +209,16 @@ class TestWebWidgetClient : public WebWidgetClient {
   void RegisterViewportLayers(const cc::ViewportLayers& layOAers) override;
   void RegisterSelection(const cc::LayerSelection& selection) override;
   void SetBackgroundColor(SkColor color) override;
-  void SetPageScaleFactorAndLimits(float page_scale_factor,
-                                   float minimum,
-                                   float maximum) override;
+  void SetAllowGpuRasterization(bool allow) override;
+  void SetPageScaleStateAndLimits(float page_scale_factor,
+                                  bool is_pinch_gesture_active,
+                                  float minimum,
+                                  float maximum) override;
+  void InjectGestureScrollEvent(WebGestureDevice device,
+                                const WebFloatSize& delta,
+                                ScrollGranularity granularity,
+                                cc::ElementId scrollable_area_element_id,
+                                WebInputEvent::Type injected_type) override;
 
   content::LayerTreeView* layer_tree_view() { return layer_tree_view_; }
   cc::LayerTreeHost* layer_tree_host() {
@@ -228,6 +240,9 @@ class TestWebWidgetClient : public WebWidgetClient {
   int FinishedLoadingLayoutCount() const {
     return finished_loading_layout_count_;
   }
+  int InjectedGestureScrollCount() const {
+    return injected_gesture_scroll_update_count_;
+  }
 
  private:
   content::LayerTreeView* layer_tree_view_ = nullptr;
@@ -237,6 +252,7 @@ class TestWebWidgetClient : public WebWidgetClient {
   int visually_non_empty_layout_count_ = 0;
   int finished_parsing_layout_count_ = 0;
   int finished_loading_layout_count_ = 0;
+  int injected_gesture_scroll_update_count_ = 0;
 };
 
 class TestWebViewClient : public WebViewClient {
@@ -255,7 +271,6 @@ class TestWebViewClient : public WebViewClient {
                       const WebWindowFeatures&,
                       const WebString& name,
                       WebNavigationPolicy,
-                      bool,
                       WebSandboxFlags,
                       const FeaturePolicy::FeatureState&,
                       const SessionStorageNamespaceId&) override;
@@ -374,8 +389,7 @@ class TestWebFrameClient : public WebLocalFrameClient {
                                   WebTreeScopeType,
                                   const WebString& name,
                                   const WebString& fallback_name,
-                                  WebSandboxFlags,
-                                  const ParsedFeaturePolicy&,
+                                  const FramePolicy&,
                                   const WebFrameOwnerProperties&,
                                   FrameOwnerElementType) override;
   void DidStartLoading() override;

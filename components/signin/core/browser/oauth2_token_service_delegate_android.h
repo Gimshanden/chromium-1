@@ -55,9 +55,6 @@ class OAuth2TokenServiceDelegateAndroid : public OAuth2TokenServiceDelegate {
                        const GoogleServiceAuthError& error) override;
   std::vector<std::string> GetAccounts() override;
 
-  // Lists account names at the OS level.
-  std::vector<std::string> GetSystemAccountNames();
-
   void UpdateAccountList(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -67,7 +64,9 @@ class OAuth2TokenServiceDelegateAndroid : public OAuth2TokenServiceDelegate {
   // android account ids and check the token status of each.
   // NOTE: TokenAvailable notifications will be sent for all accounts, even if
   // they were already known. See https://crbug.com/939470 for details.
-  void UpdateAccountList(const std::string& signed_in_account_id);
+  void UpdateAccountList(const CoreAccountId& signed_in_account_id,
+                         const std::vector<CoreAccountId>& prev_ids,
+                         const std::vector<CoreAccountId>& curr_ids);
 
   // Overridden from OAuth2TokenService to complete signout of all
   // OA2TService aware accounts.
@@ -90,16 +89,13 @@ class OAuth2TokenServiceDelegateAndroid : public OAuth2TokenServiceDelegate {
                              const OAuth2TokenService::ScopeSet& scopes,
                              const std::string& access_token) override;
 
-  // Called to notify observers when a refresh token is available.
-  void FireRefreshTokenAvailable(const std::string& account_id) override;
-  // Called to notify observers when a refresh token has been revoked.
-  void FireRefreshTokenRevoked(const std::string& account_id) override;
   // Called to notify observers when refresh tokans have been loaded.
   void FireRefreshTokensLoaded() override;
 
  private:
-  std::string MapAccountIdToAccountName(const std::string& account_id) const;
-  std::string MapAccountNameToAccountId(const std::string& account_name) const;
+  std::string MapAccountIdToAccountName(const CoreAccountId& account_id) const;
+  CoreAccountId MapAccountNameToAccountId(
+      const std::string& account_name) const;
 
   enum RefreshTokenLoadStatus {
     RT_LOAD_NOT_START,
@@ -110,11 +106,20 @@ class OAuth2TokenServiceDelegateAndroid : public OAuth2TokenServiceDelegate {
 
   // Return whether accounts are valid and we have access to all the tokens in
   // |curr_ids|.
-  bool UpdateAccountList(const std::string& signed_in_id,
-                         const std::vector<std::string>& prev_ids,
-                         const std::vector<std::string>& curr_ids,
-                         std::vector<std::string>* refreshed_ids,
-                         std::vector<std::string>* revoked_ids);
+  bool UpdateAccountList(const CoreAccountId& signed_in_id,
+                         const std::vector<CoreAccountId>& prev_ids,
+                         const std::vector<CoreAccountId>& curr_ids,
+                         std::vector<CoreAccountId>* refreshed_ids,
+                         std::vector<CoreAccountId>* revoked_ids);
+
+  // Lists account names at the OS level.
+  std::vector<std::string> GetSystemAccountNames();
+  // As |GetSystemAccountNames| but returning account IDs.
+  std::vector<CoreAccountId> GetSystemAccounts();
+  // As |GetAccounts| but with only validated account IDs.
+  std::vector<CoreAccountId> GetValidAccounts();
+  // Set accounts using Java's Oauth2TokenService.setAccounts.
+  virtual void SetAccounts(const std::vector<CoreAccountId>& accounts);
 
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 

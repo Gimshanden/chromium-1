@@ -30,14 +30,23 @@ class ClientStatus {
   // Modifies the corresponding proto status.
   void set_proto_status(ProcessedActionStatusProto status) { status_ = status; }
 
+  // Returns a mutable version of status details, creates one if necessary.
+  ProcessedActionStatusDetailsProto* mutable_details() {
+    has_details_ = true;
+    return &details_;
+  }
+
+  // Returns the status details associated with this status.
+  const ProcessedActionStatusDetailsProto& details() const { return details_; }
+
   // The output operator, for logging.
   friend std::ostream& operator<<(std::ostream& out,
                                   const ClientStatus& status);
 
  private:
   ProcessedActionStatusProto status_;
-  // TODO(b/129387787): Add more information, to be reported to
-  // ProcessedActionProto
+  bool has_details_ = false;
+  ProcessedActionStatusDetailsProto details_;
 };
 
 // An OK status.

@@ -39,14 +39,25 @@
 
 namespace blink {
 
-class MODULES_EXPORT Gamepad final : public ScriptWrappable,
-                                     public ContextClient {
+class MODULES_EXPORT Gamepad final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(Gamepad);
 
  public:
-  explicit Gamepad(ExecutionContext*);
+  // Objects implementing this interface are garbage-collected.
+  class Client : public GarbageCollectedMixin {
+   public:
+    virtual GamepadHapticActuator* GetVibrationActuatorForGamepad(
+        const Gamepad&) = 0;
+    virtual ~Client() = default;
+  };
+
+  Gamepad(Client* client,
+          unsigned index,
+          TimeTicks time_origin,
+          TimeTicks time_floor);
   ~Gamepad() override;
+
+  void UpdateFromDeviceState(const device::Gamepad&);
 
   typedef Vector<double> DoubleVector;
 
@@ -54,13 +65,11 @@ class MODULES_EXPORT Gamepad final : public ScriptWrappable,
   void SetId(const String& id) { id_ = id; }
 
   unsigned index() const { return index_; }
-  void SetIndex(unsigned val) { index_ = val; }
 
   bool connected() const { return connected_; }
   void SetConnected(bool val) { connected_ = val; }
 
   DOMHighResTimeStamp timestamp() const { return timestamp_; }
-  void SetTimestamp(DOMHighResTimeStamp val) { timestamp_ = val; }
 
   const String& mapping() const { return mapping_; }
   void SetMapping(const String& val) { mapping_ = val; }
@@ -73,11 +82,12 @@ class MODULES_EXPORT Gamepad final : public ScriptWrappable,
   void SetButtons(unsigned count, const device::GamepadButton* data);
   bool isButtonDataDirty() const { return is_button_data_dirty_; }
 
-  GamepadHapticActuator* vibrationActuator() const {
-    return vibration_actuator_;
-  }
+  GamepadHapticActuator* vibrationActuator() const;
   void SetVibrationActuatorInfo(const device::GamepadHapticActuator&);
   bool HasVibrationActuator() const { return has_vibration_actuator_; }
+  device::GamepadHapticActuatorType GetVibrationActuatorType() const {
+    return vibration_actuator_type_;
+  }
 
   GamepadPose* pose() const { return pose_; }
   void SetPose(const device::GamepadPose&);
@@ -88,17 +98,18 @@ class MODULES_EXPORT Gamepad final : public ScriptWrappable,
   unsigned displayId() const { return display_id_; }
   void SetDisplayId(unsigned val) { display_id_ = val; }
 
-  void InitializeSharedState();
-  void CopySharedStateFromBackBuffer(const Gamepad* back);
-
   void Trace(blink::Visitor*) override;
 
  private:
+  void SetTimestamp(const device::Gamepad& device_gamepad);
+
+  Member<Client> client_;
+
   // A string identifying the gamepad model.
   String id_;
 
   // The index of this gamepad within the GamepadList.
-  unsigned index_;
+  const unsigned index_;
 
   // True if this gamepad was still connected when gamepad state was captured.
   bool connected_;
@@ -121,9 +132,6 @@ class MODULES_EXPORT Gamepad final : public ScriptWrappable,
   // The type of haptic actuator used for vibration effects.
   device::GamepadHapticActuatorType vibration_actuator_type_;
 
-  // The vibration actuator, or nullptr if the gamepad has none.
-  Member<GamepadHapticActuator> vibration_actuator_;
-
   // Snapshot of the gamepad pose.
   Member<GamepadPose> pose_;
 
@@ -140,6 +148,12 @@ class MODULES_EXPORT Gamepad final : public ScriptWrappable,
   // True if the data in |buttons_| has changed since the last time it was
   // accessed.
   bool is_button_data_dirty_;
+
+  // Base time on which all relative timestamps are based.
+  const TimeTicks time_origin_;
+
+  // Minimum value to use for timestamps from the device.
+  const TimeTicks time_floor_;
 };
 
 }  // namespace blink

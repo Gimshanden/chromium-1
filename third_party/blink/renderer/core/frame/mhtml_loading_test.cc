@@ -99,8 +99,7 @@ TEST_F(MHTMLLoadingTest, CheckDomain) {
   Document* document = frame->GetDocument();
   ASSERT_TRUE(document);
 
-  EXPECT_STREQ(kFileURL,
-               frame->DomWindow()->location()->toString().Ascii().data());
+  EXPECT_EQ(kFileURL, frame->DomWindow()->location()->toString());
 
   const SecurityOrigin* origin = document->GetSecurityOrigin();
   EXPECT_STRNE("localhost", origin->Domain().Ascii().data());
@@ -119,8 +118,9 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(kSandboxAll & ~(kSandboxPopups |
-                            kSandboxPropagatesToAuxiliaryBrowsingContexts),
+  EXPECT_EQ(WebSandboxFlags::kAll &
+                ~(WebSandboxFlags::kPopups |
+                  WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts),
             document->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
@@ -138,8 +138,9 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   Document* child_document = child_frame->GetDocument();
   ASSERT_TRUE(child_document);
 
-  EXPECT_EQ(kSandboxAll & ~(kSandboxPopups |
-                            kSandboxPropagatesToAuxiliaryBrowsingContexts),
+  EXPECT_EQ(WebSandboxFlags::kAll &
+                ~(WebSandboxFlags::kPopups |
+                  WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts),
             child_document->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
@@ -163,8 +164,9 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlagsInXSLT) {
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(kSandboxAll & ~(kSandboxPopups |
-                            kSandboxPropagatesToAuxiliaryBrowsingContexts),
+  EXPECT_EQ(WebSandboxFlags::kAll &
+                ~(WebSandboxFlags::kPopups |
+                  WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts),
             document->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.

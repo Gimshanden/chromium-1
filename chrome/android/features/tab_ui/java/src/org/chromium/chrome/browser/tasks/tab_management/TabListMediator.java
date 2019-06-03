@@ -4,36 +4,51 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import android.content.ComponentCallbacks;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
+import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
+import android.support.v7.widget.GridLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.helper.ItemTouchHelper;
 import android.view.View;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.native_page.NativePageFactory;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.EmptyTabModelFilter;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabList;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupUtils;
+import org.chromium.chrome.browser.tasks.tabgroup.TabGroupModelFilter;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.ui.modelutil.PropertyModel;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Mediator for business logic for the tab grid. This class should be initialized with a list of
@@ -110,6 +125,32 @@ class TabListMediator {
         TabActionListener getCreateGroupButtonOnClickListener(Tab tab);
     }
 
+    /**
+     * An interface to get the onClickListener for opening dialog when click on a grid card.
+     */
+    public interface GridCardOnClickListenerProvider {
+        /**
+         * @return {@link TabActionListener} to open tabgrid dialog. If the given {@link Tab} is not
+         * able to create group, return null;
+         */
+        @Nullable
+        TabActionListener getGridCardOnClickListener(Tab tab);
+    }
+
+    @IntDef({TabClosedFrom.TAB_STRIP, TabClosedFrom.TAB_GRID_SHEET, TabClosedFrom.GRID_TAB_SWITCHER,
+            TabClosedFrom.GRID_TAB_SWITCHER_GROUP})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface TabClosedFrom {
+        int TAB_STRIP = 0;
+        int TAB_GRID_SHEET = 1;
+        int GRID_TAB_SWITCHER = 2;
+        int GRID_TAB_SWITCHER_GROUP = 3;
+        int NUM_ENTRIES = 4;
+    }
+
+    private static final String TAG = "TabListMediator";
+    private static Map<Integer, Integer> sTabClosedFromMapTabClosedFromMap = new HashMap<>();
+
     private final TabListFaviconProvider mTabListFaviconProvider;
     private final TabListModel mModel;
     private final TabModelSelector mTabModelSelector;
@@ -117,8 +158,10 @@ class TabListMediator {
     private final TabActionListener mTabClosedListener;
     private final TitleProvider mTitleProvider;
     private final CreateGroupButtonProvider mCreateGroupButtonProvider;
+    private final GridCardOnClickListenerProvider mGridCardOnClickListenerProvider;
     private final String mComponentName;
     private boolean mCloseAllRelatedTabs;
+    private ComponentCallbacks mComponentCallbacks;
 
     private final TabActionListener mTabSelectedListener = new TabActionListener() {
         @Override
@@ -190,6 +233,8 @@ class TabListMediator {
 
     private final TabModelObserver mTabModelObserver;
 
+    private TabGroupModelFilter.Observer mTabGroupObserver;
+
     /**
      * Interface for implementing a {@link Runnable} that takes a tabId for a generic action.
      */
@@ -214,7 +259,9 @@ class TabListMediator {
     public TabListMediator(TabListModel model, TabModelSelector tabModelSelector,
             @Nullable ThumbnailProvider thumbnailProvider, @Nullable TitleProvider titleProvider,
             TabListFaviconProvider tabListFaviconProvider, boolean closeRelatedTabs,
-            @Nullable CreateGroupButtonProvider createGroupButtonProvider, String componentName) {
+            @Nullable CreateGroupButtonProvider createGroupButtonProvider,
+            @Nullable GridCardOnClickListenerProvider gridCardOnClickListenerProvider,
+            String componentName) {
         mTabModelSelector = tabModelSelector;
         mThumbnailProvider = thumbnailProvider;
         mModel = model;
@@ -222,6 +269,7 @@ class TabListMediator {
         mComponentName = componentName;
         mTitleProvider = titleProvider != null ? titleProvider : Tab::getTitle;
         mCreateGroupButtonProvider = createGroupButtonProvider;
+        mGridCardOnClickListenerProvider = gridCardOnClickListenerProvider;
         mCloseAllRelatedTabs = closeRelatedTabs;
 
         mTabModelObserver = new EmptyTabModelObserver() {
@@ -241,6 +289,28 @@ class TabListMediator {
             @Override
             public void tabClosureUndone(Tab tab) {
                 onTabAdded(tab, !mCloseAllRelatedTabs);
+                if (sTabClosedFromMapTabClosedFromMap.containsKey(tab.getId())) {
+                    @TabClosedFrom
+                    int from = sTabClosedFromMapTabClosedFromMap.get(tab.getId());
+                    switch (from) {
+                        case TabClosedFrom.TAB_STRIP:
+                            RecordUserAction.record("TabStrip.UndoCloseTab");
+                            break;
+                        case TabClosedFrom.TAB_GRID_SHEET:
+                            RecordUserAction.record("TabGridSheet.UndoCloseTab");
+                            break;
+                        case TabClosedFrom.GRID_TAB_SWITCHER:
+                            RecordUserAction.record("GridTabSwitch.UndoCloseTab");
+                            break;
+                        case TabClosedFrom.GRID_TAB_SWITCHER_GROUP:
+                            RecordUserAction.record("GridTabSwitcher.UndoCloseTabGroup");
+                            break;
+                        default:
+                            assert false
+                                : "tabClosureUndone for tab that closed from an unknown UI";
+                    }
+                    sTabClosedFromMapTabClosedFromMap.remove(tab.getId());
+                }
             }
 
             @Override
@@ -253,26 +323,139 @@ class TabListMediator {
                 if (mModel.indexFromId(tab.getId()) == TabModel.INVALID_TAB_INDEX) return;
                 mModel.removeAt(mModel.indexFromId(tab.getId()));
             }
+
+            @Override
+            public void didMoveTab(Tab tab, int newIndex, int curIndex) {
+                if (mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter()
+                                instanceof TabGroupModelFilter) {
+                    return;
+                }
+                onTabMoved(tab, newIndex, curIndex);
+            }
         };
 
         mTabModelSelector.getTabModelFilterProvider().addTabModelFilterObserver(mTabModelObserver);
 
+        if (mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter()
+                        instanceof TabGroupModelFilter) {
+            mTabGroupObserver = new TabGroupModelFilter.Observer() {
+                @Override
+                public void didMergeTabToGroup(Tab movedTab, int selectedTabIdInGroup) {}
+
+                @Override
+                public void didMoveWithinGroup(
+                        Tab movedTab, int tabModelOldIndex, int tabModelNewIndex) {
+                    int curPosition = mModel.indexFromId(movedTab.getId());
+                    TabModel tabModel = mTabModelSelector.getCurrentModel();
+
+                    if (!isValidMovePosition(curPosition)) return;
+
+                    Tab destinationTab = tabModel.getTabAt(tabModelNewIndex > tabModelOldIndex
+                                    ? tabModelNewIndex - 1
+                                    : tabModelNewIndex + 1);
+
+                    int newPosition = mModel.indexFromId(destinationTab.getId());
+                    if (!isValidMovePosition(newPosition)) return;
+                    mModel.move(curPosition, newPosition);
+                }
+
+                @Override
+                public void didMoveTabGroup(
+                        Tab movedTab, int tabModelOldIndex, int tabModelNewIndex) {
+                    List<Tab> relatedTabs = getRelatedTabsForId(movedTab.getId());
+                    Tab currentGroupSelectedTab =
+                            TabGroupUtils.getSelectedTabInGroupForTab(mTabModelSelector, movedTab);
+                    TabModel tabModel = mTabModelSelector.getCurrentModel();
+                    int curPosition = mModel.indexFromId(currentGroupSelectedTab.getId());
+                    if (!isValidMovePosition(curPosition)) return;
+
+                    // Find the tab which was in the destination index before this move. Use that
+                    // tab to figure out the new position.
+                    int destinationTabIndex = tabModelNewIndex > tabModelOldIndex
+                            ? tabModelNewIndex - relatedTabs.size()
+                            : tabModelNewIndex + 1;
+                    Tab destinationTab = tabModel.getTabAt(destinationTabIndex);
+                    Tab destinationGroupSelectedTab = TabGroupUtils.getSelectedTabInGroupForTab(
+                            mTabModelSelector, destinationTab);
+                    int newPosition = mModel.indexFromId(destinationGroupSelectedTab.getId());
+                    if (!isValidMovePosition(newPosition)) return;
+
+                    mModel.move(curPosition, newPosition);
+                }
+            };
+
+            ((TabGroupModelFilter) mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(
+                     false))
+                    .addTabGroupObserver(mTabGroupObserver);
+            ((TabGroupModelFilter) mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(
+                     true))
+                    .addTabGroupObserver(mTabGroupObserver);
+        }
+
+        // TODO(meiliang): follow up with unit tests to test the close signal is sent correctly with
+        // the recommendedNextTab.
         mTabClosedListener = new TabActionListener() {
             @Override
             public void run(int tabId) {
                 RecordUserAction.record("MobileTabClosed." + mComponentName);
+
                 if (mCloseAllRelatedTabs) {
                     List<Tab> related = getRelatedTabsForId(tabId);
                     if (related.size() > 1) {
+                        onGroupClosedFrom(tabId);
                         mTabModelSelector.getCurrentModel().closeMultipleTabs(related, true);
                         return;
                     }
                 }
+                onTabClosedFrom(tabId, mComponentName);
+
+                Tab currentTab = mTabModelSelector.getCurrentTab();
+                Tab closingTab =
+                        TabModelUtils.getTabById(mTabModelSelector.getCurrentModel(), tabId);
+                Tab nextTab = currentTab == closingTab ? getNextTab(tabId) : null;
+
                 mTabModelSelector.getCurrentModel().closeTab(
-                        TabModelUtils.getTabById(mTabModelSelector.getCurrentModel(), tabId), false,
-                        false, true);
+                        closingTab, nextTab, false, false, true);
+            }
+
+            private Tab getNextTab(int closingTabId) {
+                int closingTabIndex = mModel.indexFromId(closingTabId);
+
+                if (closingTabIndex == TabModel.INVALID_TAB_INDEX) {
+                    assert false;
+                    return null;
+                }
+
+                int nextTabId = Tab.INVALID_TAB_ID;
+                if (mModel.size() > 1) {
+                    nextTabId = closingTabIndex == 0
+                            ? mModel.get(closingTabIndex + 1).get(TabProperties.TAB_ID)
+                            : mModel.get(closingTabIndex - 1).get(TabProperties.TAB_ID);
+                }
+
+                return TabModelUtils.getTabById(mTabModelSelector.getCurrentModel(), nextTabId);
             }
         };
+    }
+
+    private void onTabClosedFrom(int tabId, String fromComponent) {
+        @TabClosedFrom
+        int from;
+        if (fromComponent.equals(TabGroupUiCoordinator.COMPONENT_NAME)) {
+            from = TabClosedFrom.TAB_STRIP;
+        } else if (fromComponent.equals(TabGridSheetCoordinator.COMPONENT_NAME)) {
+            from = TabClosedFrom.TAB_GRID_SHEET;
+        } else if (fromComponent.equals(GridTabSwitcherCoordinator.COMPONENT_NAME)) {
+            from = TabClosedFrom.GRID_TAB_SWITCHER;
+        } else {
+            Log.w(TAG, "Attempting to close tab from Unknown UI");
+            return;
+        }
+        sTabClosedFromMapTabClosedFromMap.put(tabId, from);
+    }
+
+    private void onGroupClosedFrom(int tabId) {
+        sTabClosedFromMapTabClosedFromMap.put(tabId, TabClosedFrom.GRID_TAB_SWITCHER_GROUP);
     }
 
     public void setCloseAllRelatedTabsForTest(boolean closeAllRelatedTabs) {
@@ -302,32 +485,118 @@ class TabListMediator {
         addTabInfoToModel(tab, index, mTabModelSelector.getCurrentTab() == tab);
     }
 
+    private void onTabMoved(Tab tab, int newIndex, int curIndex) {
+        // Handle move without groups enabled.
+        if (mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter()
+                        instanceof EmptyTabModelFilter) {
+            if (!isValidMovePosition(curIndex) || !isValidMovePosition(newIndex)) return;
+            mModel.move(curIndex, newIndex);
+        }
+    }
+
+    private boolean isValidMovePosition(int position) {
+        return position != TabModel.INVALID_TAB_INDEX && position < mModel.size();
+    }
+
+    private boolean areTabsUnchanged(@Nullable List<Tab> tabs) {
+        if (tabs == null) {
+            return mModel.size() == 0;
+        }
+        if (tabs.size() != mModel.size()) return false;
+        for (int i = 0; i < tabs.size(); i++) {
+            if (tabs.get(i).getId() != mModel.get(i).get(TabProperties.TAB_ID)) return false;
+        }
+        return true;
+    }
+
     /**
      * Initialize the component with a list of tabs to show in a grid.
      * @param tabs The list of tabs to be shown.
+     * @return Whether the {@link TabListRecyclerView} can be shown quickly.
      */
-    public void resetWithListOfTabs(@Nullable List<Tab> tabs) {
+    public boolean resetWithListOfTabs(@Nullable List<Tab> tabs) {
+        if (areTabsUnchanged(tabs)) {
+            if (tabs == null) return true;
+
+            for (int i = 0; i < tabs.size(); i++) {
+                Tab tab = tabs.get(i);
+
+                boolean isSelected = mTabModelSelector.getCurrentTab() == tab;
+                mModel.get(i).set(TabProperties.IS_SELECTED, isSelected);
+
+                if (mThumbnailProvider != null && isSelected) {
+                    // TODO(crbug.com/968829): make force updating faster.
+                    ThumbnailFetcher callback = new ThumbnailFetcher(mThumbnailProvider, tab, true);
+                    mModel.get(i).set(TabProperties.THUMBNAIL_FETCHER, callback);
+                }
+
+                mModel.get(i).set(TabProperties.CREATE_GROUP_LISTENER,
+                        getCreateGroupButtonListener(tab, isSelected));
+            }
+            return true;
+        }
         mModel.set(new ArrayList<>());
         if (tabs == null) {
-            return;
+            return true;
         }
         Tab currentTab = mTabModelSelector.getCurrentTab();
-        if (currentTab == null) return;
+        if (currentTab == null) return false;
 
         for (int i = 0; i < tabs.size(); i++) {
             addTabInfoToModel(tabs.get(i), i, tabs.get(i).getId() == currentTab.getId());
         }
+        return false;
     }
 
     /**
      * @return The callback that hosts the logic for swipe and drag related actions.
      */
     ItemTouchHelper.SimpleCallback getItemTouchHelperCallback(final float swipeToDismissThreshold) {
-        return new ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.START | ItemTouchHelper.END) {
+        return new ItemTouchHelper.SimpleCallback(0, 0) {
             @Override
-            public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder,
-                    RecyclerView.ViewHolder viewHolder1) {
-                return false;
+            public int getMovementFlags(
+                    RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
+                final int dragFlags = FeatureUtilities.isTabGroupsAndroidEnabled()
+                                && !FeatureUtilities.isTabGroupsAndroidUiImprovementsEnabled()
+                        ? 0
+                        : ItemTouchHelper.START | ItemTouchHelper.END | ItemTouchHelper.UP
+                                | ItemTouchHelper.DOWN;
+                final int swipeFlags = ItemTouchHelper.START | ItemTouchHelper.END;
+                return makeMovementFlags(dragFlags, swipeFlags);
+            }
+
+            @Override
+            public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder fromViewHolder,
+                    RecyclerView.ViewHolder toViewHolder) {
+                assert fromViewHolder instanceof TabGridViewHolder;
+                assert toViewHolder instanceof TabGridViewHolder;
+
+                int currentTabId = ((TabGridViewHolder) fromViewHolder).getTabId();
+                int destinationTabId = ((TabGridViewHolder) toViewHolder).getTabId();
+                int distance =
+                        toViewHolder.getAdapterPosition() - fromViewHolder.getAdapterPosition();
+                TabModelFilter filter =
+                        mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter();
+                TabModel tabModel = mTabModelSelector.getCurrentModel();
+                if (filter instanceof EmptyTabModelFilter) {
+                    tabModel.moveTab(currentTabId,
+                            mModel.indexFromId(currentTabId)
+                                    + (distance > 0 ? distance + 1 : distance));
+                } else if (!mCloseAllRelatedTabs) {
+                    int destinationIndex =
+                            tabModel.indexOf(mTabModelSelector.getTabById(destinationTabId));
+                    tabModel.moveTab(
+                            currentTabId, distance > 0 ? destinationIndex + 1 : destinationIndex);
+                } else {
+                    List<Tab> destinationTabGroup = getRelatedTabsForId(destinationTabId);
+                    int newIndex = distance >= 0 ? TabGroupUtils.getLastTabModelIndexForList(
+                                                           mTabModelSelector, destinationTabGroup)
+                                    + 1
+                                                 : TabGroupUtils.getFirstTabModelIndexForList(
+                                                         mTabModelSelector, destinationTabGroup);
+                    ((TabGroupModelFilter) filter).moveRelatedTabs(currentTabId, newIndex);
+                }
+                return true;
             }
 
             @Override
@@ -361,6 +630,28 @@ class TabListMediator {
         };
     }
 
+    void registerOrientationListener(GridLayoutManager manager) {
+        // TODO(yuezhanggg): Try to dynamically determine span counts based on screen width,
+        // minimum card width and padding.
+        mComponentCallbacks = new ComponentCallbacks() {
+            @Override
+            public void onConfigurationChanged(Configuration newConfig) {
+                manager.setSpanCount(newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
+                                ? TabListCoordinator.GRID_LAYOUT_SPAN_COUNT_PORTRAIT
+                                : TabListCoordinator.GRID_LAYOUT_SPAN_COUNT_LANDSCAPE);
+            }
+
+            @Override
+            public void onLowMemory() {}
+        };
+        ContextUtils.getApplicationContext().registerComponentCallbacks(mComponentCallbacks);
+    }
+
+    @VisibleForTesting
+    void setCloseAllRelatedTabs(boolean flag) {
+        mCloseAllRelatedTabs = flag;
+    }
+
     /**
      * Destroy any members that needs clean up.
      */
@@ -375,17 +666,30 @@ class TabListMediator {
             mTabModelSelector.getTabModelFilterProvider().removeTabModelFilterObserver(
                     mTabModelObserver);
         }
+        if (mTabGroupObserver != null) {
+            ((TabGroupModelFilter) mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(
+                     false))
+                    .removeTabGroupObserver(mTabGroupObserver);
+            ((TabGroupModelFilter) mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(
+                     true))
+                    .removeTabGroupObserver(mTabGroupObserver);
+        }
+        if (mComponentCallbacks != null) {
+            ContextUtils.getApplicationContext().unregisterComponentCallbacks(mComponentCallbacks);
+        }
     }
 
     private void addTabInfoToModel(final Tab tab, int index, boolean isSelected) {
-        TabActionListener createGroupButtonOnClickListener = null;
-        if (isSelected && mCreateGroupButtonProvider != null) {
-            createGroupButtonOnClickListener =
-                    mCreateGroupButtonProvider.getCreateGroupButtonOnClickListener(tab);
-        }
         boolean showIPH = false;
         if (mCloseAllRelatedTabs && !mShownIPH) {
             showIPH = getRelatedTabsForId(tab.getId()).size() > 1;
+        }
+        TabActionListener tabSelectedListener;
+        if (mGridCardOnClickListenerProvider == null
+                || getRelatedTabsForId(tab.getId()).size() == 1) {
+            tabSelectedListener = mTabSelectedListener;
+        } else {
+            tabSelectedListener = mGridCardOnClickListenerProvider.getGridCardOnClickListener(tab);
         }
 
         PropertyModel tabInfo =
@@ -396,9 +700,10 @@ class TabListMediator {
                                 mTabListFaviconProvider.getDefaultFaviconDrawable())
                         .with(TabProperties.IS_SELECTED, isSelected)
                         .with(TabProperties.IPH_PROVIDER, showIPH ? mIphProvider : null)
-                        .with(TabProperties.TAB_SELECTED_LISTENER, mTabSelectedListener)
+                        .with(TabProperties.TAB_SELECTED_LISTENER, tabSelectedListener)
                         .with(TabProperties.TAB_CLOSED_LISTENER, mTabClosedListener)
-                        .with(TabProperties.CREATE_GROUP_LISTENER, createGroupButtonOnClickListener)
+                        .with(TabProperties.CREATE_GROUP_LISTENER,
+                                getCreateGroupButtonListener(tab, isSelected))
                         .with(TabProperties.ALPHA, 1f)
                         .build();
 
@@ -422,5 +727,15 @@ class TabListMediator {
             tabInfo.set(TabProperties.THUMBNAIL_FETCHER, callback);
         }
         tab.addObserver(mTabObserver);
+    }
+
+    @Nullable
+    private TabActionListener getCreateGroupButtonListener(Tab tab, boolean isSelected) {
+        TabActionListener createGroupButtonOnClickListener = null;
+        if (isSelected && mCreateGroupButtonProvider != null) {
+            createGroupButtonOnClickListener =
+                    mCreateGroupButtonProvider.getCreateGroupButtonOnClickListener(tab);
+        }
+        return createGroupButtonOnClickListener;
     }
 }

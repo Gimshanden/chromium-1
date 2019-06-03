@@ -133,11 +133,20 @@ class TestingDriveFsHostDelegate : public DriveFsHost::Delegate,
   std::string GetObfuscatedAccountId() override {
     return "salt-" + account_id_.GetAccountIdKey();
   }
+  bool IsMetricsCollectionEnabled() override { return false; }
 
   std::unique_ptr<DriveFsBootstrapListener> CreateMojoListener() override {
     DCHECK(pending_bootstrap_);
     return std::make_unique<FakeDriveFsBootstrapListener>(
         std::move(pending_bootstrap_));
+  }
+
+  std::string GetLostAndFoundDirectoryName() override {
+    return "recovered files";
+  }
+
+  base::FilePath GetMyFilesPath() override {
+    return base::FilePath("/MyFiles");
   }
 
   const std::unique_ptr<service_manager::Connector> connector_;
@@ -219,14 +228,14 @@ class FakeIdentityService
   void GetPrimaryAccountWhenAvailable(
       GetPrimaryAccountWhenAvailableCallback callback) override {
     auto account_id = AccountId::FromUserEmailGaiaId("test@example.com", "ID");
-    AccountInfo account_info;
+    CoreAccountInfo account_info;
     account_info.email = account_id.GetUserEmail();
     account_info.gaia = account_id.GetGaiaId();
     account_info.account_id = account_id.GetAccountIdKey();
     std::move(callback).Run(account_info, {});
   }
 
-  void GetAccessToken(const std::string& account_id,
+  void GetAccessToken(const CoreAccountId& account_id,
                       const ::identity::ScopeSet& scopes,
                       const std::string& consumer_id,
                       GetAccessTokenCallback callback) override {
@@ -400,6 +409,8 @@ class DriveFsHostTest : public ::testing::Test, public mojom::DriveFsBootstrap {
             mojom::DriveFsRequest drive_fs_request,
             mojom::DriveFsDelegatePtr delegate) override {
     EXPECT_EQ("test@example.com", config->user_email);
+    EXPECT_EQ("recovered files",
+              config->lost_and_found_directory_name.value_or("<None>"));
     init_access_token_ = std::move(config->access_token);
     binding_.Bind(std::move(drive_fs_request));
     mojo::FuseInterface(std::move(pending_delegate_request_),

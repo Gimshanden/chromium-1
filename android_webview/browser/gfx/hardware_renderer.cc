@@ -57,7 +57,7 @@ HardwareRenderer::~HardwareRenderer() {
   // Reset draw constraints.
   render_thread_manager_->PostParentDrawDataToChildCompositorOnRT(
       ParentCompositorDrawConstraints(), compositor_id_,
-      viz::PresentationFeedbackMap());
+      viz::PresentationFeedbackMap(), 0u);
   for (auto& child_frame : child_frame_queue_) {
     child_frame->WaitOnFutureIfNeeded();
     ReturnChildFrame(std::move(child_frame));
@@ -84,8 +84,9 @@ void HardwareRenderer::CommitFrame() {
   child_frame_queue_.emplace_back(std::move(child_frames.front()));
 }
 
-void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
-  TRACE_EVENT0("android_webview", "HardwareRenderer::DrawGL");
+void HardwareRenderer::Draw(HardwareRendererDrawParams* params) {
+  TRACE_EVENT1("android_webview", "HardwareRenderer::Draw", "vulkan",
+               surfaces_->is_using_vulkan());
 
   for (auto& pruned_frame : WaitAndPruneFrameQueue(&child_frame_queue_))
     ReturnChildFrame(std::move(pruned_frame));
@@ -103,7 +104,7 @@ void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
     // We need to watch if the current Android context has changed and enforce a
     // clean-up in the compositor.
     EGLContext current_context = eglGetCurrentContext();
-    DCHECK(current_context) << "DrawGL called without EGLContext";
+    DCHECK(current_context) << "Draw called without EGLContext";
 
     // TODO(boliu): Handle context loss.
     if (last_egl_context_ != current_context)
@@ -111,6 +112,7 @@ void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
   }
 
   bool submitted_new_frame = false;
+  uint32_t frame_token = 0u;
   // SurfaceFactory::SubmitCompositorFrame might call glFlush. So calling it
   // during "kModeSync" stage (which does not allow GL) might result in extra
   // kModeProcess. Instead, submit the frame in "kModeDraw" stage to avoid
@@ -142,6 +144,7 @@ void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
       device_scale_factor_ = device_scale_factor;
     }
 
+    frame_token = child_compositor_frame->metadata.frame_token;
     support_->SubmitCompositorFrame(child_id_,
                                     std::move(*child_compositor_frame));
     submitted_new_frame = true;
@@ -163,7 +166,7 @@ void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
   // presentation feedback to return as well.
   if (need_to_update_draw_constraints && !submitted_new_frame) {
     render_thread_manager_->PostParentDrawDataToChildCompositorOnRT(
-        draw_constraints, compositor_id_, viz::PresentationFeedbackMap());
+        draw_constraints, compositor_id_, viz::PresentationFeedbackMap(), 0u);
   }
 
   if (!child_id_.is_valid())
@@ -183,10 +186,9 @@ void HardwareRenderer::DrawGL(HardwareRendererDrawParams* params) {
                          device_scale_factor_, params->color_space);
   viz::PresentationFeedbackMap feedbacks =
       support_->TakePresentationFeedbacks();
-  if (submitted_new_frame &&
-      (need_to_update_draw_constraints || !feedbacks.empty())) {
+  if (submitted_new_frame) {
     render_thread_manager_->PostParentDrawDataToChildCompositorOnRT(
-        draw_constraints, compositor_id_, std::move(feedbacks));
+        draw_constraints, compositor_id_, std::move(feedbacks), frame_token);
   }
 }
 

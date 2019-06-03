@@ -24,14 +24,16 @@ source_set("common") {
     "//url",
   ]
   public_deps = [
-    "//fuchsia:web_fidl",
     "//third_party/fuchsia-sdk/sdk:sys",
+    "//third_party/fuchsia-sdk/sdk:web",
   ]
   visibility = [ ":*" ]
 }
 
 source_set("cast_runner_core") {
   sources = [
+    "cast/api_bindings_client.cc",
+    "cast/api_bindings_client.h",
     "cast/cast_channel_bindings.cc",
     "cast/cast_channel_bindings.h",
     "cast/cast_component.cc",
@@ -41,20 +43,22 @@ source_set("cast_runner_core") {
     "cast/cast_runner.h",
     "cast/named_message_port_connector.cc",
     "cast/named_message_port_connector.h",
-    "cast/not_implemented_api_bindings.cc",
-    "cast/not_implemented_api_bindings.h",
     "cast/queryable_data_bindings.cc",
     "cast/queryable_data_bindings.h",
+    "cast/touch_input_bindings.cc",
+    "cast/touch_input_bindings.h",
   ]
   data = [
     "cast/cast_channel_bindings.js",
-    "cast/named_message_port_connector.js",
-    "cast/queryable_data_bindings.js",
     "cast/not_implemented_api_bindings.js",
+    "cast/queryable_data_bindings.js",
+    "cast/touch_input_bindings.js",
+  ]
+  data_deps = [
+    "//chromecast/bindings:named_message_port_connector_resources",
   ]
   deps = [
     "//base",
-    "//fuchsia:web_fidl",
     "//fuchsia/base",
     "//fuchsia/base:modular",
     "//third_party/fuchsia-sdk/sdk:modular",
@@ -63,7 +67,7 @@ source_set("cast_runner_core") {
   public_deps = [
     ":common",
     "//fuchsia:cast_fidl",
-    "//fuchsia:web_fidl",
+    "//third_party/fuchsia-sdk/sdk:web",
   ]
   visibility = [ ":*" ]
 }
@@ -103,6 +107,8 @@ source_set("cast_runner_test_core") {
     "cast/fake_application_config_manager.h",
     "cast/fake_queryable_data.cc",
     "cast/fake_queryable_data.h",
+    "cast/test_api_bindings.cc",
+    "cast/test_api_bindings.h",
   ]
   deps = [
     ":cast_runner_core",
@@ -129,7 +135,6 @@ test("cast_runner_integration_tests") {
     "//base/test:run_all_unittests",
     "//base/test:test_support",
     "//fuchsia/base:test_support",
-    "//fuchsia/engine:test_support",
     "//net:test_support",
     "//testing/gtest",
   ]
@@ -141,6 +146,7 @@ test("cast_runner_integration_tests") {
 
 test("cast_runner_browsertests") {
   sources = [
+    "cast/api_bindings_client_browsertest.cc",
     "cast/cast_channel_bindings_browsertest.cc",
     "cast/named_message_port_connector_browsertest.cc",
     "cast/not_implemented_api_bindings_browsertest.cc",
@@ -158,7 +164,6 @@ test("cast_runner_browsertests") {
     "//fuchsia/base",
     "//fuchsia/base:test_support",
     "//fuchsia/engine:browsertest_core",
-    "//fuchsia/engine:test_support",
     "//fuchsia/engine:web_engine_core",
     "//testing/gmock",
     "//testing/gtest",
@@ -202,7 +207,6 @@ test("web_runner_integration_tests") {
     "//base/test:run_all_unittests",
     "//base/test:test_support",
     "//fuchsia/base:modular",
-    "//fuchsia/engine:test_support",
     "//net:test_support",
     "//testing/gtest",
     "//third_party/fuchsia-sdk/sdk:sys",

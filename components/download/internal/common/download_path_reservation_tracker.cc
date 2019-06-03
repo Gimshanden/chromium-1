@@ -26,6 +26,7 @@
 #include "base/third_party/icu/icu_utf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_item.h"
 #include "components/filename_generation/filename_generation.h"
 #include "net/base/filename_util.h"
@@ -57,10 +58,6 @@ const size_t kZoneIdentifierLength = sizeof(":Zone.Identifier") - 1;
 // Map of download path reservations. Each reserved path is associated with a
 // ReservationKey=DownloadItem*. This object is destroyed in |Revoke()| when
 // there are no more reservations.
-//
-// It is not an error, although undesirable, to have multiple DownloadItem*s
-// that are mapped to the same path. This can happen if a reservation is created
-// that is supposed to overwrite an existing reservation.
 ReservationMap* g_reservation_map = NULL;
 
 base::LazySequencedTaskRunner g_sequenced_task_runner =
@@ -119,6 +116,21 @@ bool IsFileNameInUse(const base::FilePath& path) {
   if (DownloadCollectionBridge::FileNameExists(path.BaseName()))
     return true;
 #endif
+  return false;
+}
+
+// Returns true if the given path is in use by a path reservation,
+// and has a different key then the item arg.
+bool IsAdditionalPathReserved(const base::FilePath& path, DownloadItem* item) {
+  if (!g_reservation_map)
+    return false;
+
+  for (ReservationMap::const_iterator iter = g_reservation_map->begin();
+       iter != g_reservation_map->end(); ++iter) {
+    if (iter->first != item && base::FilePath::CompareEqualIgnoreCase(
+                                   iter->second.value(), path.value()))
+      return true;
+  }
   return false;
 }
 
@@ -238,6 +250,11 @@ PathValidationResult ResolveReservationConflicts(
                  : PathValidationResult::CONFLICT;
 
     case DownloadPathReservationTracker::OVERWRITE:
+      if (base::FeatureList::IsEnabled(
+              features::kPreventDownloadsWithSamePath) &&
+          IsPathReserved(*target_path)) {
+        return PathValidationResult::CONFLICT;
+      }
       return PathValidationResult::SUCCESS;
 
     case DownloadPathReservationTracker::PROMPT:
@@ -252,13 +269,18 @@ PathValidationResult ResolveReservationConflicts(
 PathValidationResult ValidatePathAndResolveConflicts(
     const CreateReservationInfo& info,
     base::FilePath* target_path) {
-  // Check writability of the suggested path. If we can't write to it, default
-  // to the user's Documents directory. We'll prompt them in this case. No
-  // further amendments are made to the filename since the user is going to be
-  // prompted.
+  // Check writability of the suggested path. If we can't write to it, use
+  // the |default_download_path| if it is not empty or |fallback_directory|.
+  // We'll prompt them in this case. No further amendments are made to the
+  // filename since the user is going to be prompted.
   if (!IsPathWritable(info, *target_path)) {
     DVLOG(1) << "Unable to write to path \"" << target_path->value() << "\"";
-    *target_path = info.fallback_directory.Append(target_path->BaseName());
+    if (!info.default_download_path.empty() &&
+        target_path->DirName() != info.default_download_path) {
+      *target_path = info.default_download_path.Append(target_path->BaseName());
+    } else {
+      *target_path = info.fallback_directory.Append(target_path->BaseName());
+    }
     return PathValidationResult::PATH_NOT_WRITABLE;
   }
 
@@ -513,6 +535,13 @@ bool DownloadPathReservationTracker::IsPathInUseForTesting(
 scoped_refptr<base::SequencedTaskRunner>
 DownloadPathReservationTracker::GetTaskRunner() {
   return g_sequenced_task_runner.Get();
+}
+
+// static
+bool DownloadPathReservationTracker::CheckDownloadPathForExistingDownload(
+    const base::FilePath& target_path,
+    DownloadItem* download_item) {
+  return IsAdditionalPathReserved(target_path, download_item);
 }
 
 }  // namespace download

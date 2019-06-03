@@ -38,6 +38,7 @@ class StatusTray;
 class SystemNetworkContextManager;
 class WatchDogThread;
 class WebRtcLogUploader;
+class StartupData;
 
 namespace network {
 class NetworkQualityTracker;
@@ -127,9 +128,6 @@ class BrowserProcess {
  public:
   BrowserProcess();
   virtual ~BrowserProcess();
-
-  // Called when the ResourceDispatcherHost object is created by content.
-  virtual void ResourceDispatcherHostCreated() = 0;
 
   // Invoked when the user is logging out/shutting down. When logging off we may
   // not have enough time to do a normal shutdown. This method is invoked prior
@@ -252,6 +250,10 @@ class BrowserProcess {
   // performed on slow page loads.
   virtual optimization_guide::OptimizationGuideService*
   optimization_guide_service() = 0;
+
+  // Returns the StartupData which owns any pre-created objects in //chrome
+  // before the full browser starts.
+  virtual StartupData* startup_data() = 0;
 
 #if (defined(OS_WIN) || defined(OS_LINUX)) && !defined(OS_CHROMEOS)
   // This will start a timer that, if Chrome is in persistent mode, will check

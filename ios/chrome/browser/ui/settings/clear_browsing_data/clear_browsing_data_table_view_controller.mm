@@ -16,9 +16,13 @@
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/elements/chrome_activity_overlay_coordinator.h"
+#include "ios/chrome/browser/ui/settings/cells/clear_browsing_data_constants.h"
 #import "ios/chrome/browser/ui/settings/cells/table_view_clear_browsing_data_item.h"
+#import "ios/chrome/browser/ui/settings/clear_browsing_data/clear_browsing_data_consumer.h"
 #include "ios/chrome/browser/ui/settings/clear_browsing_data/clear_browsing_data_local_commands.h"
 #import "ios/chrome/browser/ui/settings/clear_browsing_data/clear_browsing_data_manager.h"
+#import "ios/chrome/browser/ui/settings/clear_browsing_data/clear_browsing_data_ui_constants.h"
+#import "ios/chrome/browser/ui/settings/clear_browsing_data/time_range_selector_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_text_button_item.h"
@@ -31,11 +35,6 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-namespace {
-// Separation space between sections.
-const CGFloat kSeparationSpaceBetweenSections = 9;
-}  // namespace
 
 @interface ClearBrowsingDataTableViewController () <
     TableViewTextLinkCellDelegate,
@@ -107,6 +106,8 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(showClearBrowsingDataAlertController:)];
+    _clearBrowsingDataBarButton.accessibilityIdentifier =
+        kClearBrowsingDataButtonIdentifier;
     _clearBrowsingDataBarButton.tintColor = [UIColor redColor];
   }
   return _clearBrowsingDataBarButton;
@@ -125,7 +126,12 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
 
 - (void)viewDidLoad {
   [super viewDidLoad];
+  if (IsNewClearBrowsingDataUIEnabled()) {
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+  }
   self.styler.tableViewBackgroundColor = UIColor.whiteColor;
+  self.tableView.accessibilityIdentifier =
+      kClearBrowsingDataViewAccessibilityIdentifier;
   self.tableView.backgroundColor = self.styler.tableViewBackgroundColor;
   // TableView configuration
   self.tableView.estimatedRowHeight = 56;
@@ -134,11 +140,6 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
   // Add a tableFooterView in order to disable separators at the bottom of the
   // tableView.
   self.tableView.tableFooterView = [[UIView alloc] init];
-  self.styler.tableViewBackgroundColor = [UIColor clearColor];
-  // Align cell separators with text label leading margin.
-  [self.tableView
-      setSeparatorInset:UIEdgeInsetsMake(0, kTableViewHorizontalSpacing, 0, 0)];
-
   // Navigation controller configuration.
   self.title = l10n_util::GetNSString(IDS_IOS_CLEAR_BROWSING_DATA_TITLE);
   // Adds the "Done" button and hooks it up to |dismiss|.
@@ -160,10 +161,24 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
 - (void)viewWillAppear:(BOOL)animated {
   [super viewWillAppear:animated];
   [self.dataManager restartCounters:BrowsingDataRemoveMask::REMOVE_ALL];
+
   if (IsNewClearBrowsingDataUIEnabled()) {
+    [self updateToolbarButtons];
     // Showing toolbar here because parent class hides toolbar in
     // viewWillDisappear:.
     self.navigationController.toolbarHidden = NO;
+  }
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+  [super viewWillDisappear:animated];
+  // Write data type cell selection states back to the browser state.
+  NSArray* dataTypeItems = [self.tableViewModel
+      itemsInSectionWithIdentifier:SectionIdentifierDataTypes];
+  for (TableViewClearBrowsingDataItem* dataTypeItem in dataTypeItems) {
+    DCHECK([dataTypeItem isKindOfClass:[TableViewClearBrowsingDataItem class]]);
+    self.browserState->GetPrefs()->SetBoolean(dataTypeItem.prefName,
+                                              dataTypeItem.checked);
   }
 }
 
@@ -227,6 +242,12 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
     case ItemTypeDataTypeCache:
     case ItemTypeDataTypeSavedPasswords:
     case ItemTypeDataTypeAutofill:
+      // For these cells the selection style application is specified in the
+      // corresponding item definition.
+      if (IsNewClearBrowsingDataUIEnabled()) {
+        cellToReturn.selectionStyle = UITableViewCellSelectionStyleNone;
+      }
+      break;
     default:
       break;
   }
@@ -235,20 +256,62 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
 
 #pragma mark - UITableViewDelegate
 
+- (CGFloat)tableView:(UITableView*)tableView
+    heightForHeaderInSection:(NSInteger)section {
+  NSInteger sectionIdentifier =
+      [self.tableViewModel sectionIdentifierForSection:section];
+  switch (sectionIdentifier) {
+    case SectionIdentifierGoogleAccount:
+    case SectionIdentifierClearSyncAndSavedSiteData:
+    case SectionIdentifierSavedSiteData:
+      return 5;
+    default:
+      return [super tableView:tableView heightForHeaderInSection:section];
+  }
+}
+
 - (void)tableView:(UITableView*)tableView
     didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
+  if (!IsNewClearBrowsingDataUIEnabled()) {
+    [self tableView:tableView legacyDidSelectRowAtIndexPath:indexPath];
+  } else {
+    TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
+    DCHECK(item);
+    switch (item.type) {
+      case ItemTypeTimeRange: {
+        UIViewController* controller =
+            [[TimeRangeSelectorTableViewController alloc]
+                initWithPrefs:self.browserState->GetPrefs()];
+        [self.tableView deselectRowAtIndexPath:indexPath animated:YES];
+        [self.navigationController pushViewController:controller animated:YES];
+        break;
+      }
+      case ItemTypeDataTypeBrowsingHistory:
+      case ItemTypeDataTypeCookiesSiteData:
+      case ItemTypeDataTypeCache:
+      case ItemTypeDataTypeSavedPasswords:
+      case ItemTypeDataTypeAutofill: {
+        DCHECK([item isKindOfClass:[TableViewClearBrowsingDataItem class]]);
+        TableViewClearBrowsingDataItem* clearBrowsingDataItem =
+            base::mac::ObjCCastStrict<TableViewClearBrowsingDataItem>(item);
+        clearBrowsingDataItem.checked = !clearBrowsingDataItem.checked;
+        [self reconfigureCellsForItems:@[ clearBrowsingDataItem ]];
+        [self.tableView deselectRowAtIndexPath:indexPath animated:YES];
+        break;
+      }
+      default:
+        break;
+    }
+    [self updateToolbarButtons];
+  }
+}
+
+- (void)tableView:(UITableView*)tableView
+    legacyDidSelectRowAtIndexPath:(NSIndexPath*)indexPath {
   [self.tableView deselectRowAtIndexPath:indexPath animated:YES];
   TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
   DCHECK(item);
   switch (item.type) {
-    case ItemTypeTimeRange: {
-      UIViewController* controller =
-          [[TimeRangeSelectorTableViewController alloc]
-              initWithPrefs:self.browserState->GetPrefs()
-                   delegate:self.dataManager];
-      [self.navigationController pushViewController:controller animated:YES];
-      break;
-    }
     case ItemTypeDataTypeBrowsingHistory:
     case ItemTypeDataTypeCookiesSiteData:
     case ItemTypeDataTypeCache:
@@ -262,19 +325,9 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
       [self reconfigureCellsForItems:@[ clearBrowsingDataItem ]];
       break;
     }
-    case ItemTypeClearBrowsingDataButton:
-    case ItemTypeFooterGoogleAccount:
-    case ItemTypeFooterGoogleAccountAndMyActivity:
-    case ItemTypeFooterSavedSiteData:
-    case ItemTypeFooterClearSyncAndSavedSiteData:
     default:
       break;
   }
-}
-
-- (CGFloat)tableView:(UITableView*)tableView
-    heightForFooterInSection:(NSInteger)section {
-  return kSeparationSpaceBetweenSections;
 }
 
 #pragma mark - TableViewTextLinkCellDelegate
@@ -402,6 +455,23 @@ const CGFloat kSeparationSpaceBetweenSections = 9;
   }
   self.actionSheetCoordinator = actionSheetCoordinator;
   [self.actionSheetCoordinator start];
+}
+
+- (void)updateToolbarButtons {
+  self.clearBrowsingDataBarButton.enabled = [self hasDataTypeItemsSelected];
+}
+
+- (BOOL)hasDataTypeItemsSelected {
+  // Returns YES iff at least 1 data type cell is selected.
+  NSArray* dataTypeItems = [self.tableViewModel
+      itemsInSectionWithIdentifier:SectionIdentifierDataTypes];
+  for (TableViewClearBrowsingDataItem* dataTypeItem in dataTypeItems) {
+    DCHECK([dataTypeItem isKindOfClass:[TableViewClearBrowsingDataItem class]]);
+    if (dataTypeItem.checked) {
+      return YES;
+    }
+  }
+  return NO;
 }
 
 @end

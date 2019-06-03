@@ -37,7 +37,7 @@ void NavigationBodyLoader::FillNavigationParamsResponseAndBodyLoader(
       !commit_params.original_method.empty() ? commit_params.original_method
                                              : common_params.method,
       common_params.referrer.url,
-      is_main_frame ? RESOURCE_TYPE_MAIN_FRAME : RESOURCE_TYPE_SUB_FRAME);
+      is_main_frame ? ResourceType::kMainFrame : ResourceType::kSubFrame);
 
   size_t redirect_count = commit_params.redirect_response.size();
   navigation_params->redirects.reserve(redirect_count);
@@ -122,14 +122,13 @@ void NavigationBodyLoader::OnUploadProgress(int64_t current_position,
   NOTREACHED();
 }
 
-void NavigationBodyLoader::OnReceiveCachedMetadata(
-    const std::vector<uint8_t>& data) {
+void NavigationBodyLoader::OnReceiveCachedMetadata(mojo_base::BigBuffer data) {
   // Even if IsolatedCodeCaching is landed, this code is still used by
   // ServiceWorker.
   // TODO(horo, kinuko): Make a test to cover this function.
   // TODO(https://crbug.com/930000): Add support for inline script code caching
   // with the service worker service.
-  client_->BodyCodeCacheReceived(data);
+  client_->BodyCodeCacheReceived(std::move(data));
 }
 
 void NavigationBodyLoader::OnTransferSizeUpdated(int32_t transfer_size_diff) {
@@ -139,7 +138,10 @@ void NavigationBodyLoader::OnTransferSizeUpdated(int32_t transfer_size_diff) {
 
 void NavigationBodyLoader::OnStartLoadingResponseBody(
     mojo::ScopedDataPipeConsumerHandle handle) {
+  TRACE_EVENT1("loading", "NavigationBodyLoader::OnStartLoadingResponseBody",
+               "url", resource_load_info_->url.possibly_invalid_spec());
   DCHECK(!has_received_body_handle_);
+  DCHECK(!has_received_completion_);
   has_received_body_handle_ = true;
   has_seen_end_of_data_ = false;
   handle_ = std::move(handle);
@@ -170,6 +172,8 @@ void NavigationBodyLoader::SetDefersLoading(bool defers) {
 void NavigationBodyLoader::StartLoadingBody(
     WebNavigationBodyLoader::Client* client,
     bool use_isolated_code_cache) {
+  TRACE_EVENT1("loading", "NavigationBodyLoader::StartLoadingBody", "url",
+               resource_load_info_->url.possibly_invalid_spec());
   client_ = client;
 
   NotifyResourceResponseReceived(render_frame_id_, resource_load_info_.get(),
@@ -186,8 +190,8 @@ void NavigationBodyLoader::StartLoadingBody(
   }
 }
 
-void NavigationBodyLoader::CodeCacheReceived(const base::Time& response_time,
-                                             const std::vector<uint8_t>& data) {
+void NavigationBodyLoader::CodeCacheReceived(base::Time response_time,
+                                             base::span<const uint8_t> data) {
   if (head_.response_time == response_time && client_) {
     base::WeakPtr<NavigationBodyLoader> weak_self = weak_factory_.GetWeakPtr();
     client_->BodyCodeCacheReceived(data);
@@ -215,6 +219,8 @@ void NavigationBodyLoader::OnConnectionClosed() {
 }
 
 void NavigationBodyLoader::OnReadable(MojoResult unused) {
+  TRACE_EVENT1("loading", "NavigationBodyLoader::OnReadable", "url",
+               resource_load_info_->url.possibly_invalid_spec());
   if (has_seen_end_of_data_ || is_deferred_ || is_in_on_readable_)
     return;
   // Protect against reentrancy:
@@ -232,6 +238,8 @@ void NavigationBodyLoader::OnReadable(MojoResult unused) {
 }
 
 void NavigationBodyLoader::ReadFromDataPipe() {
+  TRACE_EVENT1("loading", "NavigationBodyLoader::ReadFromDataPipe", "url",
+               resource_load_info_->url.possibly_invalid_spec());
   uint32_t num_bytes_consumed = 0;
   while (!is_deferred_) {
     const void* buffer = nullptr;

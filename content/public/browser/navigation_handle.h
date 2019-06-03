@@ -52,7 +52,7 @@ class CONTENT_EXPORT NavigationHandle {
   // some may change during navigation (e.g. due to server redirects).
 
   // Get a unique ID for this navigation.
-  virtual int64_t GetNavigationId() const = 0;
+  virtual int64_t GetNavigationId() = 0;
 
   // The URL the frame is navigating to. This may change during the navigation
   // when encountering a server redirect.
@@ -60,6 +60,8 @@ class CONTENT_EXPORT NavigationHandle {
   // WebContents::GetVisibleURL and WebContents::GetLastCommittedURL. For
   // example, viewing a page's source navigates to the URL of the page, but the
   // virtual URL is prefixed with "view-source:".
+  // Note: The URL of a NavigationHandle can change over its lifetime.
+  // e.g. URLs might be rewritten by the renderer before being committed.
   virtual const GURL& GetURL() = 0;
 
   // Returns the SiteInstance that started the request.
@@ -113,7 +115,7 @@ class CONTENT_EXPORT NavigationHandle {
   virtual base::TimeTicks NavigationInputStart() = 0;
 
   // Whether or not the navigation was started within a context menu.
-  virtual bool WasStartedFromContextMenu() const = 0;
+  virtual bool WasStartedFromContextMenu() = 0;
 
   // Returns the URL and encoding of an INPUT field that corresponds to a
   // searchable form request.
@@ -160,7 +162,7 @@ class CONTENT_EXPORT NavigationHandle {
   virtual ui::PageTransition GetPageTransition() = 0;
 
   // Returns the NavigationUIData associated with the navigation.
-  virtual const NavigationUIData* GetNavigationUIData() = 0;
+  virtual NavigationUIData* GetNavigationUIData() = 0;
 
   // Whether the target URL cannot be handled by the browser's internal protocol
   // handlers.

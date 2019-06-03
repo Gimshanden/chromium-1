@@ -115,7 +115,7 @@ std::vector<autofill::CreditCard*> GetServerCreditCards(int profile);
 }  // namespace wallet_helper
 
 // Checker to block until autofill wallet & server profiles match on both
-// profiles.
+// profiles and until server profiles got converted to local profiles.
 class AutofillWalletChecker : public StatusChangeChecker,
                               public autofill::PersonalDataManagerObserver {
  public:
@@ -135,6 +135,27 @@ class AutofillWalletChecker : public StatusChangeChecker,
   const int profile_b_;
 };
 
+// Checker to block until autofill server profiles got converted to local
+// profiles.
+class AutofillWalletConversionChecker
+    : public StatusChangeChecker,
+      public autofill::PersonalDataManagerObserver {
+ public:
+  explicit AutofillWalletConversionChecker(int profile);
+  ~AutofillWalletConversionChecker() override;
+
+  // StatusChangeChecker implementation.
+  bool Wait() override;
+  bool IsExitConditionSatisfied() override;
+  std::string GetDebugMessage() const override;
+
+  // autofill::PersonalDataManager implementation.
+  void OnPersonalDataChanged() override;
+
+ private:
+  const int profile_;
+};
+
 // Checker to block until autofill wallet metadata sizes match on both profiles.
 class AutofillWalletMetadataSizeChecker
     : public StatusChangeChecker,
@@ -151,8 +172,11 @@ class AutofillWalletMetadataSizeChecker
   void OnPersonalDataChanged() override;
 
  private:
+  bool IsExitConditionSatisfiedImpl();
+
   const int profile_a_;
   const int profile_b_;
+  bool checking_exit_condition_in_flight_ = false;
 };
 
 // Class that enables or disables USS for Wallet metadata based on test

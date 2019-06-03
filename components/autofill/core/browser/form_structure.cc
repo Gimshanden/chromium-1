@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -28,9 +30,9 @@
 #include "components/autofill/core/browser/autofill_data_util.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/field_candidates.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/form_field.h"
+#include "components/autofill/core/browser/form_parsing/field_candidates.h"
+#include "components/autofill/core/browser/form_parsing/form_field.h"
 #include "components/autofill/core/browser/proto/legacy_proto_bridge.h"
 #include "components/autofill/core/browser/randomized_encoder.h"
 #include "components/autofill/core/browser/rationalization_util.h"
@@ -152,31 +154,42 @@ HtmlFieldType FieldTypeFromAutocompleteAttributeValue(
   if (autocomplete_attribute_value == "name")
     return HTML_TYPE_NAME;
 
-  if (autocomplete_attribute_value == "given-name")
+  if (autocomplete_attribute_value == "given-name" ||
+      autocomplete_attribute_value == "given_name" ||
+      autocomplete_attribute_value == "first-name" ||
+      autocomplete_attribute_value == "first_name")
     return HTML_TYPE_GIVEN_NAME;
 
-  if (autocomplete_attribute_value == "additional-name") {
+  if (autocomplete_attribute_value == "additional-name" ||
+      autocomplete_attribute_value == "additional_name") {
     if (field.max_length == 1)
       return HTML_TYPE_ADDITIONAL_NAME_INITIAL;
     return HTML_TYPE_ADDITIONAL_NAME;
   }
 
-  if (autocomplete_attribute_value == "family-name")
+  if (autocomplete_attribute_value == "family-name" ||
+      autocomplete_attribute_value == "family_name")
     return HTML_TYPE_FAMILY_NAME;
 
-  if (autocomplete_attribute_value == "organization")
+  if (autocomplete_attribute_value == "organization" ||
+      autocomplete_attribute_value == "company")
     return HTML_TYPE_ORGANIZATION;
 
-  if (autocomplete_attribute_value == "street-address")
+  if (autocomplete_attribute_value == "street-address" ||
+      autocomplete_attribute_value == "street_address" ||
+      autocomplete_attribute_value == "address")
     return HTML_TYPE_STREET_ADDRESS;
 
-  if (autocomplete_attribute_value == "address-line1")
+  if (autocomplete_attribute_value == "address-line1" ||
+      autocomplete_attribute_value == "address_line1")
     return HTML_TYPE_ADDRESS_LINE1;
 
-  if (autocomplete_attribute_value == "address-line2")
+  if (autocomplete_attribute_value == "address-line2" ||
+      autocomplete_attribute_value == "address_line2")
     return HTML_TYPE_ADDRESS_LINE2;
 
-  if (autocomplete_attribute_value == "address-line3")
+  if (autocomplete_attribute_value == "address-line3" ||
+      autocomplete_attribute_value == "address_line3")
     return HTML_TYPE_ADDRESS_LINE3;
 
   // TODO(estade): remove support for "locality" and "region".
@@ -186,22 +199,27 @@ HtmlFieldType FieldTypeFromAutocompleteAttributeValue(
   if (autocomplete_attribute_value == "region")
     return HTML_TYPE_ADDRESS_LEVEL1;
 
-  if (autocomplete_attribute_value == "address-level1")
+  if (autocomplete_attribute_value == "address-level1" ||
+      autocomplete_attribute_value == "address_level1")
     return HTML_TYPE_ADDRESS_LEVEL1;
 
-  if (autocomplete_attribute_value == "address-level2")
+  if (autocomplete_attribute_value == "address-level2" ||
+      autocomplete_attribute_value == "address_level2")
     return HTML_TYPE_ADDRESS_LEVEL2;
 
-  if (autocomplete_attribute_value == "address-level3")
+  if (autocomplete_attribute_value == "address-level3" ||
+      autocomplete_attribute_value == "address_level3")
     return HTML_TYPE_ADDRESS_LEVEL3;
 
   if (autocomplete_attribute_value == "country")
     return HTML_TYPE_COUNTRY_CODE;
 
-  if (autocomplete_attribute_value == "country-name")
+  if (autocomplete_attribute_value == "country-name" ||
+      autocomplete_attribute_value == "country_name")
     return HTML_TYPE_COUNTRY_NAME;
 
-  if (autocomplete_attribute_value == "postal-code")
+  if (autocomplete_attribute_value == "postal-code" ||
+      autocomplete_attribute_value == "postal_code")
     return HTML_TYPE_POSTAL_CODE;
 
   // content_switches.h isn't accessible from here, hence we have
@@ -212,19 +230,24 @@ HtmlFieldType FieldTypeFromAutocompleteAttributeValue(
     return HTML_TYPE_FULL_ADDRESS;
   }
 
-  if (autocomplete_attribute_value == "cc-name")
+  if (autocomplete_attribute_value == "cc-name" ||
+      autocomplete_attribute_value == "cc_name")
     return HTML_TYPE_CREDIT_CARD_NAME_FULL;
 
-  if (autocomplete_attribute_value == "cc-given-name")
+  if (autocomplete_attribute_value == "cc-given-name" ||
+      autocomplete_attribute_value == "cc_given_name")
     return HTML_TYPE_CREDIT_CARD_NAME_FIRST;
 
-  if (autocomplete_attribute_value == "cc-family-name")
+  if (autocomplete_attribute_value == "cc-family-name" ||
+      autocomplete_attribute_value == "cc_family_name")
     return HTML_TYPE_CREDIT_CARD_NAME_LAST;
 
-  if (autocomplete_attribute_value == "cc-number")
+  if (autocomplete_attribute_value == "cc-number" ||
+      autocomplete_attribute_value == "cc_number")
     return HTML_TYPE_CREDIT_CARD_NUMBER;
 
-  if (autocomplete_attribute_value == "cc-exp") {
+  if (autocomplete_attribute_value == "cc-exp" ||
+      autocomplete_attribute_value == "cc_exp") {
     if (field.max_length == 5)
       return HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR;
     if (field.max_length == 7)
@@ -232,10 +255,12 @@ HtmlFieldType FieldTypeFromAutocompleteAttributeValue(
     return HTML_TYPE_CREDIT_CARD_EXP;
   }
 
-  if (autocomplete_attribute_value == "cc-exp-month")
+  if (autocomplete_attribute_value == "cc-exp-month" ||
+      autocomplete_attribute_value == "cc_exp_month")
     return HTML_TYPE_CREDIT_CARD_EXP_MONTH;
 
-  if (autocomplete_attribute_value == "cc-exp-year") {
+  if (autocomplete_attribute_value == "cc-exp-year" ||
+      autocomplete_attribute_value == "cc_exp_year") {
     if (field.max_length == 2)
       return HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR;
     if (field.max_length == 4)
@@ -243,46 +268,76 @@ HtmlFieldType FieldTypeFromAutocompleteAttributeValue(
     return HTML_TYPE_CREDIT_CARD_EXP_YEAR;
   }
 
-  if (autocomplete_attribute_value == "cc-csc")
+  if (autocomplete_attribute_value == "cc-csc" ||
+      autocomplete_attribute_value == "cc_csc")
     return HTML_TYPE_CREDIT_CARD_VERIFICATION_CODE;
 
-  if (autocomplete_attribute_value == "cc-type")
+  if (autocomplete_attribute_value == "cc-type" ||
+      autocomplete_attribute_value == "cc_type")
     return HTML_TYPE_CREDIT_CARD_TYPE;
 
-  if (autocomplete_attribute_value == "transaction-amount")
+  if (autocomplete_attribute_value == "transaction-amount" ||
+      autocomplete_attribute_value == "transaction_amount")
     return HTML_TYPE_TRANSACTION_AMOUNT;
 
-  if (autocomplete_attribute_value == "transaction-currency")
+  if (autocomplete_attribute_value == "transaction-currency" ||
+      autocomplete_attribute_value == "transaction_currency")
     return HTML_TYPE_TRANSACTION_CURRENCY;
 
-  if (autocomplete_attribute_value == "tel")
+  if (autocomplete_attribute_value == "tel" ||
+      autocomplete_attribute_value == "phone")
     return HTML_TYPE_TEL;
 
-  if (autocomplete_attribute_value == "tel-country-code")
+  if (autocomplete_attribute_value == "tel-country-code" ||
+      autocomplete_attribute_value == "phone-country-code" ||
+      autocomplete_attribute_value == "tel_country_code" ||
+      autocomplete_attribute_value == "phone_country_code")
     return HTML_TYPE_TEL_COUNTRY_CODE;
 
-  if (autocomplete_attribute_value == "tel-national")
+  if (autocomplete_attribute_value == "tel-national" ||
+      autocomplete_attribute_value == "phone-national" ||
+      autocomplete_attribute_value == "tel_national" ||
+      autocomplete_attribute_value == "phone_national")
     return HTML_TYPE_TEL_NATIONAL;
 
-  if (autocomplete_attribute_value == "tel-area-code")
+  if (autocomplete_attribute_value == "tel-area-code" ||
+      autocomplete_attribute_value == "phone-area-code" ||
+      autocomplete_attribute_value == "tel_area_code" ||
+      autocomplete_attribute_value == "phone_area_code")
     return HTML_TYPE_TEL_AREA_CODE;
 
-  if (autocomplete_attribute_value == "tel-local")
+  if (autocomplete_attribute_value == "tel-local" ||
+      autocomplete_attribute_value == "phone-local" ||
+      autocomplete_attribute_value == "tel_local" ||
+      autocomplete_attribute_value == "phone_local")
     return HTML_TYPE_TEL_LOCAL;
 
-  if (autocomplete_attribute_value == "tel-local-prefix")
+  if (autocomplete_attribute_value == "tel-local-prefix" ||
+      autocomplete_attribute_value == "phone-local-prefix" ||
+      autocomplete_attribute_value == "tel_local_prefix" ||
+      autocomplete_attribute_value == "phone_local_prefix")
     return HTML_TYPE_TEL_LOCAL_PREFIX;
 
-  if (autocomplete_attribute_value == "tel-local-suffix")
+  if (autocomplete_attribute_value == "tel-local-suffix" ||
+      autocomplete_attribute_value == "phone-local-suffix" ||
+      autocomplete_attribute_value == "tel_local_suffix" ||
+      autocomplete_attribute_value == "phone_local_suffix")
     return HTML_TYPE_TEL_LOCAL_SUFFIX;
 
-  if (autocomplete_attribute_value == "tel-extension")
+  if (autocomplete_attribute_value == "tel-extension" ||
+      autocomplete_attribute_value == "phone-extension" ||
+      autocomplete_attribute_value == "phone-ext" ||
+      autocomplete_attribute_value == "tel_extension" ||
+      autocomplete_attribute_value == "phone_extension" ||
+      autocomplete_attribute_value == "phone_ext")
     return HTML_TYPE_TEL_EXTENSION;
 
   if (autocomplete_attribute_value == "email")
     return HTML_TYPE_EMAIL;
 
-  if (autocomplete_attribute_value == "upi-vpa")
+  if (autocomplete_attribute_value == "upi-vpa" ||
+      autocomplete_attribute_value == "upi_vpa" ||
+      autocomplete_attribute_value == "upi")
     return HTML_TYPE_UPI_VPA;
 
   return HTML_TYPE_UNRECOGNIZED;
@@ -340,6 +395,7 @@ bool AllTypesCaptured(const FormStructure& form,
 void EncodePasswordAttributesVote(
     const std::pair<PasswordAttribute, bool>& password_attributes_vote,
     const size_t password_length_vote,
+    const int password_symbol_vote,
     AutofillUploadContents* upload) {
   switch (password_attributes_vote.first) {
     case PasswordAttribute::kHasLowercaseLetter:
@@ -355,6 +411,8 @@ void EncodePasswordAttributesVote(
       break;
     case PasswordAttribute::kHasSpecialSymbol:
       upload->set_password_has_special_symbol(password_attributes_vote.second);
+      if (password_attributes_vote.second)
+        upload->set_password_special_symbol(password_symbol_vote);
       break;
     case PasswordAttribute::kPasswordAttributesCount:
       NOTREACHED();
@@ -461,6 +519,22 @@ void EncodeFieldMetadataForQuery(const FormFieldData& field,
       base::UTF16ToUTF8(field.placeholder));
 }
 
+// Creates the type relationship rules map. The keys represent the type that has
+// rules, and the value represents the list of required types for the given
+// key. In order to respect the rule, only one of the required types is needed.
+// For example, for Autofill to support fields of type
+// "PHONE_HOME_COUNTRY_CODE", there would need to be at least one other field
+// of type "PHONE_HOME_NUMBER" or "PHONE_HOME_CITY_AND_NUMBER".
+const std::unordered_map<ServerFieldType, ServerFieldTypeSet>&
+GetTypeRelationshipMap() {
+  // Initialized and cached on first use.
+  static const auto* const rules =
+      new std::unordered_map<ServerFieldType, ServerFieldTypeSet>(
+          {{PHONE_HOME_COUNTRY_CODE,
+            {PHONE_HOME_NUMBER, PHONE_HOME_CITY_AND_NUMBER}}});
+  return *rules;
+}
+
 }  // namespace
 
 FormStructure::FormStructure(const FormData& form)
@@ -469,7 +543,7 @@ FormStructure::FormStructure(const FormData& form)
       form_name_(form.name),
       button_titles_(form.button_titles),
       submission_event_(SubmissionIndicatorEvent::NONE),
-      source_url_(form.origin),
+      source_url_(form.url),
       target_url_(form.action),
       main_frame_origin_(form.main_frame_origin),
       autofill_count_(0),
@@ -485,6 +559,7 @@ FormStructure::FormStructure(const FormData& form)
       all_fields_are_passwords_(!form.fields.empty()),
       form_parsed_timestamp_(base::TimeTicks::Now()),
       passwords_were_revealed_(false),
+      password_symbol_vote_(0),
       developer_engagement_metrics_(0) {
   // Copy the form fields.
   std::map<base::string16, size_t> unique_names;
@@ -592,7 +667,8 @@ bool FormStructure::EncodeUploadRequest(
 
   if (password_attributes_vote_) {
     EncodePasswordAttributesVote(*password_attributes_vote_,
-                                 password_length_vote_, upload);
+                                 password_length_vote_, password_symbol_vote_,
+                                 upload);
   }
 
   if (IsAutofillFieldMetadataEnabled()) {
@@ -776,7 +852,7 @@ std::vector<FormDataPredictions> FormStructure::GetFieldTypePredictions(
   for (const FormStructure* form_structure : form_structures) {
     FormDataPredictions form;
     form.data.name = form_structure->form_name_;
-    form.data.origin = form_structure->source_url_;
+    form.data.url = form_structure->source_url_;
     form.data.action = form_structure->target_url_;
     form.data.main_frame_origin = form_structure->main_frame_origin_;
     form.data.is_form_tag = form_structure->is_form_tag_;
@@ -933,6 +1009,7 @@ void FormStructure::RetrieveFromCache(
             base::FeatureList::IsEnabled(
                 features::kAutofillImportDynamicForms)) {
           field->value = cached_field->second->value;
+          value_from_dynamic_change_form_ = true;
         } else if (field->value == cached_field->second->value) {
           // From the perspective of learning user data, text fields containing
           // default values are equivalent to empty fields.
@@ -1230,24 +1307,6 @@ std::set<base::string16> FormStructure::PossibleValues(ServerFieldType type) {
   return values;
 }
 
-base::string16 FormStructure::GetUniqueValue(HtmlFieldType type) const {
-  base::string16 value;
-  for (const auto& field : fields_) {
-    if (field->html_type() != type)
-      continue;
-
-    // More than one value found; abort rather than choosing one arbitrarily.
-    if (!value.empty() && !field->value.empty()) {
-      value.clear();
-      break;
-    }
-
-    value = field->value;
-  }
-
-  return value;
-}
-
 const AutofillField* FormStructure::field(size_t index) const {
   if (index >= fields_.size()) {
     NOTREACHED();
@@ -1273,7 +1332,7 @@ size_t FormStructure::active_field_count() const {
 FormData FormStructure::ToFormData() const {
   FormData data;
   data.name = form_name_;
-  data.origin = source_url_;
+  data.url = source_url_;
   data.action = target_url_;
   data.main_frame_origin = main_frame_origin_;
 
@@ -1286,7 +1345,7 @@ FormData FormStructure::ToFormData() const {
 
 bool FormStructure::operator==(const FormData& form) const {
   // TODO(jhawkins): Is this enough to differentiate a form?
-  if (form_name_ == form.name && source_url_ == form.origin &&
+  if (form_name_ == form.name && source_url_ == form.url &&
       target_url_ == form.action) {
     return true;
   }
@@ -1728,8 +1787,21 @@ void FormStructure::RationalizeRepeatedFields(
 void FormStructure::RationalizeFieldTypePredictions() {
   RationalizeCreditCardFieldPredictions();
   for (const auto& field : fields_) {
-    field->SetTypeTo(field->Type());
+    if (base::FeatureList::IsEnabled(features::kAutofillOffNoServerData) &&
+        !field->should_autocomplete && field->server_type() == NO_SERVER_DATA &&
+        field->heuristic_type() != CREDIT_CARD_VERIFICATION_CODE) {
+      // When the field has autocomplete off, and the server returned no
+      // prediction, then assume Autofill is not useful for the current field.
+      // Special case for CVC (crbug.com/968036). We never send votes for CVC
+      // fields, but we still fill them when the user inputs them via the CVC
+      // prompt. Since Autofill doesn't trigger from a CVC field, we can keep
+      // the client-side predictions for this type.
+      field->SetTypeTo(AutofillType(UNKNOWN_TYPE));
+    } else {
+      field->SetTypeTo(field->Type());
+    }
   }
+  RationalizeTypeRelationships();
 }
 
 void FormStructure::EncodeFormForQuery(
@@ -2038,6 +2110,40 @@ base::string16 FormStructure::GetIdentifierForRefill() const {
 void FormStructure::set_randomized_encoder(
     std::unique_ptr<RandomizedEncoder> encoder) {
   randomized_encoder_ = std::move(encoder);
+}
+
+void FormStructure::RationalizeTypeRelationships() {
+  // Create a local set of all the types for faster lookup.
+  std::unordered_set<ServerFieldType> types;
+  for (const auto& field : fields_) {
+    types.insert(field->Type().GetStorableType());
+  }
+
+  const auto& type_relationship_rules = GetTypeRelationshipMap();
+
+  for (const auto& field : fields_) {
+    ServerFieldType field_type = field->Type().GetStorableType();
+    const auto& ruleset_iterator = type_relationship_rules.find(field_type);
+    if (ruleset_iterator != type_relationship_rules.end()) {
+      // We have relationship rules for this type. Verify that at least one of
+      // the required related type is present.
+      bool found = false;
+      for (ServerFieldType required_type : ruleset_iterator->second) {
+        if (types.find(required_type) != types.end()) {
+          // Found a required type, we can break as we only need one required
+          // type to respect the rule.
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        // No required type was found, the current field failed the relationship
+        // requirements for its type. Disabling Autofill for this field.
+        field->SetTypeTo(AutofillType(UNKNOWN_TYPE));
+      }
+    }
+  }
 }
 
 }  // namespace autofill

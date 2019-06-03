@@ -21,8 +21,21 @@ class HomeScreenDelegate {
   // Callback which fills out the passed settings object, allowing the caller to
   // animate with the given settings.
   using UpdateAnimationSettingsCallback =
-      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings,
-                                   bool observe)>;
+      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings)>;
+
+  enum class AnimationTrigger {
+    // Launcher animation is triggered by drag release.
+    kDragRelease,
+
+    // Launcher animation is triggered by pressing the AppList button.
+    kLauncherButton,
+
+    // Launcher animation is triggered by window activation.
+    kHideForWindow,
+
+    // Launcher animation is triggered by entering/exiting overview mode.
+    kOverviewMode
+  };
 
   virtual ~HomeScreenDelegate() = default;
 
@@ -57,6 +70,18 @@ class HomeScreenDelegate {
   // Note: Visibility of the shelf and status area are independent, but the
   // variant with shelf visible and status area hidden is currently unsupported.
   virtual bool ShouldShowStatusAreaOnHomeScreen() const = 0;
+
+  // Triggered when dragging launcher in tablet mode starts/proceeds/ends. They
+  // cover both dragging launcher to show and hide.
+  virtual void OnHomeLauncherDragStart() {}
+  virtual void OnHomeLauncherDragInProgress() {}
+  virtual void OnHomeLauncherDragEnd() {}
+
+  // Propagates the home launcher animation transition. |trigger| is what
+  // triggers the home launcher animation; |launcher_will_show| indicates
+  // whether the launcher will show by the end of animation.
+  virtual void NotifyHomeLauncherAnimationTransition(AnimationTrigger trigger,
+                                                     bool launcher_will_show) {}
 };
 
 }  // namespace ash

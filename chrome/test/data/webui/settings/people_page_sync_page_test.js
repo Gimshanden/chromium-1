@@ -581,7 +581,7 @@ cr.define('settings_people_page_sync_page', function() {
         assertFalse(!!toast.open);
 
         // Next, the toast shows up during setup.
-        syncPage.syncStatus = {setupInProgress: true};
+        syncPage.syncStatus = {firstSetupInProgress: true};
         Polymer.dom.flush();
         assertTrue(toast.open);
 
@@ -612,7 +612,7 @@ cr.define('settings_people_page_sync_page', function() {
         syncPage.syncStatus = {
           signinAllowed: true,
           syncSystemEnabled: true,
-          setupInProgress: true,
+          firstSetupInProgress: true,
           signedIn: true
         };
         Polymer.dom.flush();
@@ -637,7 +637,7 @@ cr.define('settings_people_page_sync_page', function() {
         syncPage.syncStatus = {
           signinAllowed: true,
           syncSystemEnabled: true,
-          setupInProgress: true,
+          firstSetupInProgress: true,
           signedIn: true
         };
         Polymer.dom.flush();
@@ -661,7 +661,7 @@ cr.define('settings_people_page_sync_page', function() {
         syncPage.syncStatus = {
           signinAllowed: true,
           syncSystemEnabled: true,
-          setupInProgress: true,
+          firstSetupInProgress: true,
           signedIn: true
         };
         Polymer.dom.flush();
@@ -702,6 +702,26 @@ cr.define('settings_people_page_sync_page', function() {
                   .click();
               return browserProxy.whenCalled('didNavigateAwayFromSyncPage');
             })
+            .then(abort => {
+              assertTrue(abort);
+            });
+      });
+
+      test('SyncSetupSearchSettings UnifiedConsentEnabled', function() {
+        syncPage.unifiedConsentEnabled = true;
+        syncPage.syncStatus = {
+          signinAllowed: true,
+          syncSystemEnabled: true,
+          firstSetupInProgress: true,
+          signedIn: true
+        };
+        Polymer.dom.flush();
+
+        // Searching settings while setup is in progress cancels sync.
+        settings.navigateTo(
+            settings.routes.BASIC, new URLSearchParams('search=foo'));
+
+        return browserProxy.whenCalled('didNavigateAwayFromSyncPage')
             .then(abort => {
               assertTrue(abort);
             });

@@ -39,6 +39,7 @@ class AXUniqueId;
 
 namespace views {
 
+class AXAuraObjCache;
 class View;
 class ViewAccessibility;
 
@@ -52,6 +53,8 @@ class ViewAccessibility;
 // ViewAccessibility or an AXVirtualView.
 class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegateBase {
  public:
+  using AXVirtualViews = std::vector<std::unique_ptr<AXVirtualView>>;
+
   static AXVirtualView* GetFromId(int32_t id);
 
   AXVirtualView();
@@ -78,10 +81,7 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegateBase {
   // The virtual views are deleted.
   void RemoveAllChildViews();
 
-  bool has_children() const { return !children_.empty(); }
-
-  const AXVirtualView* child_at(int index) const;
-  AXVirtualView* child_at(int index);
+  const AXVirtualViews& children() const { return children_; }
 
   // Returns the parent ViewAccessibility if the parent is a real View and not
   // an AXVirtualView. Returns nullptr otherwise.
@@ -128,8 +128,10 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegateBase {
   gfx::NativeViewAccessible ChildAtIndex(int index) override;
   gfx::NativeViewAccessible GetNSWindow() override;
   gfx::NativeViewAccessible GetParent() override;
-  gfx::Rect GetClippedScreenBoundsRect() const override;
-  gfx::Rect GetUnclippedScreenBoundsRect() const override;
+  gfx::Rect GetBoundsRect(
+      const ui::AXCoordinateSystem coordinate_system,
+      const ui::AXClippingBehavior clipping_behavior,
+      ui::AXOffscreenResult* offscreen_result) const override;
   gfx::NativeViewAccessible HitTestSync(int x, int y) override;
   gfx::NativeViewAccessible GetFocus() override;
   ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
@@ -141,8 +143,8 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegateBase {
   // Gets the real View that owns our shallowest virtual ancestor,, if any.
   View* GetOwnerView() const;
 
-  // Gets a wrapper suitable for use with tree sources.
-  AXVirtualViewWrapper* GetWrapper() const;
+  // Gets or creates a wrapper suitable for use with tree sources.
+  AXVirtualViewWrapper* GetOrCreateWrapper(views::AXAuraObjCache* cache);
 
   // Handle a request from assistive technology to perform an action on this
   // virtual view. Returns true on success, but note that the success/failure is
@@ -176,7 +178,7 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegateBase {
   AXVirtualView* virtual_parent_view_ = nullptr;
 
   // We own our children.
-  std::vector<std::unique_ptr<AXVirtualView>> children_;
+  AXVirtualViews children_;
 
   ui::AXUniqueId unique_id_;
   ui::AXNodeData custom_data_;

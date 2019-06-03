@@ -57,21 +57,10 @@ class BookmarkAppHelper : public content::NotificationObserver {
   // will have a chance to cancel the operation.
   // |install_source| indicates how the installation was triggered.
   BookmarkAppHelper(Profile* profile,
-                    WebApplicationInfo web_app_info,
+                    std::unique_ptr<WebApplicationInfo> web_app_info,
                     content::WebContents* contents,
                     WebappInstallSource install_source);
   ~BookmarkAppHelper() override;
-
-  // It is important that the linked app information in any extension that
-  // gets created from sync matches the linked app information that came from
-  // sync. If there are any changes, they will be synced back to other devices
-  // and could potentially create a never ending sync cycle.
-  // This function updates |web_app_info| with the image data of any icon from
-  // |bitmap_map| that has a URL and size matching that in |web_app_info|, as
-  // well as adding any new images from |bitmap_map| that have no URL.
-  static void UpdateWebAppIconsWithoutChangingLinks(
-      std::map<int, web_app::BitmapAndSource> bitmap_map,
-      WebApplicationInfo* web_app_info);
 
   // Begins the asynchronous bookmark app creation.
   void Create(const CreateBookmarkAppCallback& callback);
@@ -164,7 +153,7 @@ class BookmarkAppHelper : public content::NotificationObserver {
   // Called after the bubble has been shown, and the user has either accepted or
   // the dialog was dismissed.
   void OnBubbleCompleted(bool user_accepted,
-                         const WebApplicationInfo& web_app_info);
+                         std::unique_ptr<WebApplicationInfo> web_app_info);
 
   // Called when the installation of the app is complete to perform the final
   // installation steps.

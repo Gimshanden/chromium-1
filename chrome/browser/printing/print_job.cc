@@ -16,6 +16,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/printing/print_job_worker.h"
+#include "chrome/browser/printing/printer_query.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
@@ -94,7 +95,7 @@ std::vector<int> PrintJob::GetFullPageMapping(const std::vector<int>& pages,
 }
 
 void PrintJob::StartConversionToNativeFormat(
-    const scoped_refptr<base::RefCountedMemory>& print_data,
+    scoped_refptr<base::RefCountedMemory> print_data,
     const gfx::Size& page_size,
     const gfx::Rect& content_area,
     const gfx::Point& physical_offsets) {
@@ -243,7 +244,7 @@ class PrintJob::PdfConversionState {
         page_size_(page_size),
         content_area_(content_area) {}
 
-  void Start(const scoped_refptr<base::RefCountedMemory>& data,
+  void Start(scoped_refptr<base::RefCountedMemory> data,
              const PdfRenderSettings& conversion_settings,
              PdfConverter::StartCallback start_callback) {
     converter_ = PdfConverter::StartPdfConverter(data, conversion_settings,
@@ -281,7 +282,7 @@ class PrintJob::PdfConversionState {
 };
 
 void PrintJob::StartPdfToEmfConversion(
-    const scoped_refptr<base::RefCountedMemory>& bytes,
+    scoped_refptr<base::RefCountedMemory> bytes,
     const gfx::Size& page_size,
     const gfx::Rect& content_area) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -350,7 +351,7 @@ void PrintJob::OnPdfPageConverted(int page_number,
 }
 
 void PrintJob::StartPdfToTextConversion(
-    const scoped_refptr<base::RefCountedMemory>& bytes,
+    scoped_refptr<base::RefCountedMemory> bytes,
     const gfx::Size& page_size) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!pdf_conversion_state_);
@@ -367,7 +368,7 @@ void PrintJob::StartPdfToTextConversion(
 }
 
 void PrintJob::StartPdfToPostScriptConversion(
-    const scoped_refptr<base::RefCountedMemory>& bytes,
+    scoped_refptr<base::RefCountedMemory> bytes,
     const gfx::Rect& content_area,
     const gfx::Point& physical_offsets,
     bool ps_level2) {

@@ -33,9 +33,7 @@ import org.chromium.ui.modelutil.ListObservable;
 import org.chromium.ui.modelutil.PropertyListModel;
 import org.chromium.ui.modelutil.SimpleRecyclerViewMcpBase;
 
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -205,6 +203,7 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
         mOfflineModelObserver.onDestroy();
         if (mSigninPromo != null) mSigninPromo.destroy();
         mSuggestionsList.destroy();
+        mMoreButton.destroy();
         mIsDestroyed = true;
     }
 
@@ -217,16 +216,6 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
         // When the ActionItem stops being dismissable, it is possible that it was being
         // interacted with. We need to reset the view's related property changes.
         mMoreButton.maybeResetForDismiss();
-    }
-
-    @Override
-    public void dismissItem(int position, Callback<String> itemRemovedCallback) {
-        if (getSectionDismissalRange().contains(position)) {
-            mDelegate.dismissSection(this);
-            itemRemovedCallback.onResult(mCategoryInfo.getTitle());
-            return;
-        }
-        super.dismissItem(position, itemRemovedCallback);
     }
 
     @Override
@@ -313,7 +302,8 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
 
     /** Whether the section is waiting for content to be loaded. */
     public boolean isLoading() {
-        return mMoreButton.getState() == ActionItem.State.LOADING;
+        return mMoreButton.getState() == ActionItem.State.INITIAL_LOADING
+                || mMoreButton.getState() == ActionItem.State.MORE_BUTTON_LOADING;
     }
 
     /**
@@ -473,7 +463,7 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
             return;
         }
 
-        mMoreButton.updateState(ActionItem.State.LOADING);
+        mMoreButton.updateState(ActionItem.State.MORE_BUTTON_LOADING);
         mSuggestionsSource.fetchSuggestions(mCategoryInfo.getCategory(),
                 getDisplayedSuggestionIds(), suggestions -> { /* successCallback */
                     if (mIsDestroyed) return; // The section has been dismissed.
@@ -503,7 +493,7 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
         boolean isLoading = SnippetsBridge.isCategoryLoading(status);
         mMoreButton.updateState(!shouldShowSuggestions()
                         ? ActionItem.State.HIDDEN
-                        : (isLoading ? ActionItem.State.LOADING : ActionItem.State.BUTTON));
+                        : (isLoading ? ActionItem.State.INITIAL_LOADING : ActionItem.State.BUTTON));
 
         if (mSigninPromo != null) {
             mSigninPromo.setCanShowPersonalizedSuggestions(shouldShowSuggestions());
@@ -520,16 +510,6 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
     @CategoryInt
     public int getCategory() {
         return mCategoryInfo.getCategory();
-    }
-
-    @Override
-    public Set<Integer> getItemDismissalGroup(int position) {
-        // The section itself can be dismissed via any of the items in the dismissal group,
-        // otherwise we fall back to the default implementation, which dispatches to our children.
-        Set<Integer> sectionDismissalRange = getSectionDismissalRange();
-        if (sectionDismissalRange.contains(position)) return sectionDismissalRange;
-
-        return super.getItemDismissalGroup(position);
     }
 
     /**
@@ -555,20 +535,6 @@ public class SuggestionsSection extends InnerNode<NewTabPageViewHolder, PartialB
      */
     private boolean shouldShowStatusItem() {
         return shouldShowSuggestions() && !hasSuggestions();
-    }
-
-    /**
-     * @return The set of indices corresponding to items that can dismiss this entire section
-     * (as opposed to individual items in it).
-     */
-    private Set<Integer> getSectionDismissalRange() {
-        if (hasSuggestions()) return Collections.emptySet();
-
-        int statusCardIndex = getStartingOffsetForChild(mStatus);
-        if (!mMoreButton.isVisible()) return Collections.singleton(statusCardIndex);
-
-        assert statusCardIndex + 1 == getStartingOffsetForChild(mMoreButton);
-        return new HashSet<>(Arrays.asList(statusCardIndex, statusCardIndex + 1));
     }
 
     /**

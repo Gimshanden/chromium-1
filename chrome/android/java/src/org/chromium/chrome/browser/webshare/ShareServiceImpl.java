@@ -18,6 +18,7 @@ import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskRunner;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.chrome.browser.safe_browsing.FileTypePolicies;
 import org.chromium.chrome.browser.share.ShareHelper;
 import org.chromium.chrome.browser.share.ShareParams;
 import org.chromium.content_public.browser.WebContents;
@@ -65,9 +66,9 @@ public class ShareServiceImpl implements ShareService {
     // clang-format off
     private static final Set<String> PERMITTED_EXTENSIONS =
             Collections.unmodifiableSet(CollectionUtil.newHashSet(
-                    "bmp", // image/bmp
+                    "bmp", // image/bmp / image/x-ms-bmp
                     "css", // text/css
-                    "csv", // text/csv
+                    "csv", // text/csv / text/comma-separated-values
                     "ehtml", // text/html
                     "flac", // audio/flac
                     "gif", // image/gif
@@ -105,14 +106,39 @@ public class ShareServiceImpl implements ShareService {
                     "webp", // image/webp
                     "xbm" // image/x-xbitmap
             ));
+
+    private static final Set<String> PERMITTED_MIME_TYPES =
+            Collections.unmodifiableSet(CollectionUtil.newHashSet(
+                     "audio/flac",
+                     "audio/mp3",
+                     "audio/ogg",
+                     "audio/wav",
+                     "audio/webm",
+                     "audio/x-m4a",
+                     "image/bmp",
+                     "image/gif",
+                     "image/jpeg",
+                     "image/png",
+                     "image/svg+xml",
+                     "image/tiff",
+                     "image/webp",
+                     "image/x-icon",
+                     "image/x-ms-bmp",
+                     "image/x-xbitmap",
+                     "text/comma-separated-values",
+                     "text/css",
+                     "text/csv",
+                     "text/html",
+                     "text/plain",
+                     "video/mp4",
+                     "video/mpeg",
+                     "video/ogg",
+                     "video/webm"
+            ));
     // clang-format on
 
     private static final TaskRunner TASK_RUNNER =
             PostTask.createSequencedTaskRunner(TaskTraits.USER_BLOCKING);
-
-    static {
-        TASK_RUNNER.disableLifetimeCheck();
-    }
 
     public ShareServiceImpl(@Nullable WebContents webContents) {
         mActivity = activityFromWebContents(webContents);
@@ -168,7 +194,15 @@ public class ShareServiceImpl implements ShareService {
         }
 
         for (SharedFile file : files) {
-            if (isDangerousFilename(file.name)) {
+            RecordHistogram.recordSparseHistogram(
+                    "WebShare.Unverified", FileTypePolicies.umaValueForFile(file.name));
+        }
+
+        for (SharedFile file : files) {
+            if (isDangerousFilename(file.name) || isDangerousMimeType(file.blob.contentType)) {
+                Log.i(TAG,
+                        "Cannot share potentially dangerous \"" + file.blob.contentType
+                                + "\" file \"" + file.name + "\".");
                 callback.call(ShareError.PERMISSION_DENIED);
                 return;
             }
@@ -194,8 +228,8 @@ public class ShareServiceImpl implements ShareService {
                     }
 
                     for (int index = 0; index < files.length; ++index) {
-                        File tempFile = File.createTempFile(
-                                "share", FileUtils.getExtension(files[index].name), sharePath);
+                        File tempFile = File.createTempFile("share",
+                                "." + FileUtils.getExtension(files[index].name), sharePath);
                         fileUris.add(ContentUriUtils.getContentUriFromFile(tempFile));
                         blobReceivers.add(new BlobReceiver(
                                 new FileOutputStream(tempFile), MAX_SHARED_FILE_BYTES));
@@ -222,6 +256,10 @@ public class ShareServiceImpl implements ShareService {
     static boolean isDangerousFilename(String name) {
         return name.indexOf('/') != -1 || name.indexOf('\\') != -1 || name.indexOf('.') <= 0
                 || !PERMITTED_EXTENSIONS.contains(FileUtils.getExtension(name));
+    }
+
+    static boolean isDangerousMimeType(String contentType) {
+        return !PERMITTED_MIME_TYPES.contains(contentType);
     }
 
     @Nullable

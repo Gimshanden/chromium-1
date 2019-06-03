@@ -151,6 +151,10 @@ bool DialogDelegate::Close() {
   return Accept();
 }
 
+bool DialogDelegate::IsDialogDraggable() const {
+  return false;
+}
+
 void DialogDelegate::UpdateButton(LabelButton* button, ui::DialogButton type) {
   button->SetText(GetDialogButtonLabel(type));
   button->SetEnabled(IsDialogButtonEnabled(type));
@@ -173,6 +177,8 @@ bool DialogDelegate::ShouldHaveRoundCorners() const {
 View* DialogDelegate::GetInitiallyFocusedView() {
   // Focus the default button if any.
   const DialogClientView* dcv = GetDialogClientView();
+  if (!dcv)
+    return nullptr;
   int default_button = GetDefaultDialogButton();
   if (default_button == ui::DIALOG_BUTTON_NONE)
     return nullptr;
@@ -234,10 +240,14 @@ bool DialogDelegate::ShouldUseCustomFrame() const {
 }
 
 const DialogClientView* DialogDelegate::GetDialogClientView() const {
+  if (!GetWidget())
+    return nullptr;
   return GetWidget()->client_view()->AsDialogClientView();
 }
 
 DialogClientView* DialogDelegate::GetDialogClientView() {
+  if (!GetWidget())
+    return nullptr;
   return GetWidget()->client_view()->AsDialogClientView();
 }
 

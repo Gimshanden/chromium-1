@@ -5,9 +5,11 @@
 package org.chromium.chrome.browser.night_mode;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.support.annotation.StyleRes;
+import android.view.ContextThemeWrapper;
 
 import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
 
@@ -15,6 +17,15 @@ import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
  * Helper methods for supporting night mode.
  */
 public class NightModeUtils {
+    /**
+     * Due to Lemon issues on resources access, night mode is disabled on Kitkat until the issue is
+     * resolved. See https://crbug.com/957286 for details.
+     * @return Whether night mode is supported.
+     */
+    public static boolean isNightModeSupported() {
+        return Build.VERSION.SDK_INT > Build.VERSION_CODES.KITKAT;
+    }
+
     /**
      * Updates configuration for night mode to ensure night mode settings are applied properly.
      * Should be called anytime the Activity's configuration changes (e.g. from
@@ -68,5 +79,27 @@ public class NightModeUtils {
                                                        : Configuration.UI_MODE_NIGHT_NO;
         config.uiMode = nightMode | (config.uiMode & ~Configuration.UI_MODE_NIGHT_MASK);
         return true;
+    }
+
+    /**
+     * Wraps a {@link Context} into one having a resource configuration with the given night mode
+     * setting.
+     * @param context {@link Context} to wrap.
+     * @param themeResId Theme resource to use with {@link ContextThemeWrapper}.
+     * @param nightMode Whether to apply night mode.
+     * @return Wrapped {@link Context}.
+     */
+    public static Context wrapContextWithNightModeConfig(Context context, @StyleRes int themeResId,
+            boolean nightMode) {
+        ContextThemeWrapper wrapper = new ContextThemeWrapper(context, themeResId);
+        Configuration config = new Configuration();
+        // Pre-Android O, fontScale gets initialized to 1 in the constructor. Set it to 0 so
+        // that applyOverrideConfiguration() does not interpret it as an overridden value.
+        config.fontScale = 0;
+        int nightModeFlag = nightMode ? Configuration.UI_MODE_NIGHT_YES
+                : Configuration.UI_MODE_NIGHT_NO;
+        config.uiMode = nightModeFlag | (config.uiMode & ~Configuration.UI_MODE_NIGHT_MASK);
+        wrapper.applyOverrideConfiguration(config);
+        return wrapper;
     }
 }

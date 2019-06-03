@@ -72,11 +72,13 @@ void ServiceWorkerScriptLoaderFactory::CreateLoaderAndStart(
   //       ServiceWorkerInstalledScriptLoader.
   //    2) If compared script info exists and specifies that the script is
   //       installed in an old service worker but content has changed, then
-  //       resume the paused state in the compared script info to load the
-  //       script.
+  //       ServiceWorkerNewScriptLoader::CreateForResume() is called to create
+  //       a ServiceWorkerNewScriptLoader to resume the paused state in the
+  //       compared script info.
   //    3) For other cases or if ServiceWorkerImportedScriptsUpdateCheck is not
   //       enabled, serve from network with installing the script
-  //       (use ServiceWorkerNewScriptLoader).
+  //       (use ServiceWorkerNewScriptLoader::CreateForNetworkOnly() to
+  //       create a ServiceWorkerNewScriptLoader).
   //       This is the common case: load the script and install it.
 
   // Case A and C:
@@ -125,11 +127,11 @@ void ServiceWorkerScriptLoaderFactory::CreateLoaderAndStart(
           return;
         case ServiceWorkerSingleScriptUpdateChecker::Result::kDifferent:
           // Case D.2:
-          // TODO(https://crbug.com/648295): Currently, this case is treated
-          // the same as case D.3. In future, the paused state in compared
-          // script info should be resumed instead of a fresh download.
-          NOTIMPLEMENTED();
-          break;
+          mojo::MakeStrongBinding(
+              ServiceWorkerNewScriptLoader::CreateForResume(
+                  options, resource_request, std::move(client), version),
+              std::move(request));
+          return;
         case ServiceWorkerSingleScriptUpdateChecker::Result::kNotCompared:
           // This is invalid, as scripts in compared script info must have been
           // compared.
@@ -141,7 +143,7 @@ void ServiceWorkerScriptLoaderFactory::CreateLoaderAndStart(
 
   // Case D.3:
   mojo::MakeStrongBinding(
-      std::make_unique<ServiceWorkerNewScriptLoader>(
+      ServiceWorkerNewScriptLoader::CreateForNetworkOnly(
           routing_id, request_id, options, resource_request, std::move(client),
           provider_host_->running_hosted_version(),
           loader_factory_for_new_scripts_, traffic_annotation),
@@ -168,10 +170,12 @@ bool ServiceWorkerScriptLoaderFactory::CheckIfScriptRequestIsValid(
   if (!version)
     return false;
 
-  // Handle only the service worker main script (RESOURCE_TYPE_SERVICE_WORKER)
-  // or importScripts() (RESOURCE_TYPE_SCRIPT).
-  if (resource_request.resource_type != RESOURCE_TYPE_SERVICE_WORKER &&
-      resource_request.resource_type != RESOURCE_TYPE_SCRIPT) {
+  // Handle only the service worker main script (ResourceType::kServiceWorker)
+  // or importScripts() (ResourceType::kScript).
+  if (resource_request.resource_type !=
+          static_cast<int>(ResourceType::kServiceWorker) &&
+      resource_request.resource_type !=
+          static_cast<int>(ResourceType::kScript)) {
     static auto* key = base::debug::AllocateCrashKeyString(
         "swslf_bad_type", base::debug::CrashKeySize::Size32);
     base::debug::SetCrashKeyString(

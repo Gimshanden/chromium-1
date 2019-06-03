@@ -48,6 +48,9 @@ FakeAssistantManagerServiceImpl::GetAssistantSettingsManager() {
 
 void FakeAssistantManagerServiceImpl::StartCachedScreenContextInteraction() {}
 
+void FakeAssistantManagerServiceImpl::StartEditReminderInteraction(
+    const std::string& client_id) {}
+
 void FakeAssistantManagerServiceImpl::StartMetalayerInteraction(
     const gfx::Rect& region) {}
 
@@ -86,6 +89,9 @@ void FakeAssistantManagerServiceImpl::OnAccessibilityStatusChanged(
 
 void FakeAssistantManagerServiceImpl::SendAssistantFeedback(
     mojom::AssistantFeedbackPtr feedback) {}
+
+void FakeAssistantManagerServiceImpl::StopAlarmTimerRinging() {}
+void FakeAssistantManagerServiceImpl::CreateTimer(base::TimeDelta duration) {}
 
 }  // namespace assistant
 }  // namespace chromeos

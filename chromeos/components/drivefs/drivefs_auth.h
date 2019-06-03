@@ -39,6 +39,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsAuth {
     virtual service_manager::Connector* GetConnector() = 0;
     virtual const AccountId& GetAccountId() = 0;
     virtual std::string GetObfuscatedAccountId() = 0;
+    virtual bool IsMetricsCollectionEnabled() = 0;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Delegate);
@@ -57,6 +58,10 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsAuth {
     return delegate_->GetObfuscatedAccountId();
   }
 
+  bool IsMetricsCollectionEnabled() {
+    return delegate_->IsMetricsCollectionEnabled();
+  }
+
   base::Optional<std::string> GetCachedAccessToken();
 
   virtual void GetAccessToken(
@@ -64,7 +69,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsAuth {
       mojom::DriveFsDelegate::GetAccessTokenCallback callback);
 
  private:
-  void AccountReady(const AccountInfo& info,
+  void AccountReady(const CoreAccountInfo& info,
                     const identity::AccountState& state);
 
   void GotChromeAccessToken(const base::Optional<std::string>& access_token,

@@ -45,6 +45,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_inspector_overlay_host.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
@@ -79,6 +80,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/keyboard_codes.h"
 #include "v8/include/v8.h"
 
@@ -208,6 +210,7 @@ class InspectorOverlayAgent::InspectorPageOverlayDelegate final
     if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
       layer_ = cc::PictureLayer::Create(this);
       layer_->SetIsDrawable(true);
+      layer_->SetHitTestable(false);
     }
   }
   ~InspectorPageOverlayDelegate() override {
@@ -221,13 +224,13 @@ class InspectorOverlayAgent::InspectorPageOverlayDelegate final
     if (!overlay_->inspect_tool_)
       return;
 
-    overlay_->UpdateOverlayPage();
+    overlay_->PaintOverlayPage();
 
     if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
       layer_->SetBounds(gfx::Size(frame_overlay.Size()));
       RecordForeignLayer(graphics_context,
                          DisplayItem::kForeignLayerDevToolsOverlay, layer_,
-                         PropertyTreeState::Root());
+                         FloatPoint(), PropertyTreeState::Root());
       return;
     }
 
@@ -595,13 +598,26 @@ Response InspectorOverlayAgent::hideHighlight() {
 
 Response InspectorOverlayAgent::getHighlightObjectForTest(
     int node_id,
+    Maybe<bool> include_distance,
     std::unique_ptr<protocol::DictionaryValue>* result) {
   Node* node = nullptr;
   Response response = dom_agent_->AssertNode(node_id, node);
   if (!response.isSuccess())
     return response;
-  InspectorHighlight highlight(node, InspectorHighlight::DefaultConfig(),
-                               InspectorHighlightContrastInfo(), true);
+  bool is_locked_ancestor = false;
+
+  // If |node| is in a display locked subtree, highlight the highest locked
+  // ancestor element instead.
+  if (Node* locked_ancestor =
+          DisplayLockUtilities::HighestLockedExclusiveAncestor(*node)) {
+    node = locked_ancestor;
+    is_locked_ancestor = true;
+  }
+
+  InspectorHighlight highlight(
+      node, InspectorHighlight::DefaultConfig(),
+      InspectorHighlightContrastInfo(), true /* append_element_info */,
+      include_distance.fromMaybe(false), is_locked_ancestor);
   *result = highlight.AsProtocolValue();
   return Response::OK();
 }
@@ -738,38 +754,40 @@ WebInputEventResult InspectorOverlayAgent::HandleInputEventInOverlay(
 }
 
 void InspectorOverlayAgent::ScheduleUpdate() {
-  GetFrame()->GetPage()->GetChromeClient().ScheduleAnimation(
-      GetFrame()->View());
+  if (inspect_tool_) {
+    GetFrame()->GetPage()->GetChromeClient().ScheduleAnimation(
+        GetFrame()->View());
+  }
 }
 
-bool InspectorOverlayAgent::UpdateOverlayPageSize() {
+void InspectorOverlayAgent::PaintOverlayPage() {
+  DCHECK(overlay_page_);
+
   LocalFrameView* view = frame_impl_->GetFrameView();
   LocalFrame* frame = GetFrame();
   if (!view || !frame)
-    return false;
+    return;
 
+  LocalFrame* overlay_frame = OverlayMainFrame();
   // To make overlay render the same size text with any emulation scale,
   // compensate the emulation scale using page scale.
   float emulation_scale =
       frame->GetPage()->GetChromeClient().InputEventsScaleForEmulation();
   IntSize viewport_size = frame->GetPage()->GetVisualViewport().Size();
   viewport_size.Scale(emulation_scale);
-  OverlayPage()->GetVisualViewport().SetSize(viewport_size);
-  OverlayPage()->SetDefaultPageScaleLimits(1 / emulation_scale,
+  overlay_page_->GetVisualViewport().SetSize(viewport_size);
+  overlay_page_->SetDefaultPageScaleLimits(1 / emulation_scale,
                                            1 / emulation_scale);
-  OverlayPage()->GetVisualViewport().SetScale(1 / emulation_scale);
+  overlay_page_->GetVisualViewport().SetScale(1 / emulation_scale);
 
-  UpdateFrameForTool();
+  overlay_frame->SetPageZoomFactor(WindowToViewportScale());
+  overlay_frame->View()->Resize(viewport_size);
+
   Reset(viewport_size);
 
-  return true;
-}
+  DCHECK(inspect_tool_);
+  inspect_tool_->Draw(WindowToViewportScale());
 
-void InspectorOverlayAgent::UpdateOverlayPage() {
-  if (!UpdateOverlayPageSize())
-    return;
-  if (inspect_tool_)
-    inspect_tool_->Draw(WindowToViewportScale());
   OverlayMainFrame()->View()->UpdateAllLifecyclePhases(
       DocumentLifecycle::LifecycleUpdateReason::kOther);
 }
@@ -790,9 +808,9 @@ float InspectorOverlayAgent::WindowToViewportScale() const {
   return frame->GetPage()->GetChromeClient().WindowToViewportScalar(1.0f);
 }
 
-Page* InspectorOverlayAgent::OverlayPage() {
+void InspectorOverlayAgent::EnsureOverlayPageCreated() {
   if (overlay_page_)
-    return overlay_page_.Get();
+    return;
 
   ScriptForbiddenScope::AllowUserAgentScript allow_script;
 
@@ -829,49 +847,28 @@ Page* InspectorOverlayAgent::OverlayPage() {
 
   DEFINE_STATIC_LOCAL(Persistent<LocalFrameClient>, dummy_local_frame_client,
                       (MakeGarbageCollected<EmptyLocalFrameClient>()));
-  LocalFrame* frame =
-      LocalFrame::Create(dummy_local_frame_client, *overlay_page_, nullptr);
-  frame->SetView(LocalFrameView::Create(*frame));
+  auto* frame = MakeGarbageCollected<LocalFrame>(dummy_local_frame_client,
+                                                 *overlay_page_, nullptr);
+  frame->SetView(MakeGarbageCollected<LocalFrameView>(*frame));
   frame->Init();
   frame->View()->SetCanHaveScrollbars(false);
   frame->View()->SetBaseBackgroundColor(Color::kTransparent);
-  frame->SetPageZoomFactor(WindowToViewportScale());
-  frame->View()->Resize(overlay_page_->GetVisualViewport().Size());
-
-  return overlay_page_.Get();
 }
 
-void InspectorOverlayAgent::UpdateFrameForTool() {
-  CString resource_name =
-      inspect_tool_ ? inspect_tool_->GetDataResourceName() : CString();
-  if (resource_name == frame_resource_name_) {
-    if (overlay_page_) {
-      OverlayMainFrame()->SetPageZoomFactor(WindowToViewportScale());
-      IntSize viewport_size = OverlayPage()->GetVisualViewport().Size();
-      OverlayMainFrame()->View()->Resize(viewport_size);
-      Reset(viewport_size);
-    }
+void InspectorOverlayAgent::LoadFrameForTool() {
+  if (frame_resource_name_ == inspect_tool_->GetDataResourceName())
     return;
-  }
-  frame_resource_name_ = resource_name;
 
-  if (!resource_name.length()) {
-    // Keep existing frame around in order to not thrash.
-    return;
-  }
+  frame_resource_name_ = inspect_tool_->GetDataResourceName();
 
   DEFINE_STATIC_LOCAL(Persistent<LocalFrameClient>, dummy_local_frame_client,
                       (MakeGarbageCollected<EmptyLocalFrameClient>()));
-  LocalFrame* frame =
-      LocalFrame::Create(dummy_local_frame_client, *OverlayPage(), nullptr);
-  frame->SetView(LocalFrameView::Create(*frame));
+  auto* frame = MakeGarbageCollected<LocalFrame>(dummy_local_frame_client,
+                                                 *overlay_page_, nullptr);
+  frame->SetView(MakeGarbageCollected<LocalFrameView>(*frame));
   frame->Init();
   frame->View()->SetCanHaveScrollbars(false);
   frame->View()->SetBaseBackgroundColor(Color::kTransparent);
-
-  frame->SetPageZoomFactor(WindowToViewportScale());
-  IntSize viewport_size = OverlayPage()->GetVisualViewport().Size();
-  frame->View()->Resize(viewport_size);
 
   scoped_refptr<SharedBuffer> data = SharedBuffer::Create();
   data->Append("<style>", static_cast<size_t>(7));
@@ -880,7 +877,8 @@ void InspectorOverlayAgent::UpdateFrameForTool() {
   data->Append("<script>", static_cast<size_t>(8));
   data->Append(Platform::Current()->GetDataResource("inspect_tool_common.js"));
   data->Append("</script>", static_cast<size_t>(9));
-  data->Append(Platform::Current()->GetDataResource(resource_name.data()));
+  data->Append(
+      Platform::Current()->GetDataResource(frame_resource_name_.data()));
 
   frame->ForceSynchronousDocumentInstall("text/html", data);
 
@@ -904,11 +902,11 @@ void InspectorOverlayAgent::UpdateFrameForTool() {
 #elif defined(OS_POSIX)
   EvaluateInOverlay("setPlatform", "linux");
 #endif
-  Reset(viewport_size);
 }
 
 LocalFrame* InspectorOverlayAgent::OverlayMainFrame() {
-  return To<LocalFrame>(OverlayPage()->MainFrame());
+  DCHECK(overlay_page_);
+  return To<LocalFrame>(overlay_page_->MainFrame());
 }
 
 void InspectorOverlayAgent::Reset(const IntSize& viewport_size) {
@@ -1103,18 +1101,22 @@ void InspectorOverlayAgent::PickTheRightTool() {
 }
 
 void InspectorOverlayAgent::SetInspectTool(InspectTool* inspect_tool) {
+  LocalFrameView* view = frame_impl_->GetFrameView();
+  LocalFrame* frame = GetFrame();
+  if (!view || !frame)
+    return;
+
   if (inspect_tool_)
     inspect_tool_->Dispose();
   inspect_tool_ = inspect_tool;
   if (inspect_tool_) {
-    inspect_tool_->Init(this, GetFrontend());
-    if (UpdateOverlayPageSize()) {
-      if (!frame_overlay_) {
-        frame_overlay_ = std::make_unique<FrameOverlay>(
-            GetFrame(), std::make_unique<InspectorPageOverlayDelegate>(*this));
-      }
-      UpdateFrameForTool();
+    EnsureOverlayPageCreated();
+    LoadFrameForTool();
+    if (!frame_overlay_) {
+      frame_overlay_ = std::make_unique<FrameOverlay>(
+          GetFrame(), std::make_unique<InspectorPageOverlayDelegate>(*this));
     }
+    inspect_tool_->Init(this, GetFrontend());
   } else if (frame_overlay_) {
     frame_overlay_.reset();
     auto& client = GetFrame()->GetPage()->GetChromeClient();

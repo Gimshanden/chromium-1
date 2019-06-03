@@ -28,7 +28,6 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/policy_oauth2_token_fetcher.h"
 #include "chrome/browser/chromeos/policy/remote_commands/user_commands_factory_chromeos.h"
-#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
 #include "chrome/browser/chromeos/policy/wildcard_login_checker.h"
 #include "chrome/browser/invalidation/deprecated_profile_invalidation_provider_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -227,7 +226,10 @@ void UserCloudPolicyManagerChromeOS::Connect(
   std::unique_ptr<CloudPolicyClient> cloud_policy_client =
       std::make_unique<CloudPolicyClient>(
           std::string() /* machine_id */, std::string() /* machine_model */,
-          std::string() /* brand_code */, device_management_service,
+          std::string() /* brand_code */,
+          std::string() /* ethernet_mac_address */,
+          std::string() /* dock_mac_address */,
+          std::string() /* manufacture_date */, device_management_service,
           system_url_loader_factory, nullptr /* signing_service */,
           chromeos::GetDeviceDMTokenForUserPolicyGetter(account_id_));
   CreateComponentCloudPolicyService(

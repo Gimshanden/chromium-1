@@ -15,7 +15,9 @@ constexpr int64_t kMinGapBetweenPeriodicSyncEventsMs = 12 * 60 * 60 * 1000;
 }  // namespace
 
 void MockBackgroundSyncController::NotifyBackgroundSyncRegistered(
-    const url::Origin& origin) {
+    const url::Origin& origin,
+    bool can_fire,
+    bool is_reregistered) {
   registration_count_ += 1;
   registration_origin_ = origin;
 }
@@ -29,7 +31,11 @@ void MockBackgroundSyncController::GetParameterOverrides(
   *parameters = background_sync_parameters_;
 }
 
+// |origin| can be used to potentially suspend or penalize registrations based
+// on the level of user engagement. That logic isn't tested here, and |origin|
+// remains unused.
 base::TimeDelta MockBackgroundSyncController::GetNextEventDelay(
+    const url::Origin& origin,
     int64_t min_interval,
     int num_attempts,
     blink::mojom::BackgroundSyncType sync_type,
@@ -52,6 +58,11 @@ base::TimeDelta MockBackgroundSyncController::GetNextEventDelay(
   DCHECK_LE(num_attempts, parameters->max_sync_attempts);
   return parameters->initial_retry_delay *
          pow(parameters->retry_delay_factor, num_attempts - 1);
+}
+
+std::unique_ptr<BackgroundSyncController::BackgroundSyncEventKeepAlive>
+MockBackgroundSyncController::CreateBackgroundSyncEventKeepAlive() {
+  return nullptr;
 }
 
 }  // namespace content

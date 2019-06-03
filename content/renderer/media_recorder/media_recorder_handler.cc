@@ -331,7 +331,8 @@ void MediaRecorderHandler::Pause() {
     video_recorder->Pause();
   for (const auto& audio_recorder : audio_recorders_)
     audio_recorder->Pause();
-  webm_muxer_->Pause();
+  if (webm_muxer_)
+    webm_muxer_->Pause();
 }
 
 void MediaRecorderHandler::Resume() {
@@ -342,7 +343,8 @@ void MediaRecorderHandler::Resume() {
     video_recorder->Resume();
   for (const auto& audio_recorder : audio_recorders_)
     audio_recorder->Resume();
-  webm_muxer_->Resume();
+  if (webm_muxer_)
+    webm_muxer_->Resume();
 }
 
 void MediaRecorderHandler::EncodingInfo(
@@ -560,7 +562,7 @@ bool MediaRecorderHandler::UpdateTracksAndCheckIfChanged() {
 }
 
 void MediaRecorderHandler::OnVideoFrameForTesting(
-    const scoped_refptr<media::VideoFrame>& frame,
+    scoped_refptr<media::VideoFrame> frame,
     const TimeTicks& timestamp) {
   for (const auto& recorder : video_recorders_)
     recorder->OnVideoFrameForTesting(frame, timestamp);

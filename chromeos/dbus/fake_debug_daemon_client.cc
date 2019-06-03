@@ -90,18 +90,6 @@ void FakeDebugDaemonClient::GetNetworkStatus(
       FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
 }
 
-void FakeDebugDaemonClient::GetModemStatus(
-    DBusMethodCallback<std::string> callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
-}
-
-void FakeDebugDaemonClient::GetWiMaxStatus(
-    DBusMethodCallback<std::string> callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
-}
-
 void FakeDebugDaemonClient::GetNetworkInterfaces(
     DBusMethodCallback<std::string> callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -114,34 +102,18 @@ void FakeDebugDaemonClient::GetPerfOutput(
     int file_descriptor,
     DBusMethodCallback<uint64_t> error_callback) {}
 
-void FakeDebugDaemonClient::GetScrubbedLogs(const GetLogsCallback& callback) {
-  std::map<std::string, std::string> sample;
-  sample["Sample Scrubbed Log"] = "Your email address is xxxxxxxx";
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, sample));
-}
-
-void FakeDebugDaemonClient::GetScrubbedBigLogs(
-    const GetLogsCallback& callback) {
+void FakeDebugDaemonClient::GetScrubbedBigLogs(GetLogsCallback callback) {
   std::map<std::string, std::string> sample;
   sample["Sample Scrubbed Big Log"] = "Your email address is xxxxxxxx";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, sample));
+      FROM_HERE, base::BindOnce(std::move(callback), false, sample));
 }
 
-void FakeDebugDaemonClient::GetAllLogs(const GetLogsCallback& callback) {
+void FakeDebugDaemonClient::GetAllLogs(GetLogsCallback callback) {
   std::map<std::string, std::string> sample;
   sample["Sample Log"] = "Your email address is abc@abc.com";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, sample));
-}
-
-void FakeDebugDaemonClient::GetUserLogFiles(const GetLogsCallback& callback) {
-  std::map<std::string, std::string> user_logs;
-  user_logs["preferences"] = "Preferences";
-  user_logs["invalid_file"] = "Invalid File";
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, true, user_logs));
+      FROM_HERE, base::BindOnce(std::move(callback), false, sample));
 }
 
 void FakeDebugDaemonClient::GetLog(const std::string& log_name,
@@ -152,17 +124,17 @@ void FakeDebugDaemonClient::GetLog(const std::string& log_name,
 }
 
 void FakeDebugDaemonClient::TestICMP(const std::string& ip_address,
-                                     const TestICMPCallback& callback) {
+                                     TestICMPCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, ""));
+      FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
 }
 
 void FakeDebugDaemonClient::TestICMPWithOptions(
     const std::string& ip_address,
     const std::map<std::string, std::string>& options,
-    const TestICMPCallback& callback) {
+    TestICMPCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, ""));
+      FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
 }
 
 void FakeDebugDaemonClient::UploadCrashes() {
@@ -291,6 +263,20 @@ void FakeDebugDaemonClient::SetSchedulerConfiguration(
   scheduler_configuration_name_ = config_name;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), true));
+}
+
+void FakeDebugDaemonClient::SetU2fFlags(const std::set<std::string>& flags,
+                                        VoidDBusMethodCallback callback) {
+  u2f_flags_ = flags;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), true));
+}
+
+void FakeDebugDaemonClient::GetU2fFlags(
+    DBusMethodCallback<std::set<std::string>> callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), base::make_optional(u2f_flags_)));
 }
 
 }  // namespace chromeos

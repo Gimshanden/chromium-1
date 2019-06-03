@@ -98,6 +98,10 @@ UiElementName UserFriendlyElementNameToUiElementName(
       return kVideoCaptureIndicator;
     case UserFriendlyElementName::kLocationPermissionIndicator:
       return kLocationAccessIndicator;
+    case UserFriendlyElementName::kWebXrLocationPermissionIndicator:
+      return kWebVrLocationAccessIndicator;
+    case UserFriendlyElementName::kWebXrVideoPermissionIndicator:
+      return kWebVrVideoCaptureIndicator;
     default:
       NOTREACHED();
       return kNone;
@@ -609,8 +613,6 @@ void Ui::InitializeModel(const UiInitialState& ui_initial_state) {
   model_->supports_selection = ui_initial_state.supports_selection;
   model_->needs_keyboard_update = ui_initial_state.needs_keyboard_update;
   model_->standalone_vr_device = ui_initial_state.is_standalone_vr_device;
-  model_->use_new_incognito_strings =
-      ui_initial_state.use_new_incognito_strings;
   model_->controllers.push_back(ControllerModel());
 }
 
@@ -897,10 +899,10 @@ FovRectangle Ui::GetMinimalFov(const gfx::Transform& view_matrix,
 
 #if defined(OS_ANDROID)
 extern "C" {
-
 // This symbol is retrieved from the VR feature module library via dlsym(),
 // where it's bare address is type-cast to a CreateUiFunction pointer and
-// executed. Any changes to the arguments here must be mirrored in that type.
+// executed. The forward declaration here ensures that the signatures match.
+CreateUiFunction CreateUi;
 __attribute__((visibility("default"))) UiInterface* CreateUi(
     UiBrowserInterface* browser,
     PlatformInputHandler* content_input_forwarder,
@@ -912,7 +914,7 @@ __attribute__((visibility("default"))) UiInterface* CreateUi(
                 std::move(text_input_delegate), std::move(audio_delegate),
                 ui_initial_state);
 }
-}
+}  // extern "C"
 #endif  // defined(OS_ANDROID
 
 }  // namespace vr

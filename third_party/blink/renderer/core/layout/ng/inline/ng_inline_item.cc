@@ -60,11 +60,9 @@ bool IsInlineBoxEndEmpty(const ComputedStyle& style,
 NGInlineItem::NGInlineItem(NGInlineItemType type,
                            unsigned start,
                            unsigned end,
-                           const ComputedStyle* style,
                            LayoutObject* layout_object)
     : start_offset_(start),
       end_offset_(end),
-      style_(style),
       layout_object_(layout_object),
       type_(type),
       segment_data_(0),
@@ -75,7 +73,7 @@ NGInlineItem::NGInlineItem(NGInlineItemType type,
       end_collapse_type_(kNotCollapsible),
       is_end_collapsible_newline_(false),
       is_symbol_marker_(false),
-      is_generated_(false) {
+      is_generated_for_line_break_(false) {
   DCHECK_GE(end, start);
   ComputeBoxProperties();
 }
@@ -87,7 +85,6 @@ NGInlineItem::NGInlineItem(const NGInlineItem& other,
     : start_offset_(start),
       end_offset_(end),
       shape_result_(shape_result),
-      style_(other.style_),
       layout_object_(other.layout_object_),
       type_(other.type_),
       segment_data_(other.segment_data_),
@@ -98,7 +95,7 @@ NGInlineItem::NGInlineItem(const NGInlineItem& other,
       end_collapse_type_(other.end_collapse_type_),
       is_end_collapsible_newline_(other.is_end_collapsible_newline_),
       is_symbol_marker_(other.is_symbol_marker_),
-      is_generated_(other.is_generated_) {
+      is_generated_for_line_break_(other.is_generated_for_line_break_) {
   DCHECK_GE(end, start);
 }
 
@@ -112,14 +109,14 @@ void NGInlineItem::ComputeBoxProperties() {
     return;
 
   if (type_ == NGInlineItem::kOpenTag) {
-    DCHECK(style_ && layout_object_ && layout_object_->IsLayoutInline());
-    is_empty_item_ = IsInlineBoxStartEmpty(*style_, *layout_object_);
+    DCHECK(layout_object_ && layout_object_->IsLayoutInline());
+    is_empty_item_ = IsInlineBoxStartEmpty(*Style(), *layout_object_);
     return;
   }
 
   if (type_ == NGInlineItem::kCloseTag) {
-    DCHECK(style_ && layout_object_ && layout_object_->IsLayoutInline());
-    is_empty_item_ = IsInlineBoxEndEmpty(*style_, *layout_object_);
+    DCHECK(layout_object_ && layout_object_->IsLayoutInline());
+    is_empty_item_ = IsInlineBoxEndEmpty(*Style(), *layout_object_);
     return;
   }
 

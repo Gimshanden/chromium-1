@@ -15,6 +15,7 @@
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "ios/web/common/features.h"
 #include "ios/web/history_state_util.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
 #import "ios/web/navigation/navigation_item_impl.h"
@@ -22,9 +23,8 @@
 #include "ios/web/navigation/time_smoother.h"
 #include "ios/web/public/browser_state.h"
 #include "ios/web/public/browser_url_rewriter.h"
-#include "ios/web/public/features.h"
 #include "ios/web/public/referrer.h"
-#include "ios/web/public/ssl_status.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/web_client.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)

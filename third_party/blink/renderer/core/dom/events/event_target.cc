@@ -150,11 +150,38 @@ void ReportBlockedEvent(EventTarget& target,
 bool CheckTypeThenUseCount(const Event& event,
                            const AtomicString& event_type_to_count,
                            const WebFeature feature,
-                           const Document* document) {
+                           Document* document) {
   if (event.type() != event_type_to_count)
     return false;
   UseCounter::Count(*document, feature);
   return true;
+}
+void RegisterWithScheduler(ExecutionContext* execution_context,
+                           const AtomicString& event_type) {
+  if (!execution_context)
+    return;
+  // TODO(altimin): Ideally we would also support tracking unregistration of
+  // event listeners, but we don't do this for performance reasons.
+  base::Optional<SchedulingPolicy::Feature> feature_for_scheduler;
+  if (event_type == event_type_names::kPageshow) {
+    feature_for_scheduler = SchedulingPolicy::Feature::kPageShowEventListener;
+  } else if (event_type == event_type_names::kPagehide) {
+    feature_for_scheduler = SchedulingPolicy::Feature::kPageHideEventListener;
+  } else if (event_type == event_type_names::kBeforeunload) {
+    feature_for_scheduler =
+        SchedulingPolicy::Feature::kBeforeUnloadEventListener;
+  } else if (event_type == event_type_names::kUnload) {
+    feature_for_scheduler = SchedulingPolicy::Feature::kUnloadEventListener;
+  } else if (event_type == event_type_names::kFreeze) {
+    feature_for_scheduler = SchedulingPolicy::Feature::kFreezeEventListener;
+  } else if (event_type == event_type_names::kResume) {
+    feature_for_scheduler = SchedulingPolicy::Feature::kResumeEventListener;
+  }
+  if (feature_for_scheduler) {
+    execution_context->GetScheduler()->RegisterStickyFeature(
+        feature_for_scheduler.value(),
+        {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+  }
 }
 
 }  // namespace
@@ -415,6 +442,19 @@ bool EventTarget::AddEventListenerInternal(
   if (!listener)
     return false;
 
+  if (event_type == event_type_names::kTouchcancel ||
+      event_type == event_type_names::kTouchend ||
+      event_type == event_type_names::kTouchmove ||
+      event_type == event_type_names::kTouchstart) {
+    if (const LocalDOMWindow* executing_window = ExecutingWindow()) {
+      if (const Document* document = executing_window->document()) {
+        document->CountUse(options->passive()
+                               ? WebFeature::kPassiveTouchEventListener
+                               : WebFeature::kNonPassiveTouchEventListener);
+      }
+    }
+  }
+
   V8DOMActivityLogger* activity_logger =
       V8DOMActivityLogger::CurrentActivityLoggerIfIsolatedWorld();
   if (activity_logger) {
@@ -442,7 +482,7 @@ void EventTarget::AddedEventListener(
     const AtomicString& event_type,
     RegisteredEventListener& registered_listener) {
   if (const LocalDOMWindow* executing_window = ExecutingWindow()) {
-    if (const Document* document = executing_window->document()) {
+    if (Document* document = executing_window->document()) {
       if (event_type == event_type_names::kAuxclick)
         UseCounter::Count(*document, WebFeature::kAuxclickAddListenerCount);
       else if (event_type == event_type_names::kAppinstalled)
@@ -453,6 +493,9 @@ void EventTarget::AddedEventListener(
         UseCounter::Count(*document, WebFeature::kSlotChangeEventAddListener);
     }
   }
+
+  RegisterWithScheduler(GetExecutionContext(), event_type);
+
   if (event_util::IsDOMMutationEventType(event_type)) {
     if (ExecutionContext* context = GetExecutionContext()) {
       String message_text = String::Format(
@@ -689,7 +732,7 @@ void EventTarget::CountLegacyEvents(
   }
 
   if (const LocalDOMWindow* executing_window = ExecutingWindow()) {
-    if (const Document* document = executing_window->document()) {
+    if (Document* document = executing_window->document()) {
       if (legacy_listeners_vector) {
         if (listeners_vector)
           UseCounter::Count(*document, prefixed_and_unprefixed_feature);
@@ -775,7 +818,7 @@ bool EventTarget::FireEventListeners(Event& event,
   };
 
   if (const LocalDOMWindow* executing_window = ExecutingWindow()) {
-    if (const Document* document = executing_window->document()) {
+    if (Document* document = executing_window->document()) {
       if (CheckTypeThenUseCount(event, event_type_names::kBeforeunload,
                                 WebFeature::kDocumentBeforeUnloadFired,
                                 document)) {

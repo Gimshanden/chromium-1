@@ -3,10 +3,12 @@
 <translationbundle lang="sk">
 <translation id="1276998909102132017">Obrázky galérie</translation>
 <translation id="1430915738399379752">Tlačiť</translation>
+<translation id="1462966117743110941">Váš fotoaparát teraz podporuje nové režimy a fotky aj videá budete mať k dispozícii v priečinkoch stiahnutých súborov.</translation>
 <translation id="1620510694547887537">Kamera</translation>
 <translation id="1627744224761163218">4 × 4</translation>
 <translation id="1664224225747386870">Nič sa nezaznamenalo</translation>
 <translation id="1862930711583847113"><ph name="FILE" /> sa nepodarilo exportovať</translation>
+<translation id="2008689030244369546">Úplne nový vzhľad</translation>
 <translation id="2036868001356139588">Trvanie časovača</translation>
 <translation id="2050339315714019657">Na výšku</translation>
 <translation id="2064538373111010176">Aktívny fotoaparát: <ph name="CAMERA" /></translation>
@@ -21,9 +23,11 @@
 <translation id="3081586908890909590">Prepnúť na zaznamenávanie videa</translation>
 <translation id="3183731565330012717">Typ mriežky</translation>
 <translation id="3227137524299004712">Mikrofón</translation>
+<translation id="3517926952904427380">Nepodarilo sa nasnímať portrétovú fotku</translation>
 <translation id="3569311554794739032">Naozaj chcete odstrániť <ph name="FILE" />?</translation>
 <translation id="3810838688059735925">Video</translation>
 <translation id="4279490309300973883">Zrkadlenie</translation>
+<translation id="4329152592498422850">Prepnúť na snímanie štvorcových fotiek</translation>
 <translation id="4445542136948522167">Zastaviť fotenie</translation>
 <translation id="4628948037717959914">Fotografia</translation>
 <translation id="4649291346448517080">Súbor sa nepodarilo uložiť</translation>
@@ -50,6 +54,8 @@
 <translation id="8145038249676204903">Prepnúť na fotenie</translation>
 <translation id="8261506727792406068">Odstrániť</translation>
 <translation id="8428213095426709021">Nastavenia</translation>
+<translation id="8712637175834984815">Dobre</translation>
+<translation id="8815966864175525708">Prepnúť na nasnímanie portrétovej fotky</translation>
 <translation id="8870695351537079478">Zaznamenávanie sa nedá spustiť</translation>
 <translation id="9045155556724273246">10 sekúnd</translation>
 <translation id="945522503751344254">Poslať spätnú väzbu</translation>

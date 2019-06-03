@@ -33,6 +33,7 @@
 #include "content/common/frame_owner_properties.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
+#include "content/common/widget_messages.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_iterator.h"
@@ -346,7 +347,7 @@ class RenderFrameHostManagerTest : public RenderViewHostImplTestHarness {
 
   // Creates a test RenderViewHost that's swapped out.
   void CreateSwappedOutRenderViewHost() {
-    const GURL kChromeURL("chrome://foo");
+    const GURL kChromeURL(GetWebUIURL("foo"));
     const GURL kDestUrl("http://www.google.com/");
 
     // Navigate our first tab to a chrome url and then to the destination.
@@ -407,7 +408,7 @@ class RenderFrameHostManagerTest : public RenderViewHostImplTestHarness {
     CommitNavigationParams commit_params =
         entry->ConstructCommitNavigationParams(
             *frame_entry, common_params.url, frame_entry->committed_origin(),
-            common_params.method, false,
+            common_params.method,
             entry->GetSubframeUniqueNames(frame_tree_node),
             controller->GetPendingEntryIndex() ==
                 -1 /* intended_as_new_entry */,
@@ -460,7 +461,7 @@ class RenderFrameHostManagerTest : public RenderViewHostImplTestHarness {
 // a regression test for bug 9364.
 TEST_F(RenderFrameHostManagerTest, NewTabPageProcesses) {
   set_should_create_webui(true);
-  const GURL kChromeUrl("chrome://foo");
+  const GURL kChromeUrl(GetWebUIURL("foo"));
   const GURL kDestUrl("http://www.google.com/");
 
   // Navigate our first tab to the chrome url and then to the destination,
@@ -522,7 +523,7 @@ TEST_F(RenderFrameHostManagerTest, NewTabPageProcesses) {
 // for synchronous messages, which cannot be ignored without leaving the
 // renderer in a stuck state.  See http://crbug.com/93427.
 TEST_F(RenderFrameHostManagerTest, FilterMessagesWhileSwappedOut) {
-  const GURL kChromeURL("chrome://foo");
+  const GURL kChromeURL(GetWebUIURL("foo"));
   const GURL kDestUrl("http://www.google.com/");
   std::vector<FaviconURL> icons;
 
@@ -574,7 +575,7 @@ TEST_F(RenderFrameHostManagerTest, FilterMessagesWhileSwappedOut) {
 // that it only gets FrameHostMsg_UpdateFaviconURL messages for the most
 // recently committed navigation for each WebContentsImpl.
 TEST_F(RenderFrameHostManagerTest, UpdateFaviconURLWhilePendingSwapOut) {
-  const GURL kChromeURL("chrome://foo");
+  const GURL kChromeURL(GetWebUIURL("foo"));
   const GURL kDestUrl("http://www.google.com/");
   std::vector<FaviconURL> icons;
 
@@ -737,7 +738,7 @@ class RenderViewHostDestroyer : public WebContentsObserver {
 // http://crbug.com/259859.
 TEST_F(RenderFrameHostManagerTest,
        DetectUseAfterFreeInShutdownRenderViewHostsInSiteInstance) {
-  const GURL kChromeURL("chrome://newtab");
+  const GURL kChromeURL(GetWebUIURL("newtab"));
   const GURL kUrl1("http://www.google.com");
   const GURL kUrl2("http://www.chromium.org");
 
@@ -769,7 +770,7 @@ TEST_F(RenderFrameHostManagerTest,
 // EnableViewSourceMode message is sent on every navigation regardless
 // RenderView is being newly created or reused.
 TEST_F(RenderFrameHostManagerTest, AlwaysSendEnableViewSourceMode) {
-  const GURL kChromeUrl("chrome://foo/");
+  const GURL kChromeUrl(GetWebUIURL("foo"));
   const GURL kUrl("http://foo/");
   const GURL kViewSourceUrl("view-source:http://foo/");
 
@@ -943,6 +944,45 @@ TEST_F(RenderFrameHostManagerTest, Navigate) {
             *manager->GetRenderWidgetHostView()->GetBackgroundColor());
 }
 
+// Test that we properly set the RenderWidget to be hidden if the visibility of
+// the web contents becomes hidden after the start of navigation but before we
+// commit the navigation. See https://crbug.com/936858 for more details.
+TEST_F(RenderFrameHostManagerTest, WebContentVisibilityHiddenBeforeCommit) {
+  set_should_create_webui(true);
+  scoped_refptr<SiteInstance> blank_instance =
+      SiteInstance::Create(browser_context());
+  blank_instance->GetProcess()->Init();
+
+  // Create a blank tab.
+  std::unique_ptr<TestWebContents> web_contents(
+      TestWebContents::Create(browser_context(), blank_instance));
+  RenderFrameHostManager* manager = web_contents->GetRenderManagerForTesting();
+  manager->current_host()->CreateRenderView(-1, MSG_ROUTING_NONE,
+                                            base::UnguessableToken::Create(),
+                                            FrameReplicationState(), false);
+  EXPECT_TRUE(manager->current_host()->IsRenderViewLive());
+  EXPECT_TRUE(manager->current_frame_host()->IsRenderFrameLive());
+
+  // Start navigation.
+  const GURL kUrl(GetWebUIURL("foo"));
+  NavigationEntryImpl entry(
+      nullptr /* instance */, kUrl, Referrer(), base::string16() /* title */,
+      ui::PAGE_TRANSITION_TYPED, false /* is_renderer_init */,
+      nullptr /* blob_url_loader_factory */);
+  RenderFrameHostImpl* host = NavigateToEntry(manager, &entry);
+
+  // Hide the web contents before commit.
+  web_contents->WasHidden();
+
+  // Commit.
+  manager->DidNavigateFrame(host, true /* was_caused_by_user_gesture */,
+                            false /* is_same_document_navigation */);
+
+  // We should send a WidgetMsg_WasHidden message to the Renderer.
+  auto* rph = static_cast<MockRenderProcessHost*>(host->GetProcess());
+  EXPECT_TRUE(rph->sink().GetUniqueMessageMatching(WidgetMsg_WasHidden::ID));
+}
+
 // Tests WebUI creation.
 TEST_F(RenderFrameHostManagerTest, WebUI) {
   set_should_create_webui(true);
@@ -958,7 +998,7 @@ TEST_F(RenderFrameHostManagerTest, WebUI) {
   EXPECT_FALSE(manager->current_frame_host()->web_ui());
   EXPECT_TRUE(initial_rfh);
 
-  const GURL kUrl("chrome://foo");
+  const GURL kUrl(GetWebUIURL("foo"));
   NavigationEntryImpl entry(
       nullptr /* instance */, kUrl, Referrer(), base::string16() /* title */,
       ui::PAGE_TRANSITION_TYPED, false /* is_renderer_init */,
@@ -1014,7 +1054,7 @@ TEST_F(RenderFrameHostManagerTest, WebUIInNewTab) {
   EXPECT_TRUE(manager1->current_frame_host()->IsRenderFrameLive());
 
   // Navigate to a WebUI page.
-  const GURL kUrl1("chrome://foo");
+  const GURL kUrl1(GetWebUIURL("foo"));
   NavigationEntryImpl entry1(
       nullptr /* instance */, kUrl1, Referrer(), base::string16() /* title */,
       ui::PAGE_TRANSITION_TYPED, false /* is_renderer_init */,
@@ -1046,7 +1086,7 @@ TEST_F(RenderFrameHostManagerTest, WebUIInNewTab) {
                                              FrameReplicationState(), false);
   EXPECT_TRUE(manager2->current_host()->IsRenderViewLive());
 
-  const GURL kUrl2("chrome://foo/bar");
+  const GURL kUrl2(GetWebUIURL("foo/bar"));
   NavigationEntryImpl entry2(
       nullptr /* instance */, kUrl2, Referrer(), base::string16() /* title */,
       ui::PAGE_TRANSITION_LINK, true /* is_renderer_init */,
@@ -1069,14 +1109,14 @@ TEST_F(RenderFrameHostManagerTest, WebUIWasReused) {
   set_should_create_webui(true);
 
   // Navigate to a WebUI page.
-  const GURL kUrl1("chrome://foo");
+  const GURL kUrl1(GetWebUIURL("foo"));
   contents()->NavigateAndCommit(kUrl1);
   WebUIImpl* web_ui = main_test_rfh()->web_ui();
   EXPECT_TRUE(web_ui);
 
   // Navigate to another WebUI page which should be same-site and keep the
   // current WebUI.
-  const GURL kUrl2("chrome://foo/bar");
+  const GURL kUrl2(GetWebUIURL("foo/bar"));
   contents()->NavigateAndCommit(kUrl2);
   EXPECT_EQ(web_ui, main_test_rfh()->web_ui());
 }
@@ -1087,7 +1127,7 @@ TEST_F(RenderFrameHostManagerTest, WebUIWasCleared) {
   set_should_create_webui(true);
 
   // Navigate to a WebUI page.
-  const GURL kUrl1("chrome://foo");
+  const GURL kUrl1(GetWebUIURL("foo"));
   contents()->NavigateAndCommit(kUrl1);
   EXPECT_TRUE(main_test_rfh()->web_ui());
 
@@ -1140,7 +1180,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateAfterMissingSwapOutACK) {
 TEST_F(RenderFrameHostManagerTest, CreateSwappedOutOpenerRFHs) {
   const GURL kUrl1("http://www.google.com/");
   const GURL kUrl2("http://www.chromium.org/");
-  const GURL kChromeUrl("chrome://foo");
+  const GURL kChromeUrl(GetWebUIURL("foo"));
 
   // Navigate to an initial URL.
   contents()->NavigateAndCommit(kUrl1);
@@ -1407,8 +1447,8 @@ TEST_F(RenderFrameHostManagerTest, CleanUpSwappedOutRVHOnProcessCrash) {
 // is in the same process (http://crbug.com/79918).
 TEST_F(RenderFrameHostManagerTest, EnableWebUIWithSwappedOutOpener) {
   set_should_create_webui(true);
-  const GURL kSettingsUrl("chrome://chrome/settings");
-  const GURL kPluginUrl("chrome://plugins");
+  const GURL kSettingsUrl(GetWebUIURL("chrome/settings"));
+  const GURL kPluginUrl(GetWebUIURL("plugins"));
 
   // Navigate to an initial WebUI URL.
   contents()->NavigateAndCommit(kSettingsUrl);
@@ -2029,7 +2069,7 @@ TEST_F(RenderFrameHostManagerTestWithSiteIsolation,
 
   // Start a pending WebUI navigation in the main frame and verify that the
   // pending RVH has bindings.
-  const GURL kWebUIUrl("chrome://foo");
+  const GURL kWebUIUrl(GetWebUIURL("foo"));
   NavigationEntryImpl webui_entry(
       nullptr /* instance */, kWebUIUrl, Referrer(),
       base::string16() /* title */, ui::PAGE_TRANSITION_TYPED,
@@ -2454,7 +2494,7 @@ TEST_F(RenderFrameHostManagerTest,
 TEST_F(RenderFrameHostManagerTest, RestoreNavigationToWebUI) {
   set_should_create_webui(true);
 
-  const GURL kInitUrl("chrome://foo/");
+  const GURL kInitUrl(GetWebUIURL("foo"));
   scoped_refptr<SiteInstanceImpl> initial_instance =
       SiteInstanceImpl::Create(browser_context());
   initial_instance->SetSite(kInitUrl);
@@ -2513,7 +2553,7 @@ TEST_F(RenderFrameHostManagerTest, RestoreNavigationToWebUI) {
 TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithOneWebUI1) {
   set_should_create_webui(true);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo/"));
+                                                    GetWebUIURL("foo/"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host1 = manager->current_frame_host();
@@ -2575,7 +2615,7 @@ TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithOneWebUI1) {
 TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithOneWebUI2) {
   set_should_create_webui(true);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo/"));
+                                                    GetWebUIURL("foo/"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host1 = manager->current_frame_host();
@@ -2634,7 +2674,7 @@ TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithTwoWebUIs1) {
   set_should_create_webui(true);
   set_webui_type(1);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo/"));
+                                                    GetWebUIURL("foo"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host1 = manager->current_frame_host();
@@ -2655,7 +2695,7 @@ TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithTwoWebUIs1) {
 
   // Navigation another WebUI page, with a different type.
   set_webui_type(2);
-  const GURL kUrl("chrome://bar/");
+  const GURL kUrl(GetWebUIURL("bar"));
   auto navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl, contents());
   navigation->ReadyToCommit();
@@ -2700,7 +2740,7 @@ TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithTwoWebUIs2) {
   set_should_create_webui(true);
   set_webui_type(1);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo/"));
+                                                    GetWebUIURL("foo/"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host1 = manager->current_frame_host();
@@ -2721,7 +2761,7 @@ TEST_F(RenderFrameHostManagerTest, SimultaneousNavigationWithTwoWebUIs2) {
 
   // Navigation another WebUI page, with a different type.
   set_webui_type(2);
-  const GURL kUrl("chrome://bar/");
+  const GURL kUrl(GetWebUIURL("bar/"));
   auto navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl, contents());
   navigation->ReadyToCommit();
@@ -2759,19 +2799,6 @@ TEST_F(RenderFrameHostManagerTest, CanCommitOrigin) {
 
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(), kUrl);
 
-  controller().LoadURL(
-      kUrlBar, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
-  main_test_rfh()->PrepareForCommit();
-
-  FrameHostMsg_DidCommitProvisionalLoad_Params params;
-  params.nav_entry_id = 0;
-  params.did_create_new_entry = false;
-  params.transition = ui::PAGE_TRANSITION_LINK;
-  params.should_update_history = false;
-  params.gesture = NavigationGestureAuto;
-  params.method = "GET";
-  params.page_state = PageState::CreateFromURL(kUrlBar);
-
   struct TestCase {
     const char* const url;
     const char* const origin;
@@ -2796,15 +2823,20 @@ TEST_F(RenderFrameHostManagerTest, CanCommitOrigin) {
   };
 
   for (const auto& test_case : cases) {
-    params.url = GURL(test_case.url);
-    params.origin = url::Origin::Create(GURL(test_case.origin));
+    auto navigation = NavigationSimulatorImpl::CreateBrowserInitiated(
+        GURL(test_case.url), contents());
+    navigation->set_origin(url::Origin::Create(GURL(test_case.origin)));
+    navigation->ReadyToCommit();
 
-    int expected_bad_msg_count = process()->bad_msg_count();
+    int expected_bad_msg_count =
+        static_cast<MockRenderProcessHost*>(navigation->GetNavigationHandle()
+                                                ->GetRenderFrameHost()
+                                                ->GetProcess())
+            ->bad_msg_count();
     if (test_case.mismatch)
       expected_bad_msg_count++;
 
-    main_test_rfh()->SendNavigateWithParams(
-        &params, false /* was_within_same_document */);
+    navigation->Commit();
 
     EXPECT_EQ(expected_bad_msg_count, process()->bad_msg_count())
       << " url:" << test_case.url
@@ -2824,7 +2856,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateFromDeadRendererToWebUI) {
   EXPECT_FALSE(initial_host->IsRenderFrameLive());
 
   // Navigation request.
-  const GURL kUrl("chrome://foo");
+  const GURL kUrl(GetWebUIURL("foo"));
   NavigationEntryImpl entry(
       nullptr /* instance */, kUrl, Referrer(), base::string16() /* title */,
       ui::PAGE_TRANSITION_TYPED, false /* is_renderer_init */,
@@ -2838,8 +2870,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateFromDeadRendererToWebUI) {
       base::TimeTicks::Now(), base::TimeTicks::Now());
   CommitNavigationParams commit_params = entry.ConstructCommitNavigationParams(
       *frame_entry, common_params.url, frame_entry->committed_origin(),
-      common_params.method, false,
-      entry.GetSubframeUniqueNames(frame_tree_node),
+      common_params.method, entry.GetSubframeUniqueNames(frame_tree_node),
       controller().GetPendingEntryIndex() == -1 /* intended_as_new_entry */,
       static_cast<NavigationControllerImpl&>(controller())
           .GetIndexOfEntry(&entry),
@@ -2890,7 +2921,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateFromDeadRendererToWebUI) {
 TEST_F(RenderFrameHostManagerTest, NavigateSameSiteBetweenWebUIs) {
   set_should_create_webui(true);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo"));
+                                                    GetWebUIURL("foo"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host = manager->current_frame_host();
@@ -2899,7 +2930,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateSameSiteBetweenWebUIs) {
   EXPECT_TRUE(web_ui);
 
   // Navigation request. No change in the returned WebUI type.
-  const GURL kUrl("chrome://foo/bar");
+  const GURL kUrl(GetWebUIURL("foo/bar"));
   auto web_ui_navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl, contents());
   web_ui_navigation->Start();
@@ -2934,7 +2965,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateCrossSiteBetweenWebUIs) {
   set_should_create_webui(true);
   set_webui_type(1);
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(),
-                                                    GURL("chrome://foo"));
+                                                    GetWebUIURL("foo"));
 
   RenderFrameHostManager* manager = contents()->GetRenderManagerForTesting();
   RenderFrameHostImpl* host = manager->current_frame_host();
@@ -2947,7 +2978,7 @@ TEST_F(RenderFrameHostManagerTest, NavigateCrossSiteBetweenWebUIs) {
   set_webui_type(2);
 
   // Navigation request.
-  const GURL kUrl("chrome://bar");
+  const GURL kUrl(GetWebUIURL("bar"));
   auto web_ui_navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl, contents());
   web_ui_navigation->Start();

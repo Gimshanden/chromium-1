@@ -25,7 +25,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
@@ -358,7 +358,8 @@ void MCSProbe::InitializeNetworkState() {
   // Wrap it up with network service APIs.
   network_context_ = std::make_unique<network::NetworkContext>(
       nullptr /* network_service */, mojo::MakeRequest(&network_context_pipe_),
-      url_request_context_.get());
+      url_request_context_.get(),
+      /*cors_exempt_header_list=*/std::vector<std::string>());
   auto url_loader_factory_params =
       network::mojom::URLLoaderFactoryParams::New();
   url_loader_factory_params->process_id = network::mojom::kBrowserProcessId;
@@ -437,13 +438,14 @@ int MCSProbeMain(int argc, char* argv[]) {
 
   base::CommandLine::Init(argc, argv);
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
 
   mojo::core::Init();
 
   base::MessageLoopForIO message_loop;
-  base::TaskScheduler::CreateAndStartWithDefaultParams("MCSProbe");
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("MCSProbe");
 
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -454,7 +456,7 @@ int MCSProbeMain(int argc, char* argv[]) {
   base::RunLoop run_loop;
   run_loop.Run();
 
-  base::TaskScheduler::GetInstance()->Shutdown();
+  base::ThreadPoolInstance::Get()->Shutdown();
 
   return 0;
 }

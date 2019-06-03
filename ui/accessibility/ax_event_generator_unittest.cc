@@ -23,11 +23,17 @@ std::string DumpEvents(AXEventGenerator* generator) {
       case AXEventGenerator::Event::ACCESS_KEY_CHANGED:
         event_name = "ACCESS_KEY_CHANGED";
         break;
+      case AXEventGenerator::Event::ATOMIC_CHANGED:
+        event_name = "ATOMIC_CHANGED";
+        break;
       case AXEventGenerator::Event::ACTIVE_DESCENDANT_CHANGED:
         event_name = "ACTIVE_DESCENDANT_CHANGED";
         break;
       case AXEventGenerator::Event::ALERT:
         event_name = "ALERT";
+        break;
+      case AXEventGenerator::Event::BUSY_CHANGED:
+        event_name = "BUSY_CHANGED";
         break;
       case AXEventGenerator::Event::CHECKED_STATE_CHANGED:
         event_name = "CHECKED_STATE_CHANGED";
@@ -41,6 +47,9 @@ std::string DumpEvents(AXEventGenerator* generator) {
       case AXEventGenerator::Event::COLLAPSED:
         event_name = "COLLAPSED";
         break;
+      case AXEventGenerator::Event::CONTROLS_CHANGED:
+        event_name = "CONTROLS_CHANGED";
+        break;
       case AXEventGenerator::Event::DESCRIBED_BY_CHANGED:
         event_name = "DESCRIBED_BY_CHANGED";
         break;
@@ -53,6 +62,9 @@ std::string DumpEvents(AXEventGenerator* generator) {
       case AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
         event_name = "DOCUMENT_TITLE_CHANGED";
         break;
+      case AXEventGenerator::Event::DROPEFFECT_CHANGED:
+        event_name = "DROPEFFECT_CHANGED";
+        break;
       case AXEventGenerator::Event::ENABLED_CHANGED:
         event_name = "ENABLED_CHANGED";
         break;
@@ -64,6 +76,12 @@ std::string DumpEvents(AXEventGenerator* generator) {
         break;
       case AXEventGenerator::Event::FLOW_TO_CHANGED:
         event_name = "FLOW_TO_CHANGED";
+        break;
+      case AXEventGenerator::Event::GRABBED_CHANGED:
+        event_name = "GRABBED_CHANGED";
+        break;
+      case AXEventGenerator::Event::HASPOPUP_CHANGED:
+        event_name = "HASPOPUP_CHANGED";
         break;
       case AXEventGenerator::Event::HIERARCHICAL_LEVEL_CHANGED:
         event_name = "HIERARCHICAL_LEVEL_CHANGED";
@@ -95,6 +113,12 @@ std::string DumpEvents(AXEventGenerator* generator) {
       case AXEventGenerator::Event::LIVE_REGION_NODE_CHANGED:
         event_name = "LIVE_REGION_NODE_CHANGED";
         break;
+      case AXEventGenerator::Event::LIVE_RELEVANT_CHANGED:
+        event_name = "LIVE_RELEVANT_CHANGED";
+        break;
+      case AXEventGenerator::Event::LIVE_STATUS_CHANGED:
+        event_name = "LIVE_STATUS_CHANGED";
+        break;
       case AXEventGenerator::Event::LOAD_COMPLETE:
         event_name = "LOAD_COMPLETE";
         break;
@@ -103,6 +127,9 @@ std::string DumpEvents(AXEventGenerator* generator) {
         break;
       case AXEventGenerator::Event::MENU_ITEM_SELECTED:
         event_name = "MENU_ITEM_SELECTED";
+        break;
+      case AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
+        event_name = "MULTILINE_STATE_CHANGED";
         break;
       case AXEventGenerator::Event::MULTISELECTABLE_STATE_CHANGED:
         event_name = "MULTISELECTABLE_STATE_CHANGED";
@@ -151,6 +178,9 @@ std::string DumpEvents(AXEventGenerator* generator) {
         break;
       case AXEventGenerator::Event::STATE_CHANGED:
         event_name = "STATE_CHANGED";
+        break;
+      case AXEventGenerator::Event::SUBTREE_CREATED:
+        event_name = "SUBTREE_CREATED";
         break;
       case AXEventGenerator::Event::VALUE_CHANGED:
         event_name = "VALUE_CHANGED";
@@ -217,7 +247,10 @@ TEST(AXEventGeneratorTest, LoadCompleteNewTree) {
   load_complete_update.has_tree_data = true;
   load_complete_update.tree_data.loaded = true;
   ASSERT_TRUE(tree.Unserialize(load_complete_update));
-  EXPECT_EQ("LOAD_COMPLETE on 2", DumpEvents(&event_generator));
+  EXPECT_EQ(
+      "LOAD_COMPLETE on 2, "
+      "SUBTREE_CREATED on 2",
+      DumpEvents(&event_generator));
 
   // Load complete should not be emitted for sizeless roots.
   load_complete_update.root_id = 3;
@@ -227,7 +260,7 @@ TEST(AXEventGeneratorTest, LoadCompleteNewTree) {
   load_complete_update.has_tree_data = true;
   load_complete_update.tree_data.loaded = true;
   ASSERT_TRUE(tree.Unserialize(load_complete_update));
-  EXPECT_EQ("", DumpEvents(&event_generator));
+  EXPECT_EQ("SUBTREE_CREATED on 3", DumpEvents(&event_generator));
 
   // TODO(accessibility): http://crbug.com/888758
   // Load complete should not be emitted for chrome-search URLs.
@@ -241,7 +274,10 @@ TEST(AXEventGeneratorTest, LoadCompleteNewTree) {
   load_complete_update.has_tree_data = true;
   load_complete_update.tree_data.loaded = true;
   ASSERT_TRUE(tree.Unserialize(load_complete_update));
-  EXPECT_EQ("LOAD_COMPLETE on 4", DumpEvents(&event_generator));
+  EXPECT_EQ(
+      "LOAD_COMPLETE on 4, "
+      "SUBTREE_CREATED on 4",
+      DumpEvents(&event_generator));
 }
 
 TEST(AXEventGeneratorTest, LoadStart) {
@@ -263,7 +299,10 @@ TEST(AXEventGeneratorTest, LoadStart) {
   load_start_update.has_tree_data = true;
   load_start_update.tree_data.loaded = false;
   ASSERT_TRUE(tree.Unserialize(load_start_update));
-  EXPECT_EQ("LOAD_START on 2", DumpEvents(&event_generator));
+  EXPECT_EQ(
+      "LOAD_START on 2, "
+      "SUBTREE_CREATED on 2",
+      DumpEvents(&event_generator));
 }
 
 TEST(AXEventGeneratorTest, DocumentSelectionChanged) {
@@ -433,7 +472,22 @@ TEST(AXEventGeneratorTest, AddLiveRegionAttribute) {
   update.nodes[0].AddStringAttribute(ax::mojom::StringAttribute::kLiveStatus,
                                      "polite");
   ASSERT_TRUE(tree.Unserialize(update));
-  EXPECT_EQ("LIVE_REGION_CREATED on 1", DumpEvents(&event_generator));
+  EXPECT_EQ(
+      "LIVE_REGION_CREATED on 1, "
+      "LIVE_STATUS_CHANGED on 1",
+      DumpEvents(&event_generator));
+
+  event_generator.ClearEvents();
+  update.nodes[0].AddStringAttribute(ax::mojom::StringAttribute::kLiveStatus,
+                                     "assertive");
+  ASSERT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("LIVE_STATUS_CHANGED on 1", DumpEvents(&event_generator));
+
+  event_generator.ClearEvents();
+  update.nodes[0].AddStringAttribute(ax::mojom::StringAttribute::kLiveStatus,
+                                     "off");
+  ASSERT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("LIVE_STATUS_CHANGED on 1", DumpEvents(&event_generator));
 }
 
 TEST(AXEventGeneratorTest, CheckedStateChanged) {
@@ -503,7 +557,9 @@ TEST(AXEventGeneratorTest, CreateAlertAndLiveRegion) {
   EXPECT_EQ(
       "ALERT on 3, "
       "CHILDREN_CHANGED on 1, "
-      "LIVE_REGION_CREATED on 2",
+      "LIVE_REGION_CREATED on 2, "
+      "SUBTREE_CREATED on 2, "
+      "SUBTREE_CREATED on 3",
       DumpEvents(&event_generator));
 }
 
@@ -658,7 +714,10 @@ TEST(AXEventGeneratorTest, AddChild) {
   update.nodes[2].id = 3;
 
   ASSERT_TRUE(tree.Unserialize(update));
-  EXPECT_EQ("CHILDREN_CHANGED on 1", DumpEvents(&event_generator));
+  EXPECT_EQ(
+      "CHILDREN_CHANGED on 1, "
+      "SUBTREE_CREATED on 3",
+      DumpEvents(&event_generator));
 }
 
 TEST(AXEventGeneratorTest, RemoveChild) {
@@ -764,11 +823,11 @@ TEST(AXEventGeneratorTest, OtherAttributeChanged) {
                                       ids);
   ASSERT_TRUE(tree.Unserialize(update));
   EXPECT_EQ(
+      "CONTROLS_CHANGED on 6, "
       "LANGUAGE_CHANGED on 2, "
       "OTHER_ATTRIBUTE_CHANGED on 3, "
       "OTHER_ATTRIBUTE_CHANGED on 4, "
       "OTHER_ATTRIBUTE_CHANGED on 5, "
-      "OTHER_ATTRIBUTE_CHANGED on 6, "
       "RELATED_NODE_CHANGED on 6",
       DumpEvents(&event_generator));
 }
@@ -1123,8 +1182,8 @@ TEST(AXEventGeneratorTest, AriaBusyChanged) {
 
   ASSERT_TRUE(tree.Unserialize(update));
   EXPECT_EQ(
-      "LAYOUT_INVALIDATED on 1, "
-      "OTHER_ATTRIBUTE_CHANGED on 1",
+      "BUSY_CHANGED on 1, "
+      "LAYOUT_INVALIDATED on 1",
       DumpEvents(&event_generator));
 }
 
@@ -1196,6 +1255,122 @@ TEST(AXEventGeneratorTest, FlowToChanged) {
       "FLOW_FROM_CHANGED on 6, "
       "FLOW_TO_CHANGED on 2, "
       "RELATED_NODE_CHANGED on 2",
+      DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, ControlsChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(2);
+  initial_state.nodes[0].id = 1;
+  initial_state.nodes[0].child_ids.push_back(2);
+  initial_state.nodes[1].id = 2;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  std::vector<int> ids = {2};
+  update.nodes[0].AddIntListAttribute(ax::mojom::IntListAttribute::kControlsIds,
+                                      ids);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ(
+      "CONTROLS_CHANGED on 1, "
+      "RELATED_NODE_CHANGED on 1",
+      DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, AtomicChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic, true);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("ATOMIC_CHANGED on 1", DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, DropeffectChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].AddDropeffect(ax::mojom::Dropeffect::kCopy);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("DROPEFFECT_CHANGED on 1", DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, GrabbedChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kGrabbed, true);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("GRABBED_CHANGED on 1", DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, HasPopupChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].SetHasPopup(ax::mojom::HasPopup::kTrue);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("HASPOPUP_CHANGED on 1", DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, LiveRelevantChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].AddStringAttribute(ax::mojom::StringAttribute::kLiveRelevant,
+                                     "all");
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ("LIVE_RELEVANT_CHANGED on 1", DumpEvents(&event_generator));
+}
+
+TEST(AXEventGeneratorTest, MultilineStateChanged) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+
+  AXTree tree(initial_state);
+  AXEventGenerator event_generator(&tree);
+  AXTreeUpdate update = initial_state;
+
+  update.nodes[0].AddState(ax::mojom::State::kMultiline);
+  EXPECT_TRUE(tree.Unserialize(update));
+  EXPECT_EQ(
+      "MULTILINE_STATE_CHANGED on 1, "
+      "STATE_CHANGED on 1",
       DumpEvents(&event_generator));
 }
 

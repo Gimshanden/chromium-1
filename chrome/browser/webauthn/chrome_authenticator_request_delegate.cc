@@ -14,17 +14,9 @@
 #include "base/feature_list.h"
 #include "base/location.h"
 #include "base/stl_util.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/permissions/attestation_permission_request.h"
-#include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webauthn/authenticator_request_dialog.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
 #include "chrome/common/chrome_features.h"
@@ -90,8 +82,11 @@ void ChromeAuthenticatorRequestDelegate::RegisterProfilePrefs(
 }
 
 ChromeAuthenticatorRequestDelegate::ChromeAuthenticatorRequestDelegate(
-    content::RenderFrameHost* render_frame_host)
-    : render_frame_host_(render_frame_host), weak_ptr_factory_(this) {}
+    content::RenderFrameHost* render_frame_host,
+    const std::string& relying_party_id)
+    : render_frame_host_(render_frame_host),
+      relying_party_id_(relying_party_id),
+      weak_ptr_factory_(this) {}
 
 ChromeAuthenticatorRequestDelegate::~ChromeAuthenticatorRequestDelegate() {
   // Currently, completion of the request is indicated by //content destroying
@@ -110,6 +105,11 @@ ChromeAuthenticatorRequestDelegate::~ChromeAuthenticatorRequestDelegate() {
 base::WeakPtr<ChromeAuthenticatorRequestDelegate>
 ChromeAuthenticatorRequestDelegate::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
+}
+
+AuthenticatorRequestDialogModel*
+ChromeAuthenticatorRequestDelegate::WeakDialogModelForTesting() const {
+  return weak_dialog_model_;
 }
 
 content::BrowserContext* ChromeAuthenticatorRequestDelegate::browser_context()
@@ -150,6 +150,9 @@ bool ChromeAuthenticatorRequestDelegate::DoesBlockRequestOnFailure(
     case InterestingFailureReason::kAuthenticatorMissingUserVerification:
       weak_dialog_model_->OnAuthenticatorMissingUserVerification();
       break;
+    case InterestingFailureReason::kStorageFull:
+      weak_dialog_model_->OnAuthenticatorStorageFull();
+      break;
   }
   return true;
 }
@@ -163,7 +166,7 @@ void ChromeAuthenticatorRequestDelegate::RegisterActionCallbacks(
   cancel_callback_ = std::move(cancel_callback);
 
   transient_dialog_model_holder_ =
-      std::make_unique<AuthenticatorRequestDialogModel>();
+      std::make_unique<AuthenticatorRequestDialogModel>(relying_party_id_);
   transient_dialog_model_holder_->SetRequestCallback(request_callback);
   transient_dialog_model_holder_->SetBluetoothAdapterPowerOnCallback(
       bluetooth_adapter_power_on_callback);
@@ -204,29 +207,16 @@ void ChromeAuthenticatorRequestDelegate::ShouldReturnAttestation(
     return;
   }
 
-  // This does not use content::PermissionControllerDelegate because that only
-  // works with content settings, while this permission is a non-persisted,
-  // per-attested- registration consent.
-  auto* permission_request_manager = PermissionRequestManager::FromWebContents(
-      content::WebContents::FromRenderFrameHost(render_frame_host()));
-  if (!permission_request_manager) {
+  // Cryptotoken displays its own attestation consent prompt.
+  // AuthenticatorCommon does not invoke ShouldReturnAttestation() for those
+  // requests.
+  if (disable_ui_) {
+    NOTREACHED();
     std::move(callback).Run(false);
     return;
   }
 
-  // The created AttestationPermissionRequest deletes itself once complete.
-  //
-  // |callback| is called via the |MessageLoop| because otherwise the
-  // permissions bubble will have focus and |AuthenticatorImpl| checks that the
-  // frame still has focus before returning any results.
-  permission_request_manager->AddRequest(NewAttestationPermissionRequest(
-      render_frame_host()->GetLastCommittedOrigin(),
-      base::BindOnce(
-          [](base::OnceCallback<void(bool)> callback, bool result) {
-            base::ThreadTaskRunnerHandle::Get()->PostTask(
-                FROM_HERE, base::BindOnce(std::move(callback), result));
-          },
-          std::move(callback))));
+  weak_dialog_model_->RequestAttestationPermission(std::move(callback));
 #endif
 }
 
@@ -238,7 +228,14 @@ void ChromeAuthenticatorRequestDelegate::SelectAccount(
     std::vector<device::AuthenticatorGetAssertionResponse> responses,
     base::OnceCallback<void(device::AuthenticatorGetAssertionResponse)>
         callback) {
-  if (!IsWebAuthnUIEnabled() || !weak_dialog_model_) {
+  if (disable_ui_) {
+    // Cryptotoken requests should never reach account selection.
+    NOTREACHED();
+    std::move(cancel_callback_).Run();
+    return;
+  }
+
+  if (!weak_dialog_model_) {
     std::move(cancel_callback_).Run();
     return;
   }
@@ -268,7 +265,7 @@ std::string TouchIdMetadataSecret(Profile* profile) {
   PrefService* prefs = profile->GetPrefs();
   std::string key = prefs->GetString(kWebAuthnTouchIdMetadataSecretPrefName);
   if (key.empty() || !base::Base64Decode(key, &key)) {
-    key = device::fido::mac::CredentialMetadata::GenerateRandomSecret();
+    key = device::fido::mac::GenerateCredentialMetadataSecret();
     std::string encoded_key;
     base::Base64Encode(key, &encoded_key);
     prefs->SetString(kWebAuthnTouchIdMetadataSecretPrefName, encoded_key);
@@ -324,38 +321,38 @@ void ChromeAuthenticatorRequestDelegate::DisableUI() {
 }
 
 bool ChromeAuthenticatorRequestDelegate::IsWebAuthnUIEnabled() {
-  // UI can be disabled via flag or by the request handler for certain
-  // requests (e.g. on Windows, where the native API renders its own UI).
-  return base::FeatureList::IsEnabled(features::kWebAuthenticationUI) &&
-         !disable_ui_;
+  // The UI is fully disabled for the entire request duration only if the
+  // request originates from cryptotoken. The UI may be hidden in other
+  // circumstances (e.g. while showing the native Windows WebAuthn UI). But in
+  // those cases the UI is still enabled and can be shown e.g. for an
+  // attestation consent prompt.
+  return !disable_ui_;
+}
+
+bool ChromeAuthenticatorRequestDelegate::ShouldDisablePlatformAuthenticators() {
+#if defined(OS_MACOSX)
+  // Touch ID is available in Incognito, but not in Guest mode.
+  return Profile::FromBrowserContext(browser_context())->IsGuestSession();
+#else  // Windows, Android
+  return browser_context()->IsOffTheRecord();
+#endif
 }
 
 void ChromeAuthenticatorRequestDelegate::OnTransportAvailabilityEnumerated(
     device::FidoRequestHandlerBase::TransportAvailabilityInfo data) {
 #if !defined(OS_ANDROID)
-  if (data.disable_embedder_ui) {
-    disable_ui_ = true;
+  if (disable_ui_) {
     return;
   }
 
-  if (!IsWebAuthnUIEnabled())
-    return;
+  weak_dialog_model_->set_incognito_mode(
+      Profile::FromBrowserContext(browser_context())->IsIncognitoProfile());
 
-  DCHECK(weak_dialog_model_);
   weak_dialog_model_->StartFlow(std::move(data), GetLastTransportUsed(),
                                 GetPreviouslyPairedFidoBleDeviceIds());
 
-  if (weak_dialog_model_->should_dialog_be_closed()) {
-    // The model decided to not show the Chrome UI because a different native
-    // UI is shown.
-    //
-    // Disable UI to cause timeout and other errors to bubble up to the caller
-    // immediately rather than waiting for our error dialog to be dismissed.
-    disable_ui_ = true;
-    return;
-  }
-
-  DCHECK(transient_dialog_model_holder_);
+  DCHECK(transient_dialog_model_holder_)
+      << "RegisterActionCallbacks() must be called first";
   ShowAuthenticatorRequestDialog(
       content::WebContents::FromRenderFrameHost(render_frame_host()),
       std::move(transient_dialog_model_holder_));
@@ -441,6 +438,14 @@ void ChromeAuthenticatorRequestDelegate::CollectPIN(
 void ChromeAuthenticatorRequestDelegate::FinishCollectPIN() {
   weak_dialog_model_->SetCurrentStep(
       AuthenticatorRequestDialogModel::Step::kClientPinTapAgain);
+}
+
+void ChromeAuthenticatorRequestDelegate::SetMightCreateResidentCredential(
+    bool v) {
+  if (!weak_dialog_model_) {
+    return;
+  }
+  weak_dialog_model_->set_might_create_resident_credential(v);
 }
 
 void ChromeAuthenticatorRequestDelegate::OnModelDestroyed() {

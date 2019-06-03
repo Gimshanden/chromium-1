@@ -50,7 +50,7 @@ const size_t kMaxBlacklistEntries = 30;
 // Cleans up the given host blacklist by removing all stale (expiry has passed)
 // entries. If after removing all stale entries, the blacklist is still over
 // capacity, then remove the entry with the closest expiration.
-void RemoveStaleEntries(base::DictionaryValue* dict) {
+void RemoveStaleBlacklistEntries(base::DictionaryValue* dict) {
   std::vector<std::string> keys_to_delete;
 
   base::Time min_value = base::Time::Max();
@@ -225,6 +225,22 @@ PreviewsLitePageDecider::MaybeCreateThrottleFor(
   return nullptr;
 }
 
+// static
+uint64_t PreviewsLitePageDecider::GeneratePageIdForWebContents(
+    content::WebContents* web_contents) {
+  return PreviewsLitePageDecider::GeneratePageIdForProfile(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+}
+
+// static
+uint64_t PreviewsLitePageDecider::GeneratePageIdForProfile(Profile* profile) {
+  PreviewsService* previews_service =
+      PreviewsServiceFactory::GetForProfile(profile);
+  return previews_service
+             ? previews_service->previews_lite_page_decider()->GeneratePageID()
+             : 0;
+}
+
 void PreviewsLitePageDecider::OnProxyRequestHeadersChanged(
     const net::HttpRequestHeaders& headers) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -389,7 +405,7 @@ void PreviewsLitePageDecider::BlacklistBypassedHost(const std::string& host,
   host_bypass_blacklist_->SetKey(
       host, base::Value((base::Time::Now() + duration).ToDoubleT()));
 
-  RemoveStaleEntries(host_bypass_blacklist_.get());
+  RemoveStaleBlacklistEntries(host_bypass_blacklist_.get());
   if (pref_service_)
     pref_service_->Set(kHostBlacklist, *host_bypass_blacklist_);
 }

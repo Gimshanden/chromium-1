@@ -16,12 +16,14 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/win/wincrypt_shim.h"
+#include "crypto/scoped_capi_types.h"
 #include "net/cert/x509_util.h"
 #include "net/cert/x509_util_win.h"
 #include "net/ssl/ssl_platform_key_util.h"
@@ -33,36 +35,33 @@ namespace net {
 
 namespace {
 
+using ScopedHCERTSTORE = crypto::ScopedCAPIHandle<
+    HCERTSTORE,
+    crypto::CAPIDestroyerWithFlags<HCERTSTORE,
+                                   CertCloseStore,
+                                   CERT_CLOSE_STORE_CHECK_FLAG>>;
+
 class ClientCertIdentityWin : public ClientCertIdentity {
  public:
-  // Takes ownership of |cert_context|.
   ClientCertIdentityWin(
       scoped_refptr<net::X509Certificate> cert,
-      PCCERT_CONTEXT cert_context,
+      ScopedPCCERT_CONTEXT cert_context,
       scoped_refptr<base::SingleThreadTaskRunner> key_task_runner)
       : ClientCertIdentity(std::move(cert)),
-        cert_context_(cert_context),
-        key_task_runner_(key_task_runner) {}
-  ~ClientCertIdentityWin() override {
-    CertFreeCertificateContext(cert_context_);
-  }
+        cert_context_(std::move(cert_context)),
+        key_task_runner_(std::move(key_task_runner)) {}
 
-  void AcquirePrivateKey(
-      const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
-          private_key_callback) override {
-    if (base::PostTaskAndReplyWithResult(
-            key_task_runner_.get(), FROM_HERE,
-            base::Bind(&FetchClientCertPrivateKey,
-                       base::Unretained(certificate()), cert_context_),
-            private_key_callback)) {
-      return;
-    }
-    // If the task could not be posted, behave as if there was no key.
-    private_key_callback.Run(nullptr);
+  void AcquirePrivateKey(base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
+                             private_key_callback) override {
+    base::PostTaskAndReplyWithResult(
+        key_task_runner_.get(), FROM_HERE,
+        base::BindOnce(&FetchClientCertPrivateKey,
+                       base::Unretained(certificate()), cert_context_.get()),
+        std::move(private_key_callback));
   }
 
  private:
-  PCCERT_CONTEXT cert_context_;
+  ScopedPCCERT_CONTEXT cert_context_;
   scoped_refptr<base::SingleThreadTaskRunner> key_task_runner_;
 };
 
@@ -155,15 +154,18 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
     PCCERT_CONTEXT cert_context =
         chain_context->rgpChain[0]->rgpElement[0]->pCertContext;
     // Copy the certificate, so that it is valid after |cert_store| is closed.
-    PCCERT_CONTEXT cert_context2 = nullptr;
+    ScopedPCCERT_CONTEXT cert_context2;
+    PCCERT_CONTEXT raw = nullptr;
     BOOL ok = CertAddCertificateContextToStore(
-        nullptr, cert_context, CERT_STORE_ADD_USE_EXISTING, &cert_context2);
+        nullptr, cert_context, CERT_STORE_ADD_USE_EXISTING, &raw);
     if (!ok) {
       NOTREACHED();
       continue;
     }
+    cert_context2.reset(raw);
 
     // Grab the intermediates, if any.
+    std::vector<ScopedPCCERT_CONTEXT> intermediates_storage;
     std::vector<PCCERT_CONTEXT> intermediates;
     for (DWORD i = 1; i < chain_context->rgpChain[0]->cElement; ++i) {
       PCCERT_CONTEXT chain_intermediate =
@@ -172,8 +174,10 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
       ok = CertAddCertificateContextToStore(nullptr, chain_intermediate,
                                             CERT_STORE_ADD_USE_EXISTING,
                                             &copied_intermediate);
-      if (ok)
+      if (ok) {
         intermediates.push_back(copied_intermediate);
+        intermediates_storage.emplace_back(copied_intermediate);
+      }
     }
 
     // Drop the self-signed root, if any. Match Internet Explorer in not sending
@@ -185,8 +189,8 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
     // in that case, assume it is a configuration error.
     if (!intermediates.empty() &&
         x509_util::IsSelfSigned(intermediates.back())) {
-      CertFreeCertificateContext(intermediates.back());
       intermediates.pop_back();
+      intermediates_storage.pop_back();
     }
 
     // Allow UTF-8 inside PrintableStrings in client certificates. See
@@ -195,16 +199,14 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
     options.printable_string_is_utf8 = true;
     scoped_refptr<X509Certificate> cert =
         x509_util::CreateX509CertificateFromCertContexts(
-            cert_context2, intermediates, options);
+            cert_context2.get(), intermediates, options);
     if (cert) {
       selected_identities.push_back(std::make_unique<ClientCertIdentityWin>(
           std::move(cert),
-          cert_context2,     // Takes ownership of |cert_context2|.
+          std::move(cert_context2),  // Takes ownership of |cert_context2|.
           current_thread));  // The key must be acquired on the same thread, as
                              // the PCCERT_CONTEXT may not be thread safe.
     }
-    for (size_t i = 0; i < intermediates.size(); ++i)
-      CertFreeCertificateContext(intermediates[i]);
   }
 
   std::sort(selected_identities.begin(), selected_identities.end(),
@@ -216,53 +218,44 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
 
 ClientCertStoreWin::ClientCertStoreWin() {}
 
-ClientCertStoreWin::ClientCertStoreWin(HCERTSTORE cert_store) {
-  DCHECK(cert_store);
-  cert_store_.reset(cert_store);
+ClientCertStoreWin::ClientCertStoreWin(
+    base::RepeatingCallback<HCERTSTORE()> cert_store_callback)
+    : cert_store_callback_(std::move(cert_store_callback)) {
+  DCHECK(!cert_store_callback_.is_null());
 }
 
 ClientCertStoreWin::~ClientCertStoreWin() {}
 
-void ClientCertStoreWin::GetClientCerts(
-    const SSLCertRequestInfo& request,
-    const ClientCertListCallback& callback) {
-  if (cert_store_) {
-    // Use the existing client cert store. Note: Under some situations,
-    // it's possible for this to return certificates that aren't usable
-    // (see below).
-    // When using caller provided HCERTSTORE, assume that it should be accessed
-    // on the current thread.
-    callback.Run(GetClientCertsImpl(cert_store_, request));
-    return;
-  }
-
-  if (base::PostTaskAndReplyWithResult(
-          GetSSLPlatformKeyTaskRunner().get(), FROM_HERE,
-          // Caller is responsible for keeping the |request| alive
-          // until the callback is run, so std::cref is safe.
-          base::Bind(&ClientCertStoreWin::GetClientCertsWithMyCertStore,
-                     std::cref(request)),
-          callback)) {
-    return;
-  }
-
-  // If the task could not be posted, behave as if there were no certificates.
-  callback.Run(ClientCertIdentityList());
+void ClientCertStoreWin::GetClientCerts(const SSLCertRequestInfo& request,
+                                        ClientCertListCallback callback) {
+  base::PostTaskAndReplyWithResult(
+      GetSSLPlatformKeyTaskRunner().get(), FROM_HERE,
+      // Caller is responsible for keeping the |request| alive
+      // until the callback is run, so std::cref is safe.
+      base::BindOnce(&ClientCertStoreWin::GetClientCertsWithCertStore,
+                     std::cref(request), cert_store_callback_),
+      std::move(callback));
 }
 
 // static
-ClientCertIdentityList ClientCertStoreWin::GetClientCertsWithMyCertStore(
-    const SSLCertRequestInfo& request) {
-  // Always open a new instance of the "MY" store, to ensure that there
-  // are no previously cached certificates being reused after they're
-  // no longer available (some smartcard providers fail to update the "MY"
-  // store handles and instead interpose CertOpenSystemStore).
-  ScopedHCERTSTORE my_cert_store(CertOpenSystemStore(NULL, L"MY"));
-  if (!my_cert_store) {
-    PLOG(ERROR) << "Could not open the \"MY\" system certificate store: ";
+ClientCertIdentityList ClientCertStoreWin::GetClientCertsWithCertStore(
+    const SSLCertRequestInfo& request,
+    const base::RepeatingCallback<HCERTSTORE()>& cert_store_callback) {
+  ScopedHCERTSTORE cert_store;
+  if (cert_store_callback.is_null()) {
+    // Always open a new instance of the "MY" store, to ensure that there
+    // are no previously cached certificates being reused after they're
+    // no longer available (some smartcard providers fail to update the "MY"
+    // store handles and instead interpose CertOpenSystemStore).
+    cert_store.reset(CertOpenSystemStore(NULL, L"MY"));
+  } else {
+    cert_store.reset(cert_store_callback.Run());
+  }
+  if (!cert_store) {
+    PLOG(ERROR) << "Could not open certificate store: ";
     return ClientCertIdentityList();
   }
-  return GetClientCertsImpl(my_cert_store, request);
+  return GetClientCertsImpl(cert_store, request);
 }
 
 bool ClientCertStoreWin::SelectClientCertsForTesting(

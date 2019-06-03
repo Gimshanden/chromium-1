@@ -15,6 +15,7 @@
 #include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/unified_consent/feature.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
@@ -93,7 +94,11 @@ bool SyncErrorInfoBarDelegate::Accept() {
   if (ShouldShowSyncSignin(error_state_)) {
     [presenter_ showReauthenticateSignin];
   } else if (ShouldShowSyncSettings(error_state_)) {
-    [presenter_ showSyncSettings];
+    if (unified_consent::IsUnifiedConsentFeatureEnabled()) {
+      [presenter_ showGoogleServicesSettings];
+    } else {
+      [presenter_ showSyncSettings];
+    }
   } else if (ShouldShowSyncPassphraseSettings(error_state_)) {
     [presenter_ showSyncPassphraseSettings];
   }

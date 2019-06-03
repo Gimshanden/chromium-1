@@ -19,7 +19,7 @@ using testing::_;
 namespace blink {
 namespace {
 
-class ScrollableAreaMockChromeClient : public EmptyChromeClient {
+class ScrollableAreaMockChromeClient : public RenderingTestChromeClient {
  public:
   MOCK_METHOD3(MockSetToolTip, void(LocalFrame*, const String&, TextDirection));
   void SetToolTip(LocalFrame& frame,
@@ -29,7 +29,7 @@ class ScrollableAreaMockChromeClient : public EmptyChromeClient {
   }
 };
 
-}  // namespace {
+}  // namespace
 
 class PaintLayerScrollableAreaTestBase : public RenderingTest {
  public:
@@ -1106,7 +1106,7 @@ TEST_P(PaintLayerScrollableAreaTest, ScrollingBackgroundDisplayItemClient) {
     </div>
   )HTML");
 
-  EXPECT_EQ(LayoutRect(2, 3, 101, 200),
+  EXPECT_EQ(IntRect(2, 3, 101, 200),
             ToLayoutBox(GetLayoutObjectByElementId("scroller"))
                 ->GetScrollableArea()
                 ->GetScrollingBackgroundDisplayItemClient()

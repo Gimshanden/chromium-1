@@ -32,7 +32,6 @@
 #include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
-#include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/graphics/image_animation_policy.h"
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
@@ -74,9 +73,7 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
  public:
   virtual ~Image();
 
-  static cc::ImageDecodeCache* SharedCCDecodeCache(
-      CanvasColorSpace color_space,
-      CanvasPixelFormat pixel_format);
+  static cc::ImageDecodeCache& SharedCCDecodeCache(SkColorType);
 
   static scoped_refptr<Image> LoadPlatformResource(const char* name);
 
@@ -88,11 +85,6 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
       InterpolationQuality = kInterpolationNone);
 
   virtual bool IsSVGImage() const { return false; }
-  // TODO(v.paturi): Remove this function once
-  // |ShouldApplyDarkModeFilterToImage| is refactored.
-  // It's suggested that this function not be used anywhere
-  // else in the mean time.
-  virtual bool IsSVGImageForContainer() const { return false; }
   virtual bool IsBitmapImage() const { return false; }
   virtual bool IsStaticBitmapImage() const { return false; }
   virtual bool IsPlaceholderImage() const { return false; }
@@ -241,13 +233,20 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
     return nullptr;
   }
 
-  DarkModeClassification GetDarkModeClassification(const FloatRect& src_rect);
+  void SetShouldCacheDarkModeClassification(bool should_cache_result) {
+    should_cache_dark_mode_classification_ = should_cache_result;
+  }
 
-  // Dark mode classification result is cached to be consistent and have
-  // higher performance for future paints.
-  void AddDarkModeClassification(
-      const FloatRect& src_rect,
-      const DarkModeClassification dark_mode_classification);
+  bool ShouldCacheDarkModeClassification() {
+    return should_cache_dark_mode_classification_;
+  }
+
+  // Decides if a dark mode filter should be applied to the image or not.
+  // |src_rect| is needed in case of image sprites for the location and
+  // size of the smaller images that the sprite holds.
+  // For images that come from sprites the |src_rect.X| and |src_rect.Y|
+  // can be non-zero. But for other images they are both zero.
+  bool ShouldApplyDarkModeFilter(const FloatRect& src_rect);
 
   PaintImage::Id paint_image_id() const { return stable_image_id_; }
 
@@ -272,11 +271,23 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   // Whether or not size is available yet.
   virtual bool IsSizeAvailable() { return true; }
 
-  typedef std::pair<float, float> ClassificationKey;
-  std::map<ClassificationKey, DarkModeClassification>
-      dark_mode_classifications_;
+  DarkModeClassification GetDarkModeClassification(const FloatRect& src_rect);
+
+  // Dark mode classification result is cached to be consistent and have
+  // higher performance for future paints.
+  void AddDarkModeClassification(
+      const FloatRect& src_rect,
+      const DarkModeClassification dark_mode_classification);
+
+  typedef FloatSize ClassificationKey;
+  HashMap<ClassificationKey, DarkModeClassification> dark_mode_classifications_;
 
  private:
+  virtual DarkModeClassification ClassifyImageForDarkMode(
+      const FloatRect& src_rect) {
+    return DarkModeClassification::kDoNotApplyDarkModeFilter;
+  }
+
   bool image_observer_disabled_;
   scoped_refptr<SharedBuffer> encoded_image_data_;
   // TODO(Oilpan): consider having Image on the Oilpan heap and
@@ -289,6 +300,7 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   WeakPersistent<ImageObserver> image_observer_;
   PaintImage::Id stable_image_id_;
   const bool is_multipart_;
+  bool should_cache_dark_mode_classification_ = true;
   DISALLOW_COPY_AND_ASSIGN(Image);
 };
 

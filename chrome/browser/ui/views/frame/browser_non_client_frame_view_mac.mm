@@ -69,7 +69,7 @@ BrowserNonClientFrameViewMac::BrowserNonClientFrameViewMac(
 
   if (browser_view->IsBrowserTypeHostedApp()) {
     if (browser_view->browser()
-            ->hosted_app_controller()
+            ->app_controller()
             ->ShouldShowHostedAppButtonContainer()) {
       set_hosted_app_button_container(new HostedAppButtonContainer(
           frame, browser_view, GetCaptionColor(kActive),
@@ -113,7 +113,7 @@ bool BrowserNonClientFrameViewMac::CaptionButtonsOnLeadingEdge() const {
   return true;
 }
 
-gfx::Rect BrowserNonClientFrameViewMac::GetBoundsForTabStrip(
+gfx::Rect BrowserNonClientFrameViewMac::GetBoundsForTabStripRegion(
     const views::View* tabstrip) const {
   // TODO(weili): In the future, we should hide the title bar, and show the
   // tab strip directly under the menu bar. For now, just lay our content

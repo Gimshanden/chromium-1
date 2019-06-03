@@ -7,16 +7,15 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:layout_marginVertical="@dimen/most_likely_carousel_vertical_spacer"
+    android:paddingVertical="@dimen/most_likely_carousel_edge_spacer"
     android:gravity="center_horizontal">
 
-    <android.support.v7.widget.RecyclerView
+    <org.chromium.chrome.browser.touchless.SiteSuggestionsRecyclerView
         android:id="@+id/most_likely_launcher_recycler"
         android:background="@color/modern_primary_color"
         android:scrollbars="none"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="@dimen/most_likely_carousel_edge_spacer"
         android:orientation="horizontal" />
 
     <TextView
@@ -24,6 +23,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:textAppearance="@style/TextAppearance.BlackTitle2" />
+        android:textAppearance="@style/TextAppearance.BlackTitle2"
+        android:maxLines="1"/>
 
 </LinearLayout>

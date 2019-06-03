@@ -1,10 +1,10 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
+<link rel="import" href="chrome://resources/cr_elements/cr_link_row/cr_link_row.html">
 <link rel="import" href="chrome://resources/cr_elements/policy/cr_policy_pref_indicator.html">
 <link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="chrome://resources/html/md_select_css.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="google_assistant_browser_proxy.html">
 <link rel="import" href="../controls/controlled_button.html">
 <link rel="import" href="../controls/settings_toggle_button.html">
@@ -25,18 +25,8 @@
         min-width: 200px;
       }
 
-      /**
-       * This style is copied from the settings_dropdown_menu.
-       * We don't use the settings_dropdown_menu for the
-       * dspHotwordState drop down (see below), because the
-       * dspHotwordState manages 2 preferences. The
-       * settings_dropdown_menu is designed to manage only a
-       * single preference.
-       */
       cr-policy-pref-indicator {
-        height: 24px;
-        order: 0;
-        width: 24px;
+        margin-inline-end: var(--cr-controlled-by-spacing);
       }
     </style>
     <settings-toggle-button id="google-assistant-enable"
@@ -52,14 +42,15 @@
           label="$i18n{googleAssistantEnableContext}"
           sub-label="$i18n{googleAssistantEnableContextDescription}">
       </settings-toggle-button>
-      <template is="dom-if" if="[[assistantFeatureEnabled_]]">
+      <template is="dom-if" if="[[isAssistantAllowed_]]">
         <settings-toggle-button id="google-assistant-hotword-enable"
             pref="{{prefs.settings.voice_interaction.hotword.enabled}}"
             label="$i18n{googleAssistantEnableHotword}"
             sub-label="$i18n{googleAssistantEnableHotwordDescription}"
+            on-settings-boolean-control-change="onEnableHotwordChange_"
             hidden="[[!hotwordDspAvailable_]]">
         </settings-toggle-button>
-        <div class="settings-box three-line"
+        <div class="settings-box three-line" id="dsp-hotword-container"
             hidden="[[hotwordDspAvailable_]]">
           <div class="start text-area">
             <div class="label">
@@ -72,13 +63,15 @@
               $i18n{googleAssistantEnableHotwordDescription}
             </div>
           </div>
-          <template is="dom-if"
-              if="[[prefs.settings.voice_interaction.enabled.controllerBy]]"
-              restamp>
-            <cr-policy-pref-indicator
+          <template is="dom-if" if="[[hotwordEnforced_]]" restamp>
+            <cr-policy-pref-indicator id="hotword-policy-pref-indicator"
                 pref="{{prefs.settings.voice_interaction.hotword.enabled}}">
             </cr-policy-pref-indicator>
           </template>
+          <!-- We don't use the settings_dropdown_menu for the dspHotwordState
+               drop down, because the dspHotwordState manages 2 preferences.
+               The settings_dropdown_menu is designed to manage only a single
+               preference. -->
           <select id="dsp-hotword-state" class="md-select"
               aria-labelledby="googleAssistantEnableHotword"
               on-change="onDspHotwordStateChange_"
@@ -119,15 +112,9 @@
             sub-label="$i18n{googleAssistantLaunchWithMicOpenDescription}">
         </settings-toggle-button>
       </template>
-      <div id="google-assistant-settings" class="settings-box"
-          on-click="onGoogleAssistantSettingsTapped_" actionable>
-        <div class="start">
-          $i18n{googleAssistantSettings}
-        </div>
-        <paper-icon-button-light class="icon-external">
-          <button aria-label="$i18n{googleAssistantSettings}"></button>
-        </paper-icon-button-light>
-      </div>
+      <cr-link-row id="google-assistant-settings" class="hr"
+          on-click="onGoogleAssistantSettingsTapped_"
+          label="$i18n{googleAssistantSettings}" external></cr-link-row>
     </template>
   </template>
   <script src="google_assistant_page.js"></script>

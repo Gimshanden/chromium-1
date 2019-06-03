@@ -8,12 +8,15 @@
 #include <sys/xattr.h>
 
 #include <algorithm>
+#include <cctype>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
@@ -52,6 +55,7 @@
 #include "extensions/browser/extension_util.h"
 #include "net/base/escape.h"
 #include "services/device/public/mojom/mtp_manager.mojom.h"
+#include "storage/browser/fileapi/external_mount_points.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
@@ -214,7 +218,8 @@ storage::FileSystemOperationRunner::OperationID StartCopyOnIOThread(
   storage::FileSystemOperationRunner::OperationID* operation_id =
       new storage::FileSystemOperationRunner::OperationID;
   *operation_id = file_system_context->operation_runner()->Copy(
-      source_url, destination_url, storage::FileSystemOperation::OPTION_NONE,
+      source_url, destination_url,
+      storage::FileSystemOperation::OPTION_PRESERVE_LAST_MODIFIED,
       storage::FileSystemOperation::ERROR_BEHAVIOR_ABORT,
       base::BindRepeating(&OnCopyProgress, profile_id,
                           base::Unretained(operation_id)),
@@ -268,6 +273,69 @@ void GetFileMetadataRespondOnUIThread(
   base::PostTaskWithTraits(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(std::move(callback), result, file_info));
+}
+
+// Construct a case-insensitive fnmatch query from |query|. E.g.  for abc123,
+// the result would be *[aA][bB][cC]123*.
+std::string CreateFnmatchQuery(const std::string& query) {
+  std::vector<std::string> query_pieces = {"*"};
+  size_t sequence_start = 0;
+  for (size_t i = 0; i < query.size(); ++i) {
+    if (isalpha(query[i])) {
+      if (sequence_start != i) {
+        query_pieces.push_back(
+            query.substr(sequence_start, i - sequence_start));
+      }
+      std::string piece("[");
+      piece.resize(4);
+      piece[1] = tolower(query[i]);
+      piece[2] = toupper(query[i]);
+      piece[3] = ']';
+      query_pieces.push_back(std::move(piece));
+      sequence_start = i + 1;
+    }
+  }
+  if (sequence_start != query.size()) {
+    query_pieces.push_back(query.substr(sequence_start));
+  }
+  query_pieces.push_back("*");
+
+  return base::StrCat(query_pieces);
+}
+
+std::vector<std::pair<base::FilePath, bool>> SearchByPattern(
+    const base::FilePath& root,
+    const std::string& query,
+    size_t max_results) {
+  std::vector<std::pair<base::FilePath, bool>> prefix_matches;
+  std::vector<std::pair<base::FilePath, bool>> other_matches;
+
+  base::FileEnumerator enumerator(
+      root, true,
+      base::FileEnumerator::DIRECTORIES | base::FileEnumerator::FILES,
+      CreateFnmatchQuery(query), base::FileEnumerator::FolderSearchPolicy::ALL);
+
+  for (base::FilePath path = enumerator.Next(); !path.empty();
+       path = enumerator.Next()) {
+    if (base::StartsWith(path.BaseName().value(), query,
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+      prefix_matches.emplace_back(path, enumerator.GetInfo().IsDirectory());
+      if (max_results && prefix_matches.size() == max_results) {
+        return prefix_matches;
+      }
+      continue;
+    }
+    if (!max_results ||
+        prefix_matches.size() + other_matches.size() < max_results) {
+      other_matches.emplace_back(path, enumerator.GetInfo().IsDirectory());
+    }
+  }
+  prefix_matches.insert(
+      prefix_matches.end(), other_matches.begin(),
+      other_matches.begin() +
+          std::min(max_results - prefix_matches.size(), other_matches.size()));
+
+  return prefix_matches;
 }
 
 }  // namespace
@@ -350,9 +418,7 @@ void FileWatchFunctionBase::RespondWith(bool success) {
   if (success) {
     Respond(OneArgument(std::move(result_value)));
   } else {
-    auto result_list = std::make_unique<base::ListValue>();
-    result_list->Append(std::move(result_value));
-    Respond(ErrorWithArguments(std::move(result_list), ""));
+    Respond(Error(""));
   }
 }
 
@@ -377,8 +443,7 @@ ExtensionFunction::ResponseAction FileWatchFunctionBase::Run() {
   if (file_system_url.path().empty()) {
     auto result_list = std::make_unique<base::ListValue>();
     result_list->Append(std::make_unique<base::Value>(false));
-    return RespondNow(
-        ErrorWithArguments(std::move(result_list), "Invalid URL"));
+    return RespondNow(Error("Invalid URL"));
   }
 
   file_manager::EventRouter* const event_router =
@@ -682,12 +747,18 @@ void GetFileMetadataOnIOThread(
       base::BindOnce(&GetFileMetadataRespondOnUIThread, std::move(callback)));
 }
 
-// Gets the available space of the |path|.
-int64_t GetLocalDiskSpace(const base::FilePath& path) {
-  if (!base::PathExists(path)) {
-    return std::numeric_limits<int64_t>::min();
+// Gets the available space of the |paths|, stopping on the first path that
+// doesn't exist.
+std::vector<int64_t> GetLocalDiskSpaces(
+    const std::vector<base::FilePath>& paths) {
+  std::vector<int64_t> result;
+  for (const auto& path : paths) {
+    if (!base::PathExists(path)) {
+      break;
+    }
+    result.push_back(base::SysInfo::AmountOfFreeDiskSpace(path));
   }
-  return base::SysInfo::AmountOfFreeDiskSpace(path);
+  return result;
 }
 
 }  // namespace
@@ -752,21 +823,22 @@ void FileManagerPrivateInternalStartCopyFunction::RunAfterGetFileMetadata(
     return;
   }
 
-  base::FilePath destination_dir;
-  if (destination_url_.filesystem_id() ==
-      drive::util::GetDriveMountPointPath(chrome_details_.GetProfile())
-          .BaseName()
-          .value()) {
-    // Google Drive's cache is limited by the available space on the local disk.
-    destination_dir = file_manager::util::GetMyFilesFolderForProfile(
-        chrome_details_.GetProfile());
-  } else {
-    destination_dir = destination_url_.path().DirName();
+  auto* drive_integration_service =
+      drive::util::GetIntegrationServiceByProfile(chrome_details_.GetProfile());
+  std::vector<base::FilePath> destination_dirs;
+  if (drive_integration_service &&
+      drive_integration_service->GetMountPointPath().IsParent(
+          destination_url_.path())) {
+    // Google Drive's cache is limited by the available space on the local disk
+    // as well as the cloud storage.
+    destination_dirs.push_back(file_manager::util::GetMyFilesFolderForProfile(
+        chrome_details_.GetProfile()));
   }
+  destination_dirs.push_back(destination_url_.path().DirName());
 
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock()},
-      base::BindOnce(&GetLocalDiskSpace, destination_dir),
+      base::BindOnce(&GetLocalDiskSpaces, std::move(destination_dirs)),
       base::BindOnce(
           &FileManagerPrivateInternalStartCopyFunction::RunAfterCheckDiskSpace,
           this, file_info.size));
@@ -774,40 +846,51 @@ void FileManagerPrivateInternalStartCopyFunction::RunAfterGetFileMetadata(
 
 void FileManagerPrivateInternalStartCopyFunction::RunAfterCheckDiskSpace(
     int64_t space_needed,
-    int64_t space_available) {
-  if (space_available < 0) {
+    const std::vector<int64_t>& spaces_available) {
+  auto* drive_integration_service =
+      drive::util::GetIntegrationServiceByProfile(chrome_details_.GetProfile());
+  if (spaces_available.empty()) {
     // It might be a virtual path. In this case we just assume that it has
     // enough space.
     RunAfterFreeDiskSpace(true);
-  } else if (destination_url_.filesystem_id() ==
-                 file_manager::util::GetDownloadsMountPointName(
-                     chrome_details_.GetProfile()) ||
-             destination_url_.filesystem_id() ==
-                 drive::util::GetDriveMountPointPath(
-                     chrome_details_.GetProfile())
-                     .BaseName()
-                     .value()) {
-    // If the destination directory is local hard drive or Google Drive we
-    // must leave some additional space to make sure we don't break the system.
-    if (space_available - cryptohome::kMinFreeSpaceInBytes > space_needed) {
-      RunAfterFreeDiskSpace(true);
-    } else {
-      // Also we can try to secure needed space by freeing Drive caches.
-      drive::FileSystemInterface* const drive_file_system =
-          drive::util::GetFileSystemByProfile(chrome_details_.GetProfile());
-      if (!drive_file_system) {
-        RunAfterFreeDiskSpace(false);
-      } else {
-        drive_file_system->FreeDiskSpaceIfNeededFor(
-            space_needed,
-            base::Bind(&FileManagerPrivateInternalStartCopyFunction::
-                           RunAfterFreeDiskSpace,
-                       this));
-      }
-    }
-  } else {
-    RunAfterFreeDiskSpace(space_available > space_needed);
+    return;
   }
+  // If the target is not internal storage or Drive, succeed if sufficient space
+  // is available.
+  if (destination_url_.filesystem_id() !=
+          file_manager::util::GetDownloadsMountPointName(
+              chrome_details_.GetProfile()) &&
+      !(drive_integration_service &&
+        drive_integration_service->GetMountPointPath().IsParent(
+            destination_url_.path()))) {
+    RunAfterFreeDiskSpace(spaces_available[0] > space_needed);
+    return;
+  }
+
+  // If there isn't enough cloud space, fail.
+  if (spaces_available.size() > 1 && spaces_available[1] < space_needed) {
+    RunAfterFreeDiskSpace(false);
+    return;
+  }
+
+  // If the destination directory is local hard drive or Google Drive we
+  // must leave some additional space to make sure we don't break the system.
+  if (spaces_available[0] - cryptohome::kMinFreeSpaceInBytes > space_needed) {
+    RunAfterFreeDiskSpace(true);
+    return;
+  }
+  // Also we can try to secure needed space by freeing Drive caches.
+  drive::FileSystemInterface* const drive_file_system =
+      drive::util::GetFileSystemByProfile(chrome_details_.GetProfile());
+  if (!drive_file_system) {
+    RunAfterFreeDiskSpace(false);
+    return;
+  }
+  drive_file_system->FreeDiskSpaceIfNeededFor(
+      space_needed,
+      base::Bind(
+          &FileManagerPrivateInternalStartCopyFunction::RunAfterFreeDiskSpace,
+          this));
 }
 
 void FileManagerPrivateInternalStartCopyFunction::RunAfterFreeDiskSpace(
@@ -1103,6 +1186,69 @@ void FileManagerPrivateSearchFilesByHashesFunction::OnSearchByHashes(
             chrome_details_.GetProfile(), hashAndPath.path, extension_id())
             .spec());
   }
+  Respond(OneArgument(std::move(result)));
+}
+
+FileManagerPrivateSearchFilesFunction::FileManagerPrivateSearchFilesFunction()
+    : chrome_details_(this) {}
+
+ExtensionFunction::ResponseAction FileManagerPrivateSearchFilesFunction::Run() {
+  using api::file_manager_private::SearchFiles::Params;
+  const std::unique_ptr<Params> params(Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  if (params->search_params.max_results < 0) {
+    return RespondNow(Error("maxResults must be non-negative"));
+  }
+
+  base::FilePath root = file_manager::util::GetMyFilesFolderForProfile(
+      chrome_details_.GetProfile());
+
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&SearchByPattern, root, params->search_params.query,
+                     base::internal::checked_cast<size_t>(
+                         params->search_params.max_results)),
+      base::BindOnce(&FileManagerPrivateSearchFilesFunction::OnSearchByPattern,
+                     this));
+
+  return RespondLater();
+}
+
+void FileManagerPrivateSearchFilesFunction::OnSearchByPattern(
+    const std::vector<std::pair<base::FilePath, bool>>& results) {
+  auto my_files_path = file_manager::util::GetMyFilesFolderForProfile(
+      chrome_details_.GetProfile());
+
+  GURL url;
+  base::FilePath my_files_virtual_path;
+  if (!file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+          chrome_details_.GetProfile(), my_files_path, extension_id(), &url) ||
+      !storage::ExternalMountPoints::GetSystemInstance()->GetVirtualPath(
+          my_files_path, &my_files_virtual_path)) {
+    Respond(Error("My files is not mounted"));
+    return;
+  }
+  const std::string fs_name = my_files_virtual_path.value();
+  const auto fs_root = base::StrCat({url.spec(), "/"});
+
+  auto entries = std::make_unique<base::ListValue>();
+  entries->GetList().reserve(results.size());
+  for (const auto& result : results) {
+    base::FilePath fs_path("/");
+    if (!my_files_path.AppendRelativePath(result.first, &fs_path)) {
+      continue;
+    }
+    base::DictionaryValue entry;
+    entry.SetKey("fileSystemName", base::Value(fs_name));
+    entry.SetKey("fileSystemRoot", base::Value(fs_root));
+    entry.SetKey("fileFullPath", base::Value(fs_path.AsUTF8Unsafe()));
+    entry.SetKey("fileIsDirectory", base::Value(result.second));
+    entries->GetList().emplace_back(std::move(entry));
+  }
+
+  auto result = std::make_unique<base::DictionaryValue>();
+  result->SetKey("entries", std::move(*entries));
   Respond(OneArgument(std::move(result)));
 }
 

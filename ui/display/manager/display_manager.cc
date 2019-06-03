@@ -1343,7 +1343,6 @@ bool DisplayManager::ShouldSetMirrorModeOn(const DisplayIdList& new_id_list) {
         return true;
       }
     }
-    return false;
   }
   // Mirror mode should remain unchanged as long as there are more than one
   // connected displays.
@@ -2098,13 +2097,7 @@ Display DisplayManager::CreateDisplayFromDisplayInfoById(int64_t id) {
   new_display.set_rotation(display_info.GetActiveRotation());
   new_display.set_touch_support(display_info.touch_support());
   new_display.set_maximum_cursor_size(display_info.maximum_cursor_size());
-#if defined(OS_CHROMEOS)
-  // TODO(mcasas): remove this check, http://crbug.com/771345.
-  if (base::FeatureList::IsEnabled(features::kUseMonitorColorSpace))
-    new_display.set_color_space(display_info.color_space());
-#else
-  new_display.set_color_space(display_info.color_space());
-#endif
+  new_display.SetColorSpaceAndDepth(display_info.color_space());
 
   if (internal_display_has_accelerometer_ && Display::IsInternalDisplayId(id)) {
     new_display.set_accelerometer_support(
@@ -2163,7 +2156,7 @@ void DisplayManager::UpdateNonPrimaryDisplayBoundsForLayout(
 void DisplayManager::CreateMirrorWindowIfAny() {
   if (software_mirroring_display_list_.empty() || !delegate_) {
     if (!created_mirror_window_.is_null())
-      base::ResetAndReturn(&created_mirror_window_).Run();
+      std::move(created_mirror_window_).Run();
     return;
   }
   DisplayInfoList list;
@@ -2171,7 +2164,7 @@ void DisplayManager::CreateMirrorWindowIfAny() {
     list.push_back(GetDisplayInfo(display.id()));
   delegate_->CreateOrUpdateMirroringDisplay(list);
   if (!created_mirror_window_.is_null())
-    base::ResetAndReturn(&created_mirror_window_).Run();
+    std::move(created_mirror_window_).Run();
 }
 
 void DisplayManager::ApplyDisplayLayout(DisplayLayout* layout,
@@ -2229,6 +2222,13 @@ const Display& DisplayManager::GetSecondaryDisplay() const {
 
 void DisplayManager::UpdateInfoForRestoringMirrorMode() {
   if (num_connected_displays_ <= 1)
+    return;
+
+  // The display prefs have just been loaded and we're waiting for the
+  // reconfiguration of the displays to apply the newly loaded prefs. We should
+  // not overwrite the newly-loaded external display mirror configs.
+  // https://crbug.com/936884.
+  if (should_restore_mirror_mode_from_display_prefs_)
     return;
 
   // External displays mirrored because of forced tablet mode mirroring should

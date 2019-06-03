@@ -16,9 +16,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -39,6 +36,12 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/base/webui/web_ui_util.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window.h"
+#endif
 
 static const char kTargetsDataFile[] = "targets-data.json";
 
@@ -132,12 +135,15 @@ std::unique_ptr<base::DictionaryValue> BuildTargetDescriptor(Browser* browser) {
 }
 #endif  // !defined(OS_ANDROID)
 
-bool HandleAccessibilityRequestCallback(
+bool ShouldHandleAccessibilityRequestCallback(const std::string& path) {
+  return path == kTargetsDataFile;
+}
+
+void HandleAccessibilityRequestCallback(
     content::BrowserContext* current_context,
     const std::string& path,
     const content::WebUIDataSource::GotDataCallback& callback) {
-  if (path != kTargetsDataFile)
-    return false;
+  DCHECK(ShouldHandleAccessibilityRequestCallback(path));
 
   base::DictionaryValue data;
   PrefService* pref = Profile::FromBrowserContext(current_context)->GetPrefs();
@@ -224,7 +230,6 @@ bool HandleAccessibilityRequestCallback(
   base::JSONWriter::Write(data, &json_string);
 
   callback.Run(base::RefCountedString::TakeString(&json_string));
-  return true;
 }
 
 std::string RecursiveDumpAXPlatformNodeAsString(ui::AXPlatformNode* node,
@@ -256,11 +261,9 @@ AccessibilityUI::AccessibilityUI(content::WebUI* web_ui)
   html_source->AddResourcePath("accessibility.js", IDR_ACCESSIBILITY_JS);
   html_source->SetDefaultResource(IDR_ACCESSIBILITY_HTML);
   html_source->SetRequestFilter(
+      base::BindRepeating(&ShouldHandleAccessibilityRequestCallback),
       base::Bind(&HandleAccessibilityRequestCallback,
                  web_ui->GetWebContents()->GetBrowserContext()));
-
-  html_source->UseGzip(base::BindRepeating(
-      [](const std::string& path) { return path != kTargetsDataFile; }));
 
   content::BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();

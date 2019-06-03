@@ -73,7 +73,6 @@
 #include "third_party/blink/renderer/modules/accessibility/ax_list.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_list_box.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_list_box_option.h"
-#include "third_party/blink/renderer/modules/accessibility/ax_media_controls.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_media_element.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_option.h"
@@ -366,14 +365,6 @@ AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
   if (node && node->IsMediaElement())
     return AccessibilityMediaElement::Create(layout_object, *this);
 
-  // media controls
-  // TODO(836549): Remove for the rest of the controls.
-  if (node && node->IsMediaControlElement() &&
-      MediaControlElementsHelper::GetMediaControlElementType(node) !=
-          kMediaIgnore) {
-    return AccessibilityMediaControl::Create(layout_object, *this);
-  }
-
   if (IsHTMLOptionElement(node))
     return MakeGarbageCollected<AXListBoxOption>(layout_object, *this);
 
@@ -455,7 +446,7 @@ AXObject* AXObjectCacheImpl::GetOrCreate(Node* node) {
   if (node->GetLayoutObject() && !IsHTMLAreaElement(node))
     return GetOrCreate(node->GetLayoutObject());
 
-  if (!node->parentElement())
+  if (!LayoutTreeBuilderTraversal::Parent(*node))
     return nullptr;
 
   if (IsHTMLHeadElement(node))
@@ -499,8 +490,12 @@ AXObject* AXObjectCacheImpl::GetOrCreate(LayoutObject* layout_object) {
   layout_object_mapping_.Set(layout_object, axid);
   new_obj->Init();
   new_obj->SetLastKnownIsIgnoredValue(new_obj->AccessibilityIsIgnored());
-  if (node) {
-    node_object_mapping_.Set(node, axid);
+  if (node && node->GetLayoutObject() == layout_object) {
+    AXID prev_axid = node_object_mapping_.at(node);
+    if (prev_axid != 0 && prev_axid != axid) {
+      Remove(node);
+      node_object_mapping_.Set(node, axid);
+    }
     MaybeNewRelationTarget(node, new_obj);
   }
 
@@ -763,6 +758,10 @@ void AXObjectCacheImpl::SelectionChangedWithCleanLayout(Node* node) {
   if (!node)
     return;
 
+  // Something about the call chain for this method seems to leave distribution
+  // in a dirty state - update it before we call GetOrCreate so that we don't
+  // crash.
+  node->UpdateDistributionForFlatTreeTraversal();
   AXObject* ax_object = GetOrCreate(node);
   if (ax_object)
     ax_object->SelectionChanged();
@@ -942,20 +941,21 @@ void AXObjectCacheImpl::ProcessUpdatesAfterLayout(Document& document) {
 }
 
 void AXObjectCacheImpl::PostNotificationsAfterLayout(Document* document) {
-  NotificationVector old_notifications_to_post;
+  std::vector<AXEventParams> old_notifications_to_post;
   notifications_to_post_.swap(old_notifications_to_post);
-  for (auto& pair : old_notifications_to_post) {
-    AXObject* obj = pair.first;
+  for (auto& params : old_notifications_to_post) {
+    AXObject* obj = params.target;
 
-    if (!obj->AXObjectID())
+    if (!obj || !obj->AXObjectID())
       continue;
 
     if (obj->IsDetached())
       continue;
 
-    ax::mojom::Event notification = pair.second;
+    ax::mojom::Event event_type = params.event_type;
+    ax::mojom::EventFrom event_from = params.event_from;
     if (obj->GetDocument() != document) {
-      notifications_to_post_.push_back(std::make_pair(obj, notification));
+      notifications_to_post_.push_back({obj, event_type, event_from});
       continue;
     }
 
@@ -970,12 +970,12 @@ void AXObjectCacheImpl::PostNotificationsAfterLayout(Document* document) {
     }
 #endif
 
-    PostPlatformNotification(obj, notification);
+    PostPlatformNotification(obj, event_type, event_from);
 
-    if (notification == ax::mojom::Event::kChildrenChanged &&
-        obj->ParentObjectIfExists() &&
+    if (event_type == ax::mojom::Event::kChildrenChanged &&
+        obj->CachedParentObject() &&
         obj->LastKnownIsIgnoredValue() != obj->AccessibilityIsIgnored())
-      ChildrenChanged(obj->ParentObject());
+      ChildrenChanged(obj->CachedParentObject());
   }
 }
 
@@ -999,7 +999,7 @@ void AXObjectCacheImpl::PostNotification(AXObject* object,
     return;
 
   modification_count_++;
-  notifications_to_post_.push_back(std::make_pair(object, notification));
+  notifications_to_post_.push_back({object, notification, ComputeEventFrom()});
 }
 
 bool AXObjectCacheImpl::IsAriaOwned(const AXObject* object) const {
@@ -1161,8 +1161,12 @@ void AXObjectCacheImpl::HandleRoleChangeWithCleanLayout(Node* node) {
 
   DCHECK(!node->GetDocument().NeedsLayoutTreeUpdateForNode(*node));
 
+  AXObject* obj = Get(node);
+  if (!obj && IsHTMLSelectElement(node))
+    obj = GetOrCreate(node);
+
   // Invalidate the current object and make the parent reconsider its children.
-  if (AXObject* obj = Get(node)) {
+  if (obj) {
     // Save parent for later use.
     AXObject* parent = obj->ParentObject();
 
@@ -1472,7 +1476,8 @@ bool IsNodeAriaVisible(Node* node) {
 
 void AXObjectCacheImpl::PostPlatformNotification(
     AXObject* obj,
-    ax::mojom::Event notification) {
+    ax::mojom::Event notification,
+    ax::mojom::EventFrom event_from) {
   if (!document_ || !document_->View() ||
       !document_->View()->GetFrame().GetPage())
     return;
@@ -1480,7 +1485,8 @@ void AXObjectCacheImpl::PostPlatformNotification(
   WebLocalFrameImpl* webframe =
       WebLocalFrameImpl::FromFrame(document_->AXObjectCacheOwner().GetFrame());
   if (webframe && webframe->Client()) {
-    webframe->Client()->PostAccessibilityEvent(WebAXObject(obj), notification);
+    webframe->Client()->PostAccessibilityEvent(WebAXObject(obj), notification,
+                                               event_from);
   }
 }
 
@@ -1501,14 +1507,15 @@ void AXObjectCacheImpl::MarkElementDirty(const Element* element, bool subtree) {
   MarkAXObjectDirty(Get(element), subtree);
 }
 
-void AXObjectCacheImpl::HandleFocusedUIElementChanged(Node* old_focused_node,
-                                                      Node* new_focused_node) {
+void AXObjectCacheImpl::HandleFocusedUIElementChanged(
+    Element* old_focused_element,
+    Element* new_focused_element) {
   RemoveValidationMessageObject();
 
-  if (!new_focused_node)
+  if (!new_focused_element)
     return;
 
-  Page* page = new_focused_node->GetDocument().GetPage();
+  Page* page = new_focused_element->GetDocument().GetPage();
   if (!page)
     return;
 
@@ -1516,7 +1523,7 @@ void AXObjectCacheImpl::HandleFocusedUIElementChanged(Node* old_focused_node,
   if (!focused_object)
     return;
 
-  AXObject* old_focused_object = Get(old_focused_node);
+  AXObject* old_focused_object = Get(old_focused_element);
   PostNotification(old_focused_object, ax::mojom::Event::kBlur);
   PostNotification(focused_object, ax::mojom::Event::kFocus);
 }
@@ -1752,9 +1759,21 @@ void AXObjectCacheImpl::Trace(blink::Visitor* visitor) {
   visitor->Trace(node_object_mapping_);
 
   visitor->Trace(objects_);
-  visitor->Trace(notifications_to_post_);
   visitor->Trace(documents_);
   AXObjectCache::Trace(visitor);
+}
+
+ax::mojom::EventFrom AXObjectCacheImpl::ComputeEventFrom() {
+  if (is_handling_action_)
+    return ax::mojom::EventFrom::kAction;
+
+  if (document_ && document_->View() &&
+      LocalFrame::HasTransientUserActivation(
+          &(document_->View()->GetFrame()))) {
+    return ax::mojom::EventFrom::kUser;
+  }
+
+  return ax::mojom::EventFrom::kPage;
 }
 
 }  // namespace blink

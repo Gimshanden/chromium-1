@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 
@@ -112,9 +112,6 @@ AutofillProfile GetIncompleteProfile2();
 // Returns a verified profile full of dummy info.
 AutofillProfile GetVerifiedProfile();
 
-// Returns a verified profile full of dummy info, different to the above.
-AutofillProfile GetVerifiedProfile2();
-
 // Returns a server profile full of dummy info.
 AutofillProfile GetServerProfile();
 
@@ -126,12 +123,6 @@ CreditCard GetCreditCard();
 
 // Returns a credit card full of dummy info, different to the above.
 CreditCard GetCreditCard2();
-
-// Returns a verified credit card full of dummy info.
-CreditCard GetVerifiedCreditCard();
-
-// Returns a verified credit card full of dummy info, different to the above.
-CreditCard GetVerifiedCreditCard2();
 
 // Returns a masked server card full of dummy info.
 CreditCard GetMaskedServerCard();

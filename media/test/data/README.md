@@ -750,26 +750,16 @@ The frame sizes change between 1080p and 720p every 24 frames.
 
 ### VEA test files:
 
-#### bear_128x96_40frames.yuv
-First 40 raw i420 frames of bear-1280x720.mp4 scaled down to 128x96 for
-video_encode_accelerator_unittest. This is the size that could be encoded
-with the lowest H264 level 1.0 in 30 fps.
-
-#### bear_320x192_40frames.yuv
+#### bear_320x192_40frames.yuv.webm
 First 40 raw i420 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
+video_encode_accelerator_unittest. Encoded with vp9 lossless:
+`ffmpeg -pix_fmt yuv420p -s:v 320x192 -r 30 -i bear_320x192_40frames.yuv -lossless 1 bear_320x192_40frames.yuv.webm`
 
-#### bear_320x192_40frames.nv12.yuv
-First 40 raw nv12 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
+#### bear_640x384_40frames.yuv.webm
+First 40 raw i420 frames of bear-1280x720.mp4 scaled down to 340x384 for
+video_encode_accelerator_unittest. Encoded with vp9 lossless:
+`ffmpeg -pix_fmt yuv420p -s:v 640x384 -r 30 -i bear_640x384_40frames.yuv -lossless 1 bear_640x384_40frames.yuv.webm`
 
-#### bear_320x192_40frames.nv21.yuv
-First 40 raw nv21 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
-
-#### bear_320x192_40frames.yv12.yuv
-First 40 raw yv12 frames of bear-1280x720.mp4 scaled down to 320x192 for
-video_encode_accelerator_unittest.
 
 ### ImageProcessor Test Files
 
@@ -787,6 +777,16 @@ Metadata describing bear\_320x192.nv12.yuv.
 
 #### bear\_320x192.yv12.yuv
 First frame of bear\_320x192\_40frames.yv12.yuv for image\_processor_test.
+
+#### bear\_320x192.rgba
+RAW RGBA format data. This data is created from bear\_320x192.i420.yuv by the
+following command. Alpha channel is always 0xFF because of that.
+`ffmpeg -s 320x192 -pix_fmt yuv420p -i bear_320x192.i420.yuv -vcodec rawvideo -f image2 -pix_fmt rgba bear_320x192.rgba`
+
+#### bear\_320x192.bgra
+RAW BGRA format data. This data is created from bear\_320x192.i420.yuv by the
+following command. Alpha channel is always 0xFF because of that.
+`ffmpeg -s 320x192 -pix_fmt yuv420p -i bear_320x192.i420.yuv -vcodec rawvideo -f image2 -pix_fmt rgba bear_320x192.bgra`
 
 ###  VP9 parser test files:
 
@@ -817,11 +817,29 @@ ffmpeg -i green.webm -i a300hz.webm -map 0 -map 1 green-a300hz.webm
 ffmpeg -i red.webm -i a500hz.webm -map 0 -map 1 red-a500hz.webm
 ```
 
+### WebP Test Files
+
+#### bouncy_ball.webp
+An animated (extended) WebP encoded image of 450x450. Created by gildekel@ using Gimp.
+
+#### red_green_gradient_lossy.webp
+A lossy WebP encoded image of 3000x3000. Created by gildekel@ using Gimp.
+
+#### yellow_pink_gradient_lossless.webp
+A lossless WebP encoded image of 3000x3000. Created by gildekel@ using Gimp.
+
 ### JPEG Test Files
 
 #### pixel-1280x720.jpg
-Single MJEPG encoded frame of 1280x720, captured on Chromebook Pixel. This image
+Single MJPEG encoded frame of 1280x720, captured on Chromebook Pixel. This image
 does not have Huffman table.
+
+#### pixel-1280x720-trailing-zeros.jpg
+A version of pixel-1280x720.jpg with five trailing zero bytes after the EOI
+marker. The command used to generated it was:
+```
+echo -e "`xxd -g1 -p -c1 pixel-1280x720.jpg`" "\n00\n00\n00\n00\n00" | xxd -r -g1 -p -c1 > pixel-1280x720-trailing-zeros.jpg
+```
 
 #### pixel-1280x720-grayscale.jpg
 A version of pixel-1280x720.jpg converted to grayscale using:
@@ -907,6 +925,25 @@ HEVC video stream in fragmented MP4 container, generated with
 ```
 ffmpeg -i bear-320x240.webm -c:v libx265 -an -movflags faststart+frag_keyframe bear-320x240-v_frag-hevc.mp4
 ```
+
+#### bear-320x240-v-2frames_frag-hevc.mp4
+HEVC video stream in fragmented MP4 container, including the first 2 frames, generated with
+```
+ffmpeg -i bear-320x240.webm -c:v libx265 -an -movflags frag_keyframe+empty_moov+default_base_moof \
+    -vframes 2  bear-320x240-v-2frames_frag-hevc.mp4
+```
+
+#### bear-320x240-v-2frames-keyframe-is-non-sync-sample_frag-hevc.mp4
+This is bear-320x240-v-2frames_frag-hevc.mp4, with manually updated
+trun.first_sample_flags: s/0x02000000/0x01010000 (first frame is
+non-sync-sample, depends on another frame, mismatches compressed h265 first
+frame's keyframe-ness).
+
+#### bear-320x240-v-2frames-nonkeyframe-is-sync-sample_frag-hevc.mp4
+This is bear-320x240-v-2frames_frag-hevc.mp4, with manually updated
+tfhd.default_sample_flags: s/0x01010000/0x02000000 (second frame is sync-sample,
+doesn't depend on other frames, mismatches compressed h265 second frame's
+nonkeyframe-ness).
 
 ### Multi-track MP4 file
 

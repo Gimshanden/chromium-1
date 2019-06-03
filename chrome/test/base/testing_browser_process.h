@@ -69,7 +69,6 @@ class TestingBrowserProcess : public BrowserProcess {
   static TestingBrowserProcess* GetGlobal();
 
   // BrowserProcess overrides:
-  void ResourceDispatcherHostCreated() override;
   void EndSession() override;
   void FlushLocalStateAndReply(base::OnceClosure reply) override;
   metrics_services_manager::MetricsServicesManager* GetMetricsServicesManager()
@@ -118,6 +117,7 @@ class TestingBrowserProcess : public BrowserProcess {
   void SetApplicationLocale(const std::string& actual_locale) override;
   DownloadStatusUpdater* download_status_updater() override;
   DownloadRequestLimiter* download_request_limiter() override;
+  StartupData* startup_data() override;
 
 #if (defined(OS_WIN) || defined(OS_LINUX)) && !defined(OS_CHROMEOS)
   void StartAutoupdateTimer() override {}

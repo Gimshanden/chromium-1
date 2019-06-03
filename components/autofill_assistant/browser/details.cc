@@ -10,7 +10,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/country_names.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -132,6 +132,10 @@ base::Value Details::GetDebugContext() const {
   if (!detailsProto().total_price().empty())
     dict.SetKey("total_price", base::Value(detailsProto().total_price()));
 
+  if (!detailsProto().total_price_label().empty())
+    dict.SetKey("total_price_label",
+                base::Value(detailsProto().total_price_label()));
+
   if (!detailsProto().description_line_1().empty())
     dict.SetKey("description_line_1",
                 base::Value(detailsProto().description_line_1()));
@@ -139,6 +143,10 @@ base::Value Details::GetDebugContext() const {
   if (!detailsProto().description_line_2().empty())
     dict.SetKey("description_line_2",
                 base::Value(detailsProto().description_line_2()));
+
+  if (!detailsProto().description_line_3().empty())
+    dict.SetKey("description_line_3",
+                base::Value(detailsProto().description_line_3()));
 
   if (detailsProto().has_datetime()) {
     dict.SetKey("datetime",
@@ -159,6 +167,8 @@ base::Value Details::GetDebugContext() const {
   dict.SetKey("highlight_title", base::Value(changes().highlight_title()));
   dict.SetKey("highlight_line1", base::Value(changes().highlight_line1()));
   dict.SetKey("highlight_line2", base::Value(changes().highlight_line2()));
+  dict.SetKey("highlight_line3", base::Value(changes().highlight_line3()));
+  dict.SetKey("highlight_line3", base::Value(changes().highlight_line3()));
 
   return dict;
 }
@@ -228,8 +238,22 @@ bool Details::MaybeUpdateFromDetailsParameters(
       continue;
     }
 
+    if (key == "DETAILS_DESCRIPTION_LINE_3") {
+      proto_.set_description_line_3(iter.second);
+      details_updated = true;
+      continue;
+    }
+
     if (key == "DETAILS_IMAGE_URL") {
       proto_.set_image_url(iter.second);
+      details_updated = true;
+      continue;
+    }
+
+    if (key == "DETAILS_IMAGE_CLICKTHROUGH_URL") {
+      proto_.mutable_image_clickthrough_data()->set_allow_clickthrough(true);
+      proto_.mutable_image_clickthrough_data()->set_clickthrough_url(
+          iter.second);
       details_updated = true;
       continue;
     }

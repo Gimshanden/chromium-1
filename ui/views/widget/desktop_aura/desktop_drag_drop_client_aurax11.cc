@@ -267,11 +267,11 @@ class DesktopDragDropClientAuraX11::X11DragContext
   DesktopDragDropClientAuraX11* source_client_;
 
   // The client we inform once we're done with requesting data.
-  DesktopDragDropClientAuraX11* drag_drop_client_;
+  DesktopDragDropClientAuraX11* drag_drop_client_ = nullptr;
 
   // Whether we're blocking the handling of an XdndPosition message by waiting
   // for |unfetched_targets_| to be fetched.
-  bool waiting_to_handle_position_;
+  bool waiting_to_handle_position_ = false;
 
   // Where the cursor is on screen.
   gfx::Point screen_point_;
@@ -290,7 +290,7 @@ class DesktopDragDropClientAuraX11::X11DragContext
 
   // XdndPosition messages have a suggested action. Qt applications exclusively
   // use this, instead of the XdndActionList which is backed by |actions_|.
-  ::Atom suggested_action_;
+  ::Atom suggested_action_ = x11::None;
 
   // Possible actions.
   std::vector<::Atom> actions_;
@@ -304,10 +304,7 @@ DesktopDragDropClientAuraX11::X11DragContext::X11DragContext(
     : local_window_(local_window),
       source_window_(event.data.l[0]),
       source_client_(
-          DesktopDragDropClientAuraX11::GetForWindow(source_window_)),
-      drag_drop_client_(nullptr),
-      waiting_to_handle_position_(false),
-      suggested_action_(x11::None) {
+          DesktopDragDropClientAuraX11::GetForWindow(source_window_)) {
   if (!source_client_) {
     bool get_types_from_property = ((event.data.l[1] & 1) != 0);
 
@@ -318,18 +315,16 @@ DesktopDragDropClientAuraX11::X11DragContext::X11DragContext(
       }
     } else {
       // data.l[2,3,4] contain the first three types. Unused slots can be None.
-      for (int i = 0; i < 3; ++i) {
-        if (event.data.l[2 + i] != x11::None) {
-          unfetched_targets_.push_back(event.data.l[2 + i]);
-        }
+      for (size_t i = 2; i < 5; ++i) {
+        if (event.data.l[i] != x11::None)
+          unfetched_targets_.push_back(event.data.l[i]);
       }
     }
 
 #if DCHECK_IS_ON()
     DVLOG(1) << "XdndEnter has " << unfetched_targets_.size() << " data types";
-    for (::Atom target : unfetched_targets_) {
+    for (::Atom target : unfetched_targets_)
       DVLOG(1) << "XdndEnter data type: " << target;
-    }
 #endif  // DCHECK_IS_ON()
 
     // The window doesn't have a DesktopDragDropClientAuraX11, that means it's
@@ -451,9 +446,8 @@ void DesktopDragDropClientAuraX11::X11DragContext::ReadActions() {
 
 int DesktopDragDropClientAuraX11::X11DragContext::GetDragOperation() const {
   int drag_operation = ui::DragDropTypes::DRAG_NONE;
-  for (auto it = actions_.begin(); it != actions_.end(); ++it) {
-    MaskOperation(*it, &drag_operation);
-  }
+  for (const auto& action : actions_)
+    MaskOperation(action, &drag_operation);
 
   MaskOperation(suggested_action_, &drag_operation);
 
@@ -496,17 +490,7 @@ DesktopDragDropClientAuraX11::DesktopDragDropClientAuraX11(
     : root_window_(root_window),
       cursor_manager_(cursor_manager),
       xdisplay_(xdisplay),
-      xwindow_(xwindow),
-      current_modifier_state_(ui::EF_NONE),
-      target_window_(nullptr),
-      waiting_on_status_(false),
-      status_received_since_enter_(false),
-      source_provider_(nullptr),
-      source_current_window_(x11::None),
-      source_state_(SOURCE_STATE_OTHER),
-      drag_operation_(0),
-      negotiated_operation_(ui::DragDropTypes::DRAG_NONE),
-      weak_ptr_factory_(this) {
+      xwindow_(xwindow) {
   // Some tests change the DesktopDragDropClientAuraX11 associated with an
   // |xwindow|.
   g_live_client_map.Get()[xwindow] = this;

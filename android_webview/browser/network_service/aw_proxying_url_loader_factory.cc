@@ -18,6 +18,7 @@
 #include "android_webview/common/url_constants.h"
 #include "base/android/build_info.h"
 #include "base/bind.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "components/safe_browsing/common/safebrowsing_constants.h"
@@ -26,6 +27,7 @@
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_constants.h"
 #include "content/public/common/url_utils.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_util.h"
@@ -35,7 +37,6 @@ namespace android_webview {
 namespace {
 
 const char kAutoLoginHeaderName[] = "X-Auto-Login";
-const char kRequestedWithHeaderName[] = "X-Requested-With";
 
 // Handles intercepted, in-progress requests/responses, so that they can be
 // controlled and modified accordingly.
@@ -64,7 +65,7 @@ class InterceptedRequest : public network::mojom::URLLoader,
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback callback) override;
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle body) override;
@@ -133,6 +134,7 @@ class InterceptedRequest : public network::mojom::URLLoader,
   int error_status_ = net::OK;
 
   network::ResourceRequest request_;
+
   const net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
 
   mojo::Binding<network::mojom::URLLoader> proxied_loader_binding_;
@@ -283,7 +285,11 @@ InterceptedRequest::~InterceptedRequest() {
 void InterceptedRequest::Restart() {
   std::unique_ptr<AwContentsIoThreadClient> io_thread_client =
       GetIoThreadClient();
-  DCHECK(io_thread_client);
+
+  if (!io_thread_client) {
+    SendErrorAndCompleteImmediately(net::ERR_ABORTED);
+    return;
+  }
 
   if (ShouldBlockURL(request_.url, io_thread_client.get())) {
     SendErrorAndCompleteImmediately(net::ERR_ACCESS_DENIED);
@@ -326,18 +332,18 @@ bool InterceptedRequest::ShouldNotInterceptRequest() {
           android_webview::IsAndroidSpecialFileUrl(request_.url));
 }
 
-void SetRequestedWithHeader(net::HttpRequestHeaders& headers) {
-  // We send the application's package name in the X-Requested-With header for
-  // compatibility with previous WebView versions. This should not be visible to
-  // shouldInterceptRequest.
-  headers.SetHeaderIfMissing(
-      kRequestedWithHeaderName,
-      base::android::BuildInfo::GetInstance()->host_package_name());
-}
-
 void InterceptedRequest::InterceptResponseReceived(
     std::unique_ptr<AwWebResourceResponse> response) {
-  SetRequestedWithHeader(request_.headers);
+  // We send the application's package name in the X-Requested-With header for
+  // compatibility with previous WebView versions. This should not be visible to
+  // shouldInterceptRequest. It should also not trigger CORS prefetch if
+  // OOR-CORS is enabled.
+  if (!request_.headers.HasHeader(
+          content::kCorsExemptRequestedWithHeaderName)) {
+    request_.cors_exempt_headers.SetHeader(
+        content::kCorsExemptRequestedWithHeaderName,
+        base::android::BuildInfo::GetInstance()->host_package_name());
+  }
 
   if (response) {
     // non-null response: make sure to use it as an override for the
@@ -496,7 +502,8 @@ void InterceptedRequest::OnReceiveResponse(
                        std::move(error_info)));
   }
 
-  if (request_.resource_type == content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (request_.resource_type ==
+      static_cast<int>(content::ResourceType::kMainFrame)) {
     // Check for x-auto-login-header
     HeaderData header_data;
     std::string header_string;
@@ -521,7 +528,6 @@ void InterceptedRequest::OnReceiveRedirect(
     const net::RedirectInfo& redirect_info,
     const network::ResourceResponseHead& head) {
   // TODO(timvolodine): handle redirect override.
-  // TODO(timvolodine): handle unsafe redirect case.
   request_was_redirected_ = true;
   target_client_->OnReceiveRedirect(redirect_info, head);
   request_.url = redirect_info.new_url;
@@ -538,9 +544,8 @@ void InterceptedRequest::OnUploadProgress(int64_t current_position,
                                    std::move(callback));
 }
 
-void InterceptedRequest::OnReceiveCachedMetadata(
-    const std::vector<uint8_t>& data) {
-  target_client_->OnReceiveCachedMetadata(data);
+void InterceptedRequest::OnReceiveCachedMetadata(mojo_base::BigBuffer data) {
+  target_client_->OnReceiveCachedMetadata(std::move(data));
 }
 
 void InterceptedRequest::OnTransferSizeUpdated(int32_t transfer_size_diff) {
@@ -623,8 +628,17 @@ void InterceptedRequest::OnURLLoaderClientError() {
 
 void InterceptedRequest::OnURLLoaderError(uint32_t custom_reason,
                                           const std::string& description) {
-  if (custom_reason == network::mojom::URLLoader::kClientDisconnectReason)
-    SendErrorCallback(safe_browsing::GetNetErrorCodeForSafeBrowsing(), true);
+  if (custom_reason == network::mojom::URLLoader::kClientDisconnectReason) {
+    if (description == safe_browsing::kCustomCancelReasonForURLLoader) {
+      SendErrorCallback(safe_browsing::GetNetErrorCodeForSafeBrowsing(), true);
+    } else {
+      int parsed_error_code;
+      if (base::StringToInt(base::StringPiece(description),
+                            &parsed_error_code)) {
+        SendErrorCallback(parsed_error_code, false);
+      }
+    }
+  }
 
   // If CallOnComplete was already called, then this object is ready to be
   // deleted.

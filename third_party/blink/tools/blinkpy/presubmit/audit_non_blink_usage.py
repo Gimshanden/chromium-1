@@ -32,6 +32,8 @@ _CONFIG = [
             # //base constructs that are allowed everywhere
             'base::AdoptRef',
             'base::AutoReset',
+            'base::CreateSequencedTaskRunnerWithTraits',
+            'base::DefaultTickClock',
             'base::ElapsedTimer',
             'base::File',
             'base::FilePath',
@@ -44,25 +46,32 @@ _CONFIG = [
             'base::PlatformThreadId',
             'base::RefCountedData',
             'base::RunLoop',
-            'base::CreateSequencedTaskRunnerWithTraits',
             'base::ReadOnlySharedMemoryMapping',
             'base::ReadOnlySharedMemoryRegion',
+            'base::RepeatingTimer',
             'base::SequencedTaskRunner',
             'base::SingleThreadTaskRunner',
             'base::ScopedFD',
             'base::SupportsWeakPtr',
             'base::SysInfo',
             'base::ThreadChecker',
+            'base::TickClock',
             'base::Time',
             'base::TimeDelta',
             'base::TimeTicks',
             'base::ThreadTicks',
+            'base::trace_event::MemoryAllocatorDump',
+            'base::trace_event::MemoryDumpArgs',
+            'base::trace_event::MemoryDumpManager',
+            'base::trace_event::MemoryDumpProvider',
+            'base::trace_event::ProcessMemoryDump',
             'base::UnguessableToken',
             'base::UnguessableTokenHash',
             'base::UnsafeSharedMemoryRegion',
             'base::WeakPtr',
             'base::WeakPtrFactory',
             'base::WritableSharedMemoryMapping',
+            'base::as_bytes',
             'base::in_place',
             'base::make_optional',
             'base::make_span',
@@ -101,6 +110,9 @@ _CONFIG = [
 
             # //base/metrics/histogram_functions.h
             'base::UmaHistogram.+',
+
+            # //base/metrics/histogram.h
+            'base::LinearHistogram',
 
             # //base/metrics/field_trial_params.h.
             'base::GetFieldTrialParamValueByFeature',
@@ -176,6 +188,7 @@ _CONFIG = [
             'base::RandGenerator',
             'base::RandDouble',
             'base::RandBytes',
+            'base::RandBytesAsString',
 
             # Feature list checking.
             'base::Feature.*',
@@ -188,6 +201,13 @@ _CONFIG = [
 
             # For MessageLoop::TaskObserver.
             'base::PendingTask',
+
+            # Time
+            'base::Clock',
+            'base::DefaultClock',
+            'base::DefaultTickClock',
+            'base::TestMockTimeTaskRunner',
+            'base::TickClock',
 
             # cc painting types.
             'cc::PaintCanvas',
@@ -245,6 +265,9 @@ _CONFIG = [
             # Animation
             'cc::AnimationHost',
 
+            # UMA Enums
+            'cc::PaintHoldingCommitTrigger',
+
             # Scrolling
             'cc::MainThreadScrollingReason',
             'cc::ScrollSnapAlign',
@@ -261,6 +284,7 @@ _CONFIG = [
             'cc::SnapStrictness',
             'gfx::RectToSkRect',
             'gfx::ScrollOffset',
+            'ui::input_types::ScrollGranularity',
 
             # Standalone utility libraries that only depend on //base
             'skia::.+',
@@ -309,6 +333,7 @@ _CONFIG = [
             'testing::.+',  # googlemock / googletest
             'v8::.+',
             'v8_inspector::.+',
+            'inspector_protocol_encoding::.+',
 
             # Inspector instrumentation and protocol
             'probe::.+',
@@ -358,6 +383,11 @@ _CONFIG = [
             # Permit using crash keys inside Blink without jumping through
             # hoops.
             'crash_reporter::.*CrashKey.*',
+
+            # Useful for platform-specific code.
+            'base::mac::(CFToNSCast|NSToCFCast)',
+            'base::mac::Is(AtMost|AtLeast)?OS.+',
+            'base::(scoped_nsobject|ScopedCFTypeRef)',
         ],
         'disallowed': [
             '.+',
@@ -393,6 +423,12 @@ _CONFIG = [
         ],
     },
     {
+        'paths': ['third_party/blink/renderer/controller/user_level_memory_pressure_signal_generator.cc'],
+        'allowed': [
+            'base::MemoryPressureListener',
+        ],
+    },
+    {
         'paths': ['third_party/blink/renderer/core/animation'],
         'allowed': [
             '[a-z_]+_functions::.+',
@@ -417,8 +453,10 @@ _CONFIG = [
         ],
     },
     {
-        'paths': ['third_party/blink/renderer/core/editing/web_substring_util.mm'],
-        'allowed': ['base::mac::CFToNSCast'],
+        'paths': ['third_party/blink/renderer/core/editing/ime'],
+        'allowed': [
+            'ui::TextInputAction',
+        ],
     },
     {
         'paths': ['third_party/blink/renderer/core/fetch/data_consumer_handle_test_util.cc'],
@@ -493,6 +531,7 @@ _CONFIG = [
             'third_party/blink/renderer/modules/device_orientation/',
             'third_party/blink/renderer/modules/gamepad/',
             'third_party/blink/renderer/modules/sensor/',
+            'third_party/blink/renderer/modules/xr/',
         ],
         'allowed': [
             'base::subtle::Atomic32',
@@ -509,6 +548,7 @@ _CONFIG = [
         # The modules listed above need access to the following GL drawing and
         # display-related types.
         'allowed': [
+            'base::MRUCache',
             'gpu::gles2::GLES2Interface',
             'gpu::MailboxHolder',
             'display::Display',
@@ -516,10 +556,28 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/renderer/modules/imagecapture/',
+        ],
+        'allowed': [
+            'media::.+',
+            'libyuv::.+',
+        ]
+    },
+    {
+        'paths': [
             'third_party/blink/renderer/modules/media_capabilities/',
         ],
         'allowed': [
             'media::.+',
+        ]
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/mediacapturefromelement/',
+        ],
+        'allowed': [
+            'media::.+',
+            'libyuv::.+',
         ]
     },
     {
@@ -585,6 +643,7 @@ _CONFIG = [
         ],
         'allowed': [
             'cc::AnimationOptions',
+            'cc::AnimationEffectTimings',
         ],
     },
     {
@@ -648,20 +707,13 @@ _CONFIG = [
             'sigslot::.+',
         ],
     },
-    # TODO(https://crbug.com/704441) : Added temporarily.
-    {
-        'paths': ['third_party/blink/renderer/modules/exported/web_manifest_parser.cc'],
-        'allowed': [
-            'base::StringPiece',
-            'GURL',
-        ],
-    },
     {
         'paths': ['third_party/blink/renderer/modules/manifest/'],
         'allowed': [
+            # TODO(https://crbug.com/704441) : Added temporarily.
             'base::.+',
+
             'net::ParseMimeTypeWithoutParameter',
-            'GURL',
         ],
     }
 ]

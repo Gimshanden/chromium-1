@@ -199,6 +199,7 @@ class SpdyProxyClientSocketTest : public PlatformTest,
   ProxyServer proxy_;
   SpdySessionKey endpoint_spdy_session_key_;
   std::unique_ptr<CommonConnectJobParams> common_connect_job_params_;
+  SSLSocketDataProvider ssl_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyProxyClientSocketTest);
 };
@@ -215,7 +216,8 @@ SpdyProxyClientSocketTest::SpdyProxyClientSocketTest()
                                  proxy_,
                                  PRIVACY_MODE_DISABLED,
                                  SpdySessionKey::IsProxySession::kFalse,
-                                 SocketTag()) {
+                                 SocketTag()),
+      ssl_(SYNCHRONOUS, OK) {
   session_deps_.net_log = net_log_.bound().net_log();
 }
 
@@ -241,11 +243,10 @@ void SpdyProxyClientSocketTest::Initialize(base::span<const MockRead> reads,
   data_->set_connect_data(connect_data_);
   session_deps_.socket_factory->AddSocketDataProvider(data_.get());
 
-  SSLSocketDataProvider ssl(SYNCHRONOUS, OK);
-  ssl.ssl_info.cert =
+  ssl_.ssl_info.cert =
       ImportCertFromFile(GetTestCertsDirectory(), "spdy_pooling.pem");
-  ASSERT_TRUE(ssl.ssl_info.cert);
-  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl);
+  ASSERT_TRUE(ssl_.ssl_info.cert);
+  session_deps_.socket_factory->AddSSLSocketDataProvider(&ssl_);
 
   session_ = SpdySessionDependencies::SpdyCreateSession(&session_deps_);
   common_connect_job_params_ = std::make_unique<CommonConnectJobParams>(
@@ -536,7 +537,7 @@ TEST_P(SpdyProxyClientSocketTest, ConnectRedirects) {
   spdy::SpdySerializedFrame rst(
       spdy_util_.ConstructSpdyRstStream(1, spdy::ERROR_CODE_CANCEL));
   MockWrite writes[] = {
-      CreateMockWrite(conn, 0, SYNCHRONOUS), CreateMockWrite(rst, 3),
+      CreateMockWrite(conn, 0, SYNCHRONOUS),
   };
 
   spdy::SpdySerializedFrame resp(ConstructConnectRedirectReplyFrame());
@@ -546,15 +547,14 @@ TEST_P(SpdyProxyClientSocketTest, ConnectRedirects) {
 
   Initialize(reads, writes);
 
-  AssertConnectFails(ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT);
+  AssertConnectFails(ERR_TUNNEL_CONNECTION_FAILED);
 
   const HttpResponseInfo* response = sock_->GetConnectResponseInfo();
   ASSERT_TRUE(response != nullptr);
 
   const HttpResponseHeaders* headers = response->headers.get();
   ASSERT_EQ(302, headers->response_code());
-  ASSERT_FALSE(headers->HasHeader("set-cookie"));
-  ASSERT_TRUE(headers->HasHeaderValue("content-length", "0"));
+  ASSERT_TRUE(headers->HasHeader("set-cookie"));
 
   std::string location;
   ASSERT_TRUE(headers->IsRedirect(&location));

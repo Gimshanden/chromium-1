@@ -12,13 +12,10 @@ namespace aura {
 class Window;
 }
 
-class PrefService;
-
 namespace ash {
 
 class ASH_EXPORT ShellObserver {
  public:
-
   // Called when a casting session is started or stopped.
   virtual void OnCastingSessionStartedOrStopped(bool started) {}
 
@@ -28,9 +25,10 @@ class ASH_EXPORT ShellObserver {
   // Invoked when the shelf alignment in |root_window| is changed.
   virtual void OnShelfAlignmentChanged(aura::Window* root_window) {}
 
-  // Invoked when accessibility related insets (accessibility panel, docked
-  // magnifier) in |root_window| changed.
-  virtual void OnAccessibilityInsetsChanged(aura::Window* root_window) {}
+  // Invoked when user work area insets (accessibility panel, docked magnifier,
+  // keyboard) in |root_window| changed.
+  // This notification is not fired when shelf bounds changed.
+  virtual void OnUserWorkAreaInsetsChanged(aura::Window* root_window) {}
 
   // Invoked when the shelf auto-hide behavior in |root_window| is changed.
   virtual void OnShelfAutoHideBehaviorChanged(aura::Window* root_window) {}
@@ -68,10 +66,6 @@ class ASH_EXPORT ShellObserver {
   // Called near the end of ~Shell. Shell::Get() still returns the Shell, but
   // most of Shell's state has been deleted.
   virtual void OnShellDestroyed() {}
-
-  // Called when local state prefs are available. This occurs an arbitrary
-  // amount of time after Shell initialization. Only called once.
-  virtual void OnLocalStatePrefServiceInitialized(PrefService* pref_service) {}
 
  protected:
   virtual ~ShellObserver() {}

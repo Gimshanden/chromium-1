@@ -9,9 +9,9 @@
 
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/assistant/util/deep_link_util.h"
-#include "ash/new_window_controller.h"
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/session/session_controller.h"
+#include "ash/public/cpp/new_window_delegate.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/utility/screenshot_controller.h"
 #include "ash/voice_interaction/voice_interaction_controller.h"
@@ -22,6 +22,13 @@
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace ash {
+
+namespace {
+
+// Scheme of the Android intent url.
+constexpr char kAndroidIntentScheme[] = "intent";
+
+}  // namespace
 
 AssistantController::AssistantController()
     : assistant_volume_control_binding_(this),
@@ -79,6 +86,7 @@ void AssistantController::SetAssistant(
   assistant_ = std::move(assistant);
 
   // Provide reference to sub-controllers.
+  assistant_alarm_timer_controller_.SetAssistant(assistant_.get());
   assistant_interaction_controller_.SetAssistant(assistant_.get());
   assistant_notification_controller_.SetAssistant(assistant_.get());
   assistant_screen_context_controller_.SetAssistant(assistant_.get());
@@ -89,16 +97,32 @@ void AssistantController::SetAssistant(
   // provide an opportunity to turn on/off A11Y features.
   Shell::Get()->accessibility_controller()->AddObserver(this);
   OnAccessibilityStatusChanged();
-}
 
-void AssistantController::SetAssistantImageDownloader(
-    mojom::AssistantImageDownloaderPtr assistant_image_downloader) {
-  assistant_image_downloader_ = std::move(assistant_image_downloader);
+  for (AssistantControllerObserver& observer : observers_)
+    observer.OnAssistantReady();
 }
 
 void AssistantController::OpenAssistantSettings() {
   // Launch Assistant settings via deeplink.
   OpenUrl(assistant::util::CreateAssistantSettingsDeepLink());
+}
+
+void AssistantController::SendAssistantFeedback(
+    bool assistant_debug_info_allowed,
+    const std::string& feedback_description,
+    const std::string& screenshot_png) {
+  chromeos::assistant::mojom::AssistantFeedbackPtr assistant_feedback =
+      chromeos::assistant::mojom::AssistantFeedback::New();
+  assistant_feedback->assistant_debug_info_allowed =
+      assistant_debug_info_allowed;
+  assistant_feedback->description = feedback_description;
+  assistant_feedback->screenshot_png = screenshot_png;
+  assistant_->SendAssistantFeedback(std::move(assistant_feedback));
+}
+
+void AssistantController::SetDeviceActions(
+    chromeos::assistant::mojom::DeviceActionsPtr device_actions) {
+  device_actions_ = std::move(device_actions);
 }
 
 void AssistantController::StartSpeakerIdEnrollmentFlow() {
@@ -108,20 +132,18 @@ void AssistantController::StartSpeakerIdEnrollmentFlow() {
   if (consent_status == mojom::ConsentStatus::kActivityControlAccepted) {
     // If activity control has been accepted, launch the enrollment flow.
     setup_controller()->StartOnboarding(false /* relaunch */,
-                                        mojom::FlowType::SPEAKER_ID_ENROLLMENT);
+                                        FlowType::kSpeakerIdEnrollment);
   } else {
     // If activity control has not been accepted, launch the opt-in flow.
     setup_controller()->StartOnboarding(false /* relaunch */,
-                                        mojom::FlowType::CONSENT_FLOW);
+                                        FlowType::kConsentFlow);
   }
 }
 
 void AssistantController::DownloadImage(
     const GURL& url,
-    mojom::AssistantImageDownloader::DownloadCallback callback) {
-  DCHECK(assistant_image_downloader_);
-
-  const mojom::UserSession* user_session =
+    AssistantImageDownloader::DownloadCallback callback) {
+  const UserSession* user_session =
       Shell::Get()->session_controller()->GetUserSession(0);
 
   if (!user_session) {
@@ -130,8 +152,9 @@ void AssistantController::DownloadImage(
     return;
   }
 
-  AccountId account_id = user_session->user_info->account_id;
-  assistant_image_downloader_->Download(account_id, url, std::move(callback));
+  AccountId account_id = user_session->user_info.account_id;
+  AssistantImageDownloader::GetInstance()->Download(account_id, url,
+                                                    std::move(callback));
 }
 
 void AssistantController::OnDeepLinkReceived(
@@ -148,7 +171,7 @@ void AssistantController::OnDeepLinkReceived(
       break;
     }
     case DeepLinkType::kFeedback:
-      Shell::Get()->new_window_controller()->OpenFeedbackPage(
+      NewWindowDelegate::GetInstance()->OpenFeedbackPage(
           /*from_assistant=*/true);
       break;
     case DeepLinkType::kScreenshot:
@@ -159,9 +182,10 @@ void AssistantController::OnDeepLinkReceived(
       break;
     case DeepLinkType::kTaskManager:
       // Open task manager window.
-      Shell::Get()->new_window_controller()->ShowTaskManager();
+      NewWindowDelegate::GetInstance()->ShowTaskManager();
       break;
     case DeepLinkType::kUnsupported:
+    case DeepLinkType::kAlarmTimer:
     case DeepLinkType::kLists:
     case DeepLinkType::kNotes:
     case DeepLinkType::kOnboarding:
@@ -215,6 +239,11 @@ void AssistantController::OnAccessibilityStatusChanged() {
 }
 
 void AssistantController::OpenUrl(const GURL& url, bool from_server) {
+  if (url.SchemeIs(kAndroidIntentScheme) && device_actions_) {
+    device_actions_->LaunchAndroidIntent(url.spec());
+    return;
+  }
+
   if (assistant::util::IsDeepLinkUrl(url)) {
     NotifyDeepLinkReceived(url);
     return;
@@ -222,14 +251,14 @@ void AssistantController::OpenUrl(const GURL& url, bool from_server) {
 
   // The new tab should be opened with a user activation since the user
   // interacted with the Assistant to open the url.
-  Shell::Get()->new_window_controller()->NewTabWithUrl(
+  NewWindowDelegate::GetInstance()->NewTabWithUrl(
       url, /*from_user_interaction=*/true);
   NotifyUrlOpened(url, from_server);
 }
 
 void AssistantController::GetNavigableContentsFactory(
     mojo::PendingReceiver<content::mojom::NavigableContentsFactory> receiver) {
-  const mojom::UserSession* user_session =
+  const UserSession* user_session =
       Shell::Get()->session_controller()->GetUserSession(0);
 
   if (!user_session) {
@@ -238,7 +267,7 @@ void AssistantController::GetNavigableContentsFactory(
   }
 
   const base::Optional<base::Token>& service_instance_group =
-      user_session->user_info->service_instance_group;
+      user_session->user_info.service_instance_group;
   if (!service_instance_group) {
     LOG(ERROR) << "Unable to retrieve service instance group.";
     return;
@@ -248,6 +277,10 @@ void AssistantController::GetNavigableContentsFactory(
       service_manager::ServiceFilter::ByNameInGroup(
           content::mojom::kServiceName, *service_instance_group),
       std::move(receiver));
+}
+
+bool AssistantController::IsAssistantReady() const {
+  return !!assistant_;
 }
 
 void AssistantController::NotifyConstructed() {
@@ -286,17 +319,9 @@ void AssistantController::OnVoiceInteractionStatusChanged(
     assistant_ui_controller_.CloseUi(AssistantExitPoint::kUnspecified);
 }
 
-void AssistantController::SendAssistantFeedback(
-    bool assistant_debug_info_allowed,
-    const std::string& feedback_description,
-    const std::string& screenshot_png) {
-  chromeos::assistant::mojom::AssistantFeedbackPtr assistant_feedback =
-      chromeos::assistant::mojom::AssistantFeedback::New();
-  assistant_feedback->assistant_debug_info_allowed =
-      assistant_debug_info_allowed;
-  assistant_feedback->description = feedback_description;
-  assistant_feedback->screenshot_png = screenshot_png;
-  assistant_->SendAssistantFeedback(std::move(assistant_feedback));
+void AssistantController::OnLockedFullScreenStateChanged(bool enabled) {
+  if (enabled)
+    assistant_ui_controller_.CloseUi(AssistantExitPoint::kUnspecified);
 }
 
 base::WeakPtr<AssistantController> AssistantController::GetWeakPtr() {

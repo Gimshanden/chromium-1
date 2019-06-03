@@ -10,6 +10,7 @@
 
 #include "ash/kiosk_next/kiosk_next_shell_controller.h"
 #include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/fps_counter.h"
 #include "ash/public/cpp/tablet_mode.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
@@ -90,6 +91,13 @@ constexpr base::TimeDelta kRecordLidAngleInterval =
 constexpr base::TimeDelta kOcclusionTrackerTimeout =
     base::TimeDelta::FromMilliseconds(500);
 
+// Histogram names for recording animation smoothness when entering or exiting
+// tablet mode.
+constexpr char kTabletModeEnterHistogram[] =
+    "Ash.TabletMode.AnimationSmoothness.Enter";
+constexpr char kTabletModeExitHistogram[] =
+    "Ash.TabletMode.AnimationSmoothness.Exit";
+
 // The angle between AccelerometerReadings are considered stable if
 // their magnitudes do not differ greatly. This returns false if the deviation
 // between the screen and keyboard accelerometers is too high.
@@ -131,6 +139,33 @@ bool HasActiveInternalDisplay() {
 
 }  // namespace
 
+// Class which records animation smoothness when entering or exiting tablet
+// mode. No stats should be recorded if no windows are animated.
+class TabletModeController::TabletModeTransitionFpsCounter : public FpsCounter {
+ public:
+  TabletModeTransitionFpsCounter(ui::Compositor* compositor,
+                                 bool enter_tablet_mode)
+      : FpsCounter(compositor), enter_tablet_mode_(enter_tablet_mode) {}
+  ~TabletModeTransitionFpsCounter() override = default;
+
+  void LogUma() {
+    int smoothness = ComputeSmoothness();
+    if (smoothness < 0)
+      return;
+
+    if (enter_tablet_mode_)
+      UMA_HISTOGRAM_PERCENTAGE(kTabletModeEnterHistogram, smoothness);
+    else
+      UMA_HISTOGRAM_PERCENTAGE(kTabletModeExitHistogram, smoothness);
+  }
+
+  bool enter_tablet_mode() const { return enter_tablet_mode_; }
+
+ private:
+  bool enter_tablet_mode_;
+  DISALLOW_COPY_AND_ASSIGN(TabletModeTransitionFpsCounter);
+};
+
 constexpr char TabletModeController::kLidAngleHistogramName[];
 
 TabletModeController::TabletModeController()
@@ -171,6 +206,9 @@ TabletModeController::TabletModeController()
 }
 
 TabletModeController::~TabletModeController() {
+  if (tablet_mode_window_manager_)
+    tablet_mode_window_manager_->Shutdown();
+
   UMA_HISTOGRAM_COUNTS_1000("Tablet.AppWindowDrag.CountOfPerUserSession",
                             app_window_drag_count_);
   UMA_HISTOGRAM_COUNTS_1000(
@@ -200,7 +238,7 @@ TabletModeController::~TabletModeController() {
 // TODO(jcliang): Hide or remove EnableTabletModeWindowManager
 // (http://crbug.com/620241).
 void TabletModeController::EnableTabletModeWindowManager(bool should_enable) {
-  bool is_enabled = !!tablet_mode_window_manager_.get();
+  bool is_enabled = IsTabletModeWindowManagerEnabled();
   if (should_enable == is_enabled)
     return;
 
@@ -211,10 +249,13 @@ void TabletModeController::EnableTabletModeWindowManager(bool should_enable) {
     RootWindowController::ForWindow(root_window)->HideContextMenu();
 
   if (should_enable) {
+    state_ = State::kEnteringTabletMode;
     // Suspend occlusion tracker when entering tablet mode.
     SuspendOcclusionTracker();
 
     tablet_mode_window_manager_.reset(new TabletModeWindowManager());
+    tablet_mode_window_manager_->Init();
+
     base::RecordAction(base::UserMetricsAction("Touchview_Enabled"));
     RecordTabletModeUsageInterval(TABLET_MODE_INTERVAL_INACTIVE);
     for (auto& observer : tablet_mode_observers_)
@@ -226,27 +267,31 @@ void TabletModeController::EnableTabletModeWindowManager(bool should_enable) {
     // side, then overview mode should be started (to be seen on the side with
     // no snapped window).
     const auto state = Shell::Get()->split_view_controller()->state();
-    if (state == SplitViewController::LEFT_SNAPPED ||
-        state == SplitViewController::RIGHT_SNAPPED) {
+    if (state == SplitViewState::kLeftSnapped ||
+        state == SplitViewState::kRightSnapped) {
       Shell::Get()->overview_controller()->ToggleOverview();
     }
 
+    state_ = State::kInTabletMode;
     if (client_)  // Null at startup and in tests.
       client_->OnTabletModeToggled(true);
     VLOG(1) << "Enter tablet mode.";
   } else {
+    state_ = State::kExitingTabletMode;
     // Suspend occlusion tracker when exiting tablet mode.
     SuspendOcclusionTracker();
 
     tablet_mode_window_manager_->SetIgnoreWmEventsForExit();
     for (auto& observer : tablet_mode_observers_)
       observer.OnTabletModeEnding();
+    tablet_mode_window_manager_->Shutdown();
     tablet_mode_window_manager_.reset();
     base::RecordAction(base::UserMetricsAction("Touchview_Disabled"));
     RecordTabletModeUsageInterval(TABLET_MODE_INTERVAL_ACTIVE);
     for (auto& observer : tablet_mode_observers_)
       observer.OnTabletModeEnded();
 
+    state_ = State::kInClamshellMode;
     if (client_)  // Null at startup and in tests.
       client_->OnTabletModeToggled(false);
     VLOG(1) << "Exit tablet mode.";
@@ -256,7 +301,7 @@ void TabletModeController::EnableTabletModeWindowManager(bool should_enable) {
 }
 
 bool TabletModeController::IsTabletModeWindowManagerEnabled() const {
-  return tablet_mode_window_manager_.get() != NULL;
+  return !!tablet_mode_window_manager_;
 }
 
 void TabletModeController::AddWindow(aura::Window* window) {
@@ -302,6 +347,37 @@ bool TabletModeController::TriggerRecordLidAngleTimerForTesting() {
 
   record_lid_angle_timer_.user_task().Run();
   return true;
+}
+
+void TabletModeController::MaybeObserveBoundsAnimation(aura::Window* window) {
+  if (state_ != State::kEnteringTabletMode &&
+      state_ != State::kExitingTabletMode) {
+    return;
+  }
+
+  // A window may not be tracked by |tablet_mode_window_manager_|. Do not
+  // observe the animations of these windows.
+  if (tablet_mode_window_manager_ &&
+      !tablet_mode_window_manager_->IsTrackingWindow(window)) {
+    return;
+  }
+
+  // If |fps_counter_| exists and is of the same mode do nothing, as we only
+  // need to observe one window animation.
+  bool entering_tablet_mode = state_ == State::kEnteringTabletMode;
+  if (fps_counter_ &&
+      fps_counter_->enter_tablet_mode() == entering_tablet_mode) {
+    return;
+  }
+
+  if (!window->layer()->GetAnimator()->is_animating())
+    return;
+
+  observed_window_ = window;
+  window->AddObserver(this);
+  window->layer()->GetAnimator()->AddObserver(this);
+  fps_counter_ = std::make_unique<TabletModeTransitionFpsCounter>(
+      window->layer()->GetCompositor(), entering_tablet_mode);
 }
 
 void TabletModeController::OnShellInitialized() {
@@ -352,6 +428,15 @@ void TabletModeController::OnAccelerometerUpdated(
     scoped_refptr<const AccelerometerUpdate> update) {
   if (!AllowUiModeChange())
     return;
+
+  // When ChromeOS EC lid angle driver is present, EC can handle lid angle
+  // calculation, thus Chrome side lid angle calculation is disabled. In this
+  // case, TabletModeController no longer listens to accelerometer events.
+  if (update->HasLidAngleDriver(ACCELEROMETER_SOURCE_SCREEN) ||
+      update->HasLidAngleDriver(ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD)) {
+    AccelerometerReader::GetInstance()->RemoveObserver(this);
+    return;
+  }
 
   have_seen_accelerometer_data_ = true;
   can_detect_lid_angle_ = update->has(ACCELEROMETER_SOURCE_SCREEN) &&
@@ -406,9 +491,12 @@ void TabletModeController::TabletModeEventReceived(
   if (!HasActiveInternalDisplay())
     return;
 
-  // The tablet mode switch activates at 300 degrees, so it is always reliable
-  // when |on|. However we wish to exit tablet mode at a smaller angle, so
-  // when |on| is false we ignore if it is possible to calculate the lid angle.
+  // For updated EC, the tablet mode switch activates at 200 degrees, and
+  // deactivates at 160 degrees.
+  // For old EC, the tablet mode switch activates at 300 degrees, so it's
+  // always reliable when |on|. However we wish to exit tablet mode at a
+  // smaller angle, so when |on| is false we ignore if it is possible to
+  // calculate the lid angle.
   if (on && !IsTabletModeWindowManagerEnabled()) {
     AttemptEnterTabletMode();
   } else if (!on && IsTabletModeWindowManagerEnabled() &&
@@ -470,6 +558,37 @@ void TabletModeController::OnInputDeviceConfigurationChanged(
 
 void TabletModeController::OnDeviceListsComplete() {
   HandlePointingDeviceAddedOrRemoved();
+}
+
+void TabletModeController::OnKioskNextEnabled() {
+  kiosk_next_enabled_ = true;
+  AttemptEnterTabletMode();
+}
+
+void TabletModeController::OnLayerAnimationStarted(
+    ui::LayerAnimationSequence* sequence) {}
+
+void TabletModeController::OnLayerAnimationAborted(
+    ui::LayerAnimationSequence* sequence) {
+  StopObservingAnimation(/*record_stats=*/false);
+}
+
+void TabletModeController::OnLayerAnimationEnded(
+    ui::LayerAnimationSequence* sequence) {
+  StopObservingAnimation(/*record_stats=*/true);
+}
+
+void TabletModeController::OnLayerAnimationScheduled(
+    ui::LayerAnimationSequence* sequence) {
+  // If another animation is scheduled while the animation we were originally
+  // watching is still animating, abort and do not log stats as the stats will
+  // not be accurate.
+  StopObservingAnimation(/*record_stats=*/false);
+}
+
+void TabletModeController::OnWindowDestroying(aura::Window* window) {
+  DCHECK_EQ(observed_window_, window);
+  StopObservingAnimation(/*record_stats=*/false);
 }
 
 void TabletModeController::HandleHingeRotation(
@@ -551,6 +670,10 @@ void TabletModeController::OnGetSwitchStates(
     base::Optional<chromeos::PowerManagerClient::SwitchStates> result) {
   if (!result.has_value())
     return;
+
+  if (AccelerometerReader::GetInstance()->is_disabled())
+    return;
+
   LidEventReceived(result->lid_state, base::TimeTicks::Now());
   TabletModeEventReceived(result->tablet_mode, base::TimeTicks::Now());
 }
@@ -747,8 +870,7 @@ bool TabletModeController::LidAngleIsInTabletModeRange() {
 void TabletModeController::SuspendOcclusionTracker() {
   occlusion_tracker_reset_timer_.Stop();
   occlusion_tracker_pauser_ =
-      std::make_unique<aura::WindowOcclusionTracker::ScopedPause>(
-          Shell::Get()->aura_env());
+      std::make_unique<aura::WindowOcclusionTracker::ScopedPause>();
   occlusion_tracker_reset_timer_.Start(FROM_HERE, kOcclusionTrackerTimeout,
                                        this,
                                        &TabletModeController::ResetPauser);
@@ -758,8 +880,16 @@ void TabletModeController::ResetPauser() {
   occlusion_tracker_pauser_.reset();
 }
 
-void TabletModeController::OnKioskNextEnabled() {
-  kiosk_next_enabled_ = true;
-  AttemptEnterTabletMode();
+void TabletModeController::StopObservingAnimation(bool record_stats) {
+  DCHECK(observed_window_);
+  DCHECK(fps_counter_);
+  StopObserving();
+  observed_window_->layer()->GetAnimator()->RemoveObserver(this);
+  observed_window_->RemoveObserver(this);
+  observed_window_ = nullptr;
+  if (record_stats)
+    fps_counter_->LogUma();
+  fps_counter_.reset();
 }
+
 }  // namespace ash

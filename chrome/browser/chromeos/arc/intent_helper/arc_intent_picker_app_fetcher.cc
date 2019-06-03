@@ -12,6 +12,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/intent_picker_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
@@ -78,7 +79,8 @@ void ArcIntentPickerAppFetcher::GetArcAppsForPicker(
 // static
 bool ArcIntentPickerAppFetcher::WillGetArcAppsForNavigation(
     content::NavigationHandle* handle,
-    apps::AppsNavigationCallback callback) {
+    apps::AppsNavigationCallback callback,
+    bool should_launch_preferred_app) {
   ArcServiceManager* arc_service_manager = ArcServiceManager::Get();
   if (!arc_service_manager)
     return false;
@@ -112,8 +114,10 @@ bool ArcIntentPickerAppFetcher::WillGetArcAppsForNavigation(
   // navigation as soon as the callback is run. If the WebContents is destroyed
   // prior to this asynchronous method finishing, it is safe to not run
   // |callback| since it will not matter what we do with the deferred navigation
-  // for a now-closed tab.
-  app_fetcher->GetArcAppsForNavigation(instance, url, std::move(callback));
+  // for a now-closed tab. If |should_launch_preferred_app| flag is set to be
+  // true, preferred app (if exists) will be automatically launched.
+  app_fetcher->GetArcAppsForNavigation(instance, url, std::move(callback),
+                                       should_launch_preferred_app);
   return true;
 }
 
@@ -181,7 +185,7 @@ bool ArcIntentPickerAppFetcher::IsAppAvailableForTesting(
 // static
 size_t ArcIntentPickerAppFetcher::FindPreferredAppForTesting(
     const std::vector<mojom::IntentHandlerInfoPtr>& app_candidates) {
-  return FindPreferredApp(app_candidates, GURL());
+  return FindPreferredApp(app_candidates, /*url_for_logging=*/GURL());
 }
 
 ArcIntentPickerAppFetcher::~ArcIntentPickerAppFetcher() = default;
@@ -193,14 +197,16 @@ ArcIntentPickerAppFetcher::ArcIntentPickerAppFetcher(
 void ArcIntentPickerAppFetcher::GetArcAppsForNavigation(
     mojom::IntentHelperInstance* instance,
     const GURL& url,
-    apps::AppsNavigationCallback callback) {
+    apps::AppsNavigationCallback callback,
+    bool should_launch_preferred_app) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   instance->RequestUrlHandlerList(
       url.spec(),
       base::BindOnce(
           &ArcIntentPickerAppFetcher::OnAppCandidatesReceivedForNavigation,
-          weak_ptr_factory_.GetWeakPtr(), url, std::move(callback)));
+          weak_ptr_factory_.GetWeakPtr(), url, std::move(callback),
+          should_launch_preferred_app));
 }
 
 void ArcIntentPickerAppFetcher::GetArcAppsForPicker(
@@ -219,6 +225,7 @@ void ArcIntentPickerAppFetcher::GetArcAppsForPicker(
 void ArcIntentPickerAppFetcher::OnAppCandidatesReceivedForNavigation(
     const GURL& url,
     apps::AppsNavigationCallback callback,
+    bool should_launch_preferred_app,
     std::vector<mojom::IntentHandlerInfoPtr> app_candidates) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
@@ -228,31 +235,32 @@ void ArcIntentPickerAppFetcher::OnAppCandidatesReceivedForNavigation(
     // created iff there are ARC apps which can actually handle the given URL.
     DVLOG(1) << "There are no app candidates for this URL: " << url;
     chromeos::ChromeOsAppsNavigationThrottle::RecordUma(
-        std::string(), apps::mojom::AppType::kUnknown,
+        /*selected_app_package=*/std::string(), apps::mojom::AppType::kUnknown,
         apps::IntentPickerCloseReason::PICKER_ERROR,
         /*should_persist=*/false);
     std::move(callback).Run(apps::AppsNavigationAction::RESUME, {});
     return;
   }
 
-  // If one of the apps is marked as preferred, launch it immediately.
-  apps::PreferredPlatform pref_platform =
-      DidLaunchPreferredArcApp(url, app_candidates);
+  if (should_launch_preferred_app) {
+    // If one of the apps is marked as preferred, launch it immediately.
+    apps::PreferredPlatform pref_platform =
+        DidLaunchPreferredArcApp(url, app_candidates);
 
-  switch (pref_platform) {
-    case apps::PreferredPlatform::ARC:
-      std::move(callback).Run(apps::AppsNavigationAction::CANCEL, {});
-      return;
-    case apps::PreferredPlatform::NATIVE_CHROME:
-      std::move(callback).Run(apps::AppsNavigationAction::RESUME, {});
-      return;
-    case apps::PreferredPlatform::PWA:
-      NOTREACHED();
-      break;
-    case apps::PreferredPlatform::NONE:
-      break;  // Do nothing.
+    switch (pref_platform) {
+      case apps::PreferredPlatform::ARC:
+        std::move(callback).Run(apps::AppsNavigationAction::CANCEL, {});
+        return;
+      case apps::PreferredPlatform::NATIVE_CHROME:
+        std::move(callback).Run(apps::AppsNavigationAction::RESUME, {});
+        return;
+      case apps::PreferredPlatform::PWA:
+        NOTREACHED();
+        break;
+      case apps::PreferredPlatform::NONE:
+        break;  // Do nothing.
+    }
   }
-
   // We are always going to resume navigation at this point, and possibly show
   // the intent picker bubble to prompt the user to choose if they would like to
   // use an ARC app to open the URL.
@@ -304,9 +312,7 @@ apps::PreferredPlatform ArcIntentPickerAppFetcher::DidLaunchPreferredArcApp(
     if (!instance) {
       close_reason = apps::IntentPickerCloseReason::PICKER_ERROR;
     } else if (ArcIntentHelperBridge::IsIntentHelperPackage(package_name)) {
-      Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-      if (browser)
-        browser->window()->SetIntentPickerViewVisibility(/*visible=*/true);
+      IntentPickerTabHelper::SetShouldShowIcon(web_contents(), true);
       preferred_platform = apps::PreferredPlatform::NATIVE_CHROME;
     } else {
       instance->HandleUrl(url.spec(), package_name);
@@ -332,7 +338,7 @@ void ArcIntentPickerAppFetcher::GetArcAppIcons(
   if (!intent_helper_bridge) {
     LOG(ERROR) << "Cannot get an instance of ArcIntentHelperBridge";
     chromeos::ChromeOsAppsNavigationThrottle::RecordUma(
-        std::string(), apps::mojom::AppType::kUnknown,
+        /*selected_app_package=*/std::string(), apps::mojom::AppType::kUnknown,
         apps::IntentPickerCloseReason::PICKER_ERROR,
         /*should_persist=*/false);
     std::move(callback).Run({});

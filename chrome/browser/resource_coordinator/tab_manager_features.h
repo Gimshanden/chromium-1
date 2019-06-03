@@ -20,9 +20,6 @@ extern const base::Feature kSiteCharacteristicsDatabase;
 extern const base::Feature kStaggeredBackgroundTabOpening;
 extern const base::Feature kStaggeredBackgroundTabOpeningExperiment;
 extern const base::Feature kTabRanker;
-#if defined(OS_CHROMEOS)
-extern const base::Feature kNewProcessTypes;
-#endif // defined(OS_CHROMEOS)
 
 }  // namespace features
 
@@ -270,11 +267,23 @@ GetStaticSiteCharacteristicsDatabaseParams();
 // Gets number of oldest tab that should be scored by TabRanker.
 int GetNumOldestTabsToScoreWithTabRanker();
 
+// Gets ProcessType of tabs that should be scored by TabRanker.
+int GetProcessTypeToScoreWithTabRanker();
+
 // Gets number of oldest tabs that should be logged by TabRanker.
 int GetNumOldestTabsToLogWithTabRanker();
 
 // Whether to disable background time TabMetrics log.
 bool DisableBackgroundLogWithTabRanker();
+
+// Gets reload count penalty parameter for TabRanker.
+float GetDiscardCountPenaltyTabRanker();
+
+// Gets mru penalty parameter that converts mru index to scores.
+float GetMRUScorerPenaltyTabRanker();
+
+// Gets which type of scorer to use for TabRanker.
+int GetScorerTypeForTabRanker();
 
 }  // namespace resource_coordinator
 

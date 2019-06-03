@@ -14,7 +14,6 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/ranges.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -24,6 +23,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/extensions/browser_action_drag_data.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
@@ -78,7 +78,7 @@ BrowserActionsContainer::BrowserActionsContainer(
       browser_(browser),
       main_container_(main_container),
       interactive_(interactive) {
-  set_id(VIEW_ID_BROWSER_ACTION_TOOLBAR);
+  SetID(VIEW_ID_BROWSER_ACTION_TOOLBAR);
 
   toolbar_actions_bar_ = delegate_->CreateToolbarActionsBar(
       this, browser,
@@ -132,7 +132,7 @@ void BrowserActionsContainer::RefreshToolbarActionViews() {
 size_t BrowserActionsContainer::VisibleBrowserActions() const {
   size_t visible_actions = 0;
   for (const auto& view : toolbar_action_views_) {
-    if (view->visible())
+    if (view->GetVisible())
       ++visible_actions;
   }
   return visible_actions;
@@ -153,7 +153,7 @@ void BrowserActionsContainer::OnToolbarActionViewDragDone() {
   toolbar_actions_bar_->OnDragEnded();
 }
 
-views::MenuButton* BrowserActionsContainer::GetOverflowReferenceView() {
+views::LabelButton* BrowserActionsContainer::GetOverflowReferenceView() {
   return delegate_->GetOverflowReferenceView();
 }
 
@@ -295,7 +295,7 @@ void BrowserActionsContainer::ShowToolbarActionBubble(
         GetViewForId(controller->GetAnchorActionId());
     if (action_view) {
       anchor_view =
-          action_view->visible() ? action_view : GetOverflowReferenceView();
+          action_view->GetVisible() ? action_view : GetOverflowReferenceView();
       anchored_to_action_view = true;
     } else {
       anchor_view = BrowserView::GetBrowserViewForBrowser(browser_)
@@ -600,7 +600,7 @@ int BrowserActionsContainer::OnPerformDrop(
     --i;
 
   ToolbarActionsBar::DragType drag_type = ToolbarActionsBar::DRAG_TO_SAME;
-  if (!toolbar_action_views_[data.index()]->visible())
+  if (!toolbar_action_views_[data.index()]->GetVisible())
     drag_type = ShownInsideMenu() ? ToolbarActionsBar::DRAG_TO_OVERFLOW :
         ToolbarActionsBar::DRAG_TO_MAIN;
 

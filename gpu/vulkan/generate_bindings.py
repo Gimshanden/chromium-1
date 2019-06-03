@@ -5,6 +5,7 @@
 
 """code generator for Vulkan function pointers."""
 
+import filecmp
 import optparse
 import os
 import platform
@@ -30,7 +31,9 @@ VULKAN_INSTANCE_FUNCTIONS = [
 VULKAN_PHYSICAL_DEVICE_FUNCTIONS = [
 { 'name': 'vkCreateDevice' },
 { 'name': 'vkEnumerateDeviceLayerProperties' },
+{ 'name': 'vkGetPhysicalDeviceMemoryProperties'},
 { 'name': 'vkGetPhysicalDeviceQueueFamilyProperties' },
+{ 'name': 'vkGetPhysicalDeviceProperties' },
 # The following functions belong here but are handled specially:
 # vkGetPhysicalDeviceSurfaceCapabilitiesKHR
 # vkGetPhysicalDeviceSurfaceFormatsKHR
@@ -42,8 +45,10 @@ VULKAN_DEVICE_FUNCTIONS = [
 { 'name': 'vkAllocateCommandBuffers' },
 { 'name': 'vkAllocateDescriptorSets' },
 { 'name': 'vkAllocateMemory' },
+{ 'name': 'vkBindBufferMemory' },
 { 'name': 'vkBindImageMemory' },
 { 'name': 'vkCreateCommandPool' },
+{ 'name': 'vkCreateBuffer' },
 { 'name': 'vkCreateDescriptorPool' },
 { 'name': 'vkCreateDescriptorSetLayout' },
 { 'name': 'vkCreateFence' },
@@ -54,6 +59,7 @@ VULKAN_DEVICE_FUNCTIONS = [
 { 'name': 'vkCreateSampler' },
 { 'name': 'vkCreateSemaphore' },
 { 'name': 'vkCreateShaderModule' },
+{ 'name': 'vkDestroyBuffer' },
 { 'name': 'vkDestroyCommandPool' },
 { 'name': 'vkDestroyDescriptorPool' },
 { 'name': 'vkDestroyDescriptorSetLayout' },
@@ -70,10 +76,13 @@ VULKAN_DEVICE_FUNCTIONS = [
 { 'name': 'vkFreeCommandBuffers' },
 { 'name': 'vkFreeDescriptorSets' },
 { 'name': 'vkFreeMemory' },
+{ 'name': 'vkGetBufferMemoryRequirements' },
 { 'name': 'vkGetDeviceQueue' },
 { 'name': 'vkGetFenceStatus' },
 { 'name': 'vkGetImageMemoryRequirements' },
+{ 'name': 'vkMapMemory' },
 { 'name': 'vkResetFences' },
+{ 'name': 'vkUnmapMemory' },
 { 'name': 'vkUpdateDescriptorSets' },
 { 'name': 'vkWaitForFences' },
 ]
@@ -94,6 +103,10 @@ VULKAN_DEVICE_FUNCTIONS_LINUX = [
 VULKAN_DEVICE_FUNCTIONS_FUCHSIA = [
 { 'name': 'vkImportSemaphoreZirconHandleFUCHSIA' },
 { 'name': 'vkGetSemaphoreZirconHandleFUCHSIA' },
+{ 'name': 'vkCreateBufferCollectionFUCHSIA' },
+{ 'name': 'vkSetBufferCollectionConstraintsFUCHSIA' },
+{ 'name': 'vkGetBufferCollectionPropertiesFUCHSIA' },
+{ 'name': 'vkDestroyBufferCollectionFUCHSIA' },
 ]
 
 VULKAN_QUEUE_FUNCTIONS = [
@@ -104,6 +117,7 @@ VULKAN_QUEUE_FUNCTIONS = [
 VULKAN_COMMAND_BUFFER_FUNCTIONS = [
 { 'name': 'vkBeginCommandBuffer' },
 { 'name': 'vkCmdBeginRenderPass' },
+{ 'name': 'vkCmdCopyBufferToImage' },
 { 'name': 'vkCmdEndRenderPass' },
 { 'name': 'vkCmdExecuteCommands' },
 { 'name': 'vkCmdNextSubpass' },
@@ -197,7 +211,12 @@ struct VulkanFunctionPointers {
   VULKAN_EXPORT bool BindPhysicalDeviceFunctionPointers(VkInstance vk_instance);
 
   // These functions assume that vkGetDeviceProcAddr has been populated.
-  VULKAN_EXPORT bool BindDeviceFunctionPointers(VkDevice vk_device);
+  // |using_swiftshader| allows functions that aren't supported by Swiftshader
+  // to be missing.
+  // TODO(samans): Remove |using_swiftshader| once all the workarounds can be
+  // removed. https://crbug.com/963988
+  VULKAN_EXPORT bool BindDeviceFunctionPointers(VkDevice vk_device,
+                                                bool using_swiftshader = false);
   bool BindSwapchainFunctionPointers(VkDevice vk_device);
 
   base::NativeLibrary vulkan_loader_library_ = nullptr;
@@ -430,16 +449,21 @@ struct VulkanFunctionPointers {
 """)
 
 def WriteFunctionPointerInitialization(file, proc_addr_function, parent,
-                                       functions):
+                                       functions, allow_missing=False):
   template = Template("""  ${name}Fn = reinterpret_cast<PFN_${name}>(
     $get_proc_addr($parent, "$name"));
-  if (!${name}Fn)
+  if (!${name}Fn${check_swiftshader})
     return false;
 
 """)
+  if allow_missing:
+    check_swiftshader = " && !using_swiftshader"
+  else:
+    check_swiftshader = ""
   for func in functions:
     file.write(template.substitute(name=func['name'], get_proc_addr =
-                                   proc_addr_function, parent=parent))
+                                   proc_addr_function, parent=parent,
+                                   check_swiftshader=check_swiftshader))
 
 def WriteUnassociatedFunctionPointerInitialization(file, functions):
   WriteFunctionPointerInitialization(file, 'vkGetInstanceProcAddrFn', 'nullptr',
@@ -449,9 +473,11 @@ def WriteInstanceFunctionPointerInitialization(file, functions):
   WriteFunctionPointerInitialization(file, 'vkGetInstanceProcAddrFn',
                                      'vk_instance', functions)
 
-def WriteDeviceFunctionPointerInitialization(file, functions):
+def WriteDeviceFunctionPointerInitialization(file,
+                                             functions,
+                                             allow_missing=False):
   WriteFunctionPointerInitialization(file, 'vkGetDeviceProcAddrFn', 'vk_device',
-                                     functions)
+                                     functions, allow_missing)
 
 def GenerateSourceFile(file, unassociated_functions, instance_functions,
                        physical_device_functions, device_functions,
@@ -525,7 +551,9 @@ bool VulkanFunctionPointers::BindPhysicalDeviceFunctionPointers(
   return true;
 }
 
-bool VulkanFunctionPointers::BindDeviceFunctionPointers(VkDevice vk_device) {
+bool VulkanFunctionPointers::BindDeviceFunctionPointers(
+    VkDevice vk_device,
+    bool using_swiftshader) {
   // Device functions
 """)
   WriteDeviceFunctionPointerInitialization(file, device_functions)
@@ -549,7 +577,8 @@ bool VulkanFunctionPointers::BindDeviceFunctionPointers(VkDevice vk_device) {
 """)
 
   WriteDeviceFunctionPointerInitialization(file,
-                                           device_functions_linux_or_android)
+                                           device_functions_linux_or_android,
+                                           True) # allow_missing
 
   file.write("""\
 #endif
@@ -562,7 +591,8 @@ bool VulkanFunctionPointers::BindDeviceFunctionPointers(VkDevice vk_device) {
 """)
 
   WriteDeviceFunctionPointerInitialization(file,
-                                           device_functions_linux)
+                                           device_functions_linux,
+                                           True) # allow_missing
 
   file.write("""\
 #endif
@@ -616,11 +646,22 @@ def main(argv):
   """This is the main function."""
 
   parser = optparse.OptionParser()
-  _, args = parser.parse_args(argv)
+  parser.add_option(
+      "--output-dir",
+      help="Output directory for generated files. Defaults to this script's "
+      "directory.")
+  parser.add_option(
+      "-c", "--check", action="store_true",
+      help="Check if output files match generated files in chromium root "
+      "directory. Use this in PRESUBMIT scripts with --output-dir.")
 
-  directory = SELF_LOCATION
-  if len(args) >= 1:
-    directory = args[0]
+  (options, _) = parser.parse_args(args=argv)
+
+  # Support generating files for PRESUBMIT.
+  if options.output_dir:
+    output_dir = options.output_dir
+  else:
+    output_dir = SELF_LOCATION
 
   def ClangFormat(filename):
     formatter = "clang-format"
@@ -628,8 +669,9 @@ def main(argv):
       formatter += ".bat"
     call([formatter, "-i", "-style=chromium", filename])
 
+  header_file_name = 'vulkan_function_pointers.h'
   header_file = open(
-      os.path.join(directory, 'vulkan_function_pointers.h'), 'wb')
+      os.path.join(output_dir, header_file_name), 'wb')
   GenerateHeaderFile(header_file, VULKAN_UNASSOCIATED_FUNCTIONS,
                      VULKAN_INSTANCE_FUNCTIONS,
                      VULKAN_PHYSICAL_DEVICE_FUNCTIONS, VULKAN_DEVICE_FUNCTIONS,
@@ -642,8 +684,9 @@ def main(argv):
   header_file.close()
   ClangFormat(header_file.name)
 
+  source_file_name = 'vulkan_function_pointers.cc'
   source_file = open(
-      os.path.join(directory, 'vulkan_function_pointers.cc'), 'wb')
+      os.path.join(output_dir, source_file_name), 'wb')
   GenerateSourceFile(source_file, VULKAN_UNASSOCIATED_FUNCTIONS,
                      VULKAN_INSTANCE_FUNCTIONS,
                      VULKAN_PHYSICAL_DEVICE_FUNCTIONS, VULKAN_DEVICE_FUNCTIONS,
@@ -655,6 +698,20 @@ def main(argv):
                      VULKAN_SWAPCHAIN_FUNCTIONS)
   source_file.close()
   ClangFormat(source_file.name)
+
+  check_failed_filenames = []
+  if options.check:
+    for filename in [header_file_name, source_file_name]:
+      if not filecmp.cmp(os.path.join(output_dir, filename),
+                         os.path.join(SELF_LOCATION, filename)):
+        check_failed_filenames.append(filename)
+
+  if len(check_failed_filenames) > 0:
+    print 'Please run gpu/vulkan/generate_bindings.py'
+    print 'Failed check on generated files:'
+    for filename in check_failed_filenames:
+      print filename
+    return 1
 
   return 0
 

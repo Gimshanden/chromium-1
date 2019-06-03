@@ -4,7 +4,6 @@
 
 #include "chrome/browser/apps/intent_helper/apps_navigation_throttle.h"
 
-#include <algorithm>
 #include <utility>
 
 #include "base/bind.h"
@@ -14,12 +13,14 @@
 #include "chrome/browser/apps/intent_helper/page_transition_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/menu_manager.h"
+#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
+#include "chrome/browser/ui/intent_picker_tab_helper.h"
 #include "chrome/common/chrome_features.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -27,11 +28,20 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
 #include "url/origin.h"
 
 namespace {
 
-constexpr char kGoogleCom[] = "google.com";
+// Returns true if |url| is a known and valid redirector that will redirect a
+// navigation elsewhere.
+bool IsGoogleRedirectorUrl(const GURL& url) {
+  // This currently only check for redirectors on the "google" domain.
+  if (!page_load_metrics::IsGoogleSearchHostname(url))
+    return false;
+
+  return url.path_piece() == "/url" && url.has_query();
+}
 
 // Compares the host name of the referrer and target URL to decide whether
 // the navigation needs to be overridden.
@@ -52,28 +62,15 @@ bool ShouldOverrideUrlLoading(const GURL& previous_url,
   // Check the scheme for both |previous_url| and |current_url| since an
   // extension could have referred us (e.g. Google Docs).
   if (!current_url.SchemeIsHTTPOrHTTPS() ||
-      !previous_url.SchemeIsHTTPOrHTTPS()) {
+      previous_url.SchemeIs(extensions::kExtensionScheme)) {
     return false;
   }
 
-  // TODO(dominickn): this was added as a special case for ARC. Reconsider if
-  // it's necessary for all app platforms.
-  if (net::registry_controlled_domains::SameDomainOrHost(
-          current_url, previous_url,
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
-    if (net::registry_controlled_domains::GetDomainAndRegistry(
-            current_url,
-            net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES) ==
-        kGoogleCom) {
-      // Navigation within the google.com domain are good candidates for this
-      // throttle (and consecuently the picker UI) only if they have different
-      // hosts, this is because multiple services are hosted within the same
-      // domain e.g. play.google.com, mail.google.com and so on.
-      return current_url.host_piece() != previous_url.host_piece();
-    }
-
+  // Skip URL redirectors that are intermediate pages redirecting towards a
+  // final URL.
+  if (IsGoogleRedirectorUrl(current_url))
     return false;
-  }
+
   return true;
 }
 
@@ -95,10 +92,6 @@ GURL GetStartingGURL(content::NavigationHandle* navigation_handle) {
   return navigation_handle->GetStartingSiteInstance()->GetSiteURL();
 }
 
-bool IsDesktopPwasEnabled() {
-  return base::FeatureList::IsEnabled(features::kDesktopPWAWindowing);
-}
-
 }  // namespace
 
 namespace apps {
@@ -106,9 +99,13 @@ namespace apps {
 // static
 std::unique_ptr<content::NavigationThrottle>
 AppsNavigationThrottle::MaybeCreate(content::NavigationHandle* handle) {
+  if (!handle->IsInMainFrame())
+    return nullptr;
+
   content::WebContents* web_contents = handle->GetWebContents();
   if (!CanCreate(web_contents))
     return nullptr;
+
   return std::make_unique<AppsNavigationThrottle>(handle);
 }
 
@@ -121,6 +118,7 @@ void AppsNavigationThrottle::ShowIntentPickerBubble(
 
   ShowIntentPickerBubbleForApps(
       web_contents, std::move(apps),
+      /*show_remember_selection=*/false,
       base::BindOnce(&OnIntentPickerClosed, web_contents,
                      ui_auto_display_service, url));
 }
@@ -181,6 +179,11 @@ void AppsNavigationThrottle::RecordUma(const std::string& selected_app_package,
 }
 
 // static
+bool AppsNavigationThrottle::IsGoogleRedirectorUrlForTesting(const GURL& url) {
+  return IsGoogleRedirectorUrl(url);
+}
+
+// static
 bool AppsNavigationThrottle::ShouldOverrideUrlLoadingForTesting(
     const GURL& previous_url,
     const GURL& current_url) {
@@ -191,6 +194,7 @@ bool AppsNavigationThrottle::ShouldOverrideUrlLoadingForTesting(
 void AppsNavigationThrottle::ShowIntentPickerBubbleForApps(
     content::WebContents* web_contents,
     std::vector<IntentPickerAppInfo> apps,
+    bool show_remember_selection,
     IntentPickerResponse callback) {
   if (apps.empty())
     return;
@@ -202,7 +206,8 @@ void AppsNavigationThrottle::ShowIntentPickerBubbleForApps(
   if (!browser)
     return;
   browser->window()->ShowIntentPickerBubble(std::move(apps),
-                                            /*disable_stay_in_chrome=*/false,
+                                            /*show_stay_in_chrome=*/true,
+                                            show_remember_selection,
                                             std::move(callback));
 }
 
@@ -212,7 +217,8 @@ AppsNavigationThrottle::AppsNavigationThrottle(
       ui_displayed_(false),
       ui_auto_display_service_(
           IntentPickerAutoDisplayService::Get(Profile::FromBrowserContext(
-              navigation_handle->GetWebContents()->GetBrowserContext()))) {
+              navigation_handle->GetWebContents()->GetBrowserContext()))),
+      navigate_from_link_(false) {
   // |ui_auto_display_service_| can be null iff the call is coming from
   // IntentPickerView. Since the pointer to our service is never modified
   // (in case it is successfully created here) this check covers all the
@@ -230,10 +236,8 @@ content::NavigationThrottle::ThrottleCheckResult
 AppsNavigationThrottle::WillStartRequest() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   starting_url_ = GetStartingGURL(navigation_handle());
-  Browser* browser =
-      chrome::FindBrowserWithWebContents(navigation_handle()->GetWebContents());
-  if (browser)
-    browser->window()->SetIntentPickerViewVisibility(/*visible=*/false);
+  IntentPickerTabHelper::SetShouldShowIcon(
+      navigation_handle()->GetWebContents(), false);
   return HandleRequest();
 }
 
@@ -254,9 +258,6 @@ AppsNavigationThrottle::WillRedirectRequest() {
 // static
 bool AppsNavigationThrottle::CanCreate(content::WebContents* web_contents) {
   // Do not create the throttle if no apps can be installed.
-  if (!IsDesktopPwasEnabled())
-    return false;
-
   // Do not create the throttle in incognito or for a prerender navigation.
   if (web_contents->GetBrowserContext()->IsOffTheRecord() ||
       prerender::PrerenderContents::FromWebContents(web_contents) != nullptr) {
@@ -303,24 +304,22 @@ std::vector<IntentPickerAppInfo> AppsNavigationThrottle::FindPwaForUrl(
     content::WebContents* web_contents,
     const GURL& url,
     std::vector<IntentPickerAppInfo> apps) {
-  if (IsDesktopPwasEnabled()) {
-    // Check if the current URL has an installed desktop PWA, and add that to
-    // the list of apps if it exists.
-    const extensions::Extension* extension =
-        extensions::util::GetInstalledPwaForUrl(
-            web_contents->GetBrowserContext(), url,
-            extensions::LAUNCH_CONTAINER_WINDOW);
+  // Check if the current URL has an installed desktop PWA, and add that to
+  // the list of apps if it exists.
+  const extensions::Extension* extension =
+      extensions::util::GetInstalledPwaForUrl(
+          web_contents->GetBrowserContext(), url,
+          extensions::LAUNCH_CONTAINER_WINDOW);
 
-    if (extension) {
-      auto* menu_manager =
-          extensions::MenuManager::Get(web_contents->GetBrowserContext());
+  if (extension) {
+    auto* menu_manager =
+        extensions::MenuManager::Get(web_contents->GetBrowserContext());
 
-      // Prefer the web and place apps of type PWA before apps of type ARC.
-      // TODO(crbug.com/824598): deterministically sort this list.
-      apps.emplace(apps.begin(), apps::mojom::AppType::kWeb,
-                   menu_manager->GetIconForExtension(extension->id()),
-                   extension->id(), extension->name());
-    }
+    // Prefer the web and place apps of type PWA before apps of type ARC.
+    // TODO(crbug.com/824598): deterministically sort this list.
+    apps.emplace(apps.begin(), apps::mojom::AppType::kWeb,
+                 menu_manager->GetIconForExtension(extension->id()),
+                 extension->id(), extension->name());
   }
   return apps;
 }
@@ -345,18 +344,24 @@ void AppsNavigationThrottle::ShowIntentPickerForApps(
     const GURL& url,
     std::vector<IntentPickerAppInfo> apps,
     IntentPickerResponse callback) {
-  if (apps.empty())
+  if (apps.empty()) {
+    IntentPickerTabHelper::SetShouldShowIcon(web_contents, false);
+    ui_displayed_ = false;
     return;
+  }
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
   if (!browser)
     return;
-  const PickerShowState picker_show_state = GetPickerShowState();
+  const PickerShowState picker_show_state =
+      GetPickerShowState(apps, web_contents, url);
   switch (picker_show_state) {
     case PickerShowState::kOmnibox:
-      browser->window()->SetIntentPickerViewVisibility(true);
+      ui_displayed_ = false;
+      IntentPickerTabHelper::SetShouldShowIcon(web_contents, true);
       break;
     case PickerShowState::kPopOut:
       ShowIntentPickerBubbleForApps(web_contents, std::move(apps),
+                                    ShouldShowRememberSelection(),
                                     std::move(callback));
       break;
     default:
@@ -365,7 +370,10 @@ void AppsNavigationThrottle::ShowIntentPickerForApps(
 }
 
 AppsNavigationThrottle::PickerShowState
-AppsNavigationThrottle::GetPickerShowState() {
+AppsNavigationThrottle::GetPickerShowState(
+    const std::vector<IntentPickerAppInfo>& apps_for_picker,
+    content::WebContents* web_contents,
+    const GURL& url) {
   return PickerShowState::kOmnibox;
 }
 
@@ -377,24 +385,12 @@ IntentPickerResponse AppsNavigationThrottle::GetOnPickerClosedCallback(
                         ui_auto_display_service, url);
 }
 
-bool AppsNavigationThrottle::ShouldAutoDisplayUi(
-    const std::vector<IntentPickerAppInfo>& apps_for_picker,
-    content::WebContents* web_contents,
-    const GURL& url) {
-  if (apps_for_picker.empty())
-    return false;
+bool AppsNavigationThrottle::ShouldShowRememberSelection() {
+  return false;
+}
 
-  // Check if all the app candidates are PWAs.
-  bool only_pwa_apps =
-      std::all_of(apps_for_picker.begin(), apps_for_picker.end(),
-                  [](const IntentPickerAppInfo& app_info) {
-                    return app_info.type == apps::mojom::AppType::kWeb;
-                  });
-  if (only_pwa_apps)
-    return false;
-
-  DCHECK(ui_auto_display_service_);
-  return ui_auto_display_service_->ShouldAutoDisplayUi(url);
+bool AppsNavigationThrottle::navigate_from_link() {
+  return navigate_from_link_;
 }
 
 // static
@@ -435,7 +431,15 @@ AppsNavigationThrottle::PickerAction AppsNavigationThrottle::GetPickerAction(
 content::NavigationThrottle::ThrottleCheckResult
 AppsNavigationThrottle::HandleRequest() {
   content::NavigationHandle* handle = navigation_handle();
+  // If the navigation happened without changing document or the
+  // navigation resulted in an error page, don't check intent for the
+  // navigation.
+  if (handle->IsSameDocument() || handle->IsErrorPage())
+    return content::NavigationThrottle::PROCEED;
+
   DCHECK(!ui_displayed_);
+
+  navigate_from_link_ = false;
 
   // Always handle http(s) <form> submissions in Chrome for two reasons: 1) we
   // don't have a way to send POST data to ARC, and 2) intercepting http(s) form
@@ -447,23 +451,13 @@ AppsNavigationThrottle::HandleRequest() {
   // Ignore navigations with the CLIENT_REDIRECT qualifier on.
   constexpr bool kAllowClientRedirect = false;
 
-  // We must never handle navigations started within a context menu.
-  if (handle->WasStartedFromContextMenu())
-    return content::NavigationThrottle::PROCEED;
-
   ui::PageTransition page_transition = handle->GetPageTransition();
   content::WebContents* web_contents = handle->GetWebContents();
   const GURL& url = handle->GetURL();
-  if (ShouldIgnoreNavigation(page_transition, kAllowFormSubmit,
-                             kAllowClientRedirect)) {
-    if ((page_transition & ui::PAGE_TRANSITION_FORWARD_BACK) ||
-        (page_transition & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR)) {
-      // This enforces that whether we ignore the navigation or not, we make
-      // sure that the user cannot copy/paste or type a url to reuse
-      // ArcWebContentsData.
-      MaybeRemoveComingFromArcFlag(web_contents, starting_url_, url);
-    }
-    return content::NavigationThrottle::PROCEED;
+  if (!ShouldIgnoreNavigation(page_transition, kAllowFormSubmit,
+                              kAllowClientRedirect) &&
+      !handle->WasStartedFromContextMenu()) {
+    navigate_from_link_ = true;
   }
 
   MaybeRemoveComingFromArcFlag(web_contents, starting_url_, url);
@@ -484,17 +478,14 @@ AppsNavigationThrottle::HandleRequest() {
 
   // We didn't query ARC, so proceed with the navigation and query if we have an
   // installed desktop PWA to handle the URL.
-  if (IsDesktopPwasEnabled()) {
-    std::vector<IntentPickerAppInfo> apps =
-        FindPwaForUrl(web_contents, url, {});
+  std::vector<IntentPickerAppInfo> apps = FindPwaForUrl(web_contents, url, {});
 
-    if (!apps.empty())
-      ui_displayed_ = true;
+  if (!apps.empty())
+    ui_displayed_ = true;
 
-    ShowIntentPickerForApps(
-        web_contents, ui_auto_display_service_, url, std::move(apps),
-        GetOnPickerClosedCallback(web_contents, ui_auto_display_service_, url));
-  }
+  ShowIntentPickerForApps(
+      web_contents, ui_auto_display_service_, url, std::move(apps),
+      GetOnPickerClosedCallback(web_contents, ui_auto_display_service_, url));
 
   return content::NavigationThrottle::PROCEED;
 }

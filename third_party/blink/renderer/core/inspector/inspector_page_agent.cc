@@ -32,6 +32,7 @@
 
 #include <memory>
 
+#include "base/containers/span.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
@@ -65,7 +66,6 @@
 #include "third_party/blink/renderer/core/loader/idleness_detector.h"
 #include "third_party/blink/renderer/core/loader/resource/css_style_sheet_resource.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
-#include "third_party/blink/renderer/core/loader/scheduled_navigation.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
@@ -78,6 +78,7 @@
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8-inspector.h"
@@ -178,7 +179,7 @@ std::unique_ptr<protocol::Array<String>> GetEnabledWindowFeatures(
 
 }  // namespace
 
-static bool PrepareResourceBuffer(Resource* cached_resource,
+static bool PrepareResourceBuffer(const Resource* cached_resource,
                                   bool* has_zero_size) {
   if (!cached_resource)
     return false;
@@ -197,7 +198,7 @@ static bool PrepareResourceBuffer(Resource* cached_resource,
   return true;
 }
 
-static bool HasTextContent(Resource* cached_resource) {
+static bool HasTextContent(const Resource* cached_resource) {
   ResourceType type = cached_resource->GetType();
   return type == ResourceType::kCSSStyleSheet ||
          type == ResourceType::kXSLStyleSheet ||
@@ -252,7 +253,8 @@ static void MaybeEncodeTextContent(const String& text_content,
     *base64_encoded = false;
   } else {
     DCHECK(!text_content.Is8Bit());
-    *result = Base64Encode(text_content.Utf8(WTF::kLenientUTF8Conversion));
+    *result = Base64Encode(
+        base::as_bytes(base::make_span(StringUTF8Adaptor(text_content))));
     *base64_encoded = true;
   }
 }
@@ -310,7 +312,7 @@ bool InspectorPageAgent::SharedBufferContent(
 }
 
 // static
-bool InspectorPageAgent::CachedResourceContent(Resource* cached_resource,
+bool InspectorPageAgent::CachedResourceContent(const Resource* cached_resource,
                                                String* result,
                                                bool* base64_encoded) {
   bool has_zero_size;
@@ -927,11 +929,11 @@ void InspectorPageAgent::FrameStoppedLoading(LocalFrame* frame) {
 }
 
 void InspectorPageAgent::FrameRequestedNavigation(
-    LocalFrame* frame,
+    Frame* target_frame,
     const KURL& url,
     ClientNavigationReason reason) {
   GetFrontend()->frameRequestedNavigation(
-      IdentifiersFactory::FrameId(frame),
+      IdentifiersFactory::FrameId(target_frame),
       ClientNavigationReasonToProtocol(reason), url.GetString());
 }
 

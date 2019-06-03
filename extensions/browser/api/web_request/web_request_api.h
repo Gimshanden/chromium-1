@@ -31,6 +31,7 @@
 #include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/url_pattern_set.h"
 #include "ipc/ipc_sender.h"
@@ -95,7 +96,7 @@ class WebRequestAPI : public BrowserContextKeyedAPI,
     // in-progress network requests. If the request will *not* be handled by
     // the proxy, |callback| should be invoked with |base::nullopt|.
     virtual void HandleAuthRequest(
-        net::AuthChallengeInfo* auth_info,
+        const net::AuthChallengeInfo& auth_info,
         scoped_refptr<net::HttpResponseHeaders> response_headers,
         int32_t request_id,
         AuthRequestCallback callback);
@@ -134,7 +135,7 @@ class WebRequestAPI : public BrowserContextKeyedAPI,
     Proxy* GetProxyFromRequestId(const content::GlobalRequestID& id);
 
     void MaybeProxyAuthRequest(
-        net::AuthChallengeInfo* auth_info,
+        const net::AuthChallengeInfo& auth_info,
         scoped_refptr<net::HttpResponseHeaders> response_headers,
         const content::GlobalRequestID& request_id,
         AuthRequestCallback callback);
@@ -209,7 +210,7 @@ class WebRequestAPI : public BrowserContextKeyedAPI,
   // thread.
   bool MaybeProxyAuthRequest(
       content::BrowserContext* browser_context,
-      net::AuthChallengeInfo* auth_info,
+      const net::AuthChallengeInfo& auth_info,
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       const content::GlobalRequestID& request_id,
       bool is_main_frame,
@@ -502,6 +503,12 @@ class ExtensionWebRequestEventRouter {
   // ExtraInfoSpec::EXTRA_HEADERS set.
   bool HasAnyExtraHeadersListener(void* browser_context);
 
+  // Like above, but for usage on the UI thread.
+  bool HasAnyExtraHeadersListenerOnUI(content::BrowserContext* browser_context);
+
+  void IncrementExtraHeadersListenerCount(void* browser_context);
+  void DecrementExtraHeadersListenerCount(void* browser_context);
+
  private:
   friend class WebRequestAPI;
   friend class base::NoDestructor<ExtensionWebRequestEventRouter>;
@@ -679,7 +686,7 @@ class ExtensionWebRequestEventRouter {
 
   // Evaluates the rules of the declarative webrequest API and stores
   // modifications to the request that result from WebRequestActions as
-  // deltas in |blocked_requests_|. |original_response_headers| should only be
+  // deltas in |blocked_requests_|. |filtered_response_headers| should only be
   // set for the OnHeadersReceived stage and NULL otherwise. Returns whether any
   // deltas were generated.
   bool ProcessDeclarativeRules(
@@ -688,7 +695,7 @@ class ExtensionWebRequestEventRouter {
       const std::string& event_name,
       const WebRequestInfo* request,
       extensions::RequestStage request_stage,
-      const net::HttpResponseHeaders* original_response_headers);
+      const net::HttpResponseHeaders* filtered_response_headers);
 
   // If the BlockedRequest contains messages_to_extension entries in the event
   // deltas, we send them to subscribers of
@@ -731,6 +738,10 @@ class ExtensionWebRequestEventRouter {
   // Helper for |HasAnyExtraHeadersListener()|.
   bool HasAnyExtraHeadersListenerImpl(void* browser_context);
 
+  // Called on the UI thread to update |browser_contexts_with_extra_headers_|.
+  void UpdateExtraHeadersListenerOnUI(void* browser_context,
+                                      bool has_extra_headers_listeners);
+
   // Get the number of listeners - for testing only.
   size_t GetListenerCountForTesting(void* browser_context,
                                     const std::string& event_name);
@@ -742,8 +753,13 @@ class ExtensionWebRequestEventRouter {
   // extensions that are listening to that event.
   ListenerMap listeners_;
 
-  // Count of listeners per browser context which request extra headers.
+  // Count of listeners per browser context which request extra headers. Must be
+  // modified through [Increment/Decrement]ExtraHeadersListenerCount.
   ExtraHeadersListenerCountMap extra_headers_listener_count_;
+
+  // Accessed on the UI thread to check if a given BrowserContext has any
+  // extra headers listeners.
+  std::set<content::BrowserContext*> browser_contexts_with_extra_headers_;
 
   // A map of network requests that are waiting for at least one event handler
   // to respond.

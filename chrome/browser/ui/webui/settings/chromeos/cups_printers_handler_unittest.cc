@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_string_value_serializer.h"
+#include "chrome/browser/chromeos/printing/printing_stubs.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/debug_daemon_client.h"
@@ -42,38 +43,17 @@ void AddedPrinter(int32_t status) {
 }
 
 // Callback used for testing CupsRemovePrinter().
-void RemovedPrinter(bool* expected, bool result) {
-  EXPECT_EQ(*expected, result);
+void RemovedPrinter(base::OnceClosure quit_closure,
+                    bool* expected,
+                    bool result) {
+  *expected = result;
+  std::move(quit_closure).Run();
 }
 
-class FakePrinterConfigurer : public PrinterConfigurer {
+class TestCupsPrintersManager : public StubCupsPrintersManager {
  public:
-  void SetUpPrinter(const Printer& printer,
-                    PrinterSetupCallback callback) override {}
-};
-
-class FakeCupsPrintersManager : public CupsPrintersManager {
- public:
-  FakeCupsPrintersManager() = default;
-
-  std::vector<Printer> GetPrinters(PrinterClass printer_class) const override {
-    return {};
-  }
-
-  void RemoveUnavailablePrinters(std::vector<Printer>*) const override {}
-  void UpdateConfiguredPrinter(const Printer& printer) override {}
-  void RemoveConfiguredPrinter(const std::string& printer_id) override {}
-  void AddObserver(CupsPrintersManager::Observer* observer) override {}
-  void RemoveObserver(CupsPrintersManager::Observer* observer) override {}
-  void PrinterInstalled(const Printer& printer, bool is_automatic) override {}
-  void RecordSetupAbandoned(const Printer& printer) override {}
-
-  bool IsPrinterInstalled(const Printer& printer) const override {
-    return false;
-  }
-
-  std::unique_ptr<Printer> GetPrinter(const std::string& id) const override {
-    return std::make_unique<Printer>();
+  base::Optional<Printer> GetPrinter(const std::string& id) const override {
+    return Printer();
   }
 };
 
@@ -97,13 +77,17 @@ class FakePpdProvider : public PpdProvider {
 
 class CupsPrintersHandlerTest : public testing::Test {
  public:
-  CupsPrintersHandlerTest() = default;
+  CupsPrintersHandlerTest()
+      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
+        profile_(),
+        web_ui_(),
+        printers_handler_() {}
   ~CupsPrintersHandlerTest() override = default;
 
   void SetUp() override {
     printers_handler_ = CupsPrintersHandler::CreateForTesting(
         &profile_, base::MakeRefCounted<FakePpdProvider>(),
-        std::make_unique<FakePrinterConfigurer>(), &printers_manager_);
+        std::make_unique<StubPrinterConfigurer>(), &printers_manager_);
     printers_handler_->SetWebUIForTest(&web_ui_);
     printers_handler_->RegisterMessages();
   }
@@ -114,7 +98,7 @@ class CupsPrintersHandlerTest : public testing::Test {
   TestingProfile profile_;
   content::TestWebUI web_ui_;
   std::unique_ptr<CupsPrintersHandler> printers_handler_;
-  FakeCupsPrintersManager printers_manager_;
+  TestCupsPrintersManager printers_manager_;
 };
 
 TEST_F(CupsPrintersHandlerTest, RemoveCorrectPrinter) {
@@ -135,11 +119,14 @@ TEST_F(CupsPrintersHandlerTest, RemoveCorrectPrinter) {
 
   // We expect this printer removal to fail since the printer should have
   // already been removed by the previous call to 'removeCupsPrinter'.
-  bool expected = false;
-  client->CupsRemovePrinter("testprinter1",
-                            base::BindRepeating(&RemovedPrinter, &expected),
-                            base::DoNothing());
-  thread_bundle_.RunUntilIdle();
+  base::RunLoop run_loop;
+  bool expected = true;
+  client->CupsRemovePrinter(
+      "testprinter1",
+      base::BindRepeating(&RemovedPrinter, run_loop.QuitClosure(), &expected),
+      base::DoNothing());
+  run_loop.Run();
+  EXPECT_FALSE(expected);
 }
 
 }  // namespace settings.

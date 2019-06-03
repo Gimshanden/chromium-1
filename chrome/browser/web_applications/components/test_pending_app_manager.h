@@ -39,8 +39,14 @@ class TestPendingAppManager : public PendingAppManager {
     deduped_uninstall_count_ = 0;
   }
 
+  const std::map<GURL, InstallSource>& installed_apps() const {
+    return installed_apps_;
+  }
+
   void SimulatePreviouslyInstalledApp(const GURL& url,
                                       InstallSource install_source);
+
+  void SetInstallResultCode(InstallResultCode result_code);
 
   // PendingAppManager:
   void Install(InstallOptions install_options,
@@ -51,9 +57,14 @@ class TestPendingAppManager : public PendingAppManager {
                      const UninstallCallback& callback) override;
   std::vector<GURL> GetInstalledAppUrls(
       InstallSource install_source) const override;
-  base::Optional<std::string> LookupAppId(const GURL& url) const override;
+  base::Optional<AppId> LookupAppId(const GURL& url) const override;
+  bool HasAppIdWithInstallSource(
+      const AppId& app_id,
+      web_app::InstallSource install_source) const override;
+  void Shutdown() override {}
 
  private:
+  void DoInstall(InstallOptions install_options, OnceInstallCallback callback);
   std::vector<InstallOptions> install_requests_;
   std::vector<GURL> uninstall_requests_;
 
@@ -61,6 +72,9 @@ class TestPendingAppManager : public PendingAppManager {
   int deduped_uninstall_count_;
 
   std::map<GURL, InstallSource> installed_apps_;
+  InstallResultCode install_result_code_ = InstallResultCode::kSuccess;
+
+  base::WeakPtrFactory<TestPendingAppManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestPendingAppManager);
 };

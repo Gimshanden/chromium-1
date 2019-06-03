@@ -25,7 +25,6 @@
 #include "content/test/test_render_view_host.h"
 #include "services/viz/public/interfaces/hit_test/input_target_client.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/ui_base_features.h"
 
 namespace content {
 
@@ -266,11 +265,8 @@ class RenderWidgetHostInputEventRouterTest : public testing::Test {
         child.view.get(), parent_view, view_root_.get(),
         false /* use_zoom_for_device_scale_factor */);
 
-    // This check often fails in Mash. https://crbug.com/933876
-    if (!features::IsMultiProcessMash()) {
-      EXPECT_EQ(child.view.get(), rwhier()->FindViewFromFrameSinkId(
-                                      child.view->GetFrameSinkId()));
-    }
+    EXPECT_EQ(child.view.get(),
+              rwhier()->FindViewFromFrameSinkId(child.view->GetFrameSinkId()));
 
     return child;
   }
@@ -343,7 +339,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   blink::WebGestureEvent gesture_event(
       blink::WebInputEvent::kGestureTapDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   gesture_event.unique_touch_event_id = touch_event.unique_touch_event_id;
 
   rwhier()->RouteGestureEvent(view_root_.get(), &gesture_event,
@@ -569,7 +565,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest, DoNotCoalesceGestureEvents) {
   blink::WebGestureEvent gesture_event(
       blink::WebInputEvent::kGestureTapDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   gesture_event.unique_touch_event_id = touch_event.unique_touch_event_id;
   rwhier()->RouteGestureEvent(view_root_.get(), &gesture_event,
                               ui::LatencyInfo(ui::SourceEventType::TOUCH));
@@ -616,7 +612,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   {
     ChildViewState child = MakeChildView(view_root_.get());
@@ -669,7 +665,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   ChildViewState outer = MakeChildView(view_root_.get());
   ChildViewState inner = MakeChildView(outer.view.get());
@@ -695,7 +691,7 @@ void RenderWidgetHostInputEventRouterTest::TestSendNewGestureWhileBubbling(
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   TestRenderWidgetHostViewChildFrame* cur_target = bubbling_origin;
   RenderWidgetHostViewBase* parent = bubbling_origin->GetParentView();
@@ -742,7 +738,7 @@ void RenderWidgetHostInputEventRouterTest::TestSendNewGestureWhileBubbling(
   blink::WebGestureEvent gesture_event(
       blink::WebInputEvent::kGestureTapDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   gesture_event.unique_touch_event_id = touch_event.unique_touch_event_id;
 
   rwhier()->RouteGestureEvent(view_root_.get(), &gesture_event,
@@ -804,7 +800,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest, DoNotBubbleMultipleSequences) {
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   ChildViewState outer1 = MakeChildView(view_root_.get());
   ChildViewState inner1 = MakeChildView(outer1.view.get());
@@ -832,7 +828,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   ChildViewState child = MakeChildView(view_root_.get());
 
@@ -852,7 +848,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   blink::WebGestureEvent gesture_event(
       blink::WebInputEvent::kGestureTapDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   gesture_event.unique_touch_event_id = touch_event.unique_touch_event_id;
 
   rwhier()->RouteGestureEvent(view_root_.get(), &gesture_event,
@@ -876,7 +872,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   gfx::Vector2dF delta(0.f, 10.f);
   blink::WebGestureEvent scroll_begin =
       SyntheticWebGestureEventBuilder::BuildScrollBegin(
-          delta.x(), delta.y(), blink::kWebGestureDeviceTouchscreen);
+          delta.x(), delta.y(), blink::WebGestureDevice::kTouchscreen);
 
   ChildViewState outer = MakeChildView(view_root_.get());
   ChildViewState inner = MakeChildView(outer.view.get());
@@ -897,7 +893,7 @@ TEST_F(RenderWidgetHostInputEventRouterTest,
   blink::WebGestureEvent gesture_event(
       blink::WebInputEvent::kGestureTapDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   gesture_event.unique_touch_event_id = touch_event.unique_touch_event_id;
 
   rwhier()->RouteGestureEvent(view_root_.get(), &gesture_event,

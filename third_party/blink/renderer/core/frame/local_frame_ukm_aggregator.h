@@ -11,6 +11,10 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 
+namespace base {
+class TickClock;
+}
+
 namespace ukm {
 class UkmRecorder;
 }
@@ -47,10 +51,10 @@ namespace blink {
 //
 // A UKM event is generated according to a sampling strategy. A record is always
 // generated on the first lifecycle update, and then additional samples are
-// taken at random intervals simulating a poisson process with mean time of
-// mean_milliseconds_between_samples_. The first primary metric recording after
-// the end of the interval will produce an event with all the
-// data for that frame (i.e. the period since the last BeginMainFrame).
+// taken at random frames simulating a poisson process with mean number of
+// frames between events of mean_frames_between_samples_. The first primary
+// metric recording after the frame count has passed will produce an event with
+// all the data for that frame (i.e. the period since the last BeginMainFrame).
 //
 // Sample usage (see also SCOPED_UMA_AND_UKM_TIMER):
 //   std::unique_ptr<UkmHierarchicalTimeAggregator> aggregator(
@@ -194,10 +198,12 @@ class CORE_EXPORT LocalFrameUkmAggregator
     friend class LocalFrameUkmAggregator;
 
     ScopedUkmHierarchicalTimer(scoped_refptr<LocalFrameUkmAggregator>,
-                               size_t metric_index);
+                               size_t metric_index,
+                               const base::TickClock* clock);
 
     scoped_refptr<LocalFrameUkmAggregator> aggregator_;
     const size_t metric_index_;
+    const base::TickClock* clock_;
     const TimeTicks start_time_;
 
     DISALLOW_COPY_AND_ASSIGN(ScopedUkmHierarchicalTimer);
@@ -226,6 +232,10 @@ class CORE_EXPORT LocalFrameUkmAggregator
 
   bool InMainFrame() { return in_main_frame_update_; }
 
+  // The caller is the owner of the |clock|. The |clock| must outlive the
+  // LocalFrameUkmAggregator.
+  void SetTickClockForTesting(const base::TickClock* clock);
+
  private:
   struct AbsoluteMetricRecord {
     std::unique_ptr<CustomCountHistogram> uma_counter;
@@ -247,20 +257,24 @@ class CORE_EXPORT LocalFrameUkmAggregator
     void reset() { interval_duration = TimeDelta(); }
   };
 
-  void UpdateEventTimeAndRecordEventIfNeeded(TimeTicks current_time);
+  void UpdateEventTimeAndRecordEventIfNeeded();
   void RecordEvent();
   void ResetAllMetrics();
-  TimeDelta SampleInterval();
+  unsigned SampleFramesToNextEvent();
+
+  // Implements throttling of the ForcedStyleAndLayoutUMA metric.
+  void RecordForcedStyleLayoutUMA(TimeDelta& duration);
 
   // To test event sampling. This and all future intervals will be the given
-  // time delta, until this is called again.
-  void NextSampleIntervalForTest(TimeDelta interval) {
-    interval_for_test_ = interval;
+  // frame count, until this is called again.
+  void FramesToNextEventForTest(unsigned num_frames) {
+    frames_to_next_event_for_test_ = num_frames;
   }
 
   // UKM system data
   const int64_t source_id_;
   ukm::UkmRecorder* const recorder_;
+  const base::TickClock* clock_;
 
   // Event and metric data
   const String event_name_;
@@ -268,12 +282,18 @@ class CORE_EXPORT LocalFrameUkmAggregator
   Vector<AbsoluteMetricRecord> absolute_metric_records_;
   Vector<MainFramePercentageRecord> main_frame_percentage_records_;
 
-  // Time and sampling data
-  int mean_milliseconds_between_samples_;
-  TimeTicks next_event_time_;
+  // Sampling control. Currently we sample a bit more than every 30s assuming we
+  // are achieving 60fps. Better to sample less rather than more given our data
+  // is already beyond the throtting threshold.
+  unsigned mean_frames_between_samples_ = 2000;
+  unsigned frames_to_next_event_ = 0;
 
-  // Test data, used for SampleInterval if present
-  TimeDelta interval_for_test_ = TimeDelta();
+  // Control for the ForcedStyleAndUpdate UMA metric sampling
+  unsigned mean_calls_between_forced_style_layout_uma_ = 100;
+  unsigned calls_to_next_forced_style_layout_uma_ = 0;
+
+  // Test data, used for SampleFramesToNextEvent if present
+  unsigned frames_to_next_event_for_test_ = 0;
 
   // Set by BeginMainFrame() and cleared in RecordMEndOfFrameMetrics.
   // Main frame metrics are only recorded if this is true.

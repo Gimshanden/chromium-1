@@ -49,6 +49,8 @@ class AuthDelegateImpl : public DriveFsAuth::Delegate {
     return "salt-" + account_id_.GetAccountIdKey();
   }
 
+  bool IsMetricsCollectionEnabled() override { return false; }
+
   const std::unique_ptr<service_manager::Connector> connector_;
   const AccountId account_id_;
 
@@ -99,14 +101,14 @@ class FakeIdentityService
   void GetPrimaryAccountWhenAvailable(
       GetPrimaryAccountWhenAvailableCallback callback) override {
     auto account_id = AccountId::FromUserEmailGaiaId("test@example.com", "ID");
-    AccountInfo account_info;
+    CoreAccountInfo account_info;
     account_info.email = account_id.GetUserEmail();
     account_info.gaia = account_id.GetGaiaId();
     account_info.account_id = account_id.GetAccountIdKey();
     std::move(callback).Run(account_info, {});
   }
 
-  void GetAccessToken(const std::string& account_id,
+  void GetAccessToken(const CoreAccountId& account_id,
                       const ::identity::ScopeSet& scopes,
                       const std::string& consumer_id,
                       GetAccessTokenCallback callback) override {

@@ -12,14 +12,16 @@
 
 #include "ash/app_list/app_list_export.h"
 #include "ash/app_list/model/app_list_item_observer.h"
-#include "ash/app_list/views/app_list_menu_model_adapter.h"
-#include "ash/public/interfaces/menu.mojom.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
+
+namespace ui {
+class SimpleMenuModel;
+}  // namespace ui
 
 namespace views {
 class ImageView;
@@ -30,14 +32,13 @@ class ProgressBar;
 namespace app_list {
 
 class AppListItem;
+class AppListMenuModelAdapter;
 class AppListViewDelegate;
 class AppsGridView;
 
-class APP_LIST_EXPORT AppListItemView
-    : public views::Button,
-      public views::ContextMenuController,
-      public AppListItemObserver,
-      public AppListMenuModelAdapter::Delegate {
+class APP_LIST_EXPORT AppListItemView : public views::Button,
+                                        public views::ContextMenuController,
+                                        public AppListItemObserver {
  public:
   // Internal class name.
   static const char kViewClassName[];
@@ -65,6 +66,9 @@ class APP_LIST_EXPORT AppListItemView
   gfx::Point GetDragImageOffset();
 
   void SetAsAttemptedFolderTarget(bool is_target_folder);
+
+  // Sets focus without a11y announcements or focus ring.
+  void SilentlyRequestFocus();
 
   AppListItem* item() const { return item_weak_; }
 
@@ -122,6 +126,8 @@ class APP_LIST_EXPORT AppListItemView
   // Enables background blur for folder icon if |enabled| is true.
   void SetBackgroundBlurEnabled(bool enabled);
 
+  bool is_folder() const { return is_folder_; }
+
  private:
   class IconImageView;
 
@@ -164,9 +170,10 @@ class APP_LIST_EXPORT AppListItemView
 
   // Callback invoked when a context menu is received after calling
   // |AppListViewDelegate::GetContextMenuModel|.
-  void OnContextMenuModelReceived(const gfx::Point& point,
-                                  ui::MenuSourceType source_type,
-                                  std::vector<ash::mojom::MenuItemPtr> menu);
+  void OnContextMenuModelReceived(
+      const gfx::Point& point,
+      ui::MenuSourceType source_type,
+      std::unique_ptr<ui::SimpleMenuModel> menu_model);
 
   // views::ContextMenuController overrides:
   void ShowContextMenuForViewImpl(views::View* source,
@@ -195,9 +202,6 @@ class APP_LIST_EXPORT AppListItemView
   void ItemIsInstallingChanged() override;
   void ItemPercentDownloadedChanged() override;
   void ItemBeingDestroyed() override;
-
-  // AppListMenuModelAdapter::Delegate overrides;
-  void ExecuteCommand(int command_id, int event_flags) override;
 
   // Returns the radius of preview circle.
   int GetPreviewCircleRadius() const;
@@ -234,6 +238,10 @@ class APP_LIST_EXPORT AppListItemView
   bool mouse_dragging_ = false;
   // True if the drag host proxy is crated for mouse dragging.
   bool mouse_drag_proxy_created_ = false;
+
+  // Whether AppsGridView should not be notified of a focus event, triggering
+  // A11y alerts and a focus ring.
+  bool focus_silently_ = false;
 
   // The animation that runs when dragged view enters or exits this view.
   std::unique_ptr<gfx::SlideAnimation> dragged_view_hover_animation_;

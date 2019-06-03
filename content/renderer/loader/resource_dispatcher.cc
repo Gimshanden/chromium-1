@@ -27,7 +27,6 @@
 #include "content/public/common/navigation_policy.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/common/url_utils.h"
-#include "content/public/renderer/fixed_received_data.h"
 #include "content/public/renderer/request_peer.h"
 #include "content/public/renderer/resource_dispatcher_delegate.h"
 #include "content/renderer/loader/request_extra_data.h"
@@ -143,7 +142,7 @@ void ResourceDispatcher::OnUploadProgress(int request_id,
 void ResourceDispatcher::OnReceivedResponse(
     int request_id,
     const network::ResourceResponseHead& response_head) {
-  TRACE_EVENT0("loader", "ResourceDispatcher::OnReceivedResponse");
+  TRACE_EVENT0("loading", "ResourceDispatcher::OnReceivedResponse");
   PendingRequestInfo* request_info = GetPendingRequestInfo(request_id);
   if (!request_info)
     return;
@@ -178,14 +177,14 @@ void ResourceDispatcher::OnReceivedResponse(
 
 void ResourceDispatcher::OnReceivedCachedMetadata(
     int request_id,
-    const std::vector<uint8_t>& data) {
+    base::span<const uint8_t> data) {
   PendingRequestInfo* request_info = GetPendingRequestInfo(request_id);
   if (!request_info)
     return;
 
   if (data.size()) {
     request_info->peer->OnReceivedCachedMetadata(
-        reinterpret_cast<const char*>(&data.front()), data.size());
+        reinterpret_cast<const char*>(data.data()), data.size());
   }
 }
 
@@ -204,7 +203,7 @@ void ResourceDispatcher::OnReceivedRedirect(
     const net::RedirectInfo& redirect_info,
     const network::ResourceResponseHead& response_head,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  TRACE_EVENT0("loader", "ResourceDispatcher::OnReceivedRedirect");
+  TRACE_EVENT0("loading", "ResourceDispatcher::OnReceivedRedirect");
   PendingRequestInfo* request_info = GetPendingRequestInfo(request_id);
   if (!request_info)
     return;
@@ -268,7 +267,7 @@ void ResourceDispatcher::FollowPendingRedirect(
 void ResourceDispatcher::OnRequestComplete(
     int request_id,
     const network::URLLoaderCompletionStatus& status) {
-  TRACE_EVENT0("loader", "ResourceDispatcher::OnRequestComplete");
+  TRACE_EVENT0("loading", "ResourceDispatcher::OnRequestComplete");
 
   PendingRequestInfo* request_info = GetPendingRequestInfo(request_id);
   if (!request_info)
@@ -282,10 +281,7 @@ void ResourceDispatcher::OnRequestComplete(
   RequestPeer* peer = request_info->peer.get();
 
   if (delegate_) {
-    std::unique_ptr<RequestPeer> new_peer = delegate_->OnRequestComplete(
-        std::move(request_info->peer), status.error_code);
-    DCHECK(new_peer);
-    request_info->peer = std::move(new_peer);
+    delegate_->OnRequestComplete();
   }
 
   network::URLLoaderCompletionStatus renderer_status(status);
@@ -507,7 +503,7 @@ int ResourceDispatcher::StartAsync(
   CheckSchemeForReferrerPolicy(*request);
 
 #if defined(OS_ANDROID)
-  if (request->resource_type != RESOURCE_TYPE_MAIN_FRAME &&
+  if (request->resource_type != static_cast<int>(ResourceType::kMainFrame) &&
       request->has_user_gesture) {
     NotifyUpdateUserGestureCarryoverInfo(request->render_frame_id);
   }
@@ -532,8 +528,9 @@ int ResourceDispatcher::StartAsync(
   pending_request->previews_state = request->previews_state;
 
   if (override_url_loader) {
-    DCHECK(request->resource_type == RESOURCE_TYPE_WORKER ||
-           request->resource_type == RESOURCE_TYPE_SHARED_WORKER)
+    DCHECK(request->resource_type == static_cast<int>(ResourceType::kWorker) ||
+           request->resource_type ==
+               static_cast<int>(ResourceType::kSharedWorker))
         << request->resource_type;
 
     // Redirect checks are handled by NavigationURLLoaderImpl, so it's safe to

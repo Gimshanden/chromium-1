@@ -12,6 +12,7 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/post_task.h"
 #include "base/values.h"
@@ -62,7 +63,6 @@ content::WebUIDataSource* CreateNetInternalsHTMLSource() {
   source->SetDefaultResource(IDR_NET_INTERNALS_INDEX_HTML);
   source->AddResourcePath("index.js", IDR_NET_INTERNALS_INDEX_JS);
   source->SetJsonPath("strings.js");
-  source->UseGzip();
   return source;
 }
 

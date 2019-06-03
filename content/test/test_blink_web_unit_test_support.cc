@@ -13,7 +13,7 @@
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/null_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -22,7 +22,6 @@
 #include "content/app/mojo/mojo_init.h"
 #include "content/child/child_process.h"
 #include "content/public/common/service_names.mojom.h"
-#include "content/renderer/loader/web_data_consumer_handle_impl.h"
 #include "content/renderer/loader/web_url_loader_impl.h"
 #include "content/renderer/mojo/blink_interface_provider_impl.h"
 #include "content/test/mock_clipboard_host.h"
@@ -167,9 +166,9 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport(
     DCHECK_EQ(scheduler_type, SchedulerType::kRealScheduler);
     main_thread_scheduler_ =
         blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler(
-            base::MessageLoop::CreateMessagePumpForType(
-                base::MessageLoop::TYPE_DEFAULT));
-    base::TaskScheduler::CreateAndStartWithDefaultParams("BlinkTestSupport");
+            base::MessagePump::Create(base::MessagePump::Type::DEFAULT));
+    base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
+        "BlinkTestSupport");
   }
 
   // Initialize mojo firstly to enable Blink initialization to use it.
@@ -210,7 +209,7 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport(
 
   // Test shell always exposes the GC.
   std::string flags("--expose-gc");
-  v8::V8::SetFlagsFromString(flags.c_str(), static_cast<int>(flags.size()));
+  v8::V8::SetFlagsFromString(flags.c_str(), flags.size());
 }
 
 TestBlinkWebUnitTestSupport::~TestBlinkWebUnitTestSupport() {
@@ -229,12 +228,6 @@ std::unique_ptr<blink::WebURLLoaderFactory>
 TestBlinkWebUnitTestSupport::CreateDefaultURLLoaderFactory() {
   return std::make_unique<WebURLLoaderFactoryWithMock>(
       weak_factory_.GetWeakPtr());
-}
-
-std::unique_ptr<blink::WebDataConsumerHandle>
-TestBlinkWebUnitTestSupport::CreateDataConsumerHandle(
-    mojo::ScopedDataPipeConsumerHandle handle) {
-  return std::make_unique<WebDataConsumerHandleImpl>(std::move(handle));
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::UserAgent() {

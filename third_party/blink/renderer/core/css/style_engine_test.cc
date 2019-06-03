@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/css/style_engine.h"
 
 #include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/css/preferred_color_scheme.h"
 #include "third_party/blink/public/platform/web_float_rect.h"
@@ -34,6 +35,7 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -42,7 +44,6 @@ using namespace css_test_helpers;
 class StyleEngineTest : public testing::Test {
  protected:
   void SetUp() override;
-  void TearDown() override;
 
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
   StyleEngine& GetStyleEngine() { return GetDocument().GetStyleEngine(); }
@@ -66,22 +67,17 @@ class StyleEngineTest : public testing::Test {
 
  private:
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
-  RuntimeEnabledFeatures::Backup features_backup_;
 };
 
 void StyleEngineTest::SetUp() {
   dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
 }
 
-void StyleEngineTest::TearDown() {
-  features_backup_.Restore();
-}
-
 StyleEngineTest::RuleSetInvalidation
 StyleEngineTest::ScheduleInvalidationsForRules(TreeScope& tree_scope,
                                                const String& css_text) {
-  StyleSheetContents* sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(
+  auto* sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(
           kHTMLStandardMode, SecureContextMode::kInsecureContext));
   sheet->ParseString(css_text);
   HeapHashSet<Member<RuleSet>> rule_sets;
@@ -96,8 +92,8 @@ StyleEngineTest::ScheduleInvalidationsForRules(TreeScope& tree_scope,
 }
 
 TEST_F(StyleEngineTest, DocumentDirtyAfterInject) {
-  StyleSheetContents* parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   parsed_sheet->ParseString("div {}");
   GetStyleEngine().InjectSheet("", parsed_sheet);
   EXPECT_FALSE(IsDocumentStyleSheetCollectionClean());
@@ -159,8 +155,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
 
   const unsigned initial_count = GetStyleEngine().StyleForElementCount();
 
-  StyleSheetContents* green_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* green_parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   green_parsed_sheet->ParseString(
       "#t1 { color: green !important }"
       "#t2 { color: white !important }"
@@ -185,8 +181,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   EXPECT_EQ(MakeRGB(0, 0, 0), t3->GetComputedStyle()->VisitedDependentColor(
                                   GetCSSPropertyColor()));
 
-  StyleSheetContents* blue_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* blue_parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   blue_parsed_sheet->ParseString(
       "#t1 { color: blue !important }"
       "#t2 { color: silver }"
@@ -263,8 +259,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   ASSERT_EQ(capabilities.slope,
             FontSelectionRange({NormalSlopeValue(), NormalSlopeValue()}));
 
-  StyleSheetContents* font_face_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* font_face_parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   font_face_parsed_sheet->ParseString(
       "@font-face {"
       " font-family: 'Cool Font';"
@@ -291,8 +287,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   ASSERT_EQ(capabilities.slope,
             FontSelectionRange({ItalicSlopeValue(), ItalicSlopeValue()}));
 
-  auto* style_element =
-      HTMLStyleElement::Create(GetDocument(), CreateElementFlags());
+  auto* style_element = MakeGarbageCollected<HTMLStyleElement>(
+      GetDocument(), CreateElementFlags());
   style_element->SetInnerHTMLFromString(
       "@font-face {"
       " font-family: 'Cool Font';"
@@ -344,8 +340,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   ASSERT_FALSE(GetStyleEngine().Resolver()->FindKeyframesRule(
       t5, AtomicString("dummy-animation")));
 
-  StyleSheetContents* keyframes_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* keyframes_parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   keyframes_parsed_sheet->ParseString("@keyframes dummy-animation { from {} }");
   StyleSheetKey keyframes_key("keyframes");
   GetStyleEngine().InjectSheet(keyframes_key, keyframes_parsed_sheet,
@@ -360,7 +356,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   ASSERT_TRUE(keyframes);
   EXPECT_EQ(1u, keyframes->Keyframes().size());
 
-  style_element = HTMLStyleElement::Create(GetDocument(), CreateElementFlags());
+  style_element = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
+                                                         CreateElementFlags());
   style_element->SetInnerHTMLFromString(
       "@keyframes dummy-animation { from {} to {} }");
   GetDocument().body()->AppendChild(style_element);
@@ -402,8 +399,9 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
       MakeRGB(255, 255, 255),
       t7->GetComputedStyle()->VisitedDependentColor(GetCSSPropertyColor()));
 
-  StyleSheetContents* custom_properties_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* custom_properties_parsed_sheet =
+      MakeGarbageCollected<StyleSheetContents>(
+          MakeGarbageCollected<CSSParserContext>(GetDocument()));
   custom_properties_parsed_sheet->ParseString(
       ":root {"
       " --stop-color: red !important;"
@@ -442,8 +440,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
       MakeRGB(255, 255, 255),
       t8->GetComputedStyle()->VisitedDependentColor(GetCSSPropertyColor()));
 
-  StyleSheetContents* media_queries_parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* media_queries_parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   media_queries_parsed_sheet->ParseString(
       "@media screen {"
       " #t8 {"
@@ -496,8 +494,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   EXPECT_EQ(MakeRGB(0, 0, 0), t10->GetComputedStyle()->VisitedDependentColor(
                                    GetCSSPropertyColor()));
 
-  StyleSheetContents* parsed_author_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* parsed_author_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   parsed_author_sheet->ParseString(
       "#t9 {"
       " color: green;"
@@ -538,8 +536,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
       MakeRGB(255, 255, 255),
       t11->GetComputedStyle()->VisitedDependentColor(GetCSSPropertyColor()));
 
-  StyleSheetContents* parsed_removable_red_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* parsed_removable_red_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   parsed_removable_red_sheet->ParseString("#t11 { color: red !important; }");
   StyleSheetKey removable_red_sheet_key("removable_red_sheet");
   GetStyleEngine().InjectSheet(removable_red_sheet_key,
@@ -551,8 +549,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   EXPECT_EQ(MakeRGB(255, 0, 0), t11->GetComputedStyle()->VisitedDependentColor(
                                      GetCSSPropertyColor()));
 
-  StyleSheetContents* parsed_removable_green_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* parsed_removable_green_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   parsed_removable_green_sheet->ParseString(
       "#t11 { color: green !important; }");
   StyleSheetKey removable_green_sheet_key("removable_green_sheet");
@@ -565,8 +563,8 @@ TEST_F(StyleEngineTest, AnalyzedInject) {
   EXPECT_EQ(MakeRGB(0, 128, 0), t11->GetComputedStyle()->VisitedDependentColor(
                                      GetCSSPropertyColor()));
 
-  StyleSheetContents* parsed_removable_red_sheet2 =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* parsed_removable_red_sheet2 = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   parsed_removable_red_sheet2->ParseString("#t11 { color: red !important; }");
   GetStyleEngine().InjectSheet(removable_red_sheet_key,
                                parsed_removable_red_sheet2,
@@ -630,8 +628,8 @@ TEST_F(StyleEngineTest, InjectedFontFace) {
   EXPECT_TRUE(cache->Get(font_description, "Author"));
   EXPECT_FALSE(cache->Get(font_description, "User"));
 
-  StyleSheetContents* user_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(GetDocument()));
+  auto* user_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(GetDocument()));
   user_sheet->ParseString(
       "@font-face {"
       "  font-family: 'User';"
@@ -661,7 +659,8 @@ TEST_F(StyleEngineTest, IgnoreInvalidPropertyValue) {
 }
 
 TEST_F(StyleEngineTest, TextToSheetCache) {
-  auto* element = HTMLStyleElement::Create(GetDocument(), CreateElementFlags());
+  auto* element = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
+                                                         CreateElementFlags());
 
   String sheet_text("div {}");
   TextPosition min_pos = TextPosition::MinimumPosition();
@@ -689,7 +688,8 @@ TEST_F(StyleEngineTest, TextToSheetCache) {
   // StyleSheetContents cache.
   ThreadState::Current()->CollectAllGarbageForTesting();
 
-  element = HTMLStyleElement::Create(GetDocument(), CreateElementFlags());
+  element = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
+                                                   CreateElementFlags());
   sheet1 = GetStyleEngine().CreateSheet(*element, sheet_text, min_pos, context);
 
   // Check that we did not use a cached StyleSheetContents after the garbage
@@ -1371,7 +1371,7 @@ TEST_F(StyleEngineTest, EmptyPseudo_InsertFirst) {
   EXPECT_TRUE(t1->NeedsStyleInvalidation());
 
   Element* t2 = GetDocument().getElementById("t2");
-  t2->appendChild(HTMLSpanElement::Create(GetDocument()));
+  t2->appendChild(MakeGarbageCollected<HTMLSpanElement>(GetDocument()));
   EXPECT_TRUE(t2->NeedsStyleInvalidation());
 }
 
@@ -1393,7 +1393,7 @@ TEST_F(StyleEngineTest, EmptyPseudo_InsertNotFirst) {
   EXPECT_FALSE(t1->NeedsStyleInvalidation());
 
   Element* t2 = GetDocument().getElementById("t2");
-  t2->appendChild(HTMLSpanElement::Create(GetDocument()));
+  t2->appendChild(MakeGarbageCollected<HTMLSpanElement>(GetDocument()));
   EXPECT_FALSE(t2->NeedsStyleInvalidation());
 }
 
@@ -1418,15 +1418,15 @@ TEST_F(StyleEngineTest, EmptyPseudo_ModifyTextData_SingleNode) {
 
   UpdateAllLifecyclePhases();
 
-  ToText(t1->firstChild())->setData("");
+  To<Text>(t1->firstChild())->setData("");
   EXPECT_TRUE(t1->NeedsStyleInvalidation());
 
-  ToText(t2->firstChild())->setData("Text");
+  To<Text>(t2->firstChild())->setData("Text");
   EXPECT_TRUE(t2->NeedsStyleInvalidation());
 
   // This is not optimal. We do not detect that we change text to/from
   // non-empty string.
-  ToText(t3->firstChild())->setData("NewText");
+  To<Text>(t3->firstChild())->setData("NewText");
   EXPECT_TRUE(t3->NeedsStyleInvalidation());
 }
 
@@ -1451,13 +1451,13 @@ TEST_F(StyleEngineTest, EmptyPseudo_ModifyTextData_HasSiblings) {
 
   UpdateAllLifecyclePhases();
 
-  ToText(t1->firstChild())->setData("");
+  To<Text>(t1->firstChild())->setData("");
   EXPECT_FALSE(t1->NeedsStyleInvalidation());
 
-  ToText(t2->lastChild())->setData("Text");
+  To<Text>(t2->lastChild())->setData("Text");
   EXPECT_FALSE(t2->NeedsStyleInvalidation());
 
-  ToText(t3->firstChild())->setData("NewText");
+  To<Text>(t3->firstChild())->setData("NewText");
   EXPECT_FALSE(t3->NeedsStyleInvalidation());
 }
 
@@ -1485,7 +1485,7 @@ TEST_F(StyleEngineTest, MediaQueriesChangeDefaultFontSize) {
 }
 
 TEST_F(StyleEngineTest, MediaQueriesChangeColorScheme) {
-  RuntimeEnabledFeatures::SetMediaQueryPrefersColorSchemeEnabled(true);
+  ScopedMediaQueryPrefersColorSchemeForTest feature_scope(true);
 
   GetDocument().body()->SetInnerHTMLFromString(R"HTML(
     <style>
@@ -1511,7 +1511,7 @@ TEST_F(StyleEngineTest, MediaQueriesChangeColorScheme) {
 }
 
 TEST_F(StyleEngineTest, MediaQueriesChangeColorSchemeForcedDarkMode) {
-  RuntimeEnabledFeatures::SetMediaQueryPrefersColorSchemeEnabled(true);
+  ScopedMediaQueryPrefersColorSchemeForTest feature_scope(true);
 
   GetDocument().GetSettings()->SetForceDarkModeEnabled(true);
   GetDocument().GetSettings()->SetPreferredColorScheme(
@@ -1560,7 +1560,7 @@ TEST_F(StyleEngineTest, MediaQueriesChangePrefersReducedMotion) {
 
 TEST_F(StyleEngineTest, ShadowRootStyleRecalcCrash) {
   GetDocument().body()->SetInnerHTMLFromString("<div id=host></div>");
-  HTMLElement* host = ToHTMLElement(GetDocument().getElementById("host"));
+  auto* host = To<HTMLElement>(GetDocument().getElementById("host"));
   ASSERT_TRUE(host);
 
   ShadowRoot& shadow_root =
@@ -1685,7 +1685,7 @@ TEST_F(StyleEngineTest, FirstLetterRemoved) {
   Element* d3 = GetDocument().getElementById("d3");
 
   FirstLetterPseudoElement* fl1 =
-      ToFirstLetterPseudoElement(d1->GetPseudoElement(kPseudoIdFirstLetter));
+      To<FirstLetterPseudoElement>(d1->GetPseudoElement(kPseudoIdFirstLetter));
   EXPECT_TRUE(fl1);
 
   GetDocument().getElementById("f1")->firstChild()->remove();
@@ -1698,10 +1698,10 @@ TEST_F(StyleEngineTest, FirstLetterRemoved) {
 
   UpdateAllLifecyclePhases();
   EXPECT_FALSE(
-      ToFirstLetterPseudoElement(d1->GetPseudoElement(kPseudoIdFirstLetter)));
+      To<FirstLetterPseudoElement>(d1->GetPseudoElement(kPseudoIdFirstLetter)));
 
   FirstLetterPseudoElement* fl2 =
-      ToFirstLetterPseudoElement(d2->GetPseudoElement(kPseudoIdFirstLetter));
+      To<FirstLetterPseudoElement>(d2->GetPseudoElement(kPseudoIdFirstLetter));
   EXPECT_TRUE(fl2);
 
   GetDocument().getElementById("f2")->firstChild()->remove();
@@ -1714,10 +1714,10 @@ TEST_F(StyleEngineTest, FirstLetterRemoved) {
 
   UpdateAllLifecyclePhases();
   EXPECT_FALSE(
-      ToFirstLetterPseudoElement(d2->GetPseudoElement(kPseudoIdFirstLetter)));
+      To<FirstLetterPseudoElement>(d2->GetPseudoElement(kPseudoIdFirstLetter)));
 
   FirstLetterPseudoElement* fl3 =
-      ToFirstLetterPseudoElement(d3->GetPseudoElement(kPseudoIdFirstLetter));
+      To<FirstLetterPseudoElement>(d3->GetPseudoElement(kPseudoIdFirstLetter));
   EXPECT_TRUE(fl3);
 
   Element* f3 = GetDocument().getElementById("f3");
@@ -1730,7 +1730,8 @@ TEST_F(StyleEngineTest, FirstLetterRemoved) {
   EXPECT_TRUE(fl3->NeedsStyleRecalc());
 
   UpdateAllLifecyclePhases();
-  fl3 = ToFirstLetterPseudoElement(d3->GetPseudoElement(kPseudoIdFirstLetter));
+  fl3 =
+      To<FirstLetterPseudoElement>(d3->GetPseudoElement(kPseudoIdFirstLetter));
   EXPECT_TRUE(fl3);
   EXPECT_EQ(f3->lastChild()->GetLayoutObject(),
             fl3->RemainingTextLayoutObject());
@@ -1775,8 +1776,8 @@ TEST_F(StyleEngineTest, CSSSelectorEmptyWhitespaceOnlyFail) {
   GetDocument().View()->UpdateAllLifecyclePhases(
       DocumentLifecycle::LifecycleUpdateReason::kTest);
 
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kCSSSelectorEmptyWhitespaceOnlyFail));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kCSSSelectorEmptyWhitespaceOnlyFail));
 
   auto* div_elements = GetDocument().getElementsByTagName("div");
   ASSERT_TRUE(div_elements);
@@ -1786,8 +1787,7 @@ TEST_F(StyleEngineTest, CSSSelectorEmptyWhitespaceOnlyFail) {
     element->setAttribute(blink::html_names::kClassAttr, "match");
     element->GetDocument().View()->UpdateAllLifecyclePhases(
         DocumentLifecycle::LifecycleUpdateReason::kTest);
-    return UseCounter::IsCounted(
-        element->GetDocument(),
+    return element->GetDocument().IsUseCounted(
         WebFeature::kCSSSelectorEmptyWhitespaceOnlyFail);
   };
 
@@ -1885,6 +1885,56 @@ TEST_F(StyleEngineTest, EnsureCustomComputedStyle) {
                 !node->ComputedStyleRef().IsEnsuredInDisplayNone() ||
                 !node->GetLayoutObject());
   }
+}
+
+// Via HTMLFormControlElement, it's possible to enter
+// Node::MarkAncestorsWithChildNeedsStyleRecalc for nodes which have
+// isConnected==true, but an ancestor with isConnected==false. This is because
+// we mark the ancestor chain for style recalc via HTMLFormElement::
+// InvalidateDefaultButtonStyle while the subtree disconnection
+// is taking place.
+TEST_F(StyleEngineTest, NoCrashWhenMarkingPartiallyRemovedSubtree) {
+  GetDocument().body()->SetInnerHTMLFromString(R"HTML(
+    <style>
+      #foo:default {} /* Needed to enter Element::PseudoStateChanged */
+    </style>
+    <form id="form">
+      <div id="outer">
+        <button>
+        <div id="inner"></div>
+      </div>
+    </form>
+  )HTML");
+  UpdateAllLifecyclePhases();
+
+  Element* form = GetDocument().getElementById("form");
+  Element* outer = GetDocument().getElementById("outer");
+  Element* inner = GetDocument().getElementById("inner");
+  ASSERT_TRUE(form);
+  ASSERT_TRUE(outer);
+  ASSERT_TRUE(inner);
+
+  // Add some more buttons, to give InvalidateDefaultButtonStyle
+  // something to do when the original <button> is removed.
+  inner->SetInnerHTMLFromString("<button><button>");
+  UpdateAllLifecyclePhases();
+
+  form->removeChild(outer);
+}
+
+TEST_F(StyleEngineTest, ColorSchemeBaseBackgroundChange) {
+  ScopedCSSColorSchemeForTest enable_color_scheme(true);
+  GetDocument().GetSettings()->SetPreferredColorScheme(
+      PreferredColorScheme::kDark);
+  UpdateAllLifecyclePhases();
+
+  EXPECT_EQ(Color::kWhite, GetDocument().View()->BaseBackgroundColor());
+
+  GetDocument().documentElement()->SetInlineStyleProperty(
+      CSSPropertyID::kColorScheme, "dark");
+  UpdateAllLifecyclePhases();
+
+  EXPECT_EQ(Color::kBlack, GetDocument().View()->BaseBackgroundColor());
 }
 
 }  // namespace blink

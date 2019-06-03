@@ -17,7 +17,7 @@
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_prefs.h"
@@ -562,6 +562,13 @@ void LogPredictionQualityMetrics(
 const int kMaxBucketsCount = 50;
 
 // static
+void AutofillMetrics::LogProfileSuggestionsMadeWithFormatter(
+    bool made_with_formatter) {
+  UMA_HISTOGRAM_BOOLEAN("Autofill.ProfileSuggestionsMadeWithFormatter",
+                        made_with_formatter);
+}
+
+// static
 void AutofillMetrics::LogSubmittedCardStateMetric(
     SubmittedCardStateMetric metric) {
   DCHECK_LT(metric, NUM_SUBMITTED_CARD_STATE_METRICS);
@@ -684,6 +691,12 @@ void AutofillMetrics::LogCreditCardInfoBarMetric(
                                   metric, NUM_INFO_BAR_METRICS);
   }
 
+  if (options.from_dynamic_change_form) {
+    base::UmaHistogramEnumeration(
+        "Autofill.CreditCardInfoBar" + destination + ".FromDynamicChangeForm",
+        metric, NUM_INFO_BAR_METRICS);
+  }
+
   if (options.has_non_focusable_field) {
     base::UmaHistogramEnumeration(
         "Autofill.CreditCardInfoBar" + destination + ".FromNonFocusableForm",
@@ -746,6 +759,11 @@ void AutofillMetrics::LogSaveCardPromptMetric(
         metric_with_destination_and_show + ".FromNonFocusableForm", metric,
         NUM_SAVE_CARD_PROMPT_METRICS);
   }
+  if (options.from_dynamic_change_form) {
+    base::UmaHistogramEnumeration(
+        metric_with_destination_and_show + ".FromDynamicChangeForm", metric,
+        NUM_SAVE_CARD_PROMPT_METRICS);
+  }
   base::UmaHistogramEnumeration(
       metric_with_destination_and_show +
           PreviousSaveCreditCardPromptUserDecisionToString(
@@ -806,6 +824,12 @@ void AutofillMetrics::LogScanCreditCardCompleted(
   base::UmaHistogramLongTimes("Autofill.ScanCreditCard.Duration_" + suffix,
                               duration);
   UMA_HISTOGRAM_BOOLEAN("Autofill.ScanCreditCard.Completed", completed);
+}
+
+// static
+void AutofillMetrics::LogLocalCardMigrationDecisionMetric(
+    LocalCardMigrationDecisionMetric metric) {
+  UMA_HISTOGRAM_ENUMERATION("Autofill.LocalCardMigrationDecision", metric);
 }
 
 // static
@@ -917,13 +941,6 @@ void AutofillMetrics::LogSaveCardWithFirstAndLastNameOffered(bool is_local) {
 // static
 void AutofillMetrics::LogSaveCardWithFirstAndLastNameComplete(bool is_local) {
   std::string histogram_name = "Autofill.SaveCardWithFirstAndLastNameComplete.";
-  histogram_name += is_local ? "Local" : "Server";
-  base::UmaHistogramBoolean(histogram_name, true);
-}
-
-// static
-void AutofillMetrics::LogSaveCardReachedPersonalDataManager(bool is_local) {
-  std::string histogram_name = "Autofill.SaveCardReachedPersonalDataManager.";
   histogram_name += is_local ? "Local" : "Server";
   base::UmaHistogramBoolean(histogram_name, true);
 }
@@ -1876,6 +1893,17 @@ void AutofillMetrics::LogWalletSyncTransportCardsOptIn(bool is_opted_in) {
       "Autofill.HadUserOptedIn_To_WalletSyncTransportServerCards", is_opted_in);
 }
 
+void AutofillMetrics::LogCardUploadEnabledMetric(
+    CardUploadEnabledMetric metric_value,
+    AutofillSyncSigninState sync_state) {
+  const std::string parent_metric = std::string("Autofill.CardUploadEnabled");
+  base::UmaHistogramEnumeration(parent_metric, metric_value);
+
+  const std::string child_metric =
+      parent_metric + GetMetricsSyncStateSuffix(sync_state);
+  base::UmaHistogramEnumeration(child_metric, metric_value);
+}
+
 // static
 const char* AutofillMetrics::GetMetricsSyncStateSuffix(
     AutofillSyncSigninState sync_state) {
@@ -1886,8 +1914,10 @@ const char* AutofillMetrics::GetMetricsSyncStateSuffix(
       return ".SignedIn";
     case AutofillSyncSigninState::kSignedInAndWalletSyncTransportEnabled:
       return ".SignedInAndWalletSyncTransportEnabled";
-    case AutofillSyncSigninState::kSignedInAndSyncFeature:
-      return ".SignedInAndSyncFeature";
+    case AutofillSyncSigninState::kSignedInAndSyncFeatureEnabled:
+      return ".SignedInAndSyncFeatureEnabled";
+    case AutofillSyncSigninState::kSyncPaused:
+      return ".SyncPaused";
     case AutofillSyncSigninState::kNumSyncStates:
       return ".Unknown";
   }

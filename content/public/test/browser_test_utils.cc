@@ -679,6 +679,13 @@ void MaybeSendSyntheticTapGesture(WebContents* guest_web_contents) {
                                             blink::WebFloatPoint(1, 1));
 }
 
+void RunUntilInputProcessed(RenderWidgetHost* host) {
+  base::RunLoop run_loop;
+  RenderWidgetHostImpl::From(host)->WaitForInputProcessed(
+      run_loop.QuitClosure());
+  run_loop.Run();
+}
+
 void WaitForLoadStopWithoutSuccessCheck(WebContents* web_contents) {
   // In many cases, the load may have finished before we get here.  Only wait if
   // the tab still has a pending navigation.
@@ -972,20 +979,20 @@ void SimulateGesturePinchSequence(WebContents* web_contents,
   pinch_begin.SetPositionInWidget(gfx::PointF(point));
   pinch_begin.SetPositionInScreen(gfx::PointF(point));
   pinch_begin.SetNeedsWheelEvent(source_device ==
-                                 blink::kWebGestureDeviceTouchpad);
+                                 blink::WebGestureDevice::kTouchpad);
   widget_host->ForwardGestureEvent(pinch_begin);
 
   blink::WebGestureEvent pinch_update(pinch_begin);
   pinch_update.SetType(blink::WebInputEvent::kGesturePinchUpdate);
   pinch_update.data.pinch_update.scale = scale;
   pinch_update.SetNeedsWheelEvent(source_device ==
-                                  blink::kWebGestureDeviceTouchpad);
+                                  blink::WebGestureDevice::kTouchpad);
   widget_host->ForwardGestureEvent(pinch_update);
 
   blink::WebGestureEvent pinch_end(pinch_begin);
   pinch_end.SetType(blink::WebInputEvent::kGesturePinchEnd);
   pinch_end.SetNeedsWheelEvent(source_device ==
-                               blink::kWebGestureDeviceTouchpad);
+                               blink::WebGestureDevice::kTouchpad);
   widget_host->ForwardGestureEvent(pinch_end);
 }
 
@@ -998,7 +1005,7 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
       blink::WebInputEvent::kNoModifiers, ui::EventTimeForNow(),
-      blink::kWebGestureDeviceTouchpad);
+      blink::WebGestureDevice::kTouchpad);
   scroll_begin.SetPositionInWidget(gfx::PointF(point));
   scroll_begin.data.scroll_begin.delta_x_hint = delta.x();
   scroll_begin.data.scroll_begin.delta_y_hint = delta.y();
@@ -1007,7 +1014,7 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_update(
       blink::WebGestureEvent::kGestureScrollUpdate,
       blink::WebInputEvent::kNoModifiers, ui::EventTimeForNow(),
-      blink::kWebGestureDeviceTouchpad);
+      blink::WebGestureDevice::kTouchpad);
   scroll_update.SetPositionInWidget(gfx::PointF(point));
   scroll_update.data.scroll_update.delta_x = delta.x();
   scroll_update.data.scroll_update.delta_y = delta.y();
@@ -1018,7 +1025,7 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_end(blink::WebGestureEvent::kGestureScrollEnd,
                                     blink::WebInputEvent::kNoModifiers,
                                     ui::EventTimeForNow(),
-                                    blink::kWebGestureDeviceTouchpad);
+                                    blink::WebGestureDevice::kTouchpad);
   scroll_end.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_end);
 }
@@ -1032,21 +1039,21 @@ void SimulateGestureFlingSequence(WebContents* web_contents,
   blink::WebGestureEvent scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
       blink::WebInputEvent::kNoModifiers, ui::EventTimeForNow(),
-      blink::kWebGestureDeviceTouchpad);
+      blink::WebGestureDevice::kTouchpad);
   scroll_begin.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_begin);
 
   blink::WebGestureEvent scroll_end(blink::WebGestureEvent::kGestureScrollEnd,
                                     blink::WebInputEvent::kNoModifiers,
                                     ui::EventTimeForNow(),
-                                    blink::kWebGestureDeviceTouchpad);
+                                    blink::WebGestureDevice::kTouchpad);
   scroll_end.SetPositionInWidget(gfx::PointF(point));
   widget_host->ForwardGestureEvent(scroll_end);
 
   blink::WebGestureEvent fling_start(blink::WebGestureEvent::kGestureFlingStart,
                                      blink::WebInputEvent::kNoModifiers,
                                      ui::EventTimeForNow(),
-                                     blink::kWebGestureDeviceTouchpad);
+                                     blink::WebGestureDevice::kTouchpad);
   fling_start.SetPositionInWidget(gfx::PointF(point));
   fling_start.data.fling_start.target_viewport = false;
   fling_start.data.fling_start.velocity_x = velocity.x();
@@ -1066,7 +1073,7 @@ void SimulateTouchGestureAt(WebContents* web_contents,
                             const gfx::Point& point,
                             blink::WebInputEvent::Type type) {
   blink::WebGestureEvent gesture(type, 0, ui::EventTimeForNow(),
-                                 blink::kWebGestureDeviceTouchscreen);
+                                 blink::WebGestureDevice::kTouchscreen);
   gesture.SetPositionInWidget(gfx::PointF(point));
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
@@ -1088,7 +1095,7 @@ void SimulateTapWithModifiersAt(WebContents* web_contents,
                                 const gfx::Point& point) {
   blink::WebGestureEvent tap(blink::WebGestureEvent::kGestureTap, modifiers,
                              ui::EventTimeForNow(),
-                             blink::kWebGestureDeviceTouchpad);
+                             blink::WebGestureDevice::kTouchpad);
   tap.SetPositionInWidget(gfx::PointF(point));
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
@@ -1796,6 +1803,8 @@ bool SetCookie(BrowserContext* browser_context,
       ->GetCookieManager(mojo::MakeRequest(&cookie_manager));
   net::CookieOptions options;
   options.set_include_httponly();
+  options.set_same_site_cookie_context(
+      net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
   std::unique_ptr<net::CanonicalCookie> cc(
       net::CanonicalCookie::Create(url, value, base::Time::Now(), options));
   DCHECK(cc.get());
@@ -2814,7 +2823,7 @@ void ConsoleObserverDelegate::Wait() {
 
 bool ConsoleObserverDelegate::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -3049,8 +3058,8 @@ bool TestChildOrGuestAutoresize(bool is_guest,
   RenderWidgetHostImpl* guest_rwh_impl =
       static_cast<RenderWidgetHostImpl*>(guest_rwh);
 
-  scoped_refptr<SynchronizeVisualPropertiesMessageFilter> filter(
-      new SynchronizeVisualPropertiesMessageFilter());
+  auto filter =
+      base::MakeRefCounted<SynchronizeVisualPropertiesMessageFilter>();
 
   // Register the message filter for the guest or child. For guest, we must use
   // a special hook, as there are already message filters installed which will
@@ -3110,7 +3119,10 @@ SynchronizeVisualPropertiesMessageFilter::
     : content::BrowserMessageFilter(kMessageClassesToFilter,
                                     base::size(kMessageClassesToFilter)),
       screen_space_rect_run_loop_(std::make_unique<base::RunLoop>()),
-      screen_space_rect_received_(false) {}
+      screen_space_rect_received_(false),
+      pinch_gesture_active_set_(false),
+      pinch_gesture_active_cleared_(false),
+      last_pinch_gesture_active_(false) {}
 
 void SynchronizeVisualPropertiesMessageFilter::WaitForRect() {
   screen_space_rect_run_loop_->Run();
@@ -3155,6 +3167,20 @@ void SynchronizeVisualPropertiesMessageFilter::
 void SynchronizeVisualPropertiesMessageFilter::OnSynchronizeVisualProperties(
     const viz::FrameSinkId& frame_sink_id,
     const FrameVisualProperties& visual_properties) {
+  // Monitor |is_pinch_gesture_active| to determine when pinch gestures begin
+  // and end.
+  if (visual_properties.is_pinch_gesture_active &&
+      !last_pinch_gesture_active_) {
+    pinch_gesture_active_set_ = true;
+  }
+  if (!visual_properties.is_pinch_gesture_active &&
+      last_pinch_gesture_active_) {
+    pinch_gesture_active_cleared_ = true;
+    if (pinch_end_run_loop_)
+      pinch_end_run_loop_->Quit();
+  }
+  last_pinch_gesture_active_ = visual_properties.is_pinch_gesture_active;
+
   gfx::Rect screen_space_rect_in_dip = visual_properties.screen_space_rect;
   if (IsUseZoomForDSFEnabled()) {
     screen_space_rect_in_dip =
@@ -3236,6 +3262,14 @@ bool SynchronizeVisualPropertiesMessageFilter::OnMessageReceived(
   return false;
 }
 
+void SynchronizeVisualPropertiesMessageFilter::WaitForPinchGestureEnd() {
+  if (pinch_gesture_active_cleared_)
+    return;
+  DCHECK(!pinch_end_run_loop_);
+  pinch_end_run_loop_ = std::make_unique<base::RunLoop>();
+  pinch_end_run_loop_->Run();
+}
+
 RenderWidgetHostMouseEventMonitor::RenderWidgetHostMouseEventMonitor(
     RenderWidgetHost* host)
     : host_(host), event_received_(false) {
@@ -3247,6 +3281,23 @@ RenderWidgetHostMouseEventMonitor::RenderWidgetHostMouseEventMonitor(
 
 RenderWidgetHostMouseEventMonitor::~RenderWidgetHostMouseEventMonitor() {
   host_->RemoveMouseEventCallback(mouse_callback_);
+}
+
+DidStartNavigationObserver::DidStartNavigationObserver(WebContents* contents)
+    : WebContentsObserver(contents) {}
+DidStartNavigationObserver::~DidStartNavigationObserver() = default;
+
+void DidStartNavigationObserver::DidStartNavigation(NavigationHandle* handle) {
+  if (observed_)
+    return;
+  observed_ = true;
+  navigation_handle_ = handle;
+  run_loop_.Quit();
+}
+
+void DidStartNavigationObserver::DidFinishNavigation(NavigationHandle* handle) {
+  if (navigation_handle_ == handle)
+    navigation_handle_ = nullptr;
 }
 
 }  // namespace content

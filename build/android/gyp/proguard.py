@@ -55,6 +55,9 @@ def _ParseOptions(args):
   parser.add_option('--mapping-output',
                     help='Path for proguard to output mapping file to.')
   parser.add_option(
+      '--extra-mapping-output-paths',
+      help='Additional paths to copy output mapping file to.')
+  parser.add_option(
       '--output-config',
       help='Path to write the merged proguard config file to.')
   parser.add_option(
@@ -82,8 +85,6 @@ def _ParseOptions(args):
 
   assert not options.main_dex_rules_path or options.r8_path, \
       'R8 must be enabled to pass main dex rules.'
-  assert not options.min_api or options.r8_path, \
-      'R8 must be enabled to pass min api.'
 
   classpath = []
   for arg in options.classpath:
@@ -231,6 +232,10 @@ def main(args):
         with open(tmp_mapping_path) as tmp:
           mapping.writelines(l for l in tmp if not l.startswith('#'))
 
+      for output in build_utils.ParseGnList(options.extra_mapping_output_paths):
+        shutil.copy(tmp_mapping_path, output)
+
+
     with build_utils.AtomicOutput(options.output_config) as f:
       f.write(merged_configs)
       if temp_config_string:
@@ -261,6 +266,7 @@ def main(args):
     proguard.mapping_output(options.mapping_output)
     proguard.libraryjars(libraries)
     proguard.verbose(options.verbose)
+    proguard.min_api(options.min_api)
     # Do not consider the temp file as an input since its name is random.
     input_paths = proguard.GetInputs()
 

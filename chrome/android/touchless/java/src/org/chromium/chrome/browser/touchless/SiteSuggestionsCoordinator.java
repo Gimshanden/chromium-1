@@ -5,11 +5,12 @@
 package org.chromium.chrome.browser.touchless;
 
 import android.content.Context;
-import android.support.v7.widget.LinearLayoutManager;
+import android.graphics.Rect;
 import android.support.v7.widget.RecyclerView;
 import android.view.View;
 import android.view.ViewStub;
 
+import org.chromium.base.Callback;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.suggestions.ImageFetcher;
@@ -28,43 +29,72 @@ import org.chromium.ui.modelutil.RecyclerViewAdapter;
 class SiteSuggestionsCoordinator {
     static final PropertyModel.WritableIntPropertyKey CURRENT_INDEX_KEY =
             new PropertyModel.WritableIntPropertyKey();
+    static final PropertyModel.WritableIntPropertyKey INITIAL_INDEX_KEY =
+            new PropertyModel.WritableIntPropertyKey();
     static final PropertyModel
             .ReadableObjectPropertyKey<PropertyListModel<PropertyModel, PropertyKey>>
                     SUGGESTIONS_KEY = new PropertyModel.ReadableObjectPropertyKey<>();
     static final PropertyModel.WritableIntPropertyKey ITEM_COUNT_KEY =
             new PropertyModel.WritableIntPropertyKey();
+    static final PropertyModel.WritableObjectPropertyKey<PropertyModel> REMOVAL_KEY =
+            new PropertyModel.WritableObjectPropertyKey<>();
+    public static final PropertyModel.WritableObjectPropertyKey<Runnable> ON_FOCUS_CALLBACK =
+            new PropertyModel.WritableObjectPropertyKey<>();
+    public static final PropertyModel.WritableBooleanPropertyKey SHOULD_FOCUS_VIEW =
+            new PropertyModel.WritableBooleanPropertyKey();
+    public static final PropertyModel
+            .ReadableObjectPropertyKey<Callback<View>> ASYNC_FOCUS_DELEGATE =
+            new PropertyModel.ReadableObjectPropertyKey<>();
 
     private SiteSuggestionsMediator mMediator;
-    private SiteSuggestionsAdapter mAdapterDelegate;
 
     SiteSuggestionsCoordinator(View parentView, Profile profile,
             SuggestionsNavigationDelegate navigationDelegate, ContextMenuManager contextMenuManager,
-            ImageFetcher imageFetcher) {
+            ImageFetcher imageFetcher, TouchlessLayoutManager touchlessLayoutManager) {
+        Context context = parentView.getContext();
+        SiteSuggestionsLayoutManager layoutManager = new SiteSuggestionsLayoutManager(context);
         PropertyModel model =
-                new PropertyModel.Builder(CURRENT_INDEX_KEY, SUGGESTIONS_KEY, ITEM_COUNT_KEY)
+                new PropertyModel
+                        .Builder(CURRENT_INDEX_KEY, INITIAL_INDEX_KEY, SUGGESTIONS_KEY,
+                                ITEM_COUNT_KEY, REMOVAL_KEY, ON_FOCUS_CALLBACK, SHOULD_FOCUS_VIEW,
+                                ASYNC_FOCUS_DELEGATE)
                         .with(SUGGESTIONS_KEY, new PropertyListModel<>())
                         .with(ITEM_COUNT_KEY, 1)
+                        .with(ASYNC_FOCUS_DELEGATE,
+                                touchlessLayoutManager.createCallbackToSetViewToFocus())
                         .build();
         View suggestionsView =
                 ((ViewStub) parentView.findViewById(R.id.most_likely_stub)).inflate();
-        Context context = parentView.getContext();
 
         RoundedIconGenerator iconGenerator = ViewUtils.createDefaultRoundedIconGenerator(
                 context.getResources(), /* circularIcon = */ true);
         int iconSize =
                 context.getResources().getDimensionPixelSize(R.dimen.tile_view_icon_min_size);
 
-        LinearLayoutManager layoutManager = new SiteSuggestionsLayoutManager(context);
         RecyclerView recyclerView =
                 suggestionsView.findViewById(R.id.most_likely_launcher_recycler);
-        mAdapterDelegate = new SiteSuggestionsAdapter(model, iconGenerator, navigationDelegate,
-                contextMenuManager, layoutManager,
-                suggestionsView.findViewById(R.id.most_likely_web_title_text));
+        SiteSuggestionsAdapter adapterDelegate = new SiteSuggestionsAdapter(model, iconGenerator,
+                navigationDelegate, contextMenuManager, layoutManager,
+                suggestionsView.findViewById(R.id.most_likely_web_title_text), recyclerView);
 
         RecyclerViewAdapter<SiteSuggestionsViewHolderFactory.SiteSuggestionsViewHolder, PropertyKey>
                 adapter = new RecyclerViewAdapter<>(
-                        mAdapterDelegate, new SiteSuggestionsViewHolderFactory());
+                        adapterDelegate, new SiteSuggestionsViewHolderFactory());
 
+        // Add spacing because tile margins get swallowed/overridden somehow.
+        // TODO(chili): use layout margin.
+        recyclerView.addItemDecoration(new RecyclerView.ItemDecoration() {
+            @Override
+            public void getItemOffsets(
+                    Rect outRect, View view, RecyclerView parent, RecyclerView.State state) {
+                outRect.bottom = context.getResources().getDimensionPixelSize(
+                        R.dimen.most_likely_carousel_edge_spacer);
+                outRect.left = 0;
+                outRect.right = 0;
+                outRect.top = context.getResources().getDimensionPixelSize(
+                        R.dimen.most_likely_carousel_edge_spacer);
+            }
+        });
         recyclerView.setLayoutManager(layoutManager);
         recyclerView.setAdapter(adapter);
 
@@ -73,6 +103,9 @@ class SiteSuggestionsCoordinator {
 
     public void destroy() {
         mMediator.destroy();
-        mAdapterDelegate.destroy();
+    }
+
+    public FocusableComponent getFocusableComponent() {
+        return mMediator;
     }
 }

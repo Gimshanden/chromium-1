@@ -5,6 +5,8 @@
 #ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_CONSTANTS_H_
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_CONSTANTS_H_
 
+#include <cstdint>
+
 #include "extensions/common/api/declarative_net_request/constants.h"
 
 namespace extensions {
@@ -31,6 +33,7 @@ enum class ParseResult {
   ERROR_NON_ASCII_DOMAIN,
   ERROR_NON_ASCII_EXCLUDED_DOMAIN,
   ERROR_INVALID_URL_FILTER,
+  ERROR_EMPTY_REMOVE_HEADERS_LIST,
 };
 
 // Describes the ways in which updating dynamic rules can fail.
@@ -63,6 +66,18 @@ enum class DynamicRuleUpdateAction {
   kRemove,
 };
 
+// Bitmask corresponding to RemoveHeaderType defined in the API.
+enum RemoveHeadersMask : uint8_t {
+  kRemoveHeadersMask_Cookie = (1u << 0),
+  kRemoveHeadersMask_Referer = (1u << 1),
+  kRemoveHeadersMask_SetCookie = (1u << 2),
+
+  // Should be equal to the last value.
+  kRemoveHeadersMask_Last = kRemoveHeadersMask_SetCookie,
+  // Equals the maximum bitmask value.
+  kRemoveHeadersMask_Max = (kRemoveHeadersMask_Last << 1) - 1,
+};
+
 // Rule parsing errors.
 extern const char kErrorResourceTypeDuplicated[];
 extern const char kErrorEmptyRedirectRuleKey[];
@@ -75,6 +90,7 @@ extern const char kErrorDuplicateIDs[];
 extern const char kErrorPersisting[];
 extern const char kErrorNonAscii[];
 extern const char kErrorInvalidUrlFilter[];
+extern const char kErrorEmptyRemoveHeadersList[];
 
 extern const char kErrorListNotPassed[];
 

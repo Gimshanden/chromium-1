@@ -21,7 +21,7 @@
 #include "build/build_config.h"
 #include "components/heap_profiling/supervisor.h"
 #include "components/services/heap_profiling/public/cpp/controller.h"
-#include "components/services/heap_profiling/public/cpp/sampling_profiler_wrapper.h"
+#include "components/services/heap_profiling/public/cpp/profiling_client.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -711,8 +711,8 @@ bool TestDriver::CheckOrStartProfilingOnUIThreadWithAsyncSignalling() {
                                ? (options_.sample_everything ? 2 : kSampleRate)
                                : 1;
   Supervisor::GetInstance()->Start(connection, options_.mode,
-                                   options_.stack_mode, options_.stream_samples,
-                                   sampling_rate, std::move(start_callback));
+                                   options_.stack_mode, sampling_rate,
+                                   std::move(start_callback));
 
   return true;
 }
@@ -764,8 +764,8 @@ bool TestDriver::CheckOrStartProfilingOnUIThreadWithNestedRunLoops() {
                                ? (options_.sample_everything ? 2 : kSampleRate)
                                : 1;
   Supervisor::GetInstance()->Start(connection, options_.mode,
-                                   options_.stack_mode, options_.stream_samples,
-                                   sampling_rate, std::move(start_callback));
+                                   options_.stack_mode, sampling_rate,
+                                   std::move(start_callback));
 
   run_loop->Run();
 

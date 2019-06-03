@@ -132,6 +132,7 @@ void WebContentsObserverProxy::DidStartNavigation(
   Java_WebContentsObserverProxy_didStartNavigation(
       AttachCurrentThread(), java_observer_,
       static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
           ->java_navigation_handle());
 }
 
@@ -140,6 +141,7 @@ void WebContentsObserverProxy::DidRedirectNavigation(
   Java_WebContentsObserverProxy_didRedirectNavigation(
       AttachCurrentThread(), java_observer_,
       static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
           ->java_navigation_handle());
 }
 
@@ -151,6 +153,7 @@ void WebContentsObserverProxy::DidFinishNavigation(
   Java_WebContentsObserverProxy_didFinishNavigation(
       AttachCurrentThread(), java_observer_,
       static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
           ->java_navigation_handle());
 }
 
@@ -272,6 +275,16 @@ void WebContentsObserverProxy::ViewportFitChanged(
 void WebContentsObserverProxy::DidReloadLoFiImages() {
   JNIEnv* env = AttachCurrentThread();
   Java_WebContentsObserverProxy_didReloadLoFiImages(env, java_observer_);
+}
+
+void WebContentsObserverProxy::OnWebContentsFocused(RenderWidgetHost*) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_onWebContentsFocused(env, java_observer_);
+}
+
+void WebContentsObserverProxy::OnWebContentsLostFocus(RenderWidgetHost*) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_onWebContentsLostFocus(env, java_observer_);
 }
 
 }  // namespace content

@@ -14,16 +14,16 @@
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/common/service_manager_connection.h"
-#include "device/usb/public/cpp/usb_utils.h"
-#include "device/usb/public/mojom/device_enumeration_options.mojom.h"
+#include "services/device/public/cpp/usb/usb_utils.h"
 #include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/usb_enumeration_options.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -104,9 +104,8 @@ class CrosUsbNotificationDelegate
   }
 
   void HandleShowSettings() {
-    chrome::ShowSettingsSubPageForProfile(
-        ProfileManager::GetActiveUserProfile(),
-        chrome::kCrostiniSharedUsbDevicesSubPage);
+    chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+        profile(), chrome::kCrostiniSharedUsbDevicesSubPage);
     Close(false);
   }
 
@@ -279,6 +278,9 @@ void CrosUsbDetector::ConnectToDeviceManager() {
 
 bool CrosUsbDetector::ShouldShowNotification(
     const device::mojom::UsbDeviceInfo& device_info) {
+  if (!crostini::IsCrostiniEnabled(profile())) {
+    return false;
+  }
   if (device::UsbDeviceFilterMatches(*adb_device_filter_, device_info)) {
     return true;
   }

@@ -17,10 +17,6 @@
 
 namespace content {
 
-namespace {
-const char* const kDefaultInstanceSiteURL = "http://unisolated.invalid";
-}  // namespace
-
 // Start the BrowsingInstance ID counter from 1 to avoid a conflict with the
 // invalid BrowsingInstanceId value, which is 0 in its underlying IdType32.
 int BrowsingInstance::next_browsing_instance_id_ = 1;
@@ -30,7 +26,8 @@ BrowsingInstance::BrowsingInstance(BrowserContext* browser_context)
           BrowsingInstanceId::FromUnsafeValue(next_browsing_instance_id_++),
           BrowserOrResourceContext(browser_context)),
       active_contents_count_(0u),
-      default_process_(nullptr) {
+      default_process_(nullptr),
+      default_site_instance_(nullptr) {
   DCHECK(browser_context);
 }
 
@@ -55,14 +52,11 @@ void BrowsingInstance::SetDefaultProcess(RenderProcessHost* default_process) {
 
 bool BrowsingInstance::IsDefaultSiteInstance(
     const SiteInstanceImpl* site_instance) const {
-  return site_instance != nullptr &&
-         site_instance == default_site_instance_.get();
+  return site_instance != nullptr && site_instance == default_site_instance_;
 }
 
 bool BrowsingInstance::HasSiteInstance(const GURL& url) {
-  std::string site = SiteInstanceImpl::GetSiteForURL(isolation_context_, url)
-                         .possibly_invalid_spec();
-
+  std::string site = GetSiteForURL(url).possibly_invalid_spec();
   return site_instance_map_.find(site) != site_instance_map_.end();
 }
 
@@ -78,8 +72,10 @@ scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURL(
   // No current SiteInstance for this site, so let's create one.
   scoped_refptr<SiteInstanceImpl> instance = new SiteInstanceImpl(this);
 
-  // Set the site of this new SiteInstance, which will register it with us.
-  instance->SetSite(url);
+  // Set the site of this new SiteInstance, which will register it with us,
+  // unless this URL should leave the SiteInstance's site unassigned.
+  if (SiteInstance::ShouldAssignSiteForURL(url))
+    instance->SetSite(url);
   return instance;
 }
 
@@ -96,8 +92,7 @@ void BrowsingInstance::GetSiteAndLockForURL(const GURL& url,
     return;
   }
 
-  *site_url = SiteInstanceImpl::GetSiteForURL(
-      isolation_context_, url, true /* should_use_effective_urls */);
+  *site_url = GetSiteForURL(url);
   *lock_url =
       SiteInstanceImpl::DetermineProcessLockURL(isolation_context_, url);
 }
@@ -105,9 +100,7 @@ void BrowsingInstance::GetSiteAndLockForURL(const GURL& url,
 scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURLHelper(
     const GURL& url,
     bool allow_default_instance) {
-  std::string site = SiteInstanceImpl::GetSiteForURL(isolation_context_, url)
-                         .possibly_invalid_spec();
-
+  std::string site = GetSiteForURL(url).possibly_invalid_spec();
   auto i = site_instance_map_.find(site);
   if (i != site_instance_map_.end())
     return i->second;
@@ -124,11 +117,22 @@ scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURLHelper(
       !SiteInstanceImpl::DoesSiteRequireDedicatedProcess(isolation_context_,
                                                          url)) {
     DCHECK(!default_process_);
-    if (!default_site_instance_) {
-      default_site_instance_ = new SiteInstanceImpl(this);
-      default_site_instance_->SetSite(GURL(kDefaultInstanceSiteURL));
+    scoped_refptr<SiteInstanceImpl> site_instance = default_site_instance_;
+    if (!site_instance) {
+      site_instance = new SiteInstanceImpl(this);
+
+      // Keep a copy of the pointer so it can be used for other URLs. This is
+      // safe because the SiteInstanceImpl destructor will call
+      // UnregisterSiteInstance() to clear this copy when the last
+      // reference to |site_instance| is destroyed.
+      // Note: This assignment MUST happen before the SetSite() call to ensure
+      // this instance is not added to |site_instance_map_| when SetSite()
+      // calls RegisterSiteInstance().
+      default_site_instance_ = site_instance.get();
+
+      site_instance->SetSite(SiteInstanceImpl::GetDefaultSiteURL());
     }
-    return default_site_instance_;
+    return site_instance;
   }
 
   return nullptr;
@@ -140,7 +144,7 @@ void BrowsingInstance::RegisterSiteInstance(SiteInstanceImpl* site_instance) {
 
   // Explicitly prevent the |default_site_instance_| from being added since
   // the map is only supposed to contain instances that map to a single site.
-  if (site_instance == default_site_instance_.get())
+  if (site_instance == default_site_instance_)
     return;
 
   std::string site = site_instance->GetSiteURL().possibly_invalid_spec();
@@ -160,6 +164,12 @@ void BrowsingInstance::RegisterSiteInstance(SiteInstanceImpl* site_instance) {
 void BrowsingInstance::UnregisterSiteInstance(SiteInstanceImpl* site_instance) {
   DCHECK(site_instance->browsing_instance_.get() == this);
   DCHECK(site_instance->HasSite());
+
+  if (site_instance == default_site_instance_) {
+    // The last reference to the default SiteInstance is being destroyed.
+    default_site_instance_ = nullptr;
+  }
+
   std::string site = site_instance->GetSiteURL().possibly_invalid_spec();
 
   // Only unregister the SiteInstance if it is the same one that is registered
@@ -182,8 +192,13 @@ BrowsingInstance::~BrowsingInstance() {
   // us are gone.
   DCHECK(site_instance_map_.empty());
   DCHECK_EQ(0u, active_contents_count_);
+  DCHECK(!default_site_instance_);
   if (default_process_)
     default_process_->RemoveObserver(this);
+}
+
+GURL BrowsingInstance::GetSiteForURL(const GURL& url) const {
+  return SiteInstanceImpl::GetSiteForURL(isolation_context_, url);
 }
 
 }  // namespace content

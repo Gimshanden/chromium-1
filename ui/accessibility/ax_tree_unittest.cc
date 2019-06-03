@@ -91,6 +91,8 @@ class TestAXTreeObserver : public AXTreeObserver {
 
   void OnNodeChanged(AXTree* tree, AXNode* node) override {
     changed_ids_.push_back(node->id());
+    if (call_posinset_and_setsize)
+      AssertPosinsetAndSetsizeZero(node);
   }
 
   void OnAtomicUpdateFinished(AXTree* tree,
@@ -212,6 +214,12 @@ class TestAXTreeObserver : public AXTreeObserver {
     return attribute_change_log_;
   }
 
+  bool call_posinset_and_setsize = false;
+  void AssertPosinsetAndSetsizeZero(AXNode* node) {
+    ASSERT_EQ(0, node->GetPosInSet());
+    ASSERT_EQ(0, node->GetSetSize());
+  }
+
  private:
   AXTree* tree_;
   bool tree_data_changed_;
@@ -273,13 +281,13 @@ TEST(AXTreeTest, SerializeSimpleAXTree) {
   EXPECT_EQ(root.id, root_node->id());
   EXPECT_EQ(root.role, root_node->data().role);
 
-  ASSERT_EQ(2, root_node->child_count());
+  ASSERT_EQ(2u, root_node->children().size());
 
-  const AXNode* button_node = root_node->ChildAtIndex(0);
+  const AXNode* button_node = root_node->children()[0];
   EXPECT_EQ(button.id, button_node->id());
   EXPECT_EQ(button.role, button_node->data().role);
 
-  const AXNode* checkbox_node = root_node->ChildAtIndex(1);
+  const AXNode* checkbox_node = root_node->children()[1];
   EXPECT_EQ(checkbox.id, checkbox_node->id());
   EXPECT_EQ(checkbox.role, checkbox_node->data().role);
 
@@ -1380,17 +1388,17 @@ TEST(AXTreeTest, SkipIgnoredNodes) {
 
   AXTree tree(tree_update);
   AXNode* root = tree.root();
-  ASSERT_EQ(2, root->child_count());
-  ASSERT_EQ(2, root->ChildAtIndex(0)->id());
-  ASSERT_EQ(3, root->ChildAtIndex(1)->id());
+  ASSERT_EQ(2u, root->children().size());
+  ASSERT_EQ(2, root->children()[0]->id());
+  ASSERT_EQ(3, root->children()[1]->id());
 
-  EXPECT_EQ(3, root->GetUnignoredChildCount());
+  EXPECT_EQ(3u, root->GetUnignoredChildCount());
   EXPECT_EQ(4, root->GetUnignoredChildAtIndex(0)->id());
   EXPECT_EQ(5, root->GetUnignoredChildAtIndex(1)->id());
   EXPECT_EQ(3, root->GetUnignoredChildAtIndex(2)->id());
-  EXPECT_EQ(0, root->GetUnignoredChildAtIndex(0)->GetUnignoredIndexInParent());
-  EXPECT_EQ(1, root->GetUnignoredChildAtIndex(1)->GetUnignoredIndexInParent());
-  EXPECT_EQ(2, root->GetUnignoredChildAtIndex(2)->GetUnignoredIndexInParent());
+  EXPECT_EQ(0u, root->GetUnignoredChildAtIndex(0)->GetUnignoredIndexInParent());
+  EXPECT_EQ(1u, root->GetUnignoredChildAtIndex(1)->GetUnignoredIndexInParent());
+  EXPECT_EQ(2u, root->GetUnignoredChildAtIndex(2)->GetUnignoredIndexInParent());
 
   EXPECT_EQ(1, root->GetUnignoredChildAtIndex(0)->GetUnignoredParent()->id());
 }
@@ -1413,11 +1421,11 @@ TEST(AXTreeTest, TestRecursionUnignoredChildCount) {
   AXTree tree(tree_update);
 
   AXNode* root = tree.root();
-  EXPECT_EQ(2, root->child_count());
-  EXPECT_EQ(1, root->GetUnignoredChildCount());
+  EXPECT_EQ(2u, root->children().size());
+  EXPECT_EQ(1u, root->GetUnignoredChildCount());
   EXPECT_EQ(5, root->GetUnignoredChildAtIndex(0)->id());
   AXNode* unignored = tree.GetFromId(5);
-  EXPECT_EQ(0, unignored->GetUnignoredChildCount());
+  EXPECT_EQ(0u, unignored->GetUnignoredChildCount());
 }
 
 TEST(AXTreeTest, NullUnignoredChildren) {
@@ -1433,8 +1441,8 @@ TEST(AXTreeTest, NullUnignoredChildren) {
   AXTree tree(tree_update);
 
   AXNode* root = tree.root();
-  EXPECT_EQ(2, root->child_count());
-  EXPECT_EQ(0, root->GetUnignoredChildCount());
+  EXPECT_EQ(2u, root->children().size());
+  EXPECT_EQ(0u, root->GetUnignoredChildCount());
   EXPECT_EQ(nullptr, root->GetUnignoredChildAtIndex(0));
   EXPECT_EQ(nullptr, root->GetUnignoredChildAtIndex(1));
 }
@@ -2342,6 +2350,37 @@ TEST(AXTreeTest, TestSetSizePosInSetFlatTreeLevelsOnly) {
   EXPECT_EQ(item1_level1->GetSetSize(), 3);
   AXNode* ordered_set = tree.GetFromId(1);
   EXPECT_EQ(ordered_set->GetSetSize(), 3);
+}
+
+// Tests that GetPosInSet and GetSetSize work while a tree is being
+// unserialized.
+TEST(AXTreeTest, TestSetSizePosInSetSubtreeDeleted) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(3);
+  initial_state.nodes[0].id = 1;
+  initial_state.nodes[0].role = ax::mojom::Role::kTree;
+  initial_state.nodes[0].child_ids = {2, 3};
+  initial_state.nodes[1].id = 2;
+  initial_state.nodes[1].role = ax::mojom::Role::kTreeItem;
+  initial_state.nodes[2].id = 3;
+  initial_state.nodes[2].role = ax::mojom::Role::kTreeItem;
+  AXTree tree(initial_state);
+
+  // This should work normally.
+  AXNode* item = tree.GetFromId(3);
+  EXPECT_EQ(item->GetPosInSet(), 2);
+  EXPECT_EQ(item->GetSetSize(), 2);
+
+  // Use test observer to assert posinset and setsize are 0.
+  TestAXTreeObserver test_observer(&tree);
+  test_observer.call_posinset_and_setsize = true;
+  // Remove item from tree.
+  AXTreeUpdate tree_update = initial_state;
+  tree_update.nodes.resize(1);
+  tree_update.nodes[0].child_ids = {2};
+
+  ASSERT_TRUE(tree.Unserialize(tree_update));
 }
 
 }  // namespace ui

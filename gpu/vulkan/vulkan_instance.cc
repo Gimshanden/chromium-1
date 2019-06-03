@@ -47,7 +47,8 @@ VulkanInstance::~VulkanInstance() {
 
 bool VulkanInstance::Initialize(
     const std::vector<const char*>& required_extensions,
-    const std::vector<const char*>& required_layers) {
+    const std::vector<const char*>& required_layers,
+    bool using_swiftshader) {
   DCHECK(!vk_instance_);
 
   VulkanFunctionPointers* vulkan_function_pointers =
@@ -104,6 +105,23 @@ bool VulkanInstance::Initialize(
       enabled_extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
     }
   }
+
+#if DCHECK_IS_ON()
+  for (const char* enabled_extension : enabled_extensions) {
+    bool found = false;
+    for (const VkExtensionProperties& ext_property : instance_exts) {
+      if (strcmp(ext_property.extensionName, enabled_extension) == 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      DLOG(ERROR) << "Required extension " << enabled_extension
+                  << " missing from enumerated Vulkan extensions. "
+                     "vkCreateInstance will likely fail.";
+    }
+  }
+#endif
 
   std::vector<const char*> enabled_layer_names;
 #if DCHECK_IS_ON()
@@ -214,7 +232,9 @@ bool VulkanInstance::Initialize(
         reinterpret_cast<PFN_vkGetPhysicalDeviceXlibPresentationSupportKHR>(
             vkGetInstanceProcAddr(
                 vk_instance_, "vkGetPhysicalDeviceXlibPresentationSupportKHR"));
-    if (!vkGetPhysicalDeviceXlibPresentationSupportKHR)
+    // TODO(samans): Remove |using_swiftshader| once Swiftshader supports this
+    // method. https://crbug.com/swiftshader/129
+    if (!vkGetPhysicalDeviceXlibPresentationSupportKHR && !using_swiftshader)
       return false;
 #endif
 

@@ -7,7 +7,6 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/optional.h"
@@ -39,7 +38,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/search/ntp_features.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_loader.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_service.h"
 #include "chrome/browser/search/one_google_bar/one_google_bar_service_factory.h"
@@ -114,9 +112,6 @@
 using content::WebContents;
 
 namespace extensions {
-
-using extension_web_request_api_helpers::
-    WebRequestSpecialRequestHeaderModification;
 
 namespace {
 
@@ -1322,7 +1317,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
   auto make_browser_request = [this](const GURL& url) {
     auto request = std::make_unique<network::ResourceRequest>();
     request->url = url;
-    request->resource_type = content::RESOURCE_TYPE_SUB_RESOURCE;
+    request->resource_type =
+        static_cast<int>(content::ResourceType::kSubResource);
 
     auto* url_loader_factory =
         content::BrowserContext::GetDefaultStoragePartition(profile())
@@ -1851,10 +1847,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
   chromeos::ProfileHelper::SetAlwaysReturnPrimaryUserForTesting(true);
 #endif  // defined(OS_CHROMEOS)
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  Profile* temp_profile = Profile::CreateProfile(
-      profile_manager->user_data_dir().AppendASCII("profile"), nullptr,
-      Profile::CreateMode::CREATE_MODE_SYNCHRONOUS);
-
+  Profile* temp_profile =
+      Profile::CreateProfile(
+          profile_manager->user_data_dir().AppendASCII("profile"), nullptr,
+          Profile::CreateMode::CREATE_MODE_SYNCHRONOUS)
+          .release();
   // Create a WebRequestAPI instance that we can control the lifetime of.
   auto api = std::make_unique<WebRequestAPI>(temp_profile);
   // Make sure we are proxying for |temp_profile|.
@@ -1998,7 +1995,6 @@ class LocalNTPInterceptionWebRequestAPITest
         base::Unretained(this)));
     ASSERT_TRUE(https_test_server_.InitializeAndListen());
     ExtensionApiTest::SetUp();
-    feature_list_.InitWithFeatures({::features::kUseGoogleLocalNtp}, {});
   }
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ExtensionApiTest::SetUpCommandLine(command_line);
@@ -2050,7 +2046,6 @@ class LocalNTPInterceptionWebRequestAPITest
   }
 
   net::EmbeddedTestServer https_test_server_;
-  base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<base::RunLoop> runloop_;
 
   // Initialized on the UI thread in SetUpOnMainThread. Read on UI and Embedded
@@ -2439,6 +2434,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestMockedClockTest,
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, ChangeHeaderUMAs) {
+  using RequestHeaderType =
+      extension_web_request_api_helpers::RequestHeaderType;
+  using ResponseHeaderType =
+      extension_web_request_api_helpers::ResponseHeaderType;
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   TestExtensionDir test_dir;
@@ -2458,6 +2458,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, ChangeHeaderUMAs) {
               break;
             }
           }
+          headers.push({name: 'Foo1', value: 'Bar1'});
+          headers.push({name: 'Foo2', value: 'Bar2'});
+          headers.push({name: 'DNT', value: '0'});
           return {requestHeaders: headers};
         }, {urls: ['*://*/set-cookie*']},
         ['blocking', 'requestHeaders', 'extraHeaders']);
@@ -2465,11 +2468,16 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, ChangeHeaderUMAs) {
         chrome.webRequest.onHeadersReceived.addListener(function(details) {
           var headers = details.responseHeaders;
           for (var i = 0; i < headers.length; i++) {
-            if (headers[i].name.toLowerCase() == 'set-cookie') {
-              headers[i].value = 'Blah=Blah';
-              break;
+            if (headers[i].name.toLowerCase() == 'set-cookie' &&
+                headers[i].value == 'key1=val1') {
+              headers.splice(i, 1);
+              i--;
+            } else if (headers[i].name == 'Content-Length') {
+              headers[i].value = '0';
             }
           }
+          headers.push({name: 'Foo3', value: 'Bar3'});
+          headers.push({name: 'Foo4', value: 'Bar4'});
           return {responseHeaders: headers};
         }, {urls: ['*://*/set-cookie*']},
         ['blocking', 'responseHeaders', 'extraHeaders']);
@@ -2483,24 +2491,50 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, ChangeHeaderUMAs) {
 
   base::HistogramTester tester;
   ui_test_utils::NavigateToURL(
-      browser(), embedded_test_server()->GetURL("/set-cookie?Foo=Bar"));
+      browser(),
+      embedded_test_server()->GetURL("/set-cookie?key1=val1&key2=val2"));
 
-  // Changed histograms should record kUserAgent and true.
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SpecialRequestHeadersChanged",
-      WebRequestSpecialRequestHeaderModification::kUserAgent, 1);
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SetCookieResponseHeaderChanged", true, 1);
+  // Changed histograms should record kUserAgent request header along with
+  // kSetCookie and kContentLength response headers.
+  tester.ExpectUniqueSample("Extensions.WebRequest.RequestHeaderChanged",
+                            RequestHeaderType::kUserAgent, 1);
+  EXPECT_THAT(
+      tester.GetAllSamples("Extensions.WebRequest.ResponseHeaderChanged"),
+      ::testing::UnorderedElementsAre(
+          base::Bucket(static_cast<base::HistogramBase::Sample>(
+                           ResponseHeaderType::kSetCookie),
+                       1),
+          base::Bucket(static_cast<base::HistogramBase::Sample>(
+                           ResponseHeaderType::kContentLength),
+                       1)));
 
-  // Removed histograms should record kNone and false.
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SpecialRequestHeadersRemoved",
-      WebRequestSpecialRequestHeaderModification::kNone, 1);
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SetCookieResponseHeaderRemoved", false, 1);
+  // Added request header histogram should record kOther and kDNT.
+  EXPECT_THAT(tester.GetAllSamples("Extensions.WebRequest.RequestHeaderAdded"),
+              ::testing::UnorderedElementsAre(
+                  base::Bucket(static_cast<base::HistogramBase::Sample>(
+                                   RequestHeaderType::kDnt),
+                               1),
+                  base::Bucket(static_cast<base::HistogramBase::Sample>(
+                                   RequestHeaderType::kOther),
+                               2)));
+
+  // Added response header histogram should record kOther.
+  tester.ExpectUniqueSample("Extensions.WebRequest.ResponseHeaderAdded",
+                            ResponseHeaderType::kOther, 2);
+
+  // Histograms for removed headers should record kNone.
+  tester.ExpectUniqueSample("Extensions.WebRequest.RequestHeaderRemoved",
+                            RequestHeaderType::kNone, 1);
+  tester.ExpectUniqueSample("Extensions.WebRequest.ResponseHeaderRemoved",
+                            ResponseHeaderType::kNone, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, RemoveHeaderUMAs) {
+  using RequestHeaderType =
+      extension_web_request_api_helpers::RequestHeaderType;
+  using ResponseHeaderType =
+      extension_web_request_api_helpers::ResponseHeaderType;
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   TestExtensionDir test_dir;
@@ -2547,19 +2581,23 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, RemoveHeaderUMAs) {
   ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/set-cookie?Foo=Bar"));
 
-  // Removed histograms should record kUserAgent and true.
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SpecialRequestHeadersRemoved",
-      WebRequestSpecialRequestHeaderModification::kUserAgent, 1);
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SetCookieResponseHeaderRemoved", true, 1);
+  // Histograms for removed headers should record kUserAgent and kSetCookie.
+  tester.ExpectUniqueSample("Extensions.WebRequest.RequestHeaderRemoved",
+                            RequestHeaderType::kUserAgent, 1);
+  tester.ExpectUniqueSample("Extensions.WebRequest.ResponseHeaderRemoved",
+                            ResponseHeaderType::kSetCookie, 1);
 
-  // Changed histograms should record kNone and false.
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SpecialRequestHeadersChanged",
-      WebRequestSpecialRequestHeaderModification::kNone, 1);
-  tester.ExpectUniqueSample(
-      "Extensions.WebRequest.SetCookieResponseHeaderChanged", false, 1);
+  // Histograms for changed headers should record kNone.
+  tester.ExpectUniqueSample("Extensions.WebRequest.RequestHeaderChanged",
+                            RequestHeaderType::kNone, 1);
+  tester.ExpectUniqueSample("Extensions.WebRequest.ResponseHeaderChanged",
+                            ResponseHeaderType::kNone, 1);
+
+  // Histograms for added headers should record kNone.
+  tester.ExpectUniqueSample("Extensions.WebRequest.RequestHeaderAdded",
+                            RequestHeaderType::kNone, 1);
+  tester.ExpectUniqueSample("Extensions.WebRequest.ResponseHeaderAdded",
+                            ResponseHeaderType::kNone, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, ServiceWorkerFetch) {

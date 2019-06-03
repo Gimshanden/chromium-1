@@ -14,6 +14,7 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -54,6 +55,8 @@
 #include "services/device/public/mojom/mtp_manager.mojom.h"
 #include "services/device/public/mojom/mtp_storage_info.mojom.h"
 #include "storage/browser/fileapi/external_mount_points.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 namespace file_manager {
 namespace {
@@ -280,7 +283,7 @@ std::unique_ptr<Volume> Volume::CreateForRemovable(
     volume->file_system_type_ = disk->file_system_type();
     volume->volume_label_ = disk->device_label();
     volume->device_type_ = disk->device_type();
-    volume->system_path_prefix_ = base::FilePath(disk->system_path_prefix());
+    volume->storage_device_path_ = base::FilePath(disk->storage_device_path());
     volume->is_parent_ = disk->is_parent();
     volume->is_read_only_ = disk->is_read_only();
     volume->is_read_only_removable_device_ = disk->is_read_only_hardware();
@@ -412,7 +415,13 @@ std::unique_ptr<Volume> Volume::CreateForDocumentsProvider(
   volume->mount_path_ =
       arc::GetDocumentsProviderMountPath(authority, document_id);
   volume->mount_condition_ = chromeos::disks::MOUNT_CONDITION_NONE;
-  volume->volume_label_ = title;
+  if (summary.empty()) {
+    volume->volume_label_ = title;
+  } else {
+    volume->volume_label_ = l10n_util::GetStringFUTF8(
+        IDS_FILE_BROWSER_DOCPROVIDER_ROOT_LABEL_WITH_SUMMARY,
+        base::UTF8ToUTF16(title), base::UTF8ToUTF16(summary));
+  }
   volume->is_read_only_ = read_only;
   volume->watchable_ = false;
   volume->volume_id_ = arc::GetDocumentsProviderVolumeId(authority, root_id);
@@ -440,7 +449,7 @@ std::unique_ptr<Volume> Volume::CreateForTesting(
   // Keep source_path empty.
   volume->source_ = SOURCE_DEVICE;
   volume->mount_path_ = path;
-  volume->system_path_prefix_ = device_path;
+  volume->storage_device_path_ = device_path;
   volume->mount_condition_ = chromeos::disks::MOUNT_CONDITION_NONE;
   volume->is_read_only_ = read_only;
   volume->volume_id_ = GenerateVolumeId(*volume);
@@ -456,7 +465,7 @@ std::unique_ptr<Volume> Volume::CreateForTesting(
     const base::FilePath& device_path,
     const base::FilePath& mount_path) {
   std::unique_ptr<Volume> volume(new Volume());
-  volume->system_path_prefix_ = device_path;
+  volume->storage_device_path_ = device_path;
   volume->mount_path_ = mount_path;
   return volume;
 }
@@ -936,16 +945,14 @@ void VolumeManager::OnFormatEvent(
       }
       return;
     case chromeos::disks::DiskMountManager::FORMAT_COMPLETED:
-      if (error_code == chromeos::FORMAT_ERROR_NONE) {
-        // If format is completed successfully, try to mount the device.
-        // MountPath auto-detects filesystem format if second argument is
-        // empty. The third argument (mount label) is not used in a disk mount
-        // operation.
-        disk_mount_manager_->MountPath(device_path, std::string(),
-                                       std::string(), {},
-                                       chromeos::MOUNT_TYPE_DEVICE,
-                                       GetExternalStorageAccessMode(profile_));
-      }
+      // Even if format did not complete successfully, try to mount the device
+      // so the user can retry.
+      // MountPath auto-detects filesystem format if second argument is
+      // empty. The third argument (mount label) is not used in a disk mount
+      // operation.
+      disk_mount_manager_->MountPath(device_path, std::string(), std::string(),
+                                     {}, chromeos::MOUNT_TYPE_DEVICE,
+                                     GetExternalStorageAccessMode(profile_));
 
       for (auto& observer : observers_) {
         observer.OnFormatCompleted(device_path,
@@ -1186,8 +1193,6 @@ void VolumeManager::DoAttachMtpStorage(
   // hierarchical file system, and writing to external storage devices is not
   // prohibited by the preference.
   const bool read_only =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableMtpWriteSupport) ||
       mtp_storage_info->access_capability != kAccessCapabilityReadWrite ||
       mtp_storage_info->filesystem_type !=
           kFilesystemTypeGenericHierarchical ||
@@ -1250,7 +1255,7 @@ void VolumeManager::OnDocumentsProviderRootAdded(
     bool read_only,
     const std::vector<std::string>& mime_types) {
   arc::ArcDocumentsProviderRootMap::GetForArcBrowserContext()->RegisterRoot(
-      authority, document_id, root_id, mime_types);
+      authority, document_id, root_id, read_only, mime_types);
   DoMountEvent(
       chromeos::MOUNT_ERROR_NONE,
       Volume::CreateForDocumentsProvider(authority, root_id, document_id, title,

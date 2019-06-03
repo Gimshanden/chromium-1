@@ -6,10 +6,12 @@ include_rules = [
   "+components/signin/core/browser/account_info.h",
   "+components/signin/core/browser/child_account_info_fetcher_android.h",
   "+components/signin/core/browser/gaia_cookie_manager_service.h",
+  "+components/signin/core/browser/identity_manager_wrapper.h",
   "+components/signin/core/browser/list_accounts_test_utils.h",
   "+components/signin/core/browser/oauth2_token_service_delegate_android.h",
   "+components/signin/core/browser/signin_buildflags.h",
   "+components/signin/core/browser/signin_metrics.h",
+  "+components/signin/core/browser/signin_pref_names.h",
   "+components/signin/core/browser/signin_switches.h",
   "+components/signin/core/browser/ubertoken_fetcher_impl.h",
   "+components/signin/core/browser/ubertoken_fetcher.h",
@@ -35,6 +37,10 @@ specific_include_rules = {
   ],
   "accounts_mutator_unittest.cc": [
     "+services/network/test/test_url_loader_factory.h",
+  ],
+  "identity_test_environment.cc": [
+    "+components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h",
+    "+components/signin/ios/browser/profile_oauth2_token_service_ios_provider.h",
   ],
   "identity_manager_unittest.cc": [
     "+google_apis/gaia/oauth2_token_service_delegate.h",

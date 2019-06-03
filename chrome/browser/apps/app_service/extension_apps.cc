@@ -22,12 +22,16 @@
 #include "chrome/browser/ui/app_list/extension_uninstaller.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/web_applications/components/externally_installed_web_app_prefs.h"
+#include "chrome/browser/web_applications/components/web_app_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/services/app_service/public/mojom/types.mojom.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/switches.h"
@@ -64,7 +68,8 @@ namespace apps {
 ExtensionApps::ExtensionApps()
     : binding_(this),
       profile_(nullptr),
-      observer_(this),
+      prefs_observer_(this),
+      registry_observer_(this),
       app_type_(apps::mojom::AppType::kUnknown) {}
 
 ExtensionApps::~ExtensionApps() = default;
@@ -79,7 +84,8 @@ void ExtensionApps::Initialize(const apps::mojom::AppServicePtr& app_service,
 
   profile_ = profile;
   DCHECK(profile_);
-  observer_.Add(extensions::ExtensionRegistry::Get(profile_));
+  prefs_observer_.Add(extensions::ExtensionPrefs::Get(profile_));
+  registry_observer_.Add(extensions::ExtensionRegistry::Get(profile_));
   HostContentSettingsMapFactory::GetForProfile(profile_)->AddObserver(this);
 }
 
@@ -120,6 +126,8 @@ void ExtensionApps::Connect(apps::mojom::SubscriberPtr subscriber,
                   apps::mojom::Readiness::kTerminated, &apps);
     // blacklisted_extensions and blocked_extensions, corresponding to
     // kDisabledByBlacklist and kDisabledByPolicy, are deliberately ignored.
+    //
+    // If making changes to which sets are consulted, also change ShouldShow.
   }
   subscriber->OnApps(std::move(apps));
   subscribers_.AddPtr(std::move(subscriber));
@@ -159,6 +167,8 @@ void ExtensionApps::Launch(const std::string& app_id,
 
   switch (launch_source) {
     case apps::mojom::LaunchSource::kUnknown:
+    case apps::mojom::LaunchSource::kFromKioskNextHome:
+    case apps::mojom::LaunchSource::kFromParentalControls:
       break;
     case apps::mojom::LaunchSource::kFromAppListGrid:
     case apps::mojom::LaunchSource::kFromAppListGridContextMenu:
@@ -272,7 +282,9 @@ void ExtensionApps::OnContentSettingChanged(
     return;
   }
 
-  DCHECK(profile_);
+  if (!profile_) {
+    return;
+  }
 
   extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(profile_);
@@ -297,6 +309,34 @@ void ExtensionApps::OnContentSettingChanged(
       Publish(std::move(app));
     }
   }
+}
+
+void ExtensionApps::OnExtensionLastLaunchTimeChanged(
+    const std::string& app_id,
+    const base::Time& last_launch_time) {
+  if (!profile_) {
+    return;
+  }
+
+  extensions::ExtensionRegistry* registry =
+      extensions::ExtensionRegistry::Get(profile_);
+  const extensions::Extension* extension =
+      registry->GetInstalledExtension(app_id);
+  if (!extension || !Accepts(extension)) {
+    return;
+  }
+
+  apps::mojom::AppPtr app = apps::mojom::App::New();
+  app->app_type = app_type_;
+  app->app_id = extension->id();
+  app->last_launch_time = last_launch_time;
+
+  Publish(std::move(app));
+}
+
+void ExtensionApps::OnExtensionPrefsWillBeDestroyed(
+    extensions::ExtensionPrefs* prefs) {
+  prefs_observer_.Remove(prefs);
 }
 
 void ExtensionApps::OnExtensionInstalled(
@@ -329,6 +369,7 @@ void ExtensionApps::OnExtensionUninstalled(
   app->app_id = extension->id();
   app->readiness = apps::mojom::Readiness::kUninstalledByUser;
 
+  SetShowInFields(app, extension, profile_);
   Publish(std::move(app));
 }
 
@@ -363,18 +404,39 @@ bool ExtensionApps::IsBlacklisted(const std::string& app_id) {
 }
 
 // static
-apps::mojom::OptionalBool ExtensionApps::ShouldShowInAppManagement(
-    const extensions::Extension* extension) {
-  // Component extensions should not show up in App Management as they
-  // are only extensions as an implementation detail of Chrome, and have
-  // no meaningful settings.
-  if (extensions::Manifest::IsComponentLocation(extension->location()) &&
-      !base::CommandLine::ForCurrentProcess()->HasSwitch(
-          extensions::switches::kShowComponentExtensionOptions)) {
-    return apps::mojom::OptionalBool::kFalse;
+void ExtensionApps::SetShowInFields(apps::mojom::AppPtr& app,
+                                    const extensions::Extension* extension,
+                                    Profile* profile) {
+  if (ShouldShow(extension, profile)) {
+    auto show = app_list::ShouldShowInLauncher(extension, profile)
+                    ? apps::mojom::OptionalBool::kTrue
+                    : apps::mojom::OptionalBool::kFalse;
+    app->show_in_launcher = show;
+    app->show_in_search = show;
+    app->show_in_management = show;
   } else {
-    return apps::mojom::OptionalBool::kTrue;
+    app->show_in_launcher = apps::mojom::OptionalBool::kFalse;
+    app->show_in_search = apps::mojom::OptionalBool::kFalse;
+    app->show_in_management = apps::mojom::OptionalBool::kFalse;
   }
+}
+
+// static
+bool ExtensionApps::ShouldShow(const extensions::Extension* extension,
+                               Profile* profile) {
+  if (!profile) {
+    return false;
+  }
+
+  extensions::ExtensionRegistry* registry =
+      extensions::ExtensionRegistry::Get(profile);
+  const std::string& app_id = extension->id();
+  // These three extension sets are the same three consulted by Connect.
+  // Importantly, it will exclude previously installed but currently
+  // uninstalled extensions.
+  return registry->enabled_extensions().Contains(app_id) ||
+         registry->disabled_extensions().Contains(app_id) ||
+         registry->terminated_extensions().Contains(app_id);
 }
 
 void ExtensionApps::PopulatePermissions(
@@ -406,13 +468,50 @@ void ExtensionApps::PopulatePermissions(
         setting_val = apps::mojom::TriState::kAsk;
     }
 
+    content_settings::SettingInfo setting_info;
+    host_content_settings_map->GetWebsiteSetting(url, url, type, std::string(),
+                                                 &setting_info);
+
     auto permission = apps::mojom::Permission::New();
     permission->permission_id = static_cast<uint32_t>(type);
     permission->value_type = apps::mojom::PermissionValueType::kTriState;
     permission->value = static_cast<uint32_t>(setting_val);
+    permission->is_managed =
+        setting_info.source == content_settings::SETTING_SOURCE_POLICY;
 
     target->push_back(std::move(permission));
   }
+}
+
+apps::mojom::InstallSource GetInstallSource(
+    const Profile* profile,
+    const extensions::Extension* extension) {
+  if (extensions::Manifest::IsComponentLocation(extension->location()) ||
+      web_app::ExternallyInstalledWebAppPrefs::HasAppIdWithInstallSource(
+          profile->GetPrefs(), extension->id(),
+          web_app::InstallSource::kSystemInstalled)) {
+    return apps::mojom::InstallSource::kSystem;
+  }
+
+  if (extensions::Manifest::IsPolicyLocation(extension->location()) ||
+      web_app::ExternallyInstalledWebAppPrefs::HasAppIdWithInstallSource(
+          profile->GetPrefs(), extension->id(),
+          web_app::InstallSource::kExternalPolicy)) {
+    return apps::mojom::InstallSource::kPolicy;
+  }
+
+  if (extension->was_installed_by_oem()) {
+    return apps::mojom::InstallSource::kOem;
+  }
+
+  if (extension->was_installed_by_default() ||
+      web_app::ExternallyInstalledWebAppPrefs::HasAppIdWithInstallSource(
+          profile->GetPrefs(), extension->id(),
+          web_app::InstallSource::kExternalDefault)) {
+    return apps::mojom::InstallSource::kDefault;
+  }
+
+  return apps::mojom::InstallSource::kUser;
 }
 
 apps::mojom::AppPtr ExtensionApps::Convert(
@@ -425,6 +524,7 @@ apps::mojom::AppPtr ExtensionApps::Convert(
   app->readiness = readiness;
   app->name = extension->name();
   app->short_name = extension->short_name();
+  app->description = extension->description();
 
   IconEffects icon_effects = IconEffects::kNone;
 #if defined(OS_CHROMEOS)
@@ -457,29 +557,14 @@ apps::mojom::AppPtr ExtensionApps::Convert(
     PopulatePermissions(extension, &app->permissions);
   }
 
-  // TODO(crbug.com/826982): does this catch default installed web apps?
-  //
-  // https://crrev.com/c/1377955/3/chrome/browser/apps/app_service/extension_apps.cc#263
-  bool installed_internally =
-      extension->was_installed_by_default() ||
-      extension->was_installed_by_oem() ||
-      extensions::Manifest::IsComponentLocation(extension->location()) ||
-      extensions::Manifest::IsPolicyLocation(extension->location());
-  app->installed_internally = installed_internally
-                                  ? apps::mojom::OptionalBool::kTrue
-                                  : apps::mojom::OptionalBool::kFalse;
+  app->install_source = GetInstallSource(profile_, extension);
 
   app->is_platform_app = extension->is_platform_app()
                              ? apps::mojom::OptionalBool::kTrue
                              : apps::mojom::OptionalBool::kFalse;
-
-  auto show = app_list::ShouldShowInLauncher(extension, profile_)
-                  ? apps::mojom::OptionalBool::kTrue
-                  : apps::mojom::OptionalBool::kFalse;
-  app->show_in_launcher = show;
-  app->show_in_search = show;
-  app->show_in_management = ShouldShowInAppManagement(extension);
-
+  app->recommendable = apps::mojom::OptionalBool::kTrue;
+  app->searchable = apps::mojom::OptionalBool::kTrue;
+  SetShowInFields(app, extension, profile_);
   return app;
 }
 

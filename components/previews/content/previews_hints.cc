@@ -14,6 +14,7 @@
 #include "base/strings/stringprintf.h"
 #include "components/optimization_guide/hints_component_info.h"
 #include "components/optimization_guide/hints_component_util.h"
+#include "components/previews/content/hint_update_data.h"
 #include "components/previews/core/bloom_filter.h"
 #include "components/previews/core/previews_features.h"
 #include "components/previews/core/previews_switches.h"
@@ -122,6 +123,8 @@ base::Optional<PreviewsType> ConvertProtoOptimizationTypeToPreviewsType(
       return PreviewsType::RESOURCE_LOADING_HINTS;
     case optimization_guide::proto::LITE_PAGE_REDIRECT:
       return PreviewsType::LITE_PAGE_REDIRECT;
+    case optimization_guide::proto::OPTIMIZATION_NONE:
+      return PreviewsType::NONE;
   }
 }
 
@@ -137,6 +140,9 @@ bool IsEnabledOptimizationType(
       return previews::params::IsResourceLoadingHintsEnabled();
     case optimization_guide::proto::LITE_PAGE_REDIRECT:
       return previews::params::IsLitePageServerPreviewsEnabled();
+    case optimization_guide::proto::OPTIMIZATION_NONE:
+      // Always consider enabled to allow as no-op optimization.
+      return true;
   }
 }
 
@@ -166,7 +172,7 @@ net::EffectiveConnectionType ConvertProtoEffectiveConnectionType(
 
 PreviewsProcessHintsResult ProcessConfigurationHints(
     optimization_guide::proto::Configuration* config,
-    HintCacheStore::ComponentUpdateData* component_update_data) {
+    HintUpdateData* component_update_data) {
   DCHECK(config);
   // If there's no component update data, then there's nothing to do. This
   // component is not newer than the one contained within the hint cache.
@@ -236,7 +242,7 @@ void RecordOptimizationFilterStatus(PreviewsType previews_type,
 }  // namespace
 
 PreviewsHints::PreviewsHints(
-    std::unique_ptr<HintCacheStore::ComponentUpdateData> component_update_data)
+    std::unique_ptr<HintUpdateData> component_update_data)
     : hint_cache_(nullptr),
       component_update_data_(std::move(component_update_data)) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
@@ -249,8 +255,7 @@ PreviewsHints::~PreviewsHints() {
 // static
 std::unique_ptr<PreviewsHints> PreviewsHints::CreateFromHintsComponent(
     const optimization_guide::HintsComponentInfo& info,
-    std::unique_ptr<HintCacheStore::ComponentUpdateData>
-        component_update_data) {
+    std::unique_ptr<HintUpdateData> component_update_data) {
   std::unique_ptr<optimization_guide::proto::Configuration> config =
       ProcessHintsComponent(info);
   if (!config) {
@@ -275,8 +280,7 @@ std::unique_ptr<PreviewsHints> PreviewsHints::CreateFromHintsComponent(
 // static
 std::unique_ptr<PreviewsHints> PreviewsHints::CreateFromHintsConfiguration(
     std::unique_ptr<optimization_guide::proto::Configuration> config,
-    std::unique_ptr<HintCacheStore::ComponentUpdateData>
-        component_update_data) {
+    std::unique_ptr<HintUpdateData> component_update_data) {
   // Process the hints within the configuration. This will move the hints from
   // |config| into |component_update_data|.
   PreviewsProcessHintsResult process_hints_result =
@@ -304,8 +308,8 @@ void PreviewsHints::Initialize(HintCache* hint_cache,
   DCHECK(hint_cache);
   hint_cache_ = hint_cache;
   if (component_update_data_) {
-    hint_cache_->UpdateComponentData(std::move(component_update_data_),
-                                     std::move(callback));
+    hint_cache_->UpdateComponentHints(std::move(component_update_data_),
+                                      std::move(callback));
   } else {
     std::move(callback).Run();
   }
@@ -374,7 +378,8 @@ bool PreviewsHints::IsWhitelisted(
     const GURL& url,
     PreviewsType type,
     int* out_inflation_percent,
-    net::EffectiveConnectionType* out_ect_threshold) const {
+    net::EffectiveConnectionType* out_ect_threshold,
+    std::string* out_serialized_hint_version_string) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(hint_cache_);
 
@@ -405,7 +410,7 @@ bool PreviewsHints::IsWhitelisted(
   for (const auto& optimization :
        matched_page_hint->whitelisted_optimizations()) {
     // Skip over any disabled experimental optimizations.
-    if (IsDisabledExperimentalOptimization(optimization)) {
+    if (IsDisabledPerOptimizationHintExperiment(optimization)) {
       continue;
     }
     if (!IsEnabledOptimizationType(optimization.optimization_type())) {
@@ -417,11 +422,22 @@ bool PreviewsHints::IsWhitelisted(
       return false;
     }
     // |type| is the first whitelisted optimization this client supports.
-    *out_inflation_percent = optimization.inflation_percent();
-    if (matched_page_hint->has_max_ect_trigger()) {
+    // Extract any applicable metadata for it.
+    if (optimization.has_previews_metadata()) {
+      *out_inflation_percent =
+          optimization.previews_metadata().inflation_percent();
       *out_ect_threshold = ConvertProtoEffectiveConnectionType(
-          matched_page_hint->max_ect_trigger());
+          optimization.previews_metadata().max_ect_trigger());
+    } else {
+      *out_inflation_percent = optimization.inflation_percent();
+      if (matched_page_hint->has_max_ect_trigger()) {
+        *out_ect_threshold = ConvertProtoEffectiveConnectionType(
+            matched_page_hint->max_ect_trigger());
+      }
     }
+
+    *out_serialized_hint_version_string = hint->version();
+
     return true;
   }
 
@@ -486,12 +502,21 @@ bool PreviewsHints::GetResourceLoadingHints(
       continue;
     }
 
-    if (IsDisabledExperimentalOptimization(optimization)) {
+    if (IsDisabledPerOptimizationHintExperiment(optimization)) {
       continue;
     }
 
-    for (const auto& resource_loading_hint :
-         optimization.resource_loading_hints()) {
+    google::protobuf::RepeatedPtrField<
+        optimization_guide::proto::ResourceLoadingHint>
+        resource_loading_hints;
+    if (optimization.has_previews_metadata()) {
+      resource_loading_hints =
+          optimization.previews_metadata().resource_loading_hints();
+    } else {
+      resource_loading_hints = optimization.resource_loading_hints();
+    }
+
+    for (const auto& resource_loading_hint : resource_loading_hints) {
       if (!resource_loading_hint.resource_pattern().empty() &&
           resource_loading_hint.loading_optimization_type() ==
               optimization_guide::proto::LOADING_BLOCK_RESOURCE) {

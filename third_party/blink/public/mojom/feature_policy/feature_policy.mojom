@@ -91,6 +91,7 @@ enum FeaturePolicyFeature {
   // which interfere with document's input stream (document.write(),
   // document.close(), etc.).
   kDocumentWrite = 28,
+  // TODO(ekaramad): kLazyLoad is deprecated; remove.
   // Used to enforce lazyloading for a frame and any nested <iframe> or image.
   kLazyLoad = 29,
   // Restricts the usage of layout-causing animations in a document.
@@ -125,6 +126,34 @@ enum FeaturePolicyFeature {
   kUnoptimizedLossyImages = 45,
   kUnoptimizedLosslessImages = 46,
   kUnoptimizedLosslessImagesStrict = 47,
+
+  // Loading policies.
+  kLoadingFrameDefaultEager = 48,
+
+  // Implements sandbox flag: allow-downloads-without-user-activation.
+  kDownloadsWithoutUserActivation = 49,
+
+  // Allow execution while not in the viewport.
+  kExecutionWhileOutOfViewport = 50,
+  // Allow execution while not rendered.
+  kExecutionWhileNotRendered = 51,
+
+  // When disallowed, a frame without user activation cannot acquire focus.
+  kFocusWithoutUserActivation = 52,
+
+  // Client Hints
+  kClientHintDPR = 53,
+  kClientHintDeviceMemory = 54,
+  kClientHintDownlink = 55,
+  kClientHintECT = 56,
+  kClientHintLang = 57,
+  kClientHintRTT = 58,
+  kClientHintUA = 59,
+  kClientHintUAArch = 60,
+  kClientHintUAModel = 61,
+  kClientHintUAPlatform = 62,
+  kClientHintViewportWidth = 63,
+  kClientHintWidth = 64,
 
   // Don't change assigned numbers of any item, and don't reuse removed slots.
   // Add new features at the end of the enum.

@@ -33,8 +33,9 @@ void PluginVmImageDownloadClient::OnServiceInitialized(
   // TODO(okalitova): Manage downloads after sleep and log out.
   for (const auto& download : downloads) {
     VLOG(1) << "Download tracked by DownloadService: " << download.guid;
-    DownloadServiceFactory::GetForBrowserContext(profile_)->CancelDownload(
-        download.guid);
+    old_downloads_.insert(download.guid);
+    DownloadServiceFactory::GetForKey(profile_->GetProfileKey())
+        ->CancelDownload(download.guid);
   }
 }
 
@@ -42,19 +43,27 @@ void PluginVmImageDownloadClient::OnServiceUnavailable() {
   VLOG(1) << __func__ << " called";
 }
 
-download::Client::ShouldDownload PluginVmImageDownloadClient::OnDownloadStarted(
+void PluginVmImageDownloadClient::OnDownloadStarted(
     const std::string& guid,
     const std::vector<GURL>& url_chain,
     const scoped_refptr<const net::HttpResponseHeaders>& headers) {
   VLOG(1) << __func__ << " called";
-  content_length_ = headers->GetContentLength();
+  // We do not want downloads that are tracked by download service from its
+  // initialization to proceed.
+  if (old_downloads_.find(guid) != old_downloads_.end()) {
+    DownloadServiceFactory::GetForKey(profile_->GetProfileKey())
+        ->CancelDownload(guid);
+    return;
+  }
+
+  content_length_ = headers ? headers->GetContentLength() : -1;
   GetManager()->OnDownloadStarted();
-  return download::Client::ShouldDownload::CONTINUE;
 }
 
 void PluginVmImageDownloadClient::OnDownloadUpdated(const std::string& guid,
                                                     uint64_t bytes_uploaded,
                                                     uint64_t bytes_downloaded) {
+  DCHECK(old_downloads_.find(guid) == old_downloads_.end());
   VLOG(1) << __func__ << " called";
   VLOG(1) << bytes_downloaded << " bytes downloaded";
   GetManager()->OnDownloadProgressUpdated(bytes_downloaded, content_length_);
@@ -86,6 +95,11 @@ void PluginVmImageDownloadClient::OnDownloadFailed(
       break;
   }
 
+  // We do not want to notify PluginVmImageManager about the status of
+  // downloads that are tracked by download service from its initialization.
+  if (old_downloads_.find(guid) != old_downloads_.end())
+    return;
+
   if (reason == download::Client::FailureReason::CANCELLED)
     GetManager()->OnDownloadCancelled();
   else
@@ -95,6 +109,7 @@ void PluginVmImageDownloadClient::OnDownloadFailed(
 void PluginVmImageDownloadClient::OnDownloadSucceeded(
     const std::string& guid,
     const download::CompletionInfo& completion_info) {
+  DCHECK(old_downloads_.find(guid) == old_downloads_.end());
   VLOG(1) << __func__ << " called";
   VLOG(1) << "Downloaded file is in " << completion_info.path.value();
   GetManager()->OnDownloadCompleted(completion_info);
@@ -110,6 +125,7 @@ bool PluginVmImageDownloadClient::CanServiceRemoveDownloadedFile(
 void PluginVmImageDownloadClient::GetUploadData(
     const std::string& guid,
     download::GetUploadDataCallback callback) {
+  DCHECK(old_downloads_.find(guid) == old_downloads_.end());
   VLOG(1) << __func__ << " called";
   base::SequencedTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), nullptr));

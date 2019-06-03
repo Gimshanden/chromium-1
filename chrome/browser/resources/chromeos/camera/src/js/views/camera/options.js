@@ -21,10 +21,25 @@ cca.views.camera = cca.views.camera || {};
 
 /**
  * Creates a controller for the options of Camera view.
+ * @param {cca.views.camera.PhotoResolPreferrer} photoResolPreferrer
+ * @param {cca.views.camera.VideoResolPreferrer} videoResolPreferrer
  * @param {function()} doSwitchDevice Callback to trigger device switching.
  * @constructor
  */
-cca.views.camera.Options = function(doSwitchDevice) {
+cca.views.camera.Options = function(
+    photoResolPreferrer, videoResolPreferrer, doSwitchDevice) {
+  /**
+   * @type {cca.views.camera.PhotoResolPreferrer}
+   * @private
+   */
+  this.photoResolPreferrer_ = photoResolPreferrer;
+
+  /**
+   * @type {cca.views.camera.VideoResolPreferrer}
+   * @private
+   */
+  this.videoResolPreferrer_ = videoResolPreferrer;
+
   /**
    * @type {function()}
    * @private
@@ -63,6 +78,15 @@ cca.views.camera.Options = function(doSwitchDevice) {
    * @private
    */
   this.videoDevices_ = null;
+
+  /**
+   * List of available video devices and width, height of its supported video
+   * resolutions and photo resolutions.
+   * @type {Promise<!Array<[MediaDeviceInfo, cros.mojom.CameraFacing, ResolList,
+   *     ResolList]>>}
+   * @private
+   */
+  this.deviceResolutions_ = null;
 
   /**
    * Mirroring set per device.
@@ -240,6 +264,59 @@ cca.views.camera.Options.prototype.maybeRefreshVideoDeviceIds_ = function() {
     cca.state.set('multi-camera', multi);
     this.refreshingVideoDeviceIds_ = false;
   });
+
+  this.deviceResolutions_ =
+      this.videoDevices_
+          .then((devices) => {
+            return Promise.all(devices.map((d) => Promise.all([
+              d,
+              cca.mojo.getCameraFacing(d.deviceId),
+              cca.mojo.getPhotoResolutions(d.deviceId),
+              cca.mojo.getVideoConfigs(d.deviceId)
+                  .then(
+                      (v) => v.filter(([, , fps]) => fps >= 24)
+                                 .map(([w, h]) => [w, h])),
+            ])));
+          })
+          .catch((e) => {
+            cca.state.set('no-resolution-settings', true);
+            throw e;
+          });
+
+  (async () => {
+    try {
+      var deviceResolutions = await this.deviceResolutions_;
+    } catch (e) {
+      return;
+    }
+    let frontSetting = null;
+    let backSetting = null;
+    let externalSettings = [];
+    deviceResolutions.forEach(([{deviceId}, facing, photoRs, videoRs]) => {
+      const setting = [deviceId, photoRs, videoRs];
+      switch (facing) {
+        case cros.mojom.CameraFacing.CAMERA_FACING_FRONT:
+          frontSetting = setting;
+          break;
+        case cros.mojom.CameraFacing.CAMERA_FACING_BACK:
+          backSetting = setting;
+          break;
+        case cros.mojom.CameraFacing.CAMERA_FACING_EXTERNAL:
+          externalSettings.push(setting);
+          break;
+        default:
+          console.error(`Ignore device of unknown facing: ${facing}`);
+      }
+    });
+    this.photoResolPreferrer_.updateResolutions(
+        frontSetting && [frontSetting[0], frontSetting[1]],
+        backSetting && [backSetting[0], backSetting[1]],
+        externalSettings.map(([deviceId, photoRs]) => [deviceId, photoRs]));
+    this.videoResolPreferrer_.updateResolutions(
+        frontSetting && [frontSetting[0], frontSetting[2]],
+        backSetting && [backSetting[0], backSetting[2]],
+        externalSettings.map(([deviceId, , videoRs]) => [deviceId, videoRs]));
+  })();
 };
 
 /**
@@ -252,20 +329,34 @@ cca.views.camera.Options.prototype.videoDeviceIds = function() {
       throw new Error('Device list empty.');
     }
     // Put the selected video device id first.
-    var sorted = devices.map((device) => device.deviceId).sort((a, b) => {
-      if (a == b) {
-        return 0;
-      }
-      if (a == this.videoDeviceId_) {
-        return -1;
-      }
-      return 1;
-    });
-    // Prepended 'null' deviceId means the system default camera. Add it only
-    // when the app is launched (no video-device-id set).
-    if (this.videoDeviceId_ == null) {
-      sorted.unshift(null);
-    }
-    return sorted;
+    return devices
+        .sort((a, b) => {
+          if (a.deviceId == b.deviceId) {
+            return 0;
+          }
+          if (this.videoDeviceId_ ?
+                  (a.deviceId == this.videoDeviceId_) :
+                  (a.label == cca.views.camera.Options.FRONT_CAMERA_LABEL)) {
+            return -1;
+          }
+          return 1;
+        })
+        .map(({deviceId}) => deviceId);
   });
+};
+
+/**
+ * Gets supported photo and video resolutions for specified video device.
+ * @async
+ * @param {string} deviceId Device id of the video device.
+ * @return {[ResolList, ResolList]} Supported photo and video resolutions.
+ * @throws {Error} May fail on HALv1 device without capability of querying
+ *     supported resolutions.
+ */
+cca.views.camera.Options.prototype.getDeviceResolutions =
+    async function(deviceId) {
+  const deviceResolutions = await this.deviceResolutions_;
+  const [, , photoRs, videoRs] =
+      deviceResolutions.find(([d]) => d.deviceId == deviceId);
+  return [photoRs, videoRs];
 };

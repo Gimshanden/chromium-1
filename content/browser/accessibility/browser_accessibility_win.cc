@@ -40,10 +40,6 @@ void BrowserAccessibilityWin::UpdatePlatformAttributes() {
   GetCOM()->UpdateStep3FireEvents(false);
 }
 
-void BrowserAccessibilityWin::OnSubtreeWillBeDeleted() {
-  GetCOM()->FireNativeEvent(EVENT_OBJECT_HIDE);
-}
-
 bool BrowserAccessibilityWin::IsNative() const {
   return true;
 }
@@ -53,7 +49,11 @@ void BrowserAccessibilityWin::OnLocationChanged() {
 }
 
 base::string16 BrowserAccessibilityWin::GetText() const {
-  return GetCOM()->AXPlatformNodeWin::GetText();
+  return GetHypertext();
+}
+
+base::string16 BrowserAccessibilityWin::GetHypertext() const {
+  return GetCOM()->AXPlatformNodeWin::GetHypertext();
 }
 
 gfx::NativeViewAccessible BrowserAccessibilityWin::GetNativeViewAccessible() {

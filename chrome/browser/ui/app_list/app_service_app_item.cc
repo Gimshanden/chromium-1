@@ -6,11 +6,13 @@
 
 #include "ash/public/cpp/app_list/app_list_config.h"
 #include "base/bind.h"
-#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_context_menu.h"
 #include "chrome/browser/ui/app_list/crostini/crostini_app_context_menu.h"
 #include "chrome/browser/ui/app_list/extension_app_context_menu.h"
+#include "chrome/services/app_service/public/cpp/app_service_proxy.h"
 
 // static
 const char AppServiceAppItem::kItemType[] = "AppServiceAppItem";
@@ -59,6 +61,13 @@ AppServiceAppItem::AppServiceAppItem(
     UpdateFromSync(sync_item);
   } else {
     SetDefaultPositionIfApplicable(model_updater);
+
+    // Crostini hard-codes its own folder. As Crostini apps are created from
+    // scratch, we move them to a default folder.
+    if (app_type_ == apps::mojom::AppType::kCrostini) {
+      DCHECK(folder_id().empty());
+      SetChromeFolderId(crostini::kCrostiniFolderId);
+    }
   }
 
   // Set model updater last to avoid being called during construction.
@@ -118,7 +127,8 @@ void AppServiceAppItem::ExecuteLaunchCommand(int event_flags) {
 
 void AppServiceAppItem::Launch(int event_flags,
                                apps::mojom::LaunchSource launch_source) {
-  apps::AppServiceProxy* proxy = apps::AppServiceProxy::Get(profile());
+  apps::AppServiceProxy* proxy =
+      apps::AppServiceProxyFactory::GetForProfile(profile());
   if (proxy) {
     proxy->Launch(id(), event_flags, launch_source,
                   GetController()->GetAppListDisplayId());
@@ -126,7 +136,8 @@ void AppServiceAppItem::Launch(int event_flags,
 }
 
 void AppServiceAppItem::CallLoadIcon(bool allow_placeholder_icon) {
-  apps::AppServiceProxy* proxy = apps::AppServiceProxy::Get(profile());
+  apps::AppServiceProxy* proxy =
+      apps::AppServiceProxyFactory::GetForProfile(profile());
   if (proxy) {
     proxy->LoadIcon(app_type_, id(),
                     apps::mojom::IconCompression::kUncompressed,

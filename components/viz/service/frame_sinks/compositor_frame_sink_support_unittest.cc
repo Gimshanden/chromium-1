@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/stl_util.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
@@ -14,6 +15,7 @@
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "components/viz/service/surfaces/surface.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_compositor_frame_sink_client.h"
@@ -96,6 +98,8 @@ class CompositorFrameSinkSupportTest : public testing::Test {
         frame_sync_token_(GenTestSyncToken(4)),
         consumer_sync_token_(GenTestSyncToken(5)) {
     manager_.SetLocalClient(&frame_sink_manager_client_);
+    now_src_ = std::make_unique<base::SimpleTestTickClock>();
+    manager_.surface_manager()->SetTickClockForTesting(now_src_.get());
     manager_.surface_manager()->AddObserver(&surface_observer_);
     manager_.RegisterFrameSinkId(kArbitraryFrameSinkId,
                                  true /* report_activation */);
@@ -229,6 +233,7 @@ class CompositorFrameSinkSupportTest : public testing::Test {
   }
 
  protected:
+  std::unique_ptr<base::SimpleTestTickClock> now_src_;
   ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;
   MockFrameSinkManagerClient frame_sink_manager_client_;
@@ -1210,6 +1215,54 @@ TEST_F(CompositorFrameSinkSupportTest,
       local_surface_id, MakeDefaultCompositorFrame(), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
   EXPECT_EQ(SubmitResult::SURFACE_OWNED_BY_ANOTHER_CLIENT, result);
+}
+
+// This test verifies that the parent sequence number of the submitted
+// CompositorFrames can decrease as long as the embed token changes as well.
+TEST_F(CompositorFrameSinkSupportTest, SubmitAfterReparenting) {
+  LocalSurfaceId local_surface_id1(2, base::UnguessableToken::Create());
+  LocalSurfaceId local_surface_id2(1, base::UnguessableToken::Create());
+
+  ASSERT_NE(local_surface_id1.embed_token(), local_surface_id2.embed_token());
+
+  CompositorFrame frame =
+      CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  SubmitResult result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id1, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
+
+  frame = CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id2, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+
+  // Even though |local_surface_id2| has a smaller parent sequence number than
+  // |local_surface_id1|, the submit should still succeed because it has a
+  // different embed token.
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
+}
+
+// This test verifies that surfaces created with a new embed token are not
+// compared against the evicted parent sequence number of the previous embed
+// token.
+TEST_F(CompositorFrameSinkSupportTest, EvictThenReparent) {
+  LocalSurfaceId local_surface_id1(2, base::UnguessableToken::Create());
+  LocalSurfaceId local_surface_id2(1, base::UnguessableToken::Create());
+
+  ASSERT_NE(local_surface_id1.embed_token(), local_surface_id2.embed_token());
+
+  support_->EvictSurface(local_surface_id1);
+  CompositorFrame frame =
+      CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  support_->SubmitCompositorFrame(local_surface_id2, std::move(frame));
+  manager_.surface_manager()->GarbageCollectSurfaces();
+
+  // Even though |local_surface_id2| has a smaller parent sequence number than
+  // |local_surface_id1|, it should not be evicted because it has a different
+  // embed token.
+  EXPECT_TRUE(
+      GetSurfaceForId(SurfaceId(support_->frame_sink_id(), local_surface_id2)));
 }
 
 }  // namespace viz

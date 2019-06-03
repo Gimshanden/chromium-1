@@ -87,6 +87,7 @@
 #include "third_party/blink/renderer/modules/media_controls/media_controls_orientation_lock_delegate.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_resource_loader.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_rotate_to_fullscreen_delegate.h"
+#include "third_party/blink/renderer/modules/media_controls/media_controls_shared_helper.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_text_track_manager.h"
 #include "third_party/blink/renderer/modules/remoteplayback/remote_playback.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -138,7 +139,6 @@ const char kActAsAudioControlsCSSClass[] = "audio-only";
 const char kScrubbingMessageCSSClass[] = "scrubbing-message";
 const char kTestModeCSSClass[] = "test-mode";
 const char kImmersiveModeCSSClass[] = "immersive-mode";
-const char kPipPresentedCSSClass[] = "pip-presented";
 
 // The delay between two taps to be recognized as a double tap gesture.
 constexpr WTF::TimeDelta kDoubleTapDelay = TimeDelta::FromMilliseconds(300);
@@ -153,33 +153,6 @@ constexpr WTF::TimeDelta kTimeToShowVolumeSliderTest =
 
 // The number of seconds to jump when double tapping.
 constexpr int kNumberOfSecondsToJump = 10;
-
-bool ShouldShowFullscreenButton(const HTMLMediaElement& media_element) {
-  // Unconditionally allow the user to exit fullscreen if we are in it
-  // now.  Especially on android, when we might not yet know if
-  // fullscreen is supported, we sometimes guess incorrectly and show
-  // the button earlier, and we don't want to remove it here if the
-  // user chose to enter fullscreen.  crbug.com/500732 .
-  if (media_element.IsFullscreen())
-    return true;
-
-  if (!media_element.IsHTMLVideoElement())
-    return false;
-
-  if (!media_element.HasVideo())
-    return false;
-
-  if (!Fullscreen::FullscreenEnabled(media_element.GetDocument()))
-    return false;
-
-  if (media_element.ControlsListInternal()->ShouldHideFullscreen()) {
-    UseCounter::Count(media_element.GetDocument(),
-                      WebFeature::kHTMLMediaElementControlsListNoFullscreen);
-    return false;
-  }
-
-  return true;
-}
 
 void MaybeParserAppendChild(Element* parent, Element* child) {
   DCHECK(parent);
@@ -353,7 +326,7 @@ class MediaControlsImpl::MediaElementMutationCallback
 
 // static
 bool MediaControlsImpl::IsModern() {
-  return RuntimeEnabledFeatures::ModernMediaControlsEnabled();
+  return true;
 }
 
 bool MediaControlsImpl::IsTouchEvent(Event* event) {
@@ -942,9 +915,7 @@ void MediaControlsImpl::Reset() {
 
   UpdatePlayState();
 
-  UpdateCurrentTimeDisplay();
-
-  timeline_->SetPosition(MediaElement().currentTime());
+  UpdateTimeIndicators();
 
   OnVolumeChange();
   OnTextTracksAddedOrRemoved();
@@ -959,17 +930,24 @@ void MediaControlsImpl::Reset() {
   OnControlsListUpdated();
 }
 
+void MediaControlsImpl::UpdateTimeIndicators() {
+  timeline_->SetPosition(MediaElement().currentTime());
+  UpdateCurrentTimeDisplay();
+}
+
 void MediaControlsImpl::OnControlsListUpdated() {
   BatchedControlUpdate batch(this);
 
   if (IsModern() && ShouldShowVideoControls()) {
     fullscreen_button_->SetIsWanted(true);
-    fullscreen_button_->setAttribute(html_names::kDisabledAttr,
-                                     ShouldShowFullscreenButton(MediaElement())
-                                         ? AtomicString()
-                                         : AtomicString(""));
+    fullscreen_button_->setAttribute(
+        html_names::kDisabledAttr,
+        MediaControlsSharedHelpers::ShouldShowFullscreenButton(MediaElement())
+            ? AtomicString()
+            : AtomicString(""));
   } else {
-    fullscreen_button_->SetIsWanted(ShouldShowFullscreenButton(MediaElement()));
+    fullscreen_button_->SetIsWanted(
+        MediaControlsSharedHelpers::ShouldShowFullscreenButton(MediaElement()));
     fullscreen_button_->removeAttribute(html_names::kDisabledAttr);
   }
 
@@ -1127,6 +1105,9 @@ bool MediaControlsImpl::ShouldHideMediaControls(unsigned behavior_flags) const {
 
   // Don't hide if we have accessiblity focus.
   if (panel_->KeepDisplayedForAccessibility())
+    return false;
+
+  if (MediaElement().seeking())
     return false;
 
   return true;
@@ -1412,7 +1393,6 @@ void MediaControlsImpl::UpdateOverflowMenuWanted() const {
 
   MaybeRecordElementsDisplayed();
 
-  UpdateOverflowAndTrackListCSSClassForPip();
   UpdateOverflowMenuItemCSSClass();
 }
 
@@ -1443,32 +1423,17 @@ void MediaControlsImpl::UpdateScrubbingMessageFits() const {
     scrubbing_message_->SetDoesFit(size_.Width() >= kMinScrubbingMessageWidth);
 }
 
-// We want to have wider menu when pip is enabled so that "Exit picture in
-// picture" text won't be truncated. When pip is disable (e.g. on mobile
-// device), we don't want to enlarged the menu because it would look empty
-// when "picture in picture" text is not presented.
-void MediaControlsImpl::UpdateOverflowAndTrackListCSSClassForPip() const {
-  if (picture_in_picture_button_.Get() &&
-      picture_in_picture_button_.Get()->OverflowElementIsWanted()) {
-    overflow_list_->classList().Add(kPipPresentedCSSClass);
-    text_track_list_->classList().Add(kPipPresentedCSSClass);
-  } else {
-    overflow_list_->classList().Remove(kPipPresentedCSSClass);
-    text_track_list_->classList().Remove(kPipPresentedCSSClass);
-  }
-}
-
 void MediaControlsImpl::UpdateSizingCSSClass() {
   MediaControlsSizingClass sizing_class =
       MediaControls::GetSizingClass(size_.Width());
 
   SetClass(kMediaControlsSizingSmallCSSClass,
            ShouldShowVideoControls() &&
-               sizing_class == MediaControlsSizingClass::kSmall);
-  SetClass(kMediaControlsSizingMediumCSSClass,
+               (sizing_class == MediaControlsSizingClass::kSmall ||
+                sizing_class == MediaControlsSizingClass::kMedium));
+  SetClass(kMediaControlsSizingLargeCSSClass,
            ShouldShowVideoControls() &&
-               (sizing_class == MediaControlsSizingClass::kMedium ||
-                sizing_class == MediaControlsSizingClass::kLarge));
+               sizing_class == MediaControlsSizingClass::kLarge);
 }
 
 void MediaControlsImpl::MaybeToggleControlsFromTap() {
@@ -1590,8 +1555,7 @@ void MediaControlsImpl::HandlePointerEvent(Event* event) {
       is_mouse_over_controls_ = true;
       if (!MediaElement().paused()) {
         MakeOpaqueFromPointerEvent();
-        if (ShouldHideMediaControls())
-          StartHideMediaControlsTimer();
+        StartHideMediaControlsIfNecessary();
       }
     }
   } else if (event->type() == event_type_names::kPointerout) {
@@ -1705,7 +1669,7 @@ void MediaControlsImpl::HandleTouchEvent(Event* event) {
 void MediaControlsImpl::EnsureAnimatedArrowContainer() {
   if (!animated_arrow_container_element_) {
     animated_arrow_container_element_ =
-        new MediaControlAnimatedArrowContainerElement(*this);
+        MakeGarbageCollected<MediaControlAnimatedArrowContainerElement>(*this);
     ParserAppendChild(animated_arrow_container_element_);
   }
 }
@@ -1775,6 +1739,11 @@ void MediaControlsImpl::HideMediaControlsTimerFired(TimerBase*) {
 
   MakeTransparent();
   overlay_cast_button_->SetIsWanted(false);
+}
+
+void MediaControlsImpl::StartHideMediaControlsIfNecessary() {
+  if (ShouldHideMediaControls())
+    StartHideMediaControlsTimer();
 }
 
 void MediaControlsImpl::StartHideMediaControlsTimer() {
@@ -1850,8 +1819,7 @@ void MediaControlsImpl::OnFocusIn() {
 }
 
 void MediaControlsImpl::OnTimeUpdate() {
-  timeline_->SetPosition(MediaElement().currentTime());
-  UpdateCurrentTimeDisplay();
+  UpdateTimeIndicators();
 
   // 'timeupdate' might be called in a paused state. The controls should not
   // become transparent in that case.
@@ -1893,8 +1861,7 @@ void MediaControlsImpl::OnDurationChange() {
 
 void MediaControlsImpl::OnPlay() {
   UpdatePlayState();
-  timeline_->SetPosition(MediaElement().currentTime());
-  UpdateCurrentTimeDisplay();
+  UpdateTimeIndicators();
   UpdateCSSClassFromState();
 }
 
@@ -1907,12 +1874,37 @@ void MediaControlsImpl::OnPlaying() {
 
 void MediaControlsImpl::OnPause() {
   UpdatePlayState();
-  timeline_->SetPosition(MediaElement().currentTime());
-  UpdateCurrentTimeDisplay();
+  UpdateTimeIndicators();
   MakeOpaque();
 
   StopHideMediaControlsTimer();
 
+  UpdateCSSClassFromState();
+}
+
+void MediaControlsImpl::OnSeeking() {
+  UpdateTimeIndicators();
+  if (!is_scrubbing_) {
+    is_scrubbing_ = true;
+    UpdateCSSClassFromState();
+  }
+
+  // Don't try to show the controls if the seek was caused by the video being
+  // looped.
+  if (MediaElement().Loop() && MediaElement().currentTime() == 0)
+    return;
+
+  if (!MediaElement().ShouldShowControls())
+    return;
+
+  MaybeShow();
+  StopHideMediaControlsTimer();
+}
+
+void MediaControlsImpl::OnSeeked() {
+  StartHideMediaControlsIfNecessary();
+
+  is_scrubbing_ = false;
   UpdateCSSClassFromState();
 }
 
@@ -2169,6 +2161,11 @@ void MediaControlsImpl::MaybeRecordElementsDisplayed() const {
 const MediaControlCurrentTimeDisplayElement&
 MediaControlsImpl::CurrentTimeDisplay() const {
   return *current_time_display_;
+}
+
+const MediaControlRemainingTimeDisplayElement&
+MediaControlsImpl::RemainingTimeDisplay() const {
+  return *duration_display_;
 }
 
 MediaControlToggleClosedCaptionsButtonElement&

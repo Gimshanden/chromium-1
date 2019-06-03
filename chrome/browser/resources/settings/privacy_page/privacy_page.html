@@ -2,12 +2,12 @@
 
 <link rel="import" href="chrome://resources/cr_elements/cr_link_row/cr_link_row.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_dialog/cr_dialog.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_icon_button/cr_icon_button.html">
 <link rel="import" href="chrome://resources/html/assert.html">
 <link rel="import" href="chrome://resources/html/cr/ui/focus_without_ink.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="security_keys_subpage.html">
 <link rel="import" href="../clear_browsing_data_dialog/clear_browsing_data_dialog.html">
 <link rel="import" href="../controls/settings_toggle_button.html">
@@ -61,8 +61,7 @@
           on-close="onDialogClosed_">
       </settings-clear-browsing-data-dialog>
     </template>
-    <template id="doNotTrackDialogIf" is="dom-if"
-        if="[[showDoNotTrackDialog_]]" notify-dom-change
+    <template id="doNotTrackDialogIf" is="dom-if" if="[[showDoNotTrackDialog_]]"
         on-dom-change="onDoNotTrackDomChange_">
       <cr-dialog id="confirmDoNotTrackDialog"
           close-text="$i18n{close}" on-cancel="onDoNotTrackDialogCancel_"
@@ -128,10 +127,12 @@
         </settings-toggle-button>
 <if expr="chromeos">
         <settings-toggle-button
+            hidden="[[!pageVisibility.contentProtectionAttestation]]"
             pref="{{prefs.cros.device.attestation_for_content_protection_enabled}}"
             label="$i18n{enableContentProtectionAttestation}">
         </settings-toggle-button>
         <settings-toggle-button
+            hidden="[[!pageVisibility.wakeOnWifi]]"
             pref="{{prefs.settings.internet.wake_on_wifi_darkconnect}}"
             label="$i18n{wakeOnWifi}">
         </settings-toggle-button>
@@ -146,6 +147,13 @@
             sub-label="$i18n{manageCertificatesDescription}"
             on-click="onManageCertificatesTap_"></cr-link-row>
 </if>
+        <template is="dom-if" if="[[enableSecurityKeysSubpage_]]">
+          <cr-link-row id="security-keys-subpage-trigger"
+            class="hr"
+            label="$i18n{securityKeysTitle}"
+            sub-label="$i18n{securityKeysDesc}"
+            on-click="onSecurityKeysTap_"></cr-link-row>
+        </template>
         <cr-link-row id="site-settings-subpage-trigger"
             class="hr"
             label="[[siteSettingsPageTitle_()]]"
@@ -156,13 +164,6 @@
             label="$i18n{clearBrowsingData}"
             sub-label="$i18n{clearBrowsingDataDescription}"
             on-click="onClearBrowsingDataTap_"></cr-link-row>
-        <template is="dom-if" if="[[enableSecurityKeysSubpage_]]">
-          <cr-link-row id="security-keys-subpage-trigger"
-            class="hr"
-            label="$i18n{securityKeysTitle}"
-            sub-label="$i18n{securityKeysDesc}"
-            on-click="onSecurityKeysTap_"></cr-link-row>
-        </template>
       </div>
 
 <if expr="use_nss_certs">
@@ -268,15 +269,9 @@
               label="$i18n{thirdPartyCookie}"
               sub-label="$i18n{thirdPartyCookieSublabel}">
           </settings-toggle-button>
-          <div id="site-data-trigger" class="settings-box" actionable
-              on-click="onSiteDataTap_">
-             <div class="start" id="cookiesLink">
-               $i18n{siteSettingsCookieLink}
-             </div>
-             <paper-icon-button-light class="subpage-arrow">
-               <button aria-labelledby="cookiesLink"></button>
-             </paper-icon-button-light>
-          </div>
+          <cr-link-row id="site-data-trigger" class="hr"
+              on-click="onSiteDataTap_" label="$i18n{siteSettingsCookieLink}">
+          </cr-link-row>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.COOKIES}}"
               block-header="$i18n{siteSettingsBlock}"
@@ -444,17 +439,16 @@
             $i18n{siteSettingsFlashPermissionsEphemeral}
           </a>
           <category-default-setting category="{{ContentSettingsTypes.PLUGINS}}"
-              toggle-off-label="$i18n{siteSettingsFlashBlock}"
-              toggle-on-label="$i18n{siteSettingsFlashAskFirstRecommended}">
+              toggle-off-label="$i18n{siteSettingsFlashBlockRecommended}"
+              toggle-on-label="$i18n{siteSettingsFlashAskFirst}">
           </category-default-setting>
 <if expr="chromeos">
           <a class="settings-box inherit-color no-outline" tabindex="-1"
               target="_blank"
               href="https://www.macromedia.com/support/documentation/en/flashplayer/help/settings_manager07.html">
             <div class="start">$i18n{adobeFlashStorage}</div>
-            <paper-icon-button-light actionable class="icon-external">
-              <button aria-label="$i18n{adobeFlashStorage}"></button>
-            </paper-icon-button-light>
+            <cr-icon-button actionable class="icon-external"
+                aria-label="$i18n{adobeFlashStorage}"></cr-icon-button>
           </a>
 </if>
           <category-setting-exceptions
@@ -619,23 +613,21 @@
 </if>
         </settings-subpage>
       </template>
-      <template is="dom-if" if="[[enableClipboardContentSetting_]]">
-        <template is="dom-if" route-path="/content/clipboard" no-search>
-          <settings-subpage page-title="$i18n{siteSettingsClipboard}"
-              search-label="$i18n{siteSettingsAllSitesSearch}"
-              search-term="{{searchFilter_}}">
-            <category-default-setting
-                toggle-off-label="$i18n{siteSettingsClipboardBlock}"
-                toggle-on-label="$i18n{siteSettingsClipboardAskRecommended}"
-                category="{{ContentSettingsTypes.CLIPBOARD}}">
-            </category-default-setting>
-            <category-setting-exceptions
-                category="{{ContentSettingsTypes.CLIPBOARD}}"
-                block-header="$i18n{siteSettingsBlock}"
-                search-filter="[[searchFilter_]]">
-            </category-setting-exceptions>
-          </settings-subpage>
-       </template>
+      <template is="dom-if" route-path="/content/clipboard" no-search>
+        <settings-subpage page-title="$i18n{siteSettingsClipboard}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+          <category-default-setting
+              toggle-off-label="$i18n{siteSettingsClipboardBlock}"
+              toggle-on-label="$i18n{siteSettingsClipboardAskRecommended}"
+              category="{{ContentSettingsTypes.CLIPBOARD}}">
+          </category-default-setting>
+          <category-setting-exceptions
+              category="{{ContentSettingsTypes.CLIPBOARD}}"
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
+          </category-setting-exceptions>
+        </settings-subpage>
       </template>
       <template is="dom-if" if="[[enablePaymentHandlerContentSetting_]]">
         <template is="dom-if" route-path="/content/paymentHandler" no-search>
@@ -654,6 +646,26 @@
             </category-setting-exceptions>
           </settings-subpage>
        </template>
+      </template>
+      <template is="dom-if" if="[[enableBluetoothScanningContentSetting_]]">
+        <template is="dom-if" route-path="/content/bluetoothScanning" no-search>
+          <settings-subpage page-title="$i18n{siteSettingsBluetoothScanning}"
+              search-label="$i18n{siteSettingsAllSitesSearch}"
+              search-term="{{searchFilter_}}">
+            <category-default-setting
+                toggle-off-label="$i18n{siteSettingsBluetoothScanningBlock}"
+                toggle-on-label=
+                    "$i18n{siteSettingsBluetoothScanningAskRecommended}"
+                category="{{ContentSettingsTypes.BLUETOOTH_SCANNING}}">
+            </category-default-setting>
+            <category-setting-exceptions
+                category="{{ContentSettingsTypes.BLUETOOTH_SCANNING}}"
+                read-only-list
+                block-header="$i18n{siteSettingsBlock}"
+                search-filter="[[searchFilter_]]">
+            </category-setting-exceptions>
+          </settings-subpage>
+        </template>
       </template>
     </settings-animated-pages>
 

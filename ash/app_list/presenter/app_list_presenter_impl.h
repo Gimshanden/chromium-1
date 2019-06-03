@@ -10,10 +10,10 @@
 #include <memory>
 
 #include "ash/app_list/app_list_metrics.h"
-#include "ash/app_list/model/app_list_view_state.h"
-#include "ash/app_list/pagination_model_observer.h"
 #include "ash/app_list/presenter/app_list_presenter_delegate.h"
 #include "ash/app_list/presenter/app_list_presenter_export.h"
+#include "ash/app_list/views/app_list_view.h"
+#include "ash/public/cpp/pagination/pagination_model_observer.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
@@ -25,6 +25,10 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/widget_observer.h"
 
+namespace ash {
+enum class AppListViewState;
+}
+
 namespace app_list {
 class AppListView;
 
@@ -35,14 +39,13 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
     : public aura::client::FocusChangeObserver,
       public ui::ImplicitAnimationObserver,
       public views::WidgetObserver,
-      public PaginationModelObserver {
+      public ash::PaginationModelObserver {
  public:
   // Callback which fills out the passed settings object. Used by
   // UpdateYPositionAndOpacityForHomeLauncher so different callers can do
   // similar animations with different settings.
   using UpdateHomeLauncherAnimationSettingsCallback =
-      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings,
-                                   bool observe)>;
+      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings)>;
 
   // Used to dismiss the app list without animations.
   class ScopedDismissAnimationDisabler {
@@ -82,9 +85,13 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // one AppListShowSource or focusing out side of the launcher.
   void Dismiss(base::TimeTicks event_time_stamp);
 
-  // Closes opened folder or search result page if they are opened. Returns
-  // whether the action was handled.
-  bool CloseOpenedPage();
+  // If app list has an opened folder, close it. Returns whether an opened
+  // folder was closed.
+  bool HandleCloseOpenFolder();
+
+  // If app list has an open search box, close it. Returns whether an open
+  // search box was closed.
+  bool HandleCloseOpenSearchBox();
 
   // Show the app list if it is visible, hide it if it is hidden. If
   // |event_time_stamp| is not 0, it means |ToggleAppList()| was triggered by
@@ -105,7 +112,7 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
                                  float background_opacity);
 
   // Ends the drag of app list from shelf.
-  void EndDragFromShelf(AppListViewState app_list_state);
+  void EndDragFromShelf(ash::AppListViewState app_list_state);
 
   // Passes a MouseWheelEvent from the shelf to the AppListView.
   void ProcessMouseWheelOffset(const gfx::Vector2d& scroll_offset_vector);
@@ -127,6 +134,12 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   // Show/hide the expand arrow view button.
   void SetExpandArrowViewVisibility(bool show);
+
+  // Called when tablet mode starts and ends.
+  void OnTabletModeChanged(bool started);
+
+  // Returns whether home launcher is currently shown.
+  bool home_launcher_shown() const { return home_launcher_shown_; }
 
  private:
   // Sets the app list view and attempts to show it.
@@ -175,8 +188,9 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // Responsible for laying out the app list UI.
   std::unique_ptr<AppListPresenterDelegate> delegate_;
 
-  // Whether we should show or hide app list widget.
-  bool is_visible_ = false;
+  // The target visibility of the AppListView, true if the target visibility is
+  // shown.
+  bool is_target_visibility_show_ = false;
 
   // The AppListView this class manages, owned by its widget.
   AppListView* view_ = nullptr;
@@ -197,6 +211,9 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   // If true, dismiss the app list immediately.
   bool dismiss_without_animation_ = false;
+
+  // Whether the home launcher is currently shown.
+  bool home_launcher_shown_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(AppListPresenterImpl);
 };

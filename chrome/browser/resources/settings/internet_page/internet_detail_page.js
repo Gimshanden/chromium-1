@@ -10,8 +10,6 @@
 (function() {
 'use strict';
 
-const CARRIER_VERIZON = 'Verizon Wireless';
-
 Polymer({
   is: 'settings-internet-detail-page',
 
@@ -90,7 +88,7 @@ Polymer({
     globalPolicy: {
       type: Object,
       value: null,
-      observer: 'updateAutoConnectPref_'
+      observer: 'globalPolicyChanged_',
     },
 
     /**
@@ -258,6 +256,12 @@ Polymer({
   },
 
   close: function() {
+    // If the page is already closed, return early to avoid navigating backward
+    // erroneously.
+    if (!this.guid) {
+      return;
+    }
+
     this.guid = '';
 
     // Delay navigating to allow other subpages to load first.
@@ -272,6 +276,12 @@ Polymer({
     });
   },
 
+  /** @param {!chrome.networkingPrivate.GlobalPolicy} globalPolicy */
+  globalPolicyChanged_: function(globalPolicy) {
+    this.updateAutoConnectPref_(
+        !!(this.autoConnect_ && this.autoConnect_.value), globalPolicy);
+  },
+
   /** @private */
   networkPropertiesChanged_: function() {
     if (!this.networkProperties_) {
@@ -279,13 +289,8 @@ Polymer({
     }
 
     // Update autoConnect if it has changed. Default value is false.
-    const autoConnect = CrOnc.getAutoConnect(this.networkProperties_);
-    if (this.autoConnect_ === undefined) {
-      this.updateAutoConnectPref_();
-    }
-    if (autoConnect != this.autoConnect_.value) {
-      this.autoConnect_.value = autoConnect;
-    }
+    this.updateAutoConnectPref_(
+        CrOnc.getAutoConnect(this.networkProperties_), this.globalPolicy);
 
     // Update preferNetwork if it has changed. Default value is false.
     const priority = /** @type {number} */ (
@@ -334,18 +339,36 @@ Polymer({
     this.setNetworkProperties_(onc);
   },
 
-  /** @private */
-  updateAutoConnectPref_: function() {
+  /**
+   * Updates auto-connect pref value.
+   * @param {boolean} value
+   * @param {!chrome.networkingPrivate.GlobalPolicy|undefined} globalPolicy
+   * @private
+   */
+  updateAutoConnectPref_: function(value, globalPolicy) {
+    let enforcement;
+    let controlledBy;
+
+    if (this.isAutoConnectEnforcedByPolicy(
+            this.networkProperties_, globalPolicy)) {
+      enforcement = chrome.settingsPrivate.Enforcement.ENFORCED;
+      controlledBy = chrome.settingsPrivate.ControlledBy.DEVICE_POLICY;
+    }
+
+    if (this.autoConnect_ && this.autoConnect_.value == value &&
+        enforcement == this.autoConnect_.enforcement &&
+        controlledBy == this.autoConnect_.controlledBy) {
+      return;
+    }
+
     const newPrefValue = {
       key: 'fakeAutoConnectPref',
-      value: !!this.autoConnect_ && !!this.autoConnect_.value,
+      value: value,
       type: chrome.settingsPrivate.PrefType.BOOLEAN,
     };
-    if (this.isAutoConnectEnforcedByPolicy(
-            this.networkProperties_, this.globalPolicy)) {
-      newPrefValue.controlledBy =
-          chrome.settingsPrivate.ControlledBy.DEVICE_POLICY;
-      newPrefValue.enforcement = chrome.settingsPrivate.Enforcement.ENFORCED;
+    if (enforcement) {
+      newPrefValue.enforcement = enforcement;
+      newPrefValue.controlledBy = controlledBy;
     }
 
     this.autoConnect_ = newPrefValue;
@@ -760,13 +783,9 @@ Polymer({
       return false;
     }
 
-    // Only show if online payment URL is provided or the carrier is Verizon.
-    const carrier = CrOnc.getActiveValue(networkProperties.Cellular.Carrier);
-    if (carrier != CARRIER_VERIZON) {
-      const paymentPortal = networkProperties.Cellular.PaymentPortal;
-      if (!paymentPortal || !paymentPortal.Url) {
-        return false;
-      }
+    const paymentPortal = networkProperties.Cellular.PaymentPortal;
+    if (!paymentPortal || !paymentPortal.Url) {
+      return false;
     }
 
     // Only show for connected networks or LTE networks with a valid MDN.
@@ -935,6 +954,16 @@ Polymer({
   /** @private */
   showTetherDialog_: function() {
     this.getTetherDialog_().open();
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  showHiddenNetworkWarning_: function() {
+    return !!this.autoConnect_ && !!this.autoConnect_.value &&
+        !!this.networkProperties_ && !!this.networkProperties_.WiFi &&
+        !!CrOnc.getActiveValue(this.networkProperties_.WiFi.HiddenSSID);
   },
 
   /**
@@ -1307,7 +1336,7 @@ Polymer({
     }
     if (type == CrOnc.Type.CELLULAR && !!this.networkProperties_.Cellular) {
       fields.push(
-          'Cellular.Carrier', 'Cellular.Family', 'Cellular.NetworkTechnology',
+          'Cellular.Family', 'Cellular.NetworkTechnology',
           'Cellular.ServingOperator.Code');
     } else if (type == CrOnc.Type.WI_FI) {
       fields.push(

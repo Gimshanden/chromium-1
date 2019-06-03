@@ -9,10 +9,12 @@
 
 #include <memory>
 
+#include "base/file_version_info.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
@@ -40,6 +42,16 @@ constexpr FontExpectation kExpectedTestFonts[] = {{u8"CambriaMath", 1},
                                                   {u8"NSimSun", 1},
                                                   {u8"calibri-bolditalic", 0}};
 
+// DirectWrite on Windows supports IDWriteFontSet API which allows for querying
+// by PostScript name and full font name directly. In the implementation of
+// DWriteFontProxy we check whether this API is available by checking for
+// whether IDWriteFactory3 is available. In order to validate in a unit test
+// whether this check works, compare it against the dwrite.dll major version -
+// versions starting from 10 have the required functionality.
+constexpr int kDWriteMajorVersionSupportingSingleLookups = 10;
+
+// Base test class that sets up the Mojo connection to DWriteFontProxy so that
+// tests can call its Mojo methods.
 class DWriteFontProxyImplUnitTest : public testing::Test {
  public:
   DWriteFontProxyImplUnitTest()
@@ -49,28 +61,50 @@ class DWriteFontProxyImplUnitTest : public testing::Test {
     return *dwrite_font_proxy_;
   }
 
+  bool SupportsSingleLookups() {
+    blink::mojom::UniqueFontLookupMode lookup_mode;
+    dwrite_font_proxy().GetUniqueFontLookupMode(&lookup_mode);
+    return lookup_mode == blink::mojom::UniqueFontLookupMode::kSingleLookups;
+  }
+
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   blink::mojom::DWriteFontProxyPtr dwrite_font_proxy_;
   DWriteFontProxyImpl impl_;
   mojo::Binding<blink::mojom::DWriteFontProxy> binding_;
 };
 
-class DWriteFontProxyUniqueNameMatchingTest
-    : public DWriteFontProxyImplUnitTest {
+// Derived class for tests that exercise font unique local matching mojo methods
+// of DWriteFontProxy. Needs a ScopedFeatureList to activate the feature as it
+// is currently behind a flag.
+class DWriteFontProxyLocalMatchingTest : public DWriteFontProxyImplUnitTest {
  public:
-  DWriteFontProxyUniqueNameMatchingTest() {
+  DWriteFontProxyLocalMatchingTest() {
     feature_list_.InitAndEnableFeature(features::kFontSrcLocalMatching);
-    DWriteFontLookupTableBuilder* table_builder_instance =
-        DWriteFontLookupTableBuilder::GetInstance();
-    DCHECK(scoped_temp_dir_.CreateUniqueTempDir());
-    table_builder_instance->SetCacheDirectoryForTesting(
-        scoped_temp_dir_.GetPath());
-    table_builder_instance->ResetLookupTableForTesting();
-    table_builder_instance->SchedulePrepareFontUniqueNameTable();
   }
 
  private:
   base::test::ScopedFeatureList feature_list_;
+};
+
+// Derived class for tests that exercise the parts of the DWriteFontProxy Mojo
+// interface that deal with accessing the font lookup table created by
+// DWriteFontLookupTableBuilder. Initializes the DWriteFontLookupTableBuilder
+// and has a ScopedTempDir for testing persisting the lookup table to disk.
+class DWriteFontProxyTableMatchingTest
+    : public DWriteFontProxyLocalMatchingTest {
+ public:
+  DWriteFontProxyTableMatchingTest() {
+    DWriteFontLookupTableBuilder* table_builder_instance =
+        DWriteFontLookupTableBuilder::GetInstance();
+    DCHECK(scoped_temp_dir_.CreateUniqueTempDir());
+    table_builder_instance->OverrideDWriteVersionChecksForTesting();
+    table_builder_instance->SetCacheDirectoryForTesting(
+        scoped_temp_dir_.GetPath());
+    table_builder_instance->ResetLookupTableForTesting();
+    table_builder_instance->SchedulePrepareFontUniqueNameTableIfNeeded();
+  }
+
+ private:
   base::ScopedTempDir scoped_temp_dir_;
 };
 
@@ -239,12 +273,69 @@ void TestWhenLookupTableReady(
 }
 }  // namespace
 
-TEST_F(DWriteFontProxyUniqueNameMatchingTest, TestFindUniqueFont) {
+TEST_F(DWriteFontProxyTableMatchingTest, TestFindUniqueFont) {
   bool lookup_table_results_were_tested = false;
   dwrite_font_proxy().GetUniqueNameLookupTable(base::BindOnce(
       &TestWhenLookupTableReady, &lookup_table_results_were_tested));
   scoped_task_environment_.RunUntilIdle();
   ASSERT_TRUE(lookup_table_results_were_tested);
+}
+
+TEST_F(DWriteFontProxyLocalMatchingTest, TestSingleLookup) {
+  // Do not run this test on unsupported Windows versions.
+  if (!SupportsSingleLookups())
+    return;
+  for (auto& test_font_name_index : kExpectedTestFonts) {
+    base::FilePath result_path;
+    uint32_t ttc_index;
+    dwrite_font_proxy().MatchUniqueFont(
+        base::UTF8ToUTF16(test_font_name_index.font_name), &result_path,
+        &ttc_index);
+    ASSERT_GT(result_path.value().size(), 0u);
+    base::File unique_font_file(result_path,
+                                base::File::FLAG_OPEN | base::File::FLAG_READ);
+    ASSERT_TRUE(unique_font_file.IsValid());
+    ASSERT_GT(unique_font_file.GetLength(), 0);
+    ASSERT_EQ(test_font_name_index.ttc_index, ttc_index);
+  }
+}
+
+TEST_F(DWriteFontProxyLocalMatchingTest, TestSingleLookupUnavailable) {
+  // Do not run this test on unsupported Windows versions.
+  if (!SupportsSingleLookups())
+    return;
+  base::FilePath result_path;
+  uint32_t ttc_index;
+  std::string unavailable_font_name =
+      "Unavailable_Font_Name_56E7EA7E-2C69-4E23-99DC-750BC19B250E";
+  dwrite_font_proxy().MatchUniqueFont(base::UTF8ToUTF16(unavailable_font_name),
+                                      &result_path, &ttc_index);
+  ASSERT_EQ(result_path.value().size(), 0u);
+  ASSERT_EQ(ttc_index, 0u);
+}
+
+TEST_F(DWriteFontProxyLocalMatchingTest, TestLookupMode) {
+  std::unique_ptr<FileVersionInfo> dwrite_version_info =
+      FileVersionInfo::CreateFileVersionInfo(
+          base::FilePath(FILE_PATH_LITERAL("DWrite.dll")));
+
+  std::string dwrite_version =
+      base::WideToUTF8(dwrite_version_info->product_version());
+
+  int dwrite_major_version_number =
+      std::stoi(dwrite_version.substr(0, dwrite_version.find(".")));
+
+  blink::mojom::UniqueFontLookupMode expected_lookup_mode;
+  if (dwrite_major_version_number >=
+      kDWriteMajorVersionSupportingSingleLookups) {
+    expected_lookup_mode = blink::mojom::UniqueFontLookupMode::kSingleLookups;
+  } else {
+    expected_lookup_mode = blink::mojom::UniqueFontLookupMode::kRetrieveTable;
+  }
+
+  blink::mojom::UniqueFontLookupMode lookup_mode;
+  dwrite_font_proxy().GetUniqueFontLookupMode(&lookup_mode);
+  ASSERT_EQ(lookup_mode, expected_lookup_mode);
 }
 
 }  // namespace

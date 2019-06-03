@@ -21,7 +21,6 @@
 #include "base/test/scoped_task_environment.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/public/common/content_features.h"
-#include "content/public/renderer/fixed_received_data.h"
 #include "content/public/renderer/request_peer.h"
 #include "content/public/renderer/resource_dispatcher_delegate.h"
 #include "content/renderer/loader/navigation_response_override_parameters.h"
@@ -35,7 +34,6 @@
 #include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
-#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
@@ -119,10 +117,9 @@ class ResourceDispatcherTest : public testing::Test,
     request->url = GURL(kTestPageUrl);
     request->site_for_cookies = GURL(kTestPageUrl);
     request->referrer_policy = Referrer::GetDefaultReferrerPolicy();
-    request->resource_type = RESOURCE_TYPE_SUB_RESOURCE;
+    request->resource_type = static_cast<int>(ResourceType::kSubResource);
     request->priority = net::LOW;
     request->fetch_request_mode = network::mojom::FetchRequestMode::kNoCors;
-    request->fetch_frame_type = network::mojom::RequestContextFrameType::kNone;
 
     const RequestExtraData extra_data;
     extra_data.CopyToResourceRequest(request.get());
@@ -180,11 +177,7 @@ class TestResourceDispatcherDelegate : public ResourceDispatcherDelegate {
   TestResourceDispatcherDelegate() {}
   ~TestResourceDispatcherDelegate() override {}
 
-  std::unique_ptr<RequestPeer> OnRequestComplete(
-      std::unique_ptr<RequestPeer> current_peer,
-      int error_code) override {
-    return current_peer;
-  }
+  void OnRequestComplete() override {}
 
   std::unique_ptr<RequestPeer> OnReceivedResponse(
       std::unique_ptr<RequestPeer> current_peer,
@@ -214,10 +207,6 @@ class TestResourceDispatcherDelegate : public ResourceDispatcherDelegate {
     void OnStartLoadingResponseBody(
         mojo::ScopedDataPipeConsumerHandle body) override {
       body_handle_ = std::move(body);
-    }
-
-    void OnReceivedData(std::unique_ptr<ReceivedData> data) override {
-      NOTREACHED();
     }
 
     void OnTransferSizeUpdated(int transfer_size_diff) override {}

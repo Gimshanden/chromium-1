@@ -4,8 +4,8 @@
 
 package org.chromium.chrome.browser.touchless;
 
-import android.content.Intent;
-import android.net.Uri;
+import static org.chromium.chrome.browser.ChromeInactivityTracker.NTP_LAUNCH_DELAY_IN_MINS_PARAM;
+
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 
@@ -17,6 +17,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.chrome.browser.ChromeInactivityTracker;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.MockSafeBrowsingApiHandler;
 import org.chromium.chrome.test.ChromeActivityTestRule;
@@ -36,6 +38,7 @@ import org.chromium.net.test.EmbeddedTestServer;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class NoTouchActivityTest {
     private static final String TEST_PATH = "/chrome/test/data/android/simple.html";
+    private static final String TEST_PATH_2 = "/chrome/test/data/android/test.html";
 
     @Rule
     public ChromeActivityTestRule<NoTouchActivity> mActivityTestRule =
@@ -67,47 +70,6 @@ public class NoTouchActivityTest {
     }
 
     /**
-     * Tests that the Dino game is launchable.
-     */
-    @Test
-    @MediumTest
-    public void testDinoGameIsLaunchable() throws Throwable {
-        Intent i = new Intent();
-        i.setAction(Intent.ACTION_MAIN);
-        i.addCategory(Intent.CATEGORY_LAUNCHER);
-        i.setClassName(InstrumentationRegistry.getTargetContext().getPackageName(),
-                NoTouchActivity.DINOSAUR_GAME_INTENT);
-        mActivityTestRule.startMainActivityFromIntent(i, null);
-        mActivity = mActivityTestRule.getActivity();
-        Assert.assertFalse(mActivity.getActivityTab().isNativePage());
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            Assert.assertEquals("chrome://dino/",
-                    mActivity.getActivityTab().getWebContents().getLastCommittedUrl());
-        });
-    }
-
-    /**
-     * Tests that the Dino ACTION but with different URL loads dino.
-     */
-    @Test
-    @MediumTest
-    public void testDinoGameOnlyLoadsDino() throws Throwable {
-        Intent i = new Intent();
-        i.setAction(Intent.ACTION_MAIN);
-        i.addCategory(Intent.CATEGORY_LAUNCHER);
-        i.setClassName(InstrumentationRegistry.getTargetContext().getPackageName(),
-                NoTouchActivity.DINOSAUR_GAME_INTENT);
-        i.setData(Uri.parse("https://www.google.com"));
-        mActivityTestRule.startMainActivityFromIntent(i, null);
-        mActivity = mActivityTestRule.getActivity();
-        Assert.assertFalse(mActivity.getActivityTab().isNativePage());
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            Assert.assertEquals("chrome://dino/",
-                    mActivity.getActivityTab().getWebContents().getLastCommittedUrl());
-        });
-    }
-
-    /**
      * Tests that the Tab persists through recreation.
      */
     @Test
@@ -132,10 +94,67 @@ public class NoTouchActivityTest {
     }
 
     /**
-     * Tests that Safe Browsing and interstitials work.
+     * Tests that the tab does not persist after recreation, if enough time has passed.
+     *
+     * This test configures the time delay to be 0 minutes, which should always cause the inactivity
+     * threshold to be reached upon recreation.
      */
     @Test
     @MediumTest
+    @CommandLineFlags.
+    Add({"enable-features=" + ChromeInactivityTracker.FEATURE_NAME + "<FakeStudyName",
+            "force-fieldtrials=FakeStudyName/Enabled",
+            "force-fieldtrial-params=FakeStudyName.Enabled:" + NTP_LAUNCH_DELAY_IN_MINS_PARAM
+                    + "/0"})
+    public void
+    testRecreateWithTabHistoryAfterInactivity() throws Throwable {
+        mActivityTestRule.startMainActivityFromLauncher();
+        mActivity = mActivityTestRule.getActivity();
+        mActivityTestRule.loadUrl(mTestServer.getURL(TEST_PATH));
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals(mActivity.getActivityTab().getWebContents().getLastCommittedUrl(),
+                    mTestServer.getURL(TEST_PATH));
+        });
+
+        ApplicationTestUtils.fireHomeScreenIntent(mActivityTestRule.getActivity());
+        ApplicationTestUtils.launchChrome(mActivityTestRule.getActivity());
+        CriteriaHelper.pollUiThread(
+                () -> mActivity.getActivityTab().getNativePage() instanceof TouchlessNewTabPage);
+    }
+
+    @Test
+    @MediumTest
+    @CommandLineFlags.
+    Add({"enable-features=" + ChromeInactivityTracker.FEATURE_NAME + "<FakeStudyName",
+            "force-fieldtrials=FakeStudyName/Enabled",
+            "force-fieldtrial-params=FakeStudyName.Enabled:" + NTP_LAUNCH_DELAY_IN_MINS_PARAM
+                    + "/0"})
+    public void
+    testViewUrlAfterInactivity() throws Throwable {
+        mActivityTestRule.startMainActivityFromLauncher();
+        mActivity = mActivityTestRule.getActivity();
+        mActivityTestRule.loadUrl(mTestServer.getURL(TEST_PATH));
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals(mActivity.getActivityTab().getWebContents().getLastCommittedUrl(),
+                    mTestServer.getURL(TEST_PATH));
+        });
+
+        ApplicationTestUtils.fireHomeScreenIntent(mActivityTestRule.getActivity());
+
+        String alternateUrl = mTestServer.getURL(TEST_PATH_2);
+        mActivityTestRule.startMainActivityWithURL(alternateUrl);
+
+        CriteriaHelper.pollUiThread(
+                ()
+                        -> alternateUrl.equals(
+                                mActivity.getActivityTab().getWebContents().getLastCommittedUrl()));
+    }
+
+    /**
+     * Tests that Safe Browsing and interstitials work.
+     */
+    @Test
+    @DisabledTest(message = "crbug.com/947232")
     public void testSafeBrowsing() throws Throwable {
         mActivityTestRule.startMainActivityFromLauncher();
         mActivity = mActivityTestRule.getActivity();

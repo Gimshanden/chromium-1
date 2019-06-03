@@ -23,13 +23,14 @@
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_recorder.h"
 #include "cc/paint/paint_shader.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
+#include "chrome/browser/ui/tabs/tab_group_data.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -128,7 +129,7 @@ Tab::Tab(TabController* controller)
   // hover.
   set_notify_enter_exit_on_child(true);
 
-  set_id(VIEW_ID_TAB);
+  SetID(VIEW_ID_TAB);
 
   // This will cause calls to GetContentsBounds to return only the rectangle
   // inside the tab shape, rather than to its extents.
@@ -155,6 +156,7 @@ Tab::Tab(TabController* controller)
       this, base::BindRepeating(&TabController::OnMouseEventInTab,
                                 base::Unretained(controller_)));
   AddChildView(close_button_);
+  close_button_->AddObserver(this);
 
   set_context_menu_controller(this);
 
@@ -165,7 +167,10 @@ Tab::Tab(TabController* controller)
   focus_ring_ = views::FocusRing::Install(this);
 }
 
-Tab::~Tab() = default;
+Tab::~Tab() {
+  close_button_->RemoveObserver(this);
+  controller_->UpdateHoverCard(this, /* should_show */ false);
+}
 
 void Tab::AnimationEnded(const gfx::Animation* animation) {
   DCHECK_EQ(animation, &title_animation_);
@@ -181,7 +186,7 @@ void Tab::AnimationProgressed(const gfx::Animation* animation) {
 }
 
 void Tab::ButtonPressed(views::Button* sender, const ui::Event& event) {
-  if (!alert_indicator_ || !alert_indicator_->visible())
+  if (!alert_indicator_ || !alert_indicator_->GetVisible())
     base::RecordAction(UserMetricsAction("CloseTab_NoAlertIndicator"));
   else if (data_.alert_state == TabAlertState::AUDIO_PLAYING)
     base::RecordAction(UserMetricsAction("CloseTab_AudioIndicator"));
@@ -372,7 +377,6 @@ void Tab::OnBoundsChanged(const gfx::Rect& previous_bounds) {
 }
 
 bool Tab::OnKeyPressed(const ui::KeyEvent& event) {
-  controller_->UpdateHoverCard(this, false);
   if (event.key_code() == ui::VKEY_SPACE && !IsSelected()) {
     controller_->SelectTab(this, event);
     return true;
@@ -392,7 +396,7 @@ bool IsSelectionModifierDown(const ui::MouseEvent& event) {
 }  // namespace
 
 bool Tab::OnMousePressed(const ui::MouseEvent& event) {
-  controller_->UpdateHoverCard(this, false);
+  controller_->UpdateHoverCard(this, /* should_show */ false);
   controller_->OnMouseEventInTab(this, event);
 
   // Allow a right click from touch to drag, which corresponds to a long click.
@@ -487,7 +491,7 @@ void Tab::OnMouseEntered(const ui::MouseEvent& event) {
   tab_style_->ShowHover(TabStyle::ShowHoverStyle::kSubtle);
   UpdateForegroundColors();
   Layout();
-  controller_->UpdateHoverCard(this, true);
+  controller_->UpdateHoverCard(this, /* should_show */ true);
 }
 
 void Tab::OnMouseExited(const ui::MouseEvent& event) {
@@ -498,7 +502,7 @@ void Tab::OnMouseExited(const ui::MouseEvent& event) {
 }
 
 void Tab::OnGestureEvent(ui::GestureEvent* event) {
-  controller_->UpdateHoverCard(this, false);
+  controller_->UpdateHoverCard(this, /* should_show */ false);
   switch (event->type()) {
     case ui::ET_GESTURE_TAP_DOWN: {
       // TAP_DOWN is only dispatched for the first touch point.
@@ -592,8 +596,17 @@ void Tab::AddedToWidget() {
   UpdateForegroundColors();
 }
 
+void Tab::OnFocus() {
+  controller_->UpdateHoverCard(this, /* should_show */ true);
+  View::OnFocus();
+}
+
 void Tab::OnThemeChanged() {
   UpdateForegroundColors();
+}
+
+void Tab::OnViewFocused(views::View* observed_view) {
+  controller_->UpdateHoverCard(this, /* should_show */ true);
 }
 
 void Tab::SetClosing(bool closing) {
@@ -607,6 +620,21 @@ void Tab::SetClosing(bool closing) {
     // this happens.
     focus_ring_.reset();
   }
+}
+
+void Tab::SetGroup(base::Optional<TabGroupId> group) {
+  if (group_ == group)
+    return;
+  group_ = group;
+  UpdateForegroundColors();
+  SchedulePaint();
+}
+
+base::Optional<SkColor> Tab::GetGroupColor() const {
+  return group_.has_value()
+             ? base::make_optional(
+                   controller_->GetDataForGroup(group_.value())->color())
+             : base::nullopt;
 }
 
 SkColor Tab::GetAlertIndicatorColor(TabAlertState state) const {
@@ -631,6 +659,7 @@ SkColor Tab::GetAlertIndicatorColor(TabAlertState state) const {
       return theme_provider->GetColor(ThemeProperties::COLOR_TAB_PIP_PLAYING);
     case TabAlertState::BLUETOOTH_CONNECTED:
     case TabAlertState::USB_CONNECTED:
+    case TabAlertState::SERIAL_CONNECTED:
     case TabAlertState::NONE:
     case TabAlertState::VR_PRESENTING_IN_HEADSET:
       return button_color_;
@@ -754,6 +783,10 @@ base::string16 Tab::GetTooltipText(const base::string16& title,
     case TabAlertState::USB_CONNECTED:
       result.append(
           l10n_util::GetStringUTF16(IDS_TOOLTIP_TAB_ALERT_STATE_USB_CONNECTED));
+      break;
+    case TabAlertState::SERIAL_CONNECTED:
+      result.append(l10n_util::GetStringUTF16(
+          IDS_TOOLTIP_TAB_ALERT_STATE_SERIAL_CONNECTED));
       break;
     case TabAlertState::PIP_PLAYING:
       result.append(

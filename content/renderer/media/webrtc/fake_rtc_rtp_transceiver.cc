@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/renderer/media/webrtc/fake_rtc_rtp_transceiver.h"
+#include <utility>
 
-#include <vector>
+#include "content/renderer/media/webrtc/fake_rtc_rtp_transceiver.h"
+#include "content/renderer/media/webrtc/webrtc_util.h"
 
 namespace content {
 
@@ -102,8 +103,13 @@ void FakeRTCRtpSender::SetParameters(
 }
 
 void FakeRTCRtpSender::GetStats(
-    std::unique_ptr<blink::WebRTCStatsReportCallback>,
+    blink::WebRTCStatsReportCallback,
     const std::vector<webrtc::NonStandardGroupId>&) {
+  NOTIMPLEMENTED();
+}
+
+void FakeRTCRtpSender::SetStreams(
+    const blink::WebVector<blink::WebString>& stream_ids) {
   NOTIMPLEMENTED();
 }
 
@@ -164,7 +170,7 @@ FakeRTCRtpReceiver::GetSources() {
 }
 
 void FakeRTCRtpReceiver::GetStats(
-    std::unique_ptr<blink::WebRTCStatsReportCallback>,
+    blink::WebRTCStatsReportCallback,
     const std::vector<webrtc::NonStandardGroupId>&) {
   NOTIMPLEMENTED();
 }
@@ -173,6 +179,11 @@ std::unique_ptr<webrtc::RtpParameters> FakeRTCRtpReceiver::GetParameters()
     const {
   NOTIMPLEMENTED();
   return nullptr;
+}
+
+void FakeRTCRtpReceiver::SetJitterBufferMinimumDelay(
+    base::Optional<double> delay_seconds) {
+  NOTIMPLEMENTED();
 }
 
 FakeRTCRtpTransceiver::FakeRTCRtpTransceiver(

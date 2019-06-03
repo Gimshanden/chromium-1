@@ -4,6 +4,8 @@
 
 #include "services/network/test/test_network_service_client.h"
 
+#include <utility>
+
 #include "base/optional.h"
 #include "base/task/post_task.h"
 #include "base/unguessable_token.h"
@@ -23,10 +25,8 @@ void TestNetworkServiceClient::OnAuthRequired(
     uint32_t routing_id,
     uint32_t request_id,
     const GURL& url,
-    const GURL& site_for_cookies,
     bool first_auth_attempt,
-    const scoped_refptr<net::AuthChallengeInfo>& auth_info,
-    int32_t resource_type,
+    const net::AuthChallengeInfo& auth_info,
     const base::Optional<ResourceResponseHead>& head,
     mojom::AuthChallengeResponderPtr auth_challenge_responder) {
   NOTREACHED();
@@ -38,38 +38,18 @@ void TestNetworkServiceClient::OnCertificateRequested(
     uint32_t routing_id,
     uint32_t request_id,
     const scoped_refptr<net::SSLCertRequestInfo>& cert_info,
-    mojom::NetworkServiceClient::OnCertificateRequestedCallback callback) {
+    mojom::ClientCertificateResponderPtr client_cert_responder) {
   NOTREACHED();
 }
 
 void TestNetworkServiceClient::OnSSLCertificateError(
     uint32_t process_id,
     uint32_t routing_id,
-    uint32_t request_id,
-    int32_t resource_type,
     const GURL& url,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal,
     OnSSLCertificateErrorCallback response) {
-  NOTREACHED();
-}
-
-void TestNetworkServiceClient::OnCookiesRead(int process_id,
-                                             int routing_id,
-                                             const GURL& url,
-                                             const GURL& first_party_url,
-                                             const net::CookieList& cookie_list,
-                                             bool blocked_by_policy) {
-  NOTREACHED();
-}
-
-void TestNetworkServiceClient::OnCookieChange(
-    int process_id,
-    int routing_id,
-    const GURL& url,
-    const GURL& first_party_url,
-    const net::CanonicalCookie& cookie,
-    bool blocked_by_policy) {
   NOTREACHED();
 }
 
@@ -115,16 +95,6 @@ void TestNetworkServiceClient::OnLoadingStateUpdate(
     std::vector<mojom::LoadInfoPtr> infos,
     OnLoadingStateUpdateCallback callback) {}
 
-void TestNetworkServiceClient::OnClearSiteData(
-    int process_id,
-    int routing_id,
-    const GURL& url,
-    const std::string& header_value,
-    int load_flags,
-    OnClearSiteDataCallback callback) {
-  NOTREACHED();
-}
-
 void TestNetworkServiceClient::OnDataUseUpdate(
     int32_t network_traffic_annotation_id_hash,
     int64_t recv_bytes,
@@ -140,5 +110,15 @@ void TestNetworkServiceClient::OnGenerateHttpNegotiateAuthToken(
   NOTREACHED();
 }
 #endif
+
+void TestNetworkServiceClient::OnFlaggedRequestCookies(
+    int32_t process_id,
+    int32_t routing_id,
+    const net::CookieStatusList& excluded_cookies) {}
+
+void TestNetworkServiceClient::OnFlaggedResponseCookies(
+    int32_t process_id,
+    int32_t routing_id,
+    const net::CookieAndLineStatusList& excluded_cookies) {}
 
 }  // namespace network

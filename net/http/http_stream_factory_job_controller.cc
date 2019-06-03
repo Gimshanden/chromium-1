@@ -31,14 +31,14 @@ namespace net {
 namespace {
 
 // Returns parameters associated with the proxy resolution.
-std::unique_ptr<base::Value> NetLogHttpStreamJobProxyServerResolved(
+base::Value NetLogHttpStreamJobProxyServerResolved(
     const ProxyServer& proxy_server,
     NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  base::DictionaryValue dict;
 
-  dict->SetString("proxy_server", proxy_server.is_valid()
-                                      ? proxy_server.ToPacString()
-                                      : std::string());
+  dict.SetString("proxy_server", proxy_server.is_valid()
+                                     ? proxy_server.ToPacString()
+                                     : std::string());
   return std::move(dict);
 }
 
@@ -48,23 +48,21 @@ std::unique_ptr<base::Value> NetLogHttpStreamJobProxyServerResolved(
 // the main job.
 const int kMaxDelayTimeForMainJobSecs = 3;
 
-std::unique_ptr<base::Value> NetLogJobControllerCallback(
-    const GURL* url,
-    bool is_preconnect,
-    NetLogCaptureMode /* capture_mode */) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString("url", url->possibly_invalid_spec());
-  dict->SetBoolean("is_preconnect", is_preconnect);
+base::Value NetLogJobControllerCallback(const GURL* url,
+                                        bool is_preconnect,
+                                        NetLogCaptureMode /* capture_mode */) {
+  base::DictionaryValue dict;
+  dict.SetString("url", url->possibly_invalid_spec());
+  dict.SetBoolean("is_preconnect", is_preconnect);
   return std::move(dict);
 }
 
-std::unique_ptr<base::Value> NetLogAltSvcCallback(
-    const AlternativeServiceInfo* alt_svc_info,
-    bool is_broken,
-    NetLogCaptureMode /* capture_mode */) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString("alt_svc", alt_svc_info->ToString());
-  dict->SetBoolean("is_broken", is_broken);
+base::Value NetLogAltSvcCallback(const AlternativeServiceInfo* alt_svc_info,
+                                 bool is_broken,
+                                 NetLogCaptureMode /* capture_mode */) {
+  base::DictionaryValue dict;
+  dict.SetString("alt_svc", alt_svc_info->ToString());
+  dict.SetBoolean("is_broken", is_broken);
   return std::move(dict);
 }
 
@@ -183,7 +181,6 @@ LoadState HttpStreamFactory::JobController::GetLoadState() const {
 void HttpStreamFactory::JobController::OnRequestComplete() {
   DCHECK(request_);
 
-  RemoveRequestFromSpdySessionRequestMap();
   CancelJobs();
   request_ = nullptr;
   if (bound_job_) {
@@ -210,40 +207,6 @@ void HttpStreamFactory::JobController::SetPriority(RequestPriority priority) {
   if (alternative_job_) {
     alternative_job_->SetPriority(priority);
   }
-}
-
-void HttpStreamFactory::JobController::OnStreamReadyOnPooledConnection(
-    const SSLConfig& used_ssl_config,
-    const ProxyInfo& proxy_info,
-    std::unique_ptr<HttpStream> stream) {
-  DCHECK(request_->completed());
-  DCHECK(!is_websocket_);
-  DCHECK_EQ(HttpStreamRequest::HTTP_STREAM, request_->stream_type());
-
-  main_job_.reset();
-  alternative_job_.reset();
-  ResetErrorStatusForJobs();
-
-  factory_->OnStreamReady(proxy_info, request_info_.privacy_mode);
-
-  delegate_->OnStreamReady(used_ssl_config, proxy_info, std::move(stream));
-}
-
-void HttpStreamFactory::JobController::
-    OnBidirectionalStreamImplReadyOnPooledConnection(
-        const SSLConfig& used_ssl_config,
-        const ProxyInfo& used_proxy_info,
-        std::unique_ptr<BidirectionalStreamImpl> stream) {
-  DCHECK(request_->completed());
-  DCHECK(!is_websocket_);
-  DCHECK_EQ(HttpStreamRequest::BIDIRECTIONAL_STREAM, request_->stream_type());
-
-  main_job_.reset();
-  alternative_job_.reset();
-  ResetErrorStatusForJobs();
-
-  delegate_->OnBidirectionalStreamImplReady(used_ssl_config, used_proxy_info,
-                                            std::move(stream));
 }
 
 void HttpStreamFactory::JobController::OnStreamReady(
@@ -416,29 +379,6 @@ void HttpStreamFactory::JobController::OnCertificateError(
   delegate_->OnCertificateError(status, used_ssl_config, ssl_info);
 }
 
-void HttpStreamFactory::JobController::OnHttpsProxyTunnelResponseRedirect(
-    Job* job,
-    const HttpResponseInfo& response_info,
-    const SSLConfig& used_ssl_config,
-    const ProxyInfo& used_proxy_info,
-    std::unique_ptr<HttpStream> stream) {
-  MaybeResumeMainJob(job, base::TimeDelta());
-
-  if (IsJobOrphaned(job)) {
-    // We have bound a job to the associated HttpStreamRequest, |job| has been
-    // orphaned.
-    OnOrphanedJobComplete(job);
-    return;
-  }
-
-  if (!bound_job_)
-    BindJob(job);
-  if (!request_)
-    return;
-  delegate_->OnHttpsProxyTunnelResponseRedirect(
-      response_info, used_ssl_config, used_proxy_info, std::move(stream));
-}
-
 void HttpStreamFactory::JobController::OnNeedsClientAuth(
     Job* job,
     const SSLConfig& used_ssl_config,
@@ -486,69 +426,6 @@ bool HttpStreamFactory::JobController::OnInitConnection(
     const ProxyInfo& proxy_info) {
   return factory_->OnInitConnection(*this, proxy_info,
                                     request_info_.privacy_mode);
-}
-
-void HttpStreamFactory::JobController::OnNewSpdySessionReady(
-    Job* job,
-    const base::WeakPtr<SpdySession>& spdy_session) {
-  DCHECK(job);
-  DCHECK(job->using_spdy());
-  DCHECK(!is_preconnect_);
-
-  bool is_job_orphaned = IsJobOrphaned(job);
-
-  // Cache these values in case the job gets deleted.
-  const SSLConfig used_ssl_config = job->server_ssl_config();
-  const ProxyInfo used_proxy_info = job->proxy_info();
-  const bool was_alpn_negotiated = job->was_alpn_negotiated();
-  const NextProto negotiated_protocol = job->negotiated_protocol();
-  const bool using_spdy = job->using_spdy();
-  const NetLogSource source_dependency = job->net_log().source();
-
-  // Cache this so we can still use it if the JobController is deleted.
-  SpdySessionPool* spdy_session_pool = session_->spdy_session_pool();
-
-  // Notify |request_|.
-  if (!is_preconnect_ && !is_job_orphaned) {
-
-    DCHECK(request_);
-
-    // The first case is the usual case.
-    if (!job_bound_) {
-      BindJob(job);
-    }
-
-    MarkRequestComplete(was_alpn_negotiated, negotiated_protocol, using_spdy);
-
-    if (is_websocket_) {
-      // TODO(bnc): Re-instate this code when WebSockets over HTTP/2 is
-      // implemented.  https://crbug.com/801564.
-      NOTREACHED();
-    } else if (job->stream_type() == HttpStreamRequest::BIDIRECTIONAL_STREAM) {
-      std::unique_ptr<BidirectionalStreamImpl> bidirectional_stream_impl =
-          job->ReleaseBidirectionalStream();
-      DCHECK(bidirectional_stream_impl);
-      delegate_->OnBidirectionalStreamImplReady(
-          used_ssl_config, used_proxy_info,
-          std::move(bidirectional_stream_impl));
-    } else {
-      std::unique_ptr<HttpStream> stream = job->ReleaseStream();
-      DCHECK(stream);
-      delegate_->OnStreamReady(used_ssl_config, used_proxy_info,
-                               std::move(stream));
-    }
-  }
-
-  // Notify other requests that have the same SpdySessionKey.
-  // |request_| and |bound_job_| might be deleted already.
-  if (spdy_session && spdy_session->IsAvailable()) {
-    spdy_session_pool->OnNewSpdySessionReady(
-        spdy_session, used_ssl_config, used_proxy_info, was_alpn_negotiated,
-        negotiated_protocol, using_spdy, source_dependency);
-  }
-  if (is_job_orphaned) {
-    OnOrphanedJobComplete(job);
-  }
 }
 
 void HttpStreamFactory::JobController::OnPreconnectsComplete(Job* job) {
@@ -659,35 +536,6 @@ bool HttpStreamFactory::JobController::ShouldWait(Job* job) {
 
   ResumeMainJobLater(main_job_wait_time_);
   return true;
-}
-
-void HttpStreamFactory::JobController::SetSpdySessionKey(
-    Job* job,
-    const SpdySessionKey& spdy_session_key) {
-  DCHECK(!job->using_quic());
-
-  if (is_preconnect_ || IsJobOrphaned(job))
-    return;
-
-  session_->spdy_session_pool()->AddRequestToSpdySessionRequestMap(
-      spdy_session_key, request_);
-}
-
-void HttpStreamFactory::JobController::
-    RemoveRequestFromSpdySessionRequestMapForJob(Job* job) {
-  DCHECK(!job->using_quic());
-
-  if (is_preconnect_ || IsJobOrphaned(job))
-    return;
-
-  RemoveRequestFromSpdySessionRequestMap();
-}
-
-void HttpStreamFactory::JobController::
-    RemoveRequestFromSpdySessionRequestMap() {
-  DCHECK(request_);
-  session_->spdy_session_pool()->RemoveRequestFromSpdySessionRequestMap(
-      request_);
 }
 
 const NetLogWithSource* HttpStreamFactory::JobController::GetNetLog() const {
@@ -833,11 +681,11 @@ int HttpStreamFactory::JobController::DoCreateJobs() {
     alternative_service_info_ =
         GetAlternativeServiceInfoFor(request_info_, delegate_, stream_type_);
   }
-  quic::QuicTransportVersion quic_version = quic::QUIC_VERSION_UNSUPPORTED;
+  quic::ParsedQuicVersion quic_version = quic::UnsupportedQuicVersion();
   if (alternative_service_info_.protocol() == kProtoQUIC) {
     quic_version =
         SelectQuicVersion(alternative_service_info_.advertised_versions());
-    DCHECK_NE(quic_version, quic::QUIC_VERSION_UNSUPPORTED);
+    DCHECK_NE(quic_version, quic::UnsupportedQuicVersion());
   }
 
   if (is_preconnect_) {
@@ -946,7 +794,6 @@ void HttpStreamFactory::JobController::CancelJobs() {
 void HttpStreamFactory::JobController::OrphanUnboundJob() {
   DCHECK(request_);
   DCHECK(bound_job_);
-  RemoveRequestFromSpdySessionRequestMap();
 
   if (bound_job_->job_type() == MAIN && alternative_job_) {
     DCHECK(!is_websocket_);
@@ -1213,7 +1060,7 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
     // If there is no QUIC version in the advertised versions that is
     // supported, ignore this entry.
     if (SelectQuicVersion(alternative_service_info.advertised_versions()) ==
-        quic::QUIC_VERSION_UNSUPPORTED)
+        quic::UnsupportedQuicVersion())
       continue;
 
     // Check whether there is an existing QUIC session to use for this origin.
@@ -1248,23 +1095,23 @@ HttpStreamFactory::JobController::GetAlternativeServiceInfoInternal(
   return first_alternative_service_info;
 }
 
-quic::QuicTransportVersion HttpStreamFactory::JobController::SelectQuicVersion(
-    const quic::QuicTransportVersionVector& advertised_versions) {
-  const quic::QuicTransportVersionVector& supported_versions =
+quic::ParsedQuicVersion HttpStreamFactory::JobController::SelectQuicVersion(
+    const quic::ParsedQuicVersionVector& advertised_versions) {
+  const quic::ParsedQuicVersionVector& supported_versions =
       session_->params().quic_supported_versions;
   if (advertised_versions.empty())
     return supported_versions[0];
 
-  for (const quic::QuicTransportVersion& supported : supported_versions) {
-    for (const quic::QuicTransportVersion& advertised : advertised_versions) {
+  for (const quic::ParsedQuicVersion& supported : supported_versions) {
+    for (const quic::ParsedQuicVersion& advertised : advertised_versions) {
       if (supported == advertised) {
-        DCHECK_NE(quic::QUIC_VERSION_UNSUPPORTED, supported);
+        DCHECK_NE(quic::UnsupportedQuicVersion(), supported);
         return supported;
       }
     }
   }
 
-  return quic::QUIC_VERSION_UNSUPPORTED;
+  return quic::UnsupportedQuicVersion();
 }
 
 bool HttpStreamFactory::JobController::ShouldCreateAlternativeProxyServerJob(
@@ -1370,8 +1217,6 @@ int HttpStreamFactory::JobController::ReconsiderProxyAfterError(Job* job,
     return error;
   }
 
-  if (!job->using_quic())
-    RemoveRequestFromSpdySessionRequestMap();
   // Abandon all Jobs and start over.
   job_bound_ = false;
   bound_job_ = nullptr;

@@ -10,7 +10,7 @@
 #include "build/build_config.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
-#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
+#include "components/viz/service/display/overlay_candidate_validator.h"
 #include "content/browser/compositor/reflector_impl.h"
 #include "content/browser/compositor/reflector_texture.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -20,17 +20,14 @@
 #include "gpu/command_buffer/common/swap_buffers_flags.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
 #include "services/ws/public/cpp/gpu/context_provider_command_buffer.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 
 namespace content {
 
 GpuBrowserCompositorOutputSurface::GpuBrowserCompositorOutputSurface(
     scoped_refptr<ws::ContextProviderCommandBuffer> context,
-    const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-    std::unique_ptr<viz::CompositorOverlayCandidateValidator>
-        overlay_candidate_validator)
+    std::unique_ptr<viz::OverlayCandidateValidator> overlay_candidate_validator)
     : BrowserCompositorOutputSurface(std::move(context),
-                                     update_vsync_parameters_callback,
                                      std::move(overlay_candidate_validator)),
       weak_ptr_factory_(this) {
   if (capabilities_.uses_default_gl_framebuffer) {
@@ -102,7 +99,7 @@ void GpuBrowserCompositorOutputSurface::Reshape(
   has_set_draw_rectangle_since_last_resize_ = false;
   context_provider()->ContextGL()->ResizeCHROMIUM(
       size.width(), size.height(), device_scale_factor,
-      gl::GetGLColorSpace(color_space), has_alpha);
+      gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
 }
 
 void GpuBrowserCompositorOutputSurface::SwapBuffers(

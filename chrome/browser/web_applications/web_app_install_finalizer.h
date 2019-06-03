@@ -27,11 +27,14 @@ class WebAppInstallFinalizer final : public InstallFinalizer {
 
   // InstallFinalizer:
   void FinalizeInstall(const WebApplicationInfo& web_app_info,
+                       const FinalizeOptions& options,
                        InstallFinalizedCallback callback) override;
-  void FinalizePolicyInstall(const WebApplicationInfo& web_app_info,
-                             InstallFinalizedCallback callback) override;
+  void UninstallExternalWebApp(
+      const GURL& app_url,
+      UninstallExternalWebAppCallback callback) override;
   bool CanCreateOsShortcuts() const override;
   void CreateOsShortcuts(const AppId& app_id,
+                         bool add_to_desktop,
                          CreateOsShortcutsCallback callback) override;
   bool CanPinAppToShelf() const override;
   void PinAppToShelf(const AppId& app_id) override;
@@ -41,6 +44,9 @@ class WebAppInstallFinalizer final : public InstallFinalizer {
                    content::WebContents* web_contents) override;
   bool CanRevealAppShim() const override;
   void RevealAppShim(const AppId& app_id) override;
+  bool CanSkipAppUpdateForSync(
+      const AppId& app_id,
+      const WebApplicationInfo& web_app_info) const override;
 
  private:
   void OnDataWritten(InstallFinalizedCallback callback,

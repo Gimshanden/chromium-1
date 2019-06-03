@@ -38,7 +38,7 @@ struct FrameLoadRequest;
 
 Frame* CreateNewWindow(LocalFrame& opener_frame,
                        FrameLoadRequest&,
-                       bool& created);
+                       const AtomicString& name);
 
 CORE_EXPORT WebWindowFeatures GetWindowFeaturesFromString(const String&);
 

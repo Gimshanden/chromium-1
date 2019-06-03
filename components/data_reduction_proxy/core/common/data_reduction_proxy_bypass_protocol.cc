@@ -226,7 +226,6 @@ bool DataReductionProxyBypassProtocol::HandleInvalidResponseHeadersCase(
   data_reduction_proxy_info->bypass_all = false;
   data_reduction_proxy_info->mark_proxies_as_bad = true;
   data_reduction_proxy_info->bypass_duration = base::TimeDelta::FromMinutes(5);
-  data_reduction_proxy_info->bypass_action = BYPASS_ACTION_TYPE_BYPASS;
   *bypass_type = BYPASS_EVENT_TYPE_MEDIUM;
 
   return true;
@@ -297,10 +296,9 @@ bool IsProxyBypassedAtTime(const net::ProxyRetryInfoMap& retry_map,
 
 bool IsQuicProxy(const net::ProxyServer& proxy_server) {
   // Enable QUIC for whitelisted proxies.
-  return params::IsQuicEnabledForNonCoreProxies() ||
-         proxy_server ==
-             net::ProxyServer(net::ProxyServer::SCHEME_HTTPS,
-                              net::HostPortPair(kDataReductionCoreProxy, 443));
+  return (proxy_server.is_https() || proxy_server.is_quic()) &&
+         (proxy_server.host_port_pair() ==
+          net::HostPortPair(kDataReductionCoreProxy, 443));
 }
 
 void RecordQuicProxyStatus(QuicProxyStatus status) {

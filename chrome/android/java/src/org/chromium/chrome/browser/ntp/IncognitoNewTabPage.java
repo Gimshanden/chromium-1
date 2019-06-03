@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.ntp;
 
 import android.app.Activity;
 import android.graphics.Canvas;
+import android.os.Build;
 import android.support.v4.view.ViewCompat;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -15,7 +16,6 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
@@ -56,6 +56,12 @@ public class IncognitoNewTabPage
 
         mIncognitoNTPBackgroundColor =
                 ApiCompatibilityUtils.getColor(activity.getResources(), R.color.ntp_bg_incognito);
+
+        // Work around https://crbug.com/943873 and https://crbug.com/963385 where default focus
+        // highlight shows up after toggling dark mode.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getView().setDefaultFocusHighlightEnabled(false);
+        }
     }
 
     @Override
@@ -88,13 +94,11 @@ public class IncognitoNewTabPage
         mIncognitoNewTabPageView =
                 (IncognitoNewTabPageView) inflater.inflate(R.layout.new_tab_page_incognito, null);
         mIncognitoNewTabPageView.initialize(mIncognitoNewTabPageManager);
+        mIncognitoNewTabPageView.setNavigationDelegate(host.createHistoryNavigationDelegate());
 
-        boolean useAlternateIncognitoStrings =
-                ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS);
         TextView newTabIncognitoHeader =
                 (TextView) mIncognitoNewTabPageView.findViewById(R.id.new_tab_incognito_title);
-        newTabIncognitoHeader.setText(useAlternateIncognitoStrings ? R.string.new_tab_private_title
-                                                                   : R.string.new_tab_otr_title);
+        newTabIncognitoHeader.setText(R.string.new_tab_otr_title);
     }
 
     /**
@@ -111,6 +115,7 @@ public class IncognitoNewTabPage
     public void destroy() {
         assert !ViewCompat
                 .isAttachedToWindow(getView()) : "Destroy called before removed from window";
+        super.destroy();
     }
 
     @Override

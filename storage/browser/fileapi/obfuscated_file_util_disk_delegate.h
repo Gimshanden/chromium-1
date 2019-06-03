@@ -22,6 +22,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) ObfuscatedFileUtilDiskDelegate
   ~ObfuscatedFileUtilDiskDelegate() override;
 
   bool DirectoryExists(const base::FilePath& path) override;
+  size_t ComputeDirectorySize(const base::FilePath& path) override;
   bool DeleteFileOrDirectory(const base::FilePath& path,
                              bool recursive) override;
   bool IsLink(const base::FilePath& file_path) override;
@@ -44,6 +45,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) ObfuscatedFileUtilDiskDelegate
   base::File::Error Truncate(const base::FilePath& path,
                              int64_t length) override;
   base::File::Error CopyOrMoveFile(
+      const base::FilePath& src_path,
+      const base::FilePath& dest_path,
+      FileSystemOperation::CopyOrMoveOption option,
+      NativeFileUtil::CopyOrMoveMode mode) override;
+  base::File::Error CopyInForeignFile(
       const base::FilePath& src_path,
       const base::FilePath& dest_path,
       FileSystemOperation::CopyOrMoveOption option,

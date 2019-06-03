@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/environment.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop_current.h"
@@ -80,6 +81,16 @@ class NetworkServiceTestHelper::NetworkServiceTestImpl
       mock_cert_verifier_ = std::make_unique<net::MockCertVerifier>();
       network::NetworkContext::SetCertVerifierForTesting(
           mock_cert_verifier_.get());
+
+      // The default result may be set using a command line flag.
+      std::string default_result =
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              switches::kMockCertVerifierDefaultResultForTesting);
+      int default_result_int = 0;
+      if (!default_result.empty() &&
+          base::StringToInt(default_result, &default_result_int)) {
+        mock_cert_verifier_->set_default_result(default_result_int);
+      }
     }
   }
 
@@ -195,6 +206,14 @@ class NetworkServiceTestHelper::NetworkServiceTestImpl
   void GetLatestMemoryPressureLevel(
       GetLatestMemoryPressureLevelCallback callback) override {
     std::move(callback).Run(latest_memory_pressure_level_);
+  }
+
+  void GetEnvironmentVariableValue(
+      const std::string& name,
+      GetEnvironmentVariableValueCallback callback) override {
+    std::string value;
+    base::Environment::Create()->GetVar(name, &value);
+    std::move(callback).Run(value);
   }
 
   void BindRequest(network::mojom::NetworkServiceTestRequest request) {

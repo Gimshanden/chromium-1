@@ -10,6 +10,7 @@
 // <include src="gaia_input_form.js">
 // <include src="gaia_input.js">
 // <include src="gaia_password_changed.js">
+// <include src="screen_gaia_signin.js">
 // <include src="hd-iron-icon.js">
 // <include src="offline_gaia.js">
 // <include src="saml_confirm_password.js">
@@ -17,7 +18,6 @@
 // <include src="throbber_notice.js">
 // <include src="navigation_bar.js">
 // <include src="network_select_login.js">
-// <include src="unrecoverable_cryptohome_error_card.js">
 // <include src="update_required_card.js">
 // <include src="offline_ad_login.js">
 // <include src="active_directory_password_change.js">
@@ -38,3 +38,4 @@
 // <include src="marketing_opt_in.js">
 // <include src="../assistant_optin/assistant_optin_flow.js">
 // <include src="multidevice_setup_first_run.js">
+// <include src="supervision_onboarding.js">

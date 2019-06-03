@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
@@ -51,7 +52,8 @@ class ScopedThrottlingToken;
 class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
     : public mojom::URLLoader,
       public net::URLRequest::Delegate,
-      public mojom::AuthChallengeResponder {
+      public mojom::AuthChallengeResponder,
+      public mojom::ClientCertificateResponder {
  public:
   using DeleteCallback = base::OnceCallback<void(mojom::URLLoader* loader)>;
 
@@ -89,10 +91,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
   void OnAuthRequired(net::URLRequest* request,
-                      net::AuthChallengeInfo* info) override;
+                      const net::AuthChallengeInfo& info) override;
   void OnCertificateRequested(net::URLRequest* request,
                               net::SSLCertRequestInfo* info) override;
   void OnSSLCertificateError(net::URLRequest* request,
+                             int net_error,
                              const net::SSLInfo& info,
                              bool fatal) override;
   void OnResponseStarted(net::URLRequest* url_request, int net_error) override;
@@ -111,6 +114,15 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // mojom::AuthChallengeResponder:
   void OnAuthCredentials(
       const base::Optional<net::AuthCredentials>& credentials) override;
+
+  // mojom::ClientCertificateResponder:
+  void ContinueWithCertificate(
+      const scoped_refptr<net::X509Certificate>& x509_certificate,
+      const std::string& provider_name,
+      const std::vector<uint16_t>& algorithm_preferences,
+      mojom::SSLPrivateKeyPtr ssl_private_key) override;
+  void ContinueWithoutCertificate() override;
+  void CancelRequest() override;
 
   net::LoadState GetLoadStateForTesting() const;
 
@@ -137,6 +149,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
 
   const base::Optional<GURL>& new_redirect_url() const {
     return new_redirect_url_;
+  }
+
+  const base::Optional<std::string>& devtools_request_id() const {
+    return devtools_request_id_;
   }
 
   void SetAllowReportingRawHeaders(bool allow);
@@ -181,16 +197,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   void SendResponseToClient();
   void CompletePendingWrite(bool success);
   void SetRawResponseHeaders(scoped_refptr<const net::HttpResponseHeaders>);
+  void SetRawRequestHeadersAndNotify(net::HttpRawRequestHeaders);
   void SendUploadProgress(const net::UploadProgress& progress);
   void OnUploadProgressACK();
   void OnSSLCertificateErrorResponse(const net::SSLInfo& ssl_info,
                                      int net_error);
-  void OnCertificateRequestedResponse(
-      const scoped_refptr<net::X509Certificate>& x509_certificate,
-      const std::string& provider_name,
-      const std::vector<uint16_t>& algorithm_preferences,
-      mojom::SSLPrivateKeyPtr ssl_private_key,
-      bool cancel_certificate_selection);
   bool HasDataPipe() const;
   void RecordBodyReadFromNetBeforePausedIfNeeded();
   void ResumeStart();
@@ -226,6 +237,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   DeleteCallback delete_callback_;
 
   int32_t options_;
+  bool corb_detachable_;
   int resource_type_;
   bool is_load_timing_enabled_;
 
@@ -241,6 +253,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   mojo::Binding<mojom::URLLoader> binding_;
   mojo::Binding<mojom::AuthChallengeResponder>
       auth_challenge_responder_binding_;
+  mojo::Binding<mojom::ClientCertificateResponder>
+      client_cert_responder_binding_;
   mojom::URLLoaderClientPtr url_loader_client_;
   int64_t total_written_bytes_ = 0;
 
@@ -280,6 +294,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // be later referred to from NetworkContext::OnBeforeURLRequestInternal, which
   // is called from NetworkDelegate::NotifyBeforeURLRequest.
   base::Optional<GURL> new_redirect_url_;
+
+  // The ID that DevTools uses to track network requests. It is generated in the
+  // renderer process and is only present when DevTools is enabled in the
+  // renderer.
+  const base::Optional<std::string> devtools_request_id_;
 
   bool should_pause_reading_body_ = false;
   // The response body stream is open, but transferring data is paused.

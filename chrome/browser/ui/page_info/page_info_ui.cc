@@ -7,7 +7,10 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/stl_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_manager.h"
@@ -19,6 +22,7 @@
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/device/public/cpp/device_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -140,7 +144,9 @@ struct PermissionsUIInfo {
   int string_id;
 };
 
-const PermissionsUIInfo kPermissionsUIInfo[] = {
+base::span<const PermissionsUIInfo> GetContentSettingsUIInfo() {
+  DCHECK(base::FeatureList::GetInstance() != nullptr);
+  static const PermissionsUIInfo kPermissionsUIInfo[] = {
     {CONTENT_SETTINGS_TYPE_COOKIES, 0},
     {CONTENT_SETTINGS_TYPE_IMAGES, IDS_PAGE_INFO_TYPE_IMAGES},
     {CONTENT_SETTINGS_TYPE_JAVASCRIPT, IDS_PAGE_INFO_TYPE_JAVASCRIPT},
@@ -160,9 +166,21 @@ const PermissionsUIInfo kPermissionsUIInfo[] = {
     {CONTENT_SETTINGS_TYPE_ADS, IDS_PAGE_INFO_TYPE_ADS},
     {CONTENT_SETTINGS_TYPE_SOUND, IDS_PAGE_INFO_TYPE_SOUND},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, IDS_PAGE_INFO_TYPE_CLIPBOARD},
-    {CONTENT_SETTINGS_TYPE_SENSORS, IDS_PAGE_INFO_TYPE_SENSORS},
+    {CONTENT_SETTINGS_TYPE_SENSORS,
+     base::FeatureList::IsEnabled(features::kGenericSensorExtraClasses)
+         ? IDS_PAGE_INFO_TYPE_SENSORS
+         : IDS_PAGE_INFO_TYPE_MOTION_SENSORS},
     {CONTENT_SETTINGS_TYPE_USB_GUARD, IDS_PAGE_INFO_TYPE_USB},
-};
+#if !defined(OS_ANDROID)
+    {CONTENT_SETTINGS_TYPE_SERIAL_GUARD, IDS_PAGE_INFO_TYPE_SERIAL},
+    // TODO(https://crbug.com/960962): Implement Bluetooth scanning API content
+    // settings and page info on Android.
+    {CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING,
+     IDS_PAGE_INFO_TYPE_BLUETOOTH_SCANNING},
+#endif
+  };
+  return kPermissionsUIInfo;
+}
 
 std::unique_ptr<PageInfoUI::SecurityDescription> CreateSecurityDescription(
     PageInfoUI::SecuritySummaryColor style,
@@ -304,7 +322,7 @@ PageInfoUI::~PageInfoUI() {}
 
 // static
 base::string16 PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
-  for (const PermissionsUIInfo& info : kPermissionsUIInfo) {
+  for (const PermissionsUIInfo& info : GetContentSettingsUIInfo()) {
     if (info.type == type)
       return l10n_util::GetStringUTF16(info.string_id);
   }
@@ -419,9 +437,8 @@ SkColor PageInfoUI::GetSecondaryTextColor() {
 // static
 base::string16 PageInfoUI::ChosenObjectToUIString(
     const ChosenObjectInfo& object) {
-  base::string16 name;
-  object.chooser_object->value.GetString(object.ui_info.ui_name_key, &name);
-  return name;
+  return base::UTF8ToUTF16(
+      object.ui_info.get_object_name(object.chooser_object->value));
 }
 
 #if defined(OS_ANDROID)
@@ -541,6 +558,16 @@ const gfx::ImageSkia PageInfoUI::GetPermissionIcon(const PermissionInfo& info,
     case CONTENT_SETTINGS_TYPE_USB_GUARD:
       icon = &vector_icons::kUsbIcon;
       break;
+#if !defined(OS_ANDROID)
+    case CONTENT_SETTINGS_TYPE_SERIAL_GUARD:
+      icon = &vector_icons::kSerialPortIcon;
+      break;
+    // TODO(https://crbug.com/960962): Implement Bluetooth scanning API content
+    // settings and page info on Android.
+    case CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING:
+      icon = &vector_icons::kBluetoothScanningIcon;
+      break;
+#endif
     default:
       // All other |ContentSettingsType|s do not have icons on desktop or are
       // not shown in the Page Info bubble.
@@ -619,7 +646,7 @@ const gfx::ImageSkia PageInfoUI::GetVrSettingsIcon(SkColor related_text_color) {
 
 // static
 bool PageInfoUI::ContentSettingsTypeInPageInfo(ContentSettingsType type) {
-  for (const PermissionsUIInfo& info : kPermissionsUIInfo) {
+  for (const PermissionsUIInfo& info : GetContentSettingsUIInfo()) {
     if (info.type == type)
       return true;
   }

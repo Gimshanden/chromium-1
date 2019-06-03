@@ -173,15 +173,18 @@ class ChromePasswordProtectionService : public PasswordProtectionService {
   // returns an empty string.
   std::string GetOrganizationName(ReusedPasswordType password_type) const;
 
-  // Triggers "safeBrowsingPrivate.OnPolicySpecifiedPasswordReuseDetected"
-  // extension API for enterprise reporting.
-  // |is_phishing_url| indicates if the password reuse happened on a phishing
-  // page.
-  void OnPolicySpecifiedPasswordReuseDetected(const GURL& url,
-                                              bool is_phishing_url) override;
+  // If the browser is not incognito and the user is reusing their enterprise
+  // password or is a GSuite user, triggers
+  // safeBrowsingPrivate.OnPolicySpecifiedPasswordReuseDetected.
+  // |username| can be an email address or a username for a non-GAIA or
+  // saved-password reuse. No validation has been done on it.
+  void MaybeReportPasswordReuseDetected(content::WebContents* web_contents,
+                                        const std::string& username,
+                                        ReusedPasswordType reused_password_type,
+                                        bool is_phishing_url) override;
 
   // Triggers "safeBrowsingPrivate.OnPolicySpecifiedPasswordChanged" API.
-  void OnPolicySpecifiedPasswordChanged() override;
+  void ReportPasswordChanged() override;
 
   // Returns true if there's any enterprise password reuses unhandled in
   // |web_contents|.

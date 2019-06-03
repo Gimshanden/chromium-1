@@ -17,6 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
+#include "chromecast/browser/cast_media_blocker.h"
 #include "chromecast/browser/cast_web_contents.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -52,31 +53,41 @@ class CastWebContentsImpl : public CastWebContents,
       const InterfaceSet& interface_set,
       service_manager::InterfaceProvider* interface_provider) override;
   service_manager::BinderRegistry* binder_registry() override;
+  void BlockMediaLoading(bool blocked) override;
+  void EnableBackgroundVideoPlayback(bool enabled) override;
 
   // Observer interface:
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
 
- private:
-  // WebContentsObserver implementation:
+  // content::WebContentsObserver implementation:
   void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
   void OnInterfaceRequestFromFrame(
       content::RenderFrameHost* /* render_frame_host */,
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) override;
   void RenderProcessGone(base::TerminationStatus status) override;
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
-  void DidStartLoading() override;
-  void DidStopLoading() override;
+  void DidFinishLoad(content::RenderFrameHost* render_frame_host,
+                     const GURL& validated_url) override;
   void DidFailLoad(content::RenderFrameHost* render_frame_host,
                    const GURL& validated_url,
                    int error_code,
                    const base::string16& error_description) override;
+  void ResourceLoadComplete(
+      content::RenderFrameHost* render_frame_host,
+      const content::GlobalRequestID& request_id,
+      const content::mojom::ResourceLoadInfo& resource_load_info) override;
   void InnerWebContentsCreated(
       content::WebContents* inner_web_contents) override;
   void WebContentsDestroyed() override;
 
+ private:
+  void OnPageLoading();
+  void OnPageLoaded();
   void UpdatePageState();
   void NotifyObservers();
   void TracePageLoadBegin(const GURL& url);
@@ -91,13 +102,16 @@ class CastWebContentsImpl : public CastWebContents,
   PageState last_state_;
   const bool enabled_for_dev_;
   bool use_cma_renderer_;
+  const bool handle_inner_contents_;
   shell::RemoteDebuggingServer* const remote_debugging_server_;
+  std::unique_ptr<CastMediaBlocker> media_blocker_;
 
   base::flat_set<std::unique_ptr<CastWebContents>> inner_contents_;
   std::vector<RendererFeature> renderer_features_;
 
   const int tab_id_;
   base::TimeTicks start_loading_ticks_;
+  bool main_frame_loaded_;
   bool closing_;
   bool stopped_;
   bool stop_notified_;

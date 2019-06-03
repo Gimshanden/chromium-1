@@ -15,6 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/post_task.h"
@@ -112,12 +113,9 @@ bool FatalMessageHandler(int severity,
   return false;
 }
 
-// Caches the uploading flag in NSUserDefaults, so that we can access the value
-// in safe mode.
-void CacheUploadingEnabled(bool uploading_enabled) {
-  NSUserDefaults* user_defaults = [NSUserDefaults standardUserDefaults];
-  [user_defaults setBool:uploading_enabled ? YES : NO
-                  forKey:kCrashReportsUploadingEnabledKey];
+// Called after Breakpad finishes uploading each report.
+void UploadResultHandler(NSString* report_id, NSError* error) {
+  base::UmaHistogramSparse("CrashReport.BreakpadIOSUploadOutcome", error.code);
 }
 
 }  // namespace
@@ -155,16 +153,28 @@ void SetEnabled(bool enabled) {
     [[BreakpadController sharedInstance] start:NO];
   } else {
     [[BreakpadController sharedInstance] stop];
-    CacheUploadingEnabled(false);
   }
 }
 
 void SetBreakpadUploadingEnabled(bool enabled) {
-  CacheUploadingEnabled(g_crash_reporter_enabled && enabled);
-
   if (!g_crash_reporter_enabled)
     return;
+  if (enabled) {
+    static dispatch_once_t once_token;
+    dispatch_once(&once_token, ^{
+      [[BreakpadController sharedInstance]
+          setUploadCallback:UploadResultHandler];
+    });
+  }
   [[BreakpadController sharedInstance] setUploadingEnabled:enabled];
+}
+
+// Caches the uploading flag in NSUserDefaults, so that we can access the value
+// in safe mode.
+void SetUserEnabledUploading(bool uploading_enabled) {
+  [[NSUserDefaults standardUserDefaults]
+      setBool:uploading_enabled ? YES : NO
+       forKey:kCrashReportsUploadingEnabledKey];
 }
 
 void SetUploadingEnabled(bool enabled) {
@@ -185,8 +195,7 @@ void SetUploadingEnabled(bool enabled) {
   }
 }
 
-bool IsUploadingEnabled() {
-  // Return the value cached by CacheUploadingEnabled().
+bool UserEnabledUploading() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:kCrashReportsUploadingEnabledKey];
 }

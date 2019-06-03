@@ -10,7 +10,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/flat_map.h"
-#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/arc_apps_factory.h"
 #include "chrome/browser/apps/app_service/dip_px_util.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -19,6 +19,7 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_icon_descriptor.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/grit/component_extension_resources.h"
+#include "chrome/services/app_service/public/cpp/app_service_proxy.h"
 #include "components/arc/app_permissions/arc_app_permissions_bridge.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/common/app.mojom.h"
@@ -109,24 +110,26 @@ void LoadIcon0(apps::mojom::IconCompression icon_compression,
   // request to ARC++ container to extract the real data. This logic is
   // isolated inside ArcAppListPrefs and I don't think that anybody else should
   // call mojom RequestAppIcon".
-  if (icon_resource_id.empty()) {
-    auto* app_instance =
-        ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder, RequestAppIcon);
-    if (app_instance) {
-      app_instance->RequestAppIcon(
-          package_name, activity, size_hint_in_px,
-          base::BindOnce(&LoadIcon1, icon_compression, std::move(callback)));
-      return;
-    }
+  if (app_connection_holder) {
+    if (icon_resource_id.empty()) {
+      auto* app_instance =
+          ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder, RequestAppIcon);
+      if (app_instance) {
+        app_instance->RequestAppIcon(
+            package_name, activity, size_hint_in_px,
+            base::BindOnce(&LoadIcon1, icon_compression, std::move(callback)));
+        return;
+      }
 
-  } else {
-    auto* app_instance =
-        ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder, RequestShortcutIcon);
-    if (app_instance) {
-      app_instance->RequestShortcutIcon(
-          icon_resource_id, size_hint_in_px,
-          base::BindOnce(&LoadIcon1, icon_compression, std::move(callback)));
-      return;
+    } else {
+      auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder,
+                                                       RequestShortcutIcon);
+      if (app_instance) {
+        app_instance->RequestShortcutIcon(
+            icon_resource_id, size_hint_in_px,
+            base::BindOnce(&LoadIcon1, icon_compression, std::move(callback)));
+        return;
+      }
     }
   }
 
@@ -135,13 +138,15 @@ void LoadIcon0(apps::mojom::IconCompression icon_compression,
 }
 
 void UpdateAppPermissions(
-    const base::flat_map<arc::mojom::AppPermission, bool>& new_permissions,
+    const base::flat_map<arc::mojom::AppPermission,
+                         arc::mojom::PermissionStatePtr>& new_permissions,
     std::vector<apps::mojom::PermissionPtr>* permissions) {
   for (const auto& new_permission : new_permissions) {
     auto permission = apps::mojom::Permission::New();
     permission->permission_id = static_cast<uint32_t>(new_permission.first);
     permission->value_type = apps::mojom::PermissionValueType::kBool;
-    permission->value = static_cast<uint32_t>(new_permission.second);
+    permission->value = static_cast<uint32_t>(new_permission.second->granted);
+    permission->is_managed = new_permission.second->managed;
 
     permissions->push_back(std::move(permission));
   }
@@ -163,6 +168,12 @@ ArcApps::ArcApps(Profile* profile)
     return;
   }
 
+  apps::mojom::AppServicePtr& app_service =
+      apps::AppServiceProxyFactory::GetForProfile(profile)->AppService();
+  if (!app_service.is_bound()) {
+    return;
+  }
+
   prefs_ = ArcAppListPrefs::Get(profile);
   if (!prefs_) {
     return;
@@ -172,13 +183,25 @@ ArcApps::ArcApps(Profile* profile)
 
   apps::mojom::PublisherPtr publisher;
   binding_.Bind(mojo::MakeRequest(&publisher));
-  apps::AppServiceProxy::Get(profile)->AppService()->RegisterPublisher(
-      std::move(publisher), apps::mojom::AppType::kArc);
+  app_service->RegisterPublisher(std::move(publisher),
+                                 apps::mojom::AppType::kArc);
 }
 
 ArcApps::~ArcApps() {
+  // Clear out any pending icon calls to avoid a CHECK for Mojo callbacks that
+  // have not been run at App Service destruction.
+  for (auto& pending : pending_load_icon_calls_) {
+    std::move(pending).Run(nullptr);
+  }
+  pending_load_icon_calls_.clear();
+
   if (prefs_) {
-    prefs_->app_connection_holder()->RemoveObserver(this);
+    auto* holder = prefs_->app_connection_holder();
+    // The null check is for unit tests. On production, |holder| is always
+    // non-null.
+    if (holder) {
+      holder->RemoveObserver(this);
+    }
     prefs_->RemoveObserver(this);
   }
 }
@@ -256,6 +279,12 @@ void ArcApps::Launch(const std::string& app_id,
       break;
     case apps::mojom::LaunchSource::kFromAppListRecommendation:
       uit = arc::UserInteractionType::APP_STARTED_FROM_LAUNCHER_SUGGESTED_APP;
+      break;
+    case apps::mojom::LaunchSource::kFromKioskNextHome:
+      uit = arc::UserInteractionType::APP_STARTED_FROM_KIOSK_NEXT_HOME;
+      break;
+    case apps::mojom::LaunchSource::kFromParentalControls:
+      uit = arc::UserInteractionType::APP_STARTED_FROM_SETTINGS;
       break;
   }
 
@@ -453,13 +482,32 @@ void ArcApps::LoadPlayStoreIcon(apps::mojom::IconCompression icon_compression,
                        is_placeholder_icon, icon_effects, std::move(callback));
 }
 
+apps::mojom::InstallSource GetInstallSource(const ArcAppListPrefs* prefs,
+                                            const std::string& package_name) {
+  if (prefs->IsDefault(package_name)) {
+    return apps::mojom::InstallSource::kDefault;
+  }
+
+  if (prefs->IsOem(package_name)) {
+    return apps::mojom::InstallSource::kOem;
+  }
+
+  if (prefs->IsControlledByPolicy(package_name)) {
+    return apps::mojom::InstallSource::kPolicy;
+  }
+
+  return apps::mojom::InstallSource::kUser;
+}
+
 apps::mojom::AppPtr ArcApps::Convert(const std::string& app_id,
                                      const ArcAppListPrefs::AppInfo& app_info) {
   apps::mojom::AppPtr app = apps::mojom::App::New();
 
   app->app_type = apps::mojom::AppType::kArc;
   app->app_id = app_id;
-  app->readiness = apps::mojom::Readiness::kReady;
+  app->readiness = app_info.suspended
+                       ? apps::mojom::Readiness::kDisabledByPolicy
+                       : apps::mojom::Readiness::kReady;
   app->name = app_info.name;
   app->short_name = app->name;
 
@@ -472,14 +520,11 @@ apps::mojom::AppPtr ArcApps::Convert(const std::string& app_id,
   app->last_launch_time = app_info.last_launch_time;
   app->install_time = app_info.install_time;
 
-  bool installed_internally =
-      prefs_->IsDefault(app_id) ||
-      prefs_->IsControlledByPolicy(app_info.package_name);
-  app->installed_internally = installed_internally
-                                  ? apps::mojom::OptionalBool::kTrue
-                                  : apps::mojom::OptionalBool::kFalse;
+  app->install_source = GetInstallSource(prefs_, app_info.package_name);
 
   app->is_platform_app = apps::mojom::OptionalBool::kFalse;
+  app->recommendable = apps::mojom::OptionalBool::kTrue;
+  app->searchable = apps::mojom::OptionalBool::kTrue;
 
   auto show = app_info.show_in_launcher ? apps::mojom::OptionalBool::kTrue
                                         : apps::mojom::OptionalBool::kFalse;

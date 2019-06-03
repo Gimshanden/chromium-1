@@ -25,6 +25,7 @@ ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickEnabled[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickDelayMs[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickEventType[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickRevertToLeftClick[];
+ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickStabilizePosition[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickMovementThreshold[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityAutoclickMenuPosition[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityCaretHighlightEnabled[];
@@ -35,6 +36,7 @@ ASH_PUBLIC_EXPORT extern const char kAccessibilitySwitchAccessEnabled[];
 ASH_PUBLIC_EXPORT extern const char kAccessibilityDictationEnabled[];
 ASH_PUBLIC_EXPORT extern const char kShouldAlwaysShowAccessibilityMenu[];
 
+ASH_PUBLIC_EXPORT extern const char kKioskNextShellEligible[];
 ASH_PUBLIC_EXPORT extern const char kKioskNextShellEnabled[];
 
 ASH_PUBLIC_EXPORT extern const char kDockedMagnifierEnabled[];
@@ -108,6 +110,7 @@ ASH_PUBLIC_EXPORT extern const char
     kPowerForceNonzeroBrightnessForUserActivity[];
 ASH_PUBLIC_EXPORT extern const char kPowerFastSuspendWhenBacklightsForcedOff[];
 ASH_PUBLIC_EXPORT extern const char kPowerSmartDimEnabled[];
+ASH_PUBLIC_EXPORT extern const char kPowerAlsLoggingEnabled[];
 
 ASH_PUBLIC_EXPORT extern const char kShelfAlignment[];
 ASH_PUBLIC_EXPORT extern const char kShelfAlignmentLocal[];
@@ -138,11 +141,23 @@ ASH_PUBLIC_EXPORT extern const char kAssistantNumWarmerWelcomeTriggered[];
 
 ASH_PUBLIC_EXPORT extern const char kVpnConfigAllowed[];
 
-ASH_PUBLIC_EXPORT extern const char kDevicePowerPeakShiftEnabled[];
-ASH_PUBLIC_EXPORT extern const char kDevicePowerPeakShiftBatteryThreshold[];
-ASH_PUBLIC_EXPORT extern const char kDevicePowerPeakShiftDayConfig[];
+ASH_PUBLIC_EXPORT extern const char kPowerPeakShiftEnabled[];
+ASH_PUBLIC_EXPORT extern const char kPowerPeakShiftBatteryThreshold[];
+ASH_PUBLIC_EXPORT extern const char kPowerPeakShiftDayConfig[];
 
-ASH_PUBLIC_EXPORT extern const char kDeviceBootOnAcEnabled[];
+ASH_PUBLIC_EXPORT extern const char kBootOnAcEnabled[];
+
+ASH_PUBLIC_EXPORT extern const char kAdvancedBatteryChargeModeEnabled[];
+ASH_PUBLIC_EXPORT extern const char kAdvancedBatteryChargeModeDayConfig[];
+
+ASH_PUBLIC_EXPORT extern const char kBatteryChargeMode[];
+ASH_PUBLIC_EXPORT extern const char kBatteryChargeCustomStartCharging[];
+ASH_PUBLIC_EXPORT extern const char kBatteryChargeCustomStopCharging[];
+
+ASH_PUBLIC_EXPORT extern const char kUsbPowerShareEnabled[];
+
+ASH_PUBLIC_EXPORT extern const char kAssistantPrivacyInfoShownInLauncher[];
+ASH_PUBLIC_EXPORT extern const char kAssistantPrivacyInfoDismissedInLauncher[];
 
 }  // namespace prefs
 

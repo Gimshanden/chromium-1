@@ -11,6 +11,7 @@
 #include "base/metrics/field_trial.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
@@ -27,6 +28,7 @@
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/stub_password_manager_driver.h"
 #include "components/password_manager/core/browser/test_password_store.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -37,6 +39,7 @@
 #include "url/gurl.h"
 
 using autofill::FormStructure;
+using autofill::PasswordRequirementsSpec;
 using base::ASCIIToUTF16;
 using testing::_;
 
@@ -89,15 +92,15 @@ class TestPasswordManagerDriver : public StubPasswordManagerDriver {
       found_forms_eligible_for_generation_;
 };
 
-autofill::PasswordRequirementsSpec GetDomainWideRequirements() {
-  autofill::PasswordRequirementsSpec spec;
+PasswordRequirementsSpec GetDomainWideRequirements() {
+  PasswordRequirementsSpec spec;
   spec.set_max_length(7);
   spec.set_priority(20);
   return spec;
 }
 
-autofill::PasswordRequirementsSpec GetFieldRequirements() {
-  autofill::PasswordRequirementsSpec spec;
+PasswordRequirementsSpec GetFieldRequirements() {
+  PasswordRequirementsSpec spec;
   spec.set_max_length(8);
   spec.set_priority(10);
   return spec;
@@ -115,7 +118,7 @@ class FakePasswordRequirementsSpecFetcher
   void Fetch(GURL origin, FetchCallback callback) override {
     if (origin.GetOrigin().host_piece().find(kNoServerResponse) !=
         std::string::npos) {
-      std::move(callback).Run(autofill::PasswordRequirementsSpec());
+      std::move(callback).Run(PasswordRequirementsSpec());
     } else if (origin.GetOrigin().host_piece().find(kHasServerResponse) !=
                std::string::npos) {
       std::move(callback).Run(GetDomainWideRequirements());
@@ -239,27 +242,35 @@ TEST_F(PasswordGenerationFrameHelperTest, ProcessPasswordRequirements) {
     const char* name;
     bool has_domain_wide_requirements = false;
     bool has_field_requirements = false;
-    autofill::PasswordRequirementsSpec expected_spec;
+    PasswordRequirementsSpec expected_spec;
+    // Assuming that a second form existed on the page for which no
+    // per-formsignature-requirements exists, this indicates the expected
+    // requirements that Chrome should conclude.
+    PasswordRequirementsSpec expected_spec_for_unknown_signature;
   } kTests[] = {
       {
           .name = "No known requirements",
-          .expected_spec = autofill::PasswordRequirementsSpec(),
+          .expected_spec = PasswordRequirementsSpec(),
+          .expected_spec_for_unknown_signature = PasswordRequirementsSpec(),
       },
       {
           .name = "Only domain wide requirements",
           .has_domain_wide_requirements = true,
           .expected_spec = GetDomainWideRequirements(),
+          .expected_spec_for_unknown_signature = GetDomainWideRequirements(),
       },
       {
           .name = "Only field requirements",
           .has_field_requirements = true,
           .expected_spec = GetFieldRequirements(),
+          .expected_spec_for_unknown_signature = GetFieldRequirements(),
       },
       {
           .name = "Domain wide requirements take precedence",
           .has_domain_wide_requirements = true,
           .has_field_requirements = true,
           .expected_spec = GetDomainWideRequirements(),
+          .expected_spec_for_unknown_signature = GetDomainWideRequirements(),
       },
   };
 
@@ -273,19 +284,25 @@ TEST_F(PasswordGenerationFrameHelperTest, ProcessPasswordRequirements) {
     ++test_counter;
 
     autofill::FormFieldData username;
-    username.label = ASCIIToUTF16("username");
     username.name = ASCIIToUTF16("login");
     username.form_control_type = "text";
 
     autofill::FormFieldData password;
-    password.label = ASCIIToUTF16("password");
     password.name =
         ASCIIToUTF16(base::StringPrintf("password%d", test_counter));
     password.form_control_type = "password";
 
+    // Configure the last committed entry URL with some magic constants for
+    // which the FakePasswordRequirementsFetcher is configured to respond
+    // with a filled or empty response.
+    GURL origin(base::StringPrintf("https://%d-%s/", test_counter,
+                                   test.has_domain_wide_requirements
+                                       ? kHasServerResponse
+                                       : kNoServerResponse));
+
     autofill::FormData account_creation_form;
-    account_creation_form.origin = GURL("http://accounts.yahoo.com/");
-    account_creation_form.action = GURL("http://accounts.yahoo.com/signup");
+    account_creation_form.url = origin;
+    account_creation_form.action = origin;
     account_creation_form.name = ASCIIToUTF16("account_creation_form");
     account_creation_form.fields.push_back(username);
     account_creation_form.fields.push_back(password);
@@ -304,13 +321,7 @@ TEST_F(PasswordGenerationFrameHelperTest, ProcessPasswordRequirements) {
       *response.mutable_field(1)->mutable_password_requirements() =
           GetFieldRequirements();
     }
-    // Configure the last committed entry URL with some magic constants for
-    // which the FakePasswordRequirementsFetcher is configured to respond
-    // with a filled or empty response.
-    GURL origin(base::StringPrintf("https://%d-%s/", test_counter,
-                                   test.has_domain_wide_requirements
-                                       ? kHasServerResponse
-                                       : kNoServerResponse));
+
     client_->SetLastCommittedEntryUrl(origin);
 
     std::string response_string;
@@ -330,10 +341,16 @@ TEST_F(PasswordGenerationFrameHelperTest, ProcessPasswordRequirements) {
         autofill::CalculateFormSignature(account_creation_form);
     autofill::FieldSignature field_signature =
         autofill::CalculateFieldSignatureForField(password);
-    autofill::PasswordRequirementsSpec spec =
+    PasswordRequirementsSpec spec =
         client_->GetPasswordRequirementsService()->GetSpec(
             origin, form_signature, field_signature);
     EXPECT_EQ(test.expected_spec.max_length(), spec.max_length());
+
+    PasswordRequirementsSpec spec_for_unknown_signature =
+        client_->GetPasswordRequirementsService()->GetSpec(
+            origin, form_signature + 1, field_signature);
+    EXPECT_EQ(test.expected_spec_for_unknown_signature.max_length(),
+              spec.max_length());
   }
 }
 
@@ -344,8 +361,15 @@ TEST_F(PasswordGenerationFrameHelperTest, DetectFormsEligibleForGeneration) {
   EXPECT_CALL(*client_, GetPasswordSyncState())
       .WillRepeatedly(testing::Return(SYNCING_NORMAL_ENCRYPTION));
 
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /* enabled_features */ {},
+      /*  disabled_features*/ {features::kNewPasswordFormParsing,
+                               features::kNewPasswordFormParsingForSaving,
+                               features::kOnlyNewParser});
+
   autofill::FormData login_form;
-  login_form.origin = GURL("http://www.yahoo.com/login/");
+  login_form.url = GURL("http://www.yahoo.com/login/");
   autofill::FormFieldData username;
   username.label = ASCIIToUTF16("username");
   username.name = ASCIIToUTF16("login");
@@ -361,7 +385,7 @@ TEST_F(PasswordGenerationFrameHelperTest, DetectFormsEligibleForGeneration) {
   forms.push_back(&form1);
 
   autofill::FormData account_creation_form;
-  account_creation_form.origin = GURL("http://accounts.yahoo.com/");
+  account_creation_form.url = GURL("http://accounts.yahoo.com/");
   account_creation_form.action = GURL("http://accounts.yahoo.com/signup");
   account_creation_form.name = ASCIIToUTF16("account_creation_form");
   account_creation_form.fields.push_back(username);
@@ -381,7 +405,7 @@ TEST_F(PasswordGenerationFrameHelperTest, DetectFormsEligibleForGeneration) {
   forms.push_back(&form2);
 
   autofill::FormData change_password_form;
-  change_password_form.origin = GURL("http://accounts.yahoo.com/");
+  change_password_form.url = GURL("http://accounts.yahoo.com/");
   change_password_form.action = GURL("http://accounts.yahoo.com/change");
   change_password_form.name = ASCIIToUTF16("change_password_form");
   change_password_form.fields.push_back(password);

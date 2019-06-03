@@ -35,8 +35,6 @@
 /** @const */ var SCREEN_WRONG_HWID = 'wrong-hwid';
 /** @const */ var SCREEN_DEVICE_DISABLED = 'device-disabled';
 /** @const */ var SCREEN_UPDATE_REQUIRED = 'update-required';
-/** @const */ var SCREEN_UNRECOVERABLE_CRYPTOHOME_ERROR =
-    'unrecoverable-cryptohome-error';
 /** @const */ var SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE =
     'ad-password-change';
 /** @const */ var SCREEN_SYNC_CONSENT = 'sync-consent';
@@ -85,19 +83,6 @@
   LOCAL_STATE_ERROR: 'ui-state-local-state-error',
   AUTO_ENROLLMENT_ERROR: 'ui-state-auto-enrollment-error',
   ROLLBACK_ERROR: 'ui-state-rollback-error'
-};
-
-/* Possible types of UI. */
-/** @const */ var DISPLAY_TYPE = {
-  UNKNOWN: 'unknown',
-  OOBE: 'oobe',
-  LOGIN: 'login',
-  LOCK: 'lock',
-  USER_ADDING: 'user-adding',
-  APP_LAUNCH_SPLASH: 'app-launch-splash',
-  ARC_KIOSK_SPLASH: 'arc-kiosk-splash',
-  DESKTOP_USER_MANAGER: 'login-add-user',
-  GAIA_SIGNIN: 'gaia-signin'
 };
 
 /** @const */ var USER_ACTION_ROLLBACK_TOGGLED = 'rollback-toggled';
@@ -419,6 +404,8 @@ cr.define('cr.ui.login', function() {
           // In this case update check will be skipped and OOBE will
           // proceed straight to enrollment screen when EULA is accepted.
           chrome.send('skipUpdateEnrollAfterEula');
+        } else {
+          console.warn('No action for current step ID: ' + currentStepId);
         }
       } else if (name == ACCELERATOR_KIOSK_ENABLE) {
         if (attributes.toggleKioskAllowed ||
@@ -589,9 +576,6 @@ cr.define('cr.ui.login', function() {
       // Adjust inner container height based on new step's height.
       this.updateScreenSize(newStep);
 
-      if (newStep.onAfterShow)
-        newStep.onAfterShow(screenData);
-
       // Default control to be focused (if specified).
       var defaultControl = newStep.defaultControl;
 
@@ -646,6 +630,11 @@ cr.define('cr.ui.login', function() {
         }
       }
       this.currentStep_ = nextStepIndex;
+
+      // Call onAfterShow after currentStep_ so that the step can have a
+      // post-set hook.
+      if (newStep.onAfterShow)
+        newStep.onAfterShow(screenData);
 
       var stepLogo = $('step-logo');
       if (stepLogo) {
@@ -1127,9 +1116,10 @@ cr.define('cr.ui.login', function() {
   DisplayManager.resetSigninUI = function(forceOnline) {
     var currentScreenId = Oobe.getInstance().currentScreen.id;
 
-    if ($(SCREEN_GAIA_SIGNIN))
+    if ($(SCREEN_GAIA_SIGNIN)) {
       $(SCREEN_GAIA_SIGNIN)
           .reset(currentScreenId == SCREEN_GAIA_SIGNIN, forceOnline);
+    }
     $('pod-row').reset(currentScreenId == SCREEN_ACCOUNT_PICKER);
   };
 

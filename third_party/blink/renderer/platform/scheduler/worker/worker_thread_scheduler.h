@@ -46,9 +46,11 @@ class PLATFORM_EXPORT WorkerThreadScheduler
       public IdleHelper::Delegate,
       public base::sequence_manager::TaskTimeObserver {
  public:
+  // |sequence_manager|and |proxy| must remain valid for the entire lifetime of
+  // this object.
   WorkerThreadScheduler(
       WebThreadType thread_type,
-      std::unique_ptr<base::sequence_manager::SequenceManager> sequence_manager,
+      base::sequence_manager::SequenceManager* sequence_manager,
       WorkerSchedulerProxy* proxy);
   ~WorkerThreadScheduler() override;
 
@@ -70,10 +72,11 @@ class PLATFORM_EXPORT WorkerThreadScheduler
 
   // NonMainThreadSchedulerImpl implementation:
   scoped_refptr<NonMainThreadTaskQueue> DefaultTaskQueue() override;
-  void OnTaskCompleted(NonMainThreadTaskQueue* worker_task_queue,
-                       const base::sequence_manager::Task& task,
-                       const base::sequence_manager::TaskQueue::TaskTiming&
-                           task_timing) override;
+  void OnTaskCompleted(
+      NonMainThreadTaskQueue* worker_task_queue,
+      const base::sequence_manager::Task& task,
+      base::sequence_manager::TaskQueue::TaskTiming* task_timing,
+      base::sequence_manager::LazyNow* lazy_now) override;
 
   // TaskTimeObserver implementation:
   void WillProcessTask(base::TimeTicks start_time) override;
@@ -130,6 +133,8 @@ class PLATFORM_EXPORT WorkerThreadScheduler
 
   void SetUkmTaskSamplingRateForTest(double rate);
   void SetUkmRecorderForTest(std::unique_ptr<ukm::UkmRecorder> ukm_recorder);
+
+  virtual void PerformMicrotaskCheckpoint();
 
  private:
   void MaybeStartLongIdlePeriod();

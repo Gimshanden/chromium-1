@@ -13,13 +13,12 @@
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_cookie_access_policy.h"
 #include "android_webview/browser/net/init_native_callback.h"
-#include "android_webview/browser/network_service/aw_cookie_manager_wrapper.h"
 #include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/path_utils.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/feature_list.h"
+#include "base/containers/circular_deque.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -43,8 +42,6 @@
 #include "net/extras/sqlite/cookie_crypto_delegate.h"
 #include "net/url_request/url_request_context.h"
 #include "services/network/network_service.h"
-#include "services/network/public/cpp/features.h"
-#include "services/network/public/mojom/cookie_manager.mojom-forward.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "url/url_constants.h"
 
@@ -166,7 +163,8 @@ CookieManager::CookieManager()
     : accept_file_scheme_cookies_(kDefaultFileSchemeAllowed),
       cookie_store_created_(false),
       cookie_store_client_thread_("CookieMonsterClient"),
-      cookie_store_backend_thread_("CookieMonsterBackend") {
+      cookie_store_backend_thread_("CookieMonsterBackend"),
+      setting_new_mojo_cookie_manager_(false) {
   cookie_store_client_thread_.Start();
   cookie_store_backend_thread_.Start();
   cookie_store_task_runner_ = cookie_store_client_thread_.task_runner();
@@ -223,7 +221,34 @@ void CookieManager::ExecCookieTaskSync(
 
 // Executes the |task| using |cookie_store_task_runner_|.
 void CookieManager::ExecCookieTask(base::OnceClosure task) {
-  cookie_store_task_runner_->PostTask(FROM_HERE, std::move(task));
+  base::AutoLock lock(task_queue_lock_);
+  tasks_.push_back(std::move(task));
+  // Unretained is safe, since android_webview::CookieManager is a singleton we
+  // never destroy (we don't need PostTask to do any memory management).
+  cookie_store_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&CookieManager::RunPendingCookieTasks,
+                                base::Unretained(this)));
+}
+
+void CookieManager::RunPendingCookieTasks() {
+  DCHECK(cookie_store_task_runner_->RunsTasksInCurrentSequence());
+  // Don't do any cookie tasks if in the middle of setting a mojo CookieManager,
+  // we'll call this method when that operation is finished.
+  if (setting_new_mojo_cookie_manager_)
+    return;
+
+  // Copy tasks into temp_queue to minimize the amount of time in the critical
+  // section, and to mitigate live-lock issues if these tasks append to the task
+  // queue themselves.
+  base::circular_deque<base::OnceClosure> temp_queue;
+  {
+    base::AutoLock lock(task_queue_lock_);
+    temp_queue.swap(tasks_);
+  }
+  while (!temp_queue.empty()) {
+    std::move(temp_queue.front()).Run();
+    temp_queue.pop_front();
+  }
 }
 
 base::SingleThreadTaskRunner* CookieManager::GetCookieStoreTaskRunner() {
@@ -267,19 +292,46 @@ net::CookieStore* CookieManager::GetCookieStore() {
   return cookie_store_.get();
 }
 
-AwCookieManagerWrapper* CookieManager::GetCookieManagerWrapper() {
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
+network::mojom::CookieManager* CookieManager::GetMojoCookieManager() {
   DCHECK(cookie_store_task_runner_->RunsTasksInCurrentSequence());
-  if (!cookie_manager_wrapper_) {
-    cookie_manager_wrapper_ = std::make_unique<AwCookieManagerWrapper>();
-  }
-  return cookie_manager_wrapper_.get();
+  return mojo_cookie_manager_.get();
 }
 
 void CookieManager::SetMojoCookieManager(
     network::mojom::CookieManagerPtrInfo cookie_manager_info) {
-  GetCookieManagerWrapper()->SetMojoCookieManager(
-      std::move(cookie_manager_info));
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  ExecCookieTaskSync(base::BindOnce(&CookieManager::SetMojoCookieManagerAsync,
+                                    base::Unretained(this),
+                                    std::move(cookie_manager_info)));
+}
+
+void CookieManager::SetMojoCookieManagerAsync(
+    network::mojom::CookieManagerPtrInfo cookie_manager_info,
+    base::OnceClosure complete) {
+  DCHECK(cookie_store_task_runner_->RunsTasksInCurrentSequence());
+  setting_new_mojo_cookie_manager_ = true;
+  // For simplicity, only permit this method to be called once (otherwise, we
+  // must sometimes flush the mojo_cookie_manager_ instead of cookie_store_).
+  DCHECK(!mojo_cookie_manager_.is_bound());
+  if (!cookie_store_created_) {
+    SwapMojoCookieManagerAsync(std::move(cookie_manager_info),
+                               std::move(complete));
+    return;
+  }
+
+  GetCookieStore()->FlushStore(base::BindOnce(
+      &CookieManager::SwapMojoCookieManagerAsync, base::Unretained(this),
+      std::move(cookie_manager_info), std::move(complete)));
+}
+
+void CookieManager::SwapMojoCookieManagerAsync(
+    network::mojom::CookieManagerPtrInfo cookie_manager_info,
+    base::OnceClosure complete) {
+  DCHECK(cookie_store_task_runner_->RunsTasksInCurrentSequence());
+  mojo_cookie_manager_.Bind(std::move(cookie_manager_info));
+  setting_new_mojo_cookie_manager_ = false;
+  std::move(complete).Run();  // unblock content initialization
+  RunPendingCookieTasks();
 }
 
 void CookieManager::SetShouldAcceptCookies(bool accept) {
@@ -331,10 +383,10 @@ void CookieManager::SetCookieHelper(
   // CookieInclusionStatus callback. WebView only cares about boolean success,
   // which is why we use |AdaptCookieInclusionStatusToBool|. This is temporary
   // technical debt until we fully launch the Network Service code path.
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+  if (GetMojoCookieManager()) {
     // *cc.get() is safe, because network::CookieManager::SetCanonicalCookie
     // will make a copy before our smart pointer goes out of scope.
-    GetCookieManagerWrapper()->SetCanonicalCookie(
+    GetMojoCookieManager()->SetCanonicalCookie(
         *cc.get(), new_host.scheme(), options,
         net::cookie_util::AdaptCookieInclusionStatusToBool(callback));
   } else {
@@ -360,8 +412,8 @@ void CookieManager::GetCookieListAsyncHelper(const GURL& host,
   options.set_same_site_cookie_context(
       net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
 
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    GetCookieManagerWrapper()->GetCookieList(
+  if (GetMojoCookieManager()) {
+    GetMojoCookieManager()->GetCookieList(
         host, options,
         base::BindOnce(&CookieManager::GetCookieListCompleted,
                        base::Unretained(this), std::move(complete), result));
@@ -397,11 +449,11 @@ void CookieManager::RemoveSessionCookiesSync() {
 
 void CookieManager::RemoveSessionCookiesHelper(
     base::RepeatingCallback<void(bool)> callback) {
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+  if (GetMojoCookieManager()) {
     auto match_session_cookies = network::mojom::CookieDeletionFilter::New();
     match_session_cookies->session_control =
         network::mojom::CookieDeletionSessionControl::SESSION_COOKIES;
-    GetCookieManagerWrapper()->DeleteCookies(
+    GetMojoCookieManager()->DeleteCookies(
         std::move(match_session_cookies),
         base::BindOnce(&CookieManager::RemoveCookiesCompleted,
                        base::Unretained(this), callback));
@@ -433,10 +485,10 @@ void CookieManager::RemoveAllCookiesSync() {
 
 void CookieManager::RemoveAllCookiesHelper(
     const base::RepeatingCallback<void(bool)> callback) {
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+  if (GetMojoCookieManager()) {
     // An empty filter matches all cookies.
     auto match_all_cookies = network::mojom::CookieDeletionFilter::New();
-    GetCookieManagerWrapper()->DeleteCookies(
+    GetMojoCookieManager()->DeleteCookies(
         std::move(match_all_cookies),
         base::BindOnce(&CookieManager::RemoveCookiesCompleted,
                        base::Unretained(this), callback));
@@ -458,8 +510,8 @@ void CookieManager::FlushCookieStore() {
 }
 
 void CookieManager::FlushCookieStoreAsyncHelper(base::OnceClosure complete) {
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    GetCookieManagerWrapper()->FlushCookieStore(std::move(complete));
+  if (GetMojoCookieManager()) {
+    GetMojoCookieManager()->FlushCookieStore(std::move(complete));
   } else {
     GetCookieStore()->FlushStore(std::move(complete));
   }
@@ -476,8 +528,8 @@ bool CookieManager::HasCookies() {
 // should not be needed.
 void CookieManager::HasCookiesAsyncHelper(bool* result,
                                           base::OnceClosure complete) {
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    GetCookieManagerWrapper()->GetAllCookies(
+  if (GetMojoCookieManager()) {
+    GetMojoCookieManager()->GetAllCookies(
         base::BindOnce(&CookieManager::HasCookiesCompleted2,
                        base::Unretained(this), std::move(complete), result));
   } else {
@@ -510,23 +562,15 @@ bool CookieManager::AllowFileSchemeCookies() {
 
 void CookieManager::SetAcceptFileSchemeCookies(bool accept) {
   base::AutoLock lock(accept_file_scheme_cookies_lock_);
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    bool success;
-    ExecCookieTaskSync(
-        base::BindOnce(&CookieManager::AllowFileSchemeCookiesAsyncHelper,
-                       base::Unretained(this), accept, &success));
-    // Should only update |accept_file_scheme_cookies_| if the CookieManager
-    // call had an effect.
-    if (!success)
-      return;
-    accept_file_scheme_cookies_ = accept;
-  } else {
-    // Can only modify |accept_file_scheme_cookies_| before the cookie store is
-    // created.
-    if (cookie_store_created_)
-      return;
-    accept_file_scheme_cookies_ = accept;
-  }
+  bool success;
+  ExecCookieTaskSync(
+      base::BindOnce(&CookieManager::AllowFileSchemeCookiesAsyncHelper,
+                     base::Unretained(this), accept, &success));
+  // Should only update |accept_file_scheme_cookies_| if
+  // AllowFileSchemeCookiesAsyncHelper says this is OK.
+  if (!success)
+    return;
+  accept_file_scheme_cookies_ = accept;
 }
 
 void CookieManager::AllowFileSchemeCookiesAsyncHelper(
@@ -534,13 +578,18 @@ void CookieManager::AllowFileSchemeCookiesAsyncHelper(
     bool* result,
     base::OnceClosure complete) {
   DCHECK(cookie_store_task_runner_->RunsTasksInCurrentSequence());
-  // We only need this in the Network Service code path.
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
-
-  GetCookieManagerWrapper()->AllowFileSchemeCookies(
-      accept,
-      base::BindOnce(&CookieManager::AllowFileSchemeCookiesCompleted,
-                     base::Unretained(this), std::move(complete), result));
+  if (GetMojoCookieManager()) {
+    GetMojoCookieManager()->AllowFileSchemeCookies(
+        accept,
+        base::BindOnce(&CookieManager::AllowFileSchemeCookiesCompleted,
+                       base::Unretained(this), std::move(complete), result));
+  } else {
+    // If we have neither a Network Service CookieManager nor have created the
+    // CookieStore, we may modify |accept_file_scheme_cookies_|.
+    bool can_change_cookieable_schemes = !cookie_store_created_;
+    *result = can_change_cookieable_schemes;
+    std::move(complete).Run();
+  }
 }
 
 void CookieManager::AllowFileSchemeCookiesCompleted(base::OnceClosure complete,

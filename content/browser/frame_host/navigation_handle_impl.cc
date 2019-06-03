@@ -59,6 +59,9 @@ int64_t CreateUniqueHandleID() {
 // UMA_HISTOGRAM_MEDIUM_TIMES, but a custom kMinTime is used for high fidelity
 // near the low end of measured values.
 //
+// TODO(zetamoo): This is duplicated in navigation_request. Never update one
+// without the other. And remove this one.
+//
 // TODO(csharrison,nasko): This macro is incorrect for subframe navigations,
 // which will only have subframe-specific transition types. This means that all
 // subframes currently are tagged as NewNavigations.
@@ -121,27 +124,16 @@ void LogIsSameProcess(ui::PageTransition transition, bool is_same_process) {
 
 NavigationHandleImpl::NavigationHandleImpl(
     NavigationRequest* navigation_request,
-    const std::vector<GURL>& redirect_chain,
     int pending_nav_entry_id,
-    std::unique_ptr<NavigationUIData> navigation_ui_data,
-    net::HttpRequestHeaders request_headers,
-    const Referrer& sanitized_referrer)
+    net::HttpRequestHeaders request_headers)
     : navigation_request_(navigation_request),
       net_error_code_(net::OK),
-      was_redirected_(false),
-      did_replace_entry_(false),
-      should_update_history_(false),
-      subframe_entry_committed_(false),
       request_headers_(std::move(request_headers)),
       pending_nav_entry_id_(pending_nav_entry_id),
-      navigation_ui_data_(std::move(navigation_ui_data)),
       navigation_id_(CreateUniqueHandleID()),
-      redirect_chain_(redirect_chain),
       reload_type_(ReloadType::NONE),
       restore_type_(RestoreType::NONE),
-      navigation_type_(NAVIGATION_TYPE_UNKNOWN),
       is_same_process_(true),
-      throttle_runner_(this, this),
       weak_factory_(this) {
   const GURL& url = navigation_request_->common_params().url;
   TRACE_EVENT_ASYNC_BEGIN2("navigation", "NavigationHandle", this,
@@ -150,20 +142,6 @@ NavigationHandleImpl::NavigationHandleImpl(
                            url.possibly_invalid_spec());
   DCHECK(!navigation_request_->common_params().navigation_start.is_null());
   DCHECK(!IsRendererDebugURL(url));
-
-  if (redirect_chain_.empty())
-    redirect_chain_.push_back(url);
-
-  // Mirrors the logic in RenderFrameImpl::SendDidCommitProvisionalLoad.
-  if (navigation_request_->common_params().transition &
-      ui::PAGE_TRANSITION_CLIENT_REDIRECT) {
-    // If the page contained a client redirect (meta refresh,
-    // document.location), set the referrer appropriately.
-    sanitized_referrer_ =
-        Referrer(redirect_chain_[0], sanitized_referrer.policy);
-  } else {
-    sanitized_referrer_ = sanitized_referrer;
-  }
 
   // Try to match this with a pending NavigationEntry if possible.  Note that
   // the NavigationController itself may be gone if this is a navigation inside
@@ -188,12 +166,6 @@ NavigationHandleImpl::NavigationHandleImpl(
     }
   }
 
-#if defined(OS_ANDROID)
-  navigation_handle_proxy_ = std::make_unique<NavigationHandleProxy>(this);
-#endif
-
-  GetDelegate()->DidStartNavigation(this);
-
   if (IsInMainFrame()) {
     TRACE_EVENT_ASYNC_BEGIN_WITH_TIMESTAMP1(
         "navigation", "Navigation StartToCommit", this,
@@ -208,9 +180,6 @@ NavigationHandleImpl::NavigationHandleImpl(
 }
 
 NavigationHandleImpl::~NavigationHandleImpl() {
-#if defined(OS_ANDROID)
-  navigation_handle_proxy_->DidFinish();
-#endif
 
   GetDelegate()->DidFinishNavigation(this);
 
@@ -227,7 +196,7 @@ NavigatorDelegate* NavigationHandleImpl::GetDelegate() const {
   return frame_tree_node()->navigator()->GetDelegate();
 }
 
-int64_t NavigationHandleImpl::GetNavigationId() const {
+int64_t NavigationHandleImpl::GetNavigationId() {
   return navigation_id_;
 }
 
@@ -255,11 +224,11 @@ bool NavigationHandleImpl::IsRendererInitiated() {
 }
 
 bool NavigationHandleImpl::WasServerRedirect() {
-  return was_redirected_;
+  return navigation_request_->was_redirected();
 }
 
 const std::vector<GURL>& NavigationHandleImpl::GetRedirectChain() {
-  return redirect_chain_;
+  return navigation_request_->redirect_chain();
 }
 
 int NavigationHandleImpl::GetFrameTreeNodeId() {
@@ -291,7 +260,7 @@ NavigationHandleImpl::GetResourceRequestBody() {
 }
 
 const Referrer& NavigationHandleImpl::GetReferrer() {
-  return sanitized_referrer_;
+  return navigation_request_->sanitized_referrer();
 }
 
 bool NavigationHandleImpl::HasUserGesture() {
@@ -302,8 +271,8 @@ ui::PageTransition NavigationHandleImpl::GetPageTransition() {
   return navigation_request_->common_params().transition;
 }
 
-const NavigationUIData* NavigationHandleImpl::GetNavigationUIData() {
-  return navigation_ui_data_.get();
+NavigationUIData* NavigationHandleImpl::GetNavigationUIData() {
+  return navigation_request_->navigation_ui_data();
 }
 
 bool NavigationHandleImpl::IsExternalProtocol() {
@@ -375,28 +344,19 @@ bool NavigationHandleImpl::IsErrorPage() {
 }
 
 bool NavigationHandleImpl::HasSubframeNavigationEntryCommitted() {
-  DCHECK(!IsInMainFrame());
-  DCHECK(state() == NavigationRequest::DID_COMMIT ||
-         state() == NavigationRequest::DID_COMMIT_ERROR_PAGE);
-  return subframe_entry_committed_;
+  return navigation_request_->subframe_entry_committed();
 }
 
 bool NavigationHandleImpl::DidReplaceEntry() {
-  DCHECK(state() == NavigationRequest::DID_COMMIT ||
-         state() == NavigationRequest::DID_COMMIT_ERROR_PAGE);
-  return did_replace_entry_;
+  return navigation_request_->did_replace_entry();
 }
 
 bool NavigationHandleImpl::ShouldUpdateHistory() {
-  DCHECK(state() == NavigationRequest::DID_COMMIT ||
-         state() == NavigationRequest::DID_COMMIT_ERROR_PAGE);
-  return should_update_history_;
+  return navigation_request_->should_update_history();
 }
 
 const GURL& NavigationHandleImpl::GetPreviousURL() {
-  DCHECK(state() == NavigationRequest::DID_COMMIT ||
-         state() == NavigationRequest::DID_COMMIT_ERROR_PAGE);
-  return previous_url_;
+  return navigation_request_->previous_url();
 }
 
 net::IPEndPoint NavigationHandleImpl::GetSocketAddress() {
@@ -409,40 +369,17 @@ net::IPEndPoint NavigationHandleImpl::GetSocketAddress() {
              : net::IPEndPoint();
 }
 
-void NavigationHandleImpl::Resume(NavigationThrottle* resuming_throttle) {
-  DCHECK(resuming_throttle);
-  TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                               "Resume");
-  throttle_runner_.ResumeProcessingNavigationEvent(resuming_throttle);
-  // DO NOT ADD CODE AFTER THIS, as the NavigationHandle might have been deleted
-  // by the previous call.
-}
-
-void NavigationHandleImpl::CancelDeferredNavigation(
-    NavigationThrottle* cancelling_throttle,
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK(cancelling_throttle);
-  DCHECK_EQ(cancelling_throttle, throttle_runner_.GetDeferringThrottle());
-  CancelDeferredNavigationInternal(result);
-}
-
 void NavigationHandleImpl::RegisterThrottleForTesting(
     std::unique_ptr<NavigationThrottle> navigation_throttle) {
-  throttle_runner_.AddThrottle(std::move(navigation_throttle));
+  navigation_request_->RegisterThrottleForTesting(
+      std::move(navigation_throttle));
 }
-
-#if defined(OS_ANDROID)
-base::android::ScopedJavaGlobalRef<jobject>
-NavigationHandleImpl::java_navigation_handle() {
-  return navigation_handle_proxy_->java_navigation_handle();
-}
-#endif
 
 bool NavigationHandleImpl::IsDeferredForTesting() {
-  return throttle_runner_.GetDeferringThrottle() != nullptr;
+  return navigation_request_->IsDeferredForTesting();
 }
 
-bool NavigationHandleImpl::WasStartedFromContextMenu() const {
+bool NavigationHandleImpl::WasStartedFromContextMenu() {
   return navigation_request_->common_params().started_from_context_menu;
 }
 
@@ -497,7 +434,7 @@ const std::string& NavigationHandleImpl::GetHrefTranslate() {
 }
 
 void NavigationHandleImpl::CallResumeForTesting() {
-  throttle_runner_.CallResumeForTesting();
+  navigation_request_->CallResumeForTesting();
 }
 
 const base::Optional<url::Origin>& NavigationHandleImpl::GetInitiatorOrigin() {
@@ -548,121 +485,6 @@ void NavigationHandleImpl::InitAppCacheHandle(
 std::unique_ptr<AppCacheNavigationHandle>
 NavigationHandleImpl::TakeAppCacheHandle() {
   return std::move(appcache_handle_);
-}
-
-void NavigationHandleImpl::WillStartRequest(
-    ThrottleChecksFinishedCallback callback) {
-  TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                               "WillStartRequest");
-  // WillStartRequest should only be called once.
-  if (state() != NavigationRequest::INITIAL) {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-    RunCompleteCallback(NavigationThrottle::CANCEL);
-    return;
-  }
-
-  navigation_request_->set_handle_state(
-      NavigationRequest::PROCESSING_WILL_START_REQUEST);
-  complete_callback_ = std::move(callback);
-
-  if (IsSelfReferentialURL()) {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-    RunCompleteCallback(NavigationThrottle::CANCEL);
-    return;
-  }
-
-  throttle_runner_.RegisterNavigationThrottles();
-
-  // If the content/ embedder did not pass the NavigationUIData at the beginning
-  // of the navigation, ask for it now.
-  if (!navigation_ui_data_)
-    navigation_ui_data_ = GetDelegate()->GetNavigationUIData(this);
-
-  // Notify each throttle of the request.
-  throttle_runner_.ProcessNavigationEvent(
-      NavigationThrottleRunner::Event::WillStartRequest);
-  // DO NOT ADD CODE AFTER THIS, as the NavigationHandle might have been deleted
-  // by the previous call.
-}
-
-void NavigationHandleImpl::UpdateStateFollowingRedirect(
-    const GURL& new_referrer_url,
-    ThrottleChecksFinishedCallback callback) {
-  // The navigation should not redirect to a "renderer debug" url. It should be
-  // blocked in NavigationRequest::OnRequestRedirected or in
-  // ResourceLoader::OnReceivedRedirect.
-  // Note: the call to GetURL below returns the post-redirect URL.
-  // See https://crbug.com/728398.
-  CHECK(!IsRendererDebugURL(GetURL()));
-
-  // Update the navigation parameters.
-  if (!(GetPageTransition() & ui::PAGE_TRANSITION_CLIENT_REDIRECT)) {
-    sanitized_referrer_.url = new_referrer_url;
-    sanitized_referrer_ =
-        Referrer::SanitizeForRequest(GetURL(), sanitized_referrer_);
-  }
-
-  was_redirected_ = true;
-  redirect_chain_.push_back(GetURL());
-
-  navigation_request_->set_handle_state(
-      NavigationRequest::PROCESSING_WILL_REDIRECT_REQUEST);
-  complete_callback_ = std::move(callback);
-}
-
-void NavigationHandleImpl::WillRedirectRequest(
-    const GURL& new_referrer_url,
-    RenderProcessHost* post_redirect_process,
-    ThrottleChecksFinishedCallback callback) {
-  TRACE_EVENT_ASYNC_STEP_INTO1("navigation", "NavigationHandle", this,
-                               "WillRedirectRequest", "url",
-                               GetURL().possibly_invalid_spec());
-  UpdateStateFollowingRedirect(new_referrer_url, std::move(callback));
-  navigation_request_->UpdateSiteURL(post_redirect_process);
-
-  if (IsSelfReferentialURL()) {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-    RunCompleteCallback(NavigationThrottle::CANCEL);
-    return;
-  }
-
-  // Notify each throttle of the request.
-  throttle_runner_.ProcessNavigationEvent(
-      NavigationThrottleRunner::Event::WillRedirectRequest);
-  // DO NOT ADD CODE AFTER THIS, as the NavigationHandle might have been deleted
-  // by the previous call.
-}
-
-void NavigationHandleImpl::WillFailRequest(
-    ThrottleChecksFinishedCallback callback) {
-  TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                               "WillFailRequest");
-
-  complete_callback_ = std::move(callback);
-  navigation_request_->set_handle_state(
-      NavigationRequest::PROCESSING_WILL_FAIL_REQUEST);
-
-  // Notify each throttle of the request.
-  throttle_runner_.ProcessNavigationEvent(
-      NavigationThrottleRunner::Event::WillFailRequest);
-  // DO NOT ADD CODE AFTER THIS, as the NavigationHandle might have been deleted
-  // by the previous call.
-}
-
-void NavigationHandleImpl::WillProcessResponse(
-    ThrottleChecksFinishedCallback callback) {
-  TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                               "WillProcessResponse");
-
-  navigation_request_->set_handle_state(
-      NavigationRequest::PROCESSING_WILL_PROCESS_RESPONSE);
-  complete_callback_ = std::move(callback);
-
-  // Notify each throttle of the response.
-  throttle_runner_.ProcessNavigationEvent(
-      NavigationThrottleRunner::Event::WillProcessResponse);
-  // DO NOT ADD CODE AFTER THIS, as the NavigationHandle might have been deleted
-  // by the previous call.
 }
 
 void NavigationHandleImpl::ReadyToCommitNavigation(bool is_error) {
@@ -721,208 +543,6 @@ void NavigationHandleImpl::ReadyToCommitNavigation(bool is_error) {
     GetDelegate()->ReadyToCommitNavigation(this);
 }
 
-void NavigationHandleImpl::DidCommitNavigation(
-    const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-    bool navigation_entry_committed,
-    bool did_replace_entry,
-    const GURL& previous_url,
-    NavigationType navigation_type) {
-  CHECK_EQ(GetURL(), params.url);
-
-  did_replace_entry_ = did_replace_entry;
-  should_update_history_ = params.should_update_history;
-  previous_url_ = previous_url;
-  base_url_ = params.base_url;
-  navigation_type_ = navigation_type;
-
-  // If an error page reloads, net_error_code might be 200 but we still want to
-  // count it as an error page.
-  if (params.base_url.spec() == kUnreachableWebDataURL ||
-      net_error_code_ != net::OK) {
-    TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                                 "DidCommitNavigation: error page");
-    navigation_request_->set_handle_state(
-        NavigationRequest::DID_COMMIT_ERROR_PAGE);
-  } else {
-    TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                                 "DidCommitNavigation");
-    navigation_request_->set_handle_state(NavigationRequest::DID_COMMIT);
-  }
-
-  StopCommitTimeout();
-
-  // Record metrics for the time it took to commit the navigation if it was to
-  // another document without error.
-  if (!IsSameDocument() && !IsErrorPage()) {
-    base::TimeTicks now = base::TimeTicks::Now();
-    base::TimeDelta delta =
-        now - navigation_request_->common_params().navigation_start;
-    ui::PageTransition transition = GetPageTransition();
-    base::Optional<bool> is_background =
-        GetRenderFrameHost()->GetProcess()->IsProcessBackgrounded();
-    LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit", transition, is_background,
-                                    delta);
-    if (IsInMainFrame()) {
-      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.MainFrame", transition,
-                                      is_background, delta);
-    } else {
-      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.Subframe", transition,
-                                      is_background, delta);
-    }
-    if (is_same_process_) {
-      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess", transition,
-                                      is_background, delta);
-      if (IsInMainFrame()) {
-        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.MainFrame",
-                                        transition, is_background, delta);
-      } else {
-        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.Subframe",
-                                        transition, is_background, delta);
-      }
-    } else {
-      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess", transition,
-                                      is_background, delta);
-      if (IsInMainFrame()) {
-        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.MainFrame",
-                                        transition, is_background, delta);
-      } else {
-        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.Subframe",
-                                        transition, is_background, delta);
-      }
-    }
-
-    if (!ready_to_commit_time_.is_null()) {
-      LOG_NAVIGATION_TIMING_HISTOGRAM("ReadyToCommitUntilCommit2",
-                                      GetPageTransition(), is_background,
-                                      now - ready_to_commit_time_);
-    }
-  }
-
-  DCHECK(!IsInMainFrame() || navigation_entry_committed)
-      << "Only subframe navigations can get here without changing the "
-      << "NavigationEntry";
-  subframe_entry_committed_ = navigation_entry_committed;
-
-  // For successful navigations, ensure the frame owner element is no longer
-  // collapsed as a result of a prior navigation.
-  if (!IsErrorPage() && !frame_tree_node()->IsMainFrame()) {
-    // The last committed load in collapsed frames will be an error page with
-    // |kUnreachableWebDataURL|. Same-document navigation should not be
-    // possible.
-    DCHECK(!IsSameDocument() || !frame_tree_node()->is_collapsed());
-    frame_tree_node()->SetCollapsed(false);
-  }
-}
-
-void NavigationHandleImpl::OnNavigationEventProcessed(
-    NavigationThrottleRunner::Event event,
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_NE(NavigationThrottle::DEFER, result.action());
-  switch (event) {
-    case NavigationThrottleRunner::Event::WillStartRequest:
-      OnWillStartRequestProcessed(result);
-      return;
-    case NavigationThrottleRunner::Event::WillRedirectRequest:
-      OnWillRedirectRequestProcessed(result);
-      return;
-    case NavigationThrottleRunner::Event::WillFailRequest:
-      OnWillFailRequestProcessed(result);
-      return;
-    case NavigationThrottleRunner::Event::WillProcessResponse:
-      OnWillProcessResponseProcessed(result);
-      return;
-    default:
-      NOTREACHED();
-  }
-  NOTREACHED();
-}
-
-void NavigationHandleImpl::OnWillStartRequestProcessed(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_EQ(NavigationRequest::PROCESSING_WILL_START_REQUEST, state());
-  DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
-  if (result.action() == NavigationThrottle::PROCEED) {
-    navigation_request_->set_handle_state(
-        NavigationRequest::WILL_START_REQUEST);
-  } else {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-  }
-  RunCompleteCallback(result);
-}
-
-void NavigationHandleImpl::OnWillRedirectRequestProcessed(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_EQ(NavigationRequest::PROCESSING_WILL_REDIRECT_REQUEST, state());
-  DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
-  if (result.action() == NavigationThrottle::PROCEED) {
-    navigation_request_->set_handle_state(
-        NavigationRequest::WILL_REDIRECT_REQUEST);
-
-#if defined(OS_ANDROID)
-    navigation_handle_proxy_->DidRedirect();
-#endif
-
-    // Notify the delegate that a redirect was encountered and will be followed.
-    if (GetDelegate())
-      GetDelegate()->DidRedirectNavigation(this);
-  } else {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-  }
-  RunCompleteCallback(result);
-}
-
-void NavigationHandleImpl::OnWillFailRequestProcessed(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_EQ(NavigationRequest::PROCESSING_WILL_FAIL_REQUEST, state());
-  DCHECK_NE(NavigationThrottle::BLOCK_RESPONSE, result.action());
-  if (result.action() == NavigationThrottle::PROCEED) {
-    navigation_request_->set_handle_state(NavigationRequest::WILL_FAIL_REQUEST);
-    result = NavigationThrottle::ThrottleCheckResult(
-        NavigationThrottle::PROCEED, net_error_code_);
-  } else {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-  }
-  RunCompleteCallback(result);
-}
-
-void NavigationHandleImpl::OnWillProcessResponseProcessed(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_EQ(NavigationRequest::PROCESSING_WILL_PROCESS_RESPONSE, state());
-  DCHECK_NE(NavigationThrottle::BLOCK_REQUEST, result.action());
-  DCHECK_NE(NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE, result.action());
-  if (result.action() == NavigationThrottle::PROCEED) {
-    navigation_request_->set_handle_state(
-        NavigationRequest::WILL_PROCESS_RESPONSE);
-    // If the navigation is done processing the response, then it's ready to
-    // commit. Inform observers that the navigation is now ready to commit,
-    // unless it is not set to commit (204/205s/downloads).
-    if (GetRenderFrameHost())
-      ReadyToCommitNavigation(false);
-  } else {
-    navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-  }
-  RunCompleteCallback(result);
-}
-
-void NavigationHandleImpl::CancelDeferredNavigationInternal(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK(state() == NavigationRequest::PROCESSING_WILL_START_REQUEST ||
-         state() == NavigationRequest::PROCESSING_WILL_REDIRECT_REQUEST ||
-         state() == NavigationRequest::PROCESSING_WILL_FAIL_REQUEST ||
-         state() == NavigationRequest::PROCESSING_WILL_PROCESS_RESPONSE);
-  DCHECK(result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
-         result.action() == NavigationThrottle::CANCEL ||
-         result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE);
-  DCHECK(result.action() != NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ||
-         state() == NavigationRequest::PROCESSING_WILL_START_REQUEST ||
-         state() == NavigationRequest::PROCESSING_WILL_REDIRECT_REQUEST);
-
-  TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
-                               "CancelDeferredNavigation");
-  navigation_request_->set_handle_state(NavigationRequest::CANCELING);
-  RunCompleteCallback(result);
-}
-
 void NavigationHandleImpl::RunCompleteCallback(
     NavigationThrottle::ThrottleCheckResult result) {
   DCHECK(result.action() != NavigationThrottle::DEFER);
@@ -938,37 +558,6 @@ void NavigationHandleImpl::RunCompleteCallback(
 
   // No code after running the callback, as it might have resulted in our
   // destruction.
-}
-
-bool NavigationHandleImpl::IsSelfReferentialURL() {
-  // about: URLs should be exempted since they are reserved for other purposes
-  // and cannot be the source of infinite recursion. See
-  // https://crbug.com/341858 .
-  if (GetURL().SchemeIs("about"))
-    return false;
-
-  // Browser-triggered navigations should be exempted.
-  if (navigation_request_->browser_initiated())
-    return false;
-
-  // Some sites rely on constructing frame hierarchies where frames are loaded
-  // via POSTs with the same URLs, so exempt POST requests.  See
-  // https://crbug.com/710008.
-  if (navigation_request_->common_params().method == "POST")
-    return false;
-
-  // We allow one level of self-reference because some sites depend on that,
-  // but we don't allow more than one.
-  bool found_self_reference = false;
-  for (const FrameTreeNode* node = frame_tree_node()->parent(); node;
-       node = node->parent()) {
-    if (node->current_url().EqualsIgnoringRef(GetURL())) {
-      if (found_self_reference)
-        return true;
-      found_self_reference = true;
-    }
-  }
-  return false;
 }
 
 void NavigationHandleImpl::RenderProcessBlockedStateChanged(bool blocked) {

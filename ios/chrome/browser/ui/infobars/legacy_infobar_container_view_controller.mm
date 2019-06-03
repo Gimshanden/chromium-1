@@ -61,14 +61,14 @@ const CGFloat kAlphaChangeAnimationDuration = 0.35;
   [super viewDidAppear:animated];
   self.visible = YES;
 
-  if (!_fullscreenObserver) {
+  if (!_fullscreenObserver && !self.disableFullscreenSupport) {
     _fullscreenObserver = std::make_unique<FullscreenUIUpdater>(self);
     self.fullscreenController->AddObserver(_fullscreenObserver.get());
   }
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
-  if (_fullscreenObserver) {
+  if (_fullscreenObserver && !self.disableFullscreenSupport) {
     self.fullscreenController->RemoveObserver(_fullscreenObserver.get());
     _fullscreenObserver = nullptr;
   }
@@ -79,11 +79,9 @@ const CGFloat kAlphaChangeAnimationDuration = 0.35;
 
 #pragma mark - InfobarConsumer
 
-- (void)addInfoBarWithDelegate:(id<InfobarUIDelegate>)infoBarDelegate
-                      position:(NSInteger)position {
-  DCHECK_LE(static_cast<NSUInteger>(position), [[self.view subviews] count]);
+- (void)addInfoBarWithDelegate:(id<InfobarUIDelegate>)infoBarDelegate {
   UIView* infoBarView = infoBarDelegate.view;
-  [self.view insertSubview:infoBarView atIndex:position];
+  [self.view addSubview:infoBarView];
   infoBarView.translatesAutoresizingMaskIntoConstraints = NO;
   [NSLayoutConstraint activateConstraints:@[
     [infoBarView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],

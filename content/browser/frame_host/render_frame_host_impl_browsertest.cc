@@ -8,6 +8,8 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/files/file_path.h"
+#include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind_test_util.h"
@@ -34,6 +36,7 @@
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
+#include "content/public/test/url_loader_interceptor.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "content/test/did_commit_navigation_interceptor.h"
@@ -723,7 +726,9 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBeforeUnloadBrowserTest,
   DOMMessageQueue msg_queue;
   GURL new_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
   TestNavigationManager navigation_manager(web_contents(), new_url);
-  EXPECT_TRUE(ExecuteScript(root, "location.href = '" + new_url.spec() + "';"));
+  // Use ExecuteScriptAsync because a ping may arrive before the script
+  // execution completion notification and confuse our expectations.
+  ExecuteScriptAsync(root, "location.href = '" + new_url.spec() + "';");
   dialog_manager()->Wait();
 
   // Answer the dialog and allow the navigation to proceed.  Note that at this
@@ -768,8 +773,10 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBeforeUnloadBrowserTest,
   DOMMessageQueue msg_queue;
   GURL new_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
   TestNavigationManager navigation_manager(web_contents(), new_url);
-  EXPECT_TRUE(ExecuteScript(root->child_at(0),
-                            "location.href = '" + new_url.spec() + "';"));
+  // Use ExecuteScriptAsync because a ping may arrive before the script
+  // execution completion notification and confuse our expectations.
+  ExecuteScriptAsync(root->child_at(0),
+                     "location.href = '" + new_url.spec() + "';");
   navigation_manager.WaitForNavigationFinished();
   EXPECT_EQ(new_url,
             root->child_at(0)->current_frame_host()->GetLastCommittedURL());
@@ -2323,6 +2330,58 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBrowserTest,
   run_loop2.Run();
 
   // Pass if this didn't crash.
+}
+
+// Verify that adding an <object> tag which resource is blocked by the network
+// stack does not result in terminating the renderer process.
+// See https://crbug.com/955777.
+IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBrowserTest,
+                       ObjectTagBlockedResource) {
+  EXPECT_TRUE(NavigateToURL(shell(), embedded_test_server()->GetURL(
+                                         "/page_with_object_fallback.html")));
+
+  GURL object_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
+  std::unique_ptr<URLLoaderInterceptor> url_interceptor =
+      URLLoaderInterceptor::SetupRequestFailForURL(object_url,
+                                                   net::ERR_BLOCKED_BY_CLIENT);
+
+  auto* rfh = static_cast<RenderFrameHostImpl*>(
+      shell()->web_contents()->GetMainFrame());
+  TestNavigationObserver observer(shell()->web_contents());
+  EXPECT_TRUE(ExecJs(shell()->web_contents(),
+                     JsReplace("setUrl($1, true);", object_url)));
+  observer.Wait();
+  EXPECT_EQ(rfh->GetLastCommittedOrigin().Serialize(),
+            EvalJs(shell()->web_contents(), "window.origin"));
+}
+
+// Regression test for crbug.com/953934. It shouldn't crash if we quickly remove
+// an object element in the middle of its failing navigation.
+IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBrowserTest,
+                       NoCrashOnRemoveObjectElementWithInvalidData) {
+  base::FilePath test_data_dir;
+  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  base::FilePath file_repro_path =
+      test_data_dir.Append(GetTestDataFilePath())
+          .Append(FILE_PATH_LITERAL(
+              "remove_object_element_with_invalid_data.html"));
+  GURL url(file_repro_path.value());
+
+  RenderProcessHostWatcher crash_observer(
+      shell()->web_contents(),
+      RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+
+  // This navigates to a page with an object element that will fail to load.
+  // When document load event hits, it'll attempt to remove that object element.
+  // This might happen while the object element's failed commit is underway.
+  // To make sure we hit these conditions and that we don't exit the test too
+  // soon, let's wait until the document.readyState finalizes. We don't really
+  // care if that succeeds since, in the failing case, the renderer is crashing.
+  NavigateToURL(shell(), url);
+  ignore_result(
+      WaitForRenderFrameReady(shell()->web_contents()->GetMainFrame()));
+
+  EXPECT_TRUE(crash_observer.did_exit_normally());
 }
 
 }  // namespace content

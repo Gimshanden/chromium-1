@@ -493,21 +493,28 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
   return UpdateImageResult::kNoDecodeError;
 }
 
-// Return true if the image content is well-compressed (and not full of
-// extraneous metadata). "well-compressed" is determined by comparing the
-// image's compression ratio against a specific value that is defined by an
-// unoptimized image feature policy on |context|.
+ImageDecoder::CompressionFormat ImageResourceContent::GetCompressionFormat()
+    const {
+  if (!image_)
+    return ImageDecoder::kUndefinedFormat;
+  return ImageDecoder::GetCompressionFormat(image_->Data(),
+                                            GetResponse().HttpContentType());
+}
+
 bool ImageResourceContent::IsAcceptableCompressionRatio(
     const SecurityContext& context) {
+  if (!image_)
+    return true;
+
   uint64_t pixels = IntrinsicSize(kDoNotRespectImageOrientation).Area();
   if (!pixels)
     return true;
-  DCHECK(image_);
+
   double resource_length =
       static_cast<double>(GetResponse().ExpectedContentLength());
-  if (resource_length <= 0 && GetImage() && GetImage()->Data()) {
+  if (resource_length <= 0 && image_->Data()) {
     // WPT and LayoutTests server returns -1 or 0 for the content length.
-    resource_length = static_cast<double>(GetImage()->Data()->size());
+    resource_length = static_cast<double>(image_->Data()->size());
   }
 
   // Calculate the image's compression ratio (in bytes per pixel) with both 1k
@@ -516,19 +523,30 @@ bool ImageResourceContent::IsAcceptableCompressionRatio(
   double compression_ratio_1k = (resource_length - 1024) / pixels;
   double compression_ratio_10k = (resource_length - 10240) / pixels;
 
-  // Note that this approach may not always correctly identify the image (for
-  // example, due to a misconfigured web server). This approach SHOULD work in
-  // all usual cases, but content sniffing could be used in the future to more
-  // confidently identify the image type.
-  // TODO(crbug.com/943203): Implement content sniffing.
-  AtomicString mime_type = GetResponse().HttpContentType();
-  if (MIMETypeRegistry::IsLossyImageMIMEType(mime_type)) {
+  ImageDecoder::CompressionFormat compression_format = GetCompressionFormat();
+  const auto max_value =
+      PolicyValue::CreateMaxPolicyValue(mojom::PolicyValueType::kDecDouble);
+  // If an unoptimized-*-images policy is specified, the specified compression
+  // ratio will be less than the max value.
+  bool is_policy_specified =
+      !context.IsFeatureEnabled(
+          mojom::FeaturePolicyFeature::kUnoptimizedLossyImages, max_value) ||
+      !context.IsFeatureEnabled(
+          mojom::FeaturePolicyFeature::kUnoptimizedLosslessImagesStrict,
+          max_value) ||
+      !context.IsFeatureEnabled(
+          mojom::FeaturePolicyFeature::kUnoptimizedLosslessImages, max_value);
+  if (is_policy_specified) {
+    UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.FeaturePolicy.ImageFormats",
+                              compression_format);
+  }
+  if (compression_format == ImageDecoder::kLossyFormat) {
     // Enforce the lossy image policy.
     return context.IsFeatureEnabled(
         mojom::FeaturePolicyFeature::kUnoptimizedLossyImages,
         PolicyValue(compression_ratio_1k), ReportOptions::kReportOnFailure);
   }
-  if (MIMETypeRegistry::IsLosslessImageMIMEType(mime_type)) {
+  if (compression_format == ImageDecoder::kLosslessFormat) {
     // Enforce the lossless image policy.
     bool enabled_by_10k_policy = context.IsFeatureEnabled(
         mojom::FeaturePolicyFeature::kUnoptimizedLosslessImages,

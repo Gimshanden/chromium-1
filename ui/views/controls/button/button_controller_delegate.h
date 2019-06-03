@@ -13,9 +13,9 @@ class Button;
 // ButtonController between different Button types.
 class VIEWS_EXPORT ButtonControllerDelegate {
  public:
-  ButtonControllerDelegate(Button* button) : button_(button) {}
+  explicit ButtonControllerDelegate(Button* button) : button_(button) {}
 
-  virtual ~ButtonControllerDelegate() {}
+  virtual ~ButtonControllerDelegate() = default;
 
   // Parallels methods in views::Button:
   virtual void RequestFocusFromEvent() = 0;
@@ -28,7 +28,7 @@ class VIEWS_EXPORT ButtonControllerDelegate {
   // Parallels method views::InkDropEventHandler::GetInkDrop:
   virtual InkDrop* GetInkDrop() = 0;
 
-  // Parallels method views::View:
+  // Parallels methods in views::View:
   virtual int GetDragOperations(const gfx::Point& press_pt) = 0;
   virtual bool InDrag() = 0;
 
@@ -37,6 +37,8 @@ class VIEWS_EXPORT ButtonControllerDelegate {
 
  private:
   Button* button_;
+
+  DISALLOW_COPY_AND_ASSIGN(ButtonControllerDelegate);
 };
 
 }  // namespace views

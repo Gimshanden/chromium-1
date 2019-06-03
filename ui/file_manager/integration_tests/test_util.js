@@ -237,7 +237,24 @@ function waitForAppWindowCount(appId, expectedCount) {
 }
 
 /**
- * Adds the givin entries to the target volume(s).
+ * Get all the browser windows.
+ * @return {Object} Object returned from chrome.windows.getAll().
+ */
+async function getBrowserWindows() {
+  const caller = getCaller();
+  return repeatUntil(async () => {
+    const result = await new Promise(function(fulfill) {
+      chrome.windows.getAll({'populate': true}, fulfill);
+    });
+    if (result.length == 0) {
+      return pending(caller, 'getBrowserWindows ' + result.length);
+    }
+    return result;
+  });
+}
+
+/**
+ * Adds the given entries to the target volume(s).
  * @param {Array<string>} volumeNames Names of target volumes.
  * @param {Array<TestEntryInfo>} entries List of entries to be added.
  * @param {function(boolean)=} opt_callback Callback function to be passed the
@@ -656,16 +673,6 @@ var ENTRIES = {
     typeText: 'Plain text',
   }),
 
-  plainText: new TestEntryInfo({
-    type: EntryType.FILE,
-    sourceFileName: 'plaintext',
-    targetPath: 'plaintext',
-    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
-    nameText: 'plaintext',
-    sizeText: '32 bytes',
-    typeText: 'Plain text',
-  }),
-
   tallHtml: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'tall.html',
@@ -686,6 +693,17 @@ var ENTRIES = {
     nameText: 'tall.pdf',
     sizeText: '15 KB',
     typeText: 'PDF document',
+  }),
+
+  imgPdf: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'img.pdf',
+    targetPath: 'imgpdf',
+    mimeType: 'application/pdf',
+    lastModifiedTime: 'Jul 4, 2012, 10:35 AM',
+    nameText: 'imgpdf',
+    sizeText: '1608 bytes',
+    typeText: 'PDF document'
   }),
 
   pinned: new TestEntryInfo({
@@ -1053,6 +1071,42 @@ var ENTRIES = {
       canRename: false,
       canDelete: false,
       canShare: true
+    },
+  }),
+
+  // A regular file that can't be renamed, but can be deleted.
+  deletableFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'text.txt',
+    targetPath: 'Deletable File.txt',
+    mimeType: 'text/plain',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'Deletable File.txt',
+    sizeText: '51 bytes',
+    typeText: 'Plain text',
+    capabilities: {
+      canCopy: true,
+      canAddChildren: false,
+      canRename: false,
+      canDelete: true
+    },
+  }),
+
+  // A regular file that can't be deleted, but can be renamed.
+  renamableFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'text.txt',
+    targetPath: 'Renamable File.txt',
+    mimeType: 'text/plain',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'Renamable File.txt',
+    sizeText: '51 bytes',
+    typeText: 'Plain text',
+    capabilities: {
+      canCopy: true,
+      canAddChildren: false,
+      canRename: true,
+      canDelete: false
     },
   }),
 

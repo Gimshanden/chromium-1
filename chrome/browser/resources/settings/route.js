@@ -13,6 +13,7 @@
  *   ACCOUNT_MANAGER: (undefined|!settings.Route),
  *   ADVANCED: (undefined|!settings.Route),
  *   ADDRESSES: (undefined|!settings.Route),
+ *   APPS: (undefined|!settings.Route),
  *   ANDROID_APPS: (undefined|!settings.Route),
  *   ANDROID_APPS_DETAILS: (undefined|!settings.Route),
  *   CROSTINI: (undefined|!settings.Route),
@@ -39,6 +40,7 @@
  *   DISPLAY: (undefined|!settings.Route),
  *   DOWNLOADS: (undefined|!settings.Route),
  *   EDIT_DICTIONARY: (undefined|!settings.Route),
+ *   EXTERNAL_STORAGE_PREFERENCES: (undefined|!settings.Route),
  *   FINGERPRINT: (undefined|!settings.Route),
  *   FONTS: (undefined|!settings.Route),
  *   GOOGLE_ASSISTANT: (undefined|!settings.Route),
@@ -47,6 +49,7 @@
  *   INPUT_METHODS: (undefined|!settings.Route),
  *   INTERNET: (undefined|!settings.Route),
  *   INTERNET_NETWORKS: (undefined|!settings.Route),
+ *   KERBEROS_ACCOUNTS: (undefined|!settings.Route),
  *   KEYBOARD: (undefined|!settings.Route),
  *   KNOWN_NETWORKS: (undefined|!settings.Route),
  *   LANGUAGES: (undefined|!settings.Route),
@@ -59,8 +62,12 @@
  *   NETWORK_DETAIL: (undefined|!settings.Route),
  *   ON_STARTUP: (undefined|!settings.Route),
  *   PASSWORDS: (undefined|!settings.Route),
+ *   PARENTAL_CONTROLS: (undefined|!settings.Route),
  *   PAYMENTS: (undefined|!settings.Route),
  *   PEOPLE: (undefined|!settings.Route),
+ *   PLUGIN_VM: (undefined|!settings.Route),
+ *   PLUGIN_VM_DETAILS: (undefined|!settings.Route),
+ *   PLUGIN_VM_SHARED_PATHS: (undefined|!settings.Route),
  *   POINTERS: (undefined|!settings.Route),
  *   POWER: (undefined|!settings.Route),
  *   PRINTING: (undefined|!settings.Route),
@@ -76,6 +83,7 @@
  *   SITE_SETTINGS_ALL: (undefined|!settings.Route),
  *   SITE_SETTINGS_AUTOMATIC_DOWNLOADS: (undefined|!settings.Route),
  *   SITE_SETTINGS_BACKGROUND_SYNC: (undefined|!settings.Route),
+ *   SITE_SETTINGS_BLUETOOTH_SCANNING: (undefined|!settings.Route),
  *   SITE_SETTINGS_CAMERA: (undefined|!settings.Route),
  *   SITE_SETTINGS_CLIPBOARD: (undefined|!settings.Route),
  *   SITE_SETTINGS_COOKIES: (undefined|!settings.Route),
@@ -245,6 +253,12 @@ cr.define('settings', function() {
     r.MULTIDEVICE_FEATURES = r.MULTIDEVICE.createChild('/multidevice/features');
     r.SMART_LOCK =
         r.MULTIDEVICE_FEATURES.createChild('/multidevice/features/smartLock');
+
+    if (loadTimeData.valueExists('showParentalControls') &&
+        loadTimeData.getBoolean('showParentalControls')) {
+      r.PARENTAL_CONTROLS =
+          r.BASIC.createSection('/parentalControls', 'parentalControls');
+    }
     // </if>
 
     if (pageVisibility.appearance !== false) {
@@ -272,6 +286,11 @@ cr.define('settings', function() {
       r.GOOGLE_ASSISTANT = r.SEARCH.createChild('/googleAssistant');
     }
 
+    if (loadTimeData.valueExists('showApps') &&
+        loadTimeData.getBoolean('showApps')) {
+      r.APPS = r.BASIC.createSection('/apps', 'apps');
+    }
+
     r.ANDROID_APPS = r.BASIC.createSection('/androidApps', 'androidApps');
     r.ANDROID_APPS_DETAILS = r.ANDROID_APPS.createChild('/androidApps/details');
 
@@ -284,6 +303,14 @@ cr.define('settings', function() {
       r.CROSTINI_SHARED_PATHS = r.CROSTINI.createChild('/crostini/sharedPaths');
       r.CROSTINI_SHARED_USB_DEVICES =
           r.CROSTINI.createChild('/crostini/sharedUsbDevices');
+    }
+
+    if (loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm')) {
+      r.PLUGIN_VM = r.BASIC.createSection('/pluginVm', 'pluginVm');
+      r.PLUGIN_VM_DETAILS = r.PLUGIN_VM.createChild('/pluginVm/details');
+      r.PLUGIN_VM_SHARED_PATHS =
+          r.PLUGIN_VM.createChild('/pluginVm/sharedPaths');
     }
     // </if>
 
@@ -303,6 +330,7 @@ cr.define('settings', function() {
       r.CHANGE_PICTURE = r.PEOPLE.createChild('/changePicture');
       r.ACCOUNTS = r.PEOPLE.createChild('/accounts');
       r.ACCOUNT_MANAGER = r.PEOPLE.createChild('/accountManager');
+      r.KERBEROS_ACCOUNTS = r.PEOPLE.createChild('/kerberosAccounts');
       r.LOCK_SCREEN = r.PEOPLE.createChild('/lockScreen');
       r.FINGERPRINT = r.LOCK_SCREEN.createChild('/lockScreen/fingerprint');
       // </if>
@@ -315,6 +343,8 @@ cr.define('settings', function() {
     r.STYLUS = r.DEVICE.createChild('/stylus');
     r.DISPLAY = r.DEVICE.createChild('/display');
     r.STORAGE = r.DEVICE.createChild('/storage');
+    r.EXTERNAL_STORAGE_PREFERENCES =
+        r.DEVICE.createChild('/storage/externalStoragePreferences');
     r.POWER = r.DEVICE.createChild('/power');
     // </if>
 
@@ -387,6 +417,10 @@ cr.define('settings', function() {
       if (loadTimeData.getBoolean('enablePaymentHandlerContentSetting')) {
         r.SITE_SETTINGS_PAYMENT_HANDLER =
             r.SITE_SETTINGS.createChild('paymentHandler');
+      }
+      if (loadTimeData.getBoolean('enableBluetoothScanningContentSetting')) {
+        r.SITE_SETTINGS_BLUETOOTH_SCANNING =
+            r.SITE_SETTINGS.createChild('bluetoothScanning');
       }
 
       // <if expr="chromeos">

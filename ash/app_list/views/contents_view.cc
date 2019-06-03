@@ -21,6 +21,7 @@
 #include "ash/app_list/views/search_result_list_view.h"
 #include "ash/app_list/views/search_result_page_view.h"
 #include "ash/app_list/views/search_result_tile_item_list_view.h"
+#include "ash/keyboard/ui/keyboard_controller.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/app_list_switches.h"
@@ -29,7 +30,6 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
-#include "ui/keyboard/keyboard_controller.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view_model.h"
 #include "ui/views/widget/widget.h"
@@ -79,7 +79,7 @@ void ContentsView::Init(AppListModel* model) {
   AddLauncherPage(horizontal_page_container_, ash::AppListState::kStateApps);
 
   // Search results UI.
-  search_results_page_view_ = new SearchResultPageView();
+  search_results_page_view_ = new SearchResultPageView(view_delegate);
 
   // Search result containers.
   SearchModel::SearchResults* results =
@@ -138,6 +138,25 @@ void ContentsView::Init(AppListModel* model) {
   ActivePageChanged();
 }
 
+void ContentsView::ResetForShow() {
+  SetActiveState(ash::AppListState::kStateApps);
+  GetAppsContainerView()->ResetForShowApps();
+  // We clear the search when hiding so when app list appears it is not showing
+  // search results.
+  GetSearchBoxView()->ClearSearch();
+
+  // In side shelf, the opacity of the contents is not animated so set it to the
+  // final state. In tablet mode, opacity of the elements is controlled by the
+  // HomeLauncherGestureHandler which expects these elements to be opaque.
+  // Otherwise the contents animate from 0 to 1 so set the initial opacity to 0.
+  const float initial_opacity =
+      app_list_view_->is_side_shelf() || app_list_view()->is_tablet_mode()
+          ? 1.0f
+          : 0.0f;
+  GetSearchBoxView()->layer()->SetOpacity(initial_opacity);
+  layer()->SetOpacity(initial_opacity);
+}
+
 void ContentsView::CancelDrag() {
   if (GetAppsContainerView()->apps_grid_view()->has_dragged_view())
     GetAppsContainerView()->apps_grid_view()->EndDrag(true);
@@ -157,7 +176,11 @@ void ContentsView::SetDragAndDropHostOfCurrentAppList(
 }
 
 void ContentsView::OnAppListViewTargetStateChanged(
-    AppListViewState target_state) {
+    ash::AppListViewState target_state) {
+  if (target_state == ash::AppListViewState::kClosed) {
+    CancelDrag();
+    return;
+  }
   UpdateExpandArrowFocusBehavior(target_state);
 }
 
@@ -222,7 +245,7 @@ AppsContainerView* ContentsView::GetAppsContainerView() {
 void ContentsView::SetActiveStateInternal(int page_index,
                                           bool show_search_or_assistant_results,
                                           bool animate) {
-  if (!GetPageView(page_index)->visible())
+  if (!GetPageView(page_index)->GetVisible())
     return;
 
   if (!show_search_or_assistant_results)
@@ -295,13 +318,18 @@ bool ContentsView::IsShowingEmbeddedAssistantUI() const {
 }
 
 void ContentsView::UpdatePageBounds() {
+  // No need to do anything while closed. To layout while closed may result in
+  // the search-box going offscreen.
+  if (app_list_view_->app_list_state() == ash::AppListViewState::kClosed)
+    return;
+
   // The bounds calculations will potentially be mid-transition (depending on
   // the state of the PaginationModel).
   int current_page = std::max(0, pagination_model_.selected_page());
   int target_page = current_page;
   double progress = 1;
   if (pagination_model_.has_transition()) {
-    const PaginationModel::Transition& transition =
+    const ash::PaginationModel::Transition& transition =
         pagination_model_.transition();
     if (pagination_model_.is_valid_page(transition.target_page)) {
       target_page = transition.target_page;
@@ -326,7 +354,6 @@ void ContentsView::UpdatePageBounds() {
       page->OnAnimationUpdated(progress, current_state, target_state);
   }
 
-  // Update the search box.
   UpdateSearchBox(progress, current_state, target_state);
 
   // Update the expand arrow view's opacity.
@@ -385,8 +412,9 @@ void ContentsView::UpdateExpandArrowOpacity(double progress,
 }
 
 void ContentsView::UpdateExpandArrowFocusBehavior(
-    AppListViewState target_state) {
-  const bool expand_arrow_enabled = target_state == AppListViewState::PEEKING;
+    ash::AppListViewState target_state) {
+  const bool expand_arrow_enabled =
+      target_state == ash::AppListViewState::kPeeking;
   // The expand arrow is only focusable and has InkDropMode on in peeking
   // state.
   expand_arrow_view_->SetFocusBehavior(
@@ -412,7 +440,7 @@ void ContentsView::UpdateSearchBoxVisibility(ash::AppListState current_state) {
   }
 }
 
-PaginationModel* ContentsView::GetAppsPaginationModel() {
+ash::PaginationModel* ContentsView::GetAppsPaginationModel() {
   return GetAppsContainerView()->apps_grid_view()->pagination_model();
 }
 
@@ -483,7 +511,7 @@ bool ContentsView::Back() {
   ash::AppListState state = view_to_state_[GetActivePageIndex()];
   switch (state) {
     case ash::AppListState::kStateApps: {
-      PaginationModel* pagination_model =
+      ash::PaginationModel* pagination_model =
           GetAppsContainerView()->apps_grid_view()->pagination_model();
       if (GetAppsContainerView()->IsInFolderView()) {
         GetAppsContainerView()->app_list_folder_view()->CloseFolderPage();
@@ -563,8 +591,6 @@ void ContentsView::FadeOutOnClose(base::TimeDelta animation_duration) {
 }
 
 void ContentsView::FadeInOnOpen(base::TimeDelta animation_duration) {
-  GetSearchBoxView()->layer()->SetOpacity(0.0f);
-  layer()->SetOpacity(0.0f);
   DoAnimation(animation_duration, layer(), 1.0f);
   DoAnimation(animation_duration, GetSearchBoxView()->layer(), 1.0f);
 }
@@ -574,16 +600,15 @@ views::View* ContentsView::GetSelectedView() const {
 }
 
 void ContentsView::UpdateYPositionAndOpacity() {
-  AppListViewState state = app_list_view_->app_list_state();
-  if (state == AppListViewState::CLOSED ||
-      state == AppListViewState::FULLSCREEN_SEARCH ||
-      state == AppListViewState::HALF) {
+  ash::AppListViewState state = app_list_view_->app_list_state();
+  if (state == ash::AppListViewState::kFullscreenSearch ||
+      state == ash::AppListViewState::kHalf) {
     return;
   }
 
   const bool should_restore_opacity =
       !app_list_view_->is_in_drag() &&
-      (app_list_view_->app_list_state() != AppListViewState::CLOSED);
+      (app_list_view_->app_list_state() != ash::AppListViewState::kClosed);
 
   // Changes the opacity of expand arrow between 0 and 1 when app list
   // transition progress changes between |kExpandArrowOpacityStartProgress|
@@ -627,7 +652,7 @@ float ContentsView::GetAppListMainViewScale() const {
 }
 
 void ContentsView::SetExpandArrowViewVisibility(bool show) {
-  if (expand_arrow_view_->visible() == show)
+  if (expand_arrow_view_->GetVisible() == show)
     return;
 
   expand_arrow_view_->SetVisible(show);

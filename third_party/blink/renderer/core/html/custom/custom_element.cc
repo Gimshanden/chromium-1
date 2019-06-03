@@ -18,7 +18,8 @@
 #include "third_party/blink/renderer/core/html/html_unknown_element.h"
 #include "third_party/blink/renderer/core/html_element_factory.h"
 #include "third_party/blink/renderer/core/html_element_type_helpers.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 
 namespace blink {
@@ -138,7 +139,7 @@ HTMLElement* CustomElement::CreateCustomElement(Document& document,
     return definition->CreateElement(document, tag_name, flags);
   }
   // 7. Otherwise:
-  return ToHTMLElement(
+  return To<HTMLElement>(
       CreateUncustomizedOrUndefinedElementTemplate<kQNameIsValid>(
           document, tag_name, flags, g_null_atom));
 }
@@ -157,7 +158,7 @@ Element* CustomElement::CreateUncustomizedOrUndefinedElementTemplate(
   }
 
   Element* element;
-  if (origin_trials::CustomElementsV0Enabled(&document)) {
+  if (RuntimeEnabledFeatures::CustomElementsV0Enabled(&document)) {
     if (V0CustomElement::IsValidName(tag_name.LocalName()) &&
         document.RegistrationContext()) {
       element = document.RegistrationContext()->CreateCustomTagElement(
@@ -214,7 +215,7 @@ HTMLElement* CustomElement::CreateFailedElement(Document& document,
   // given namespace, namespace prefix set to null, custom element state set
   // to "failed", and node document set to document.
 
-  HTMLElement* element = HTMLUnknownElement::Create(tag_name, document);
+  auto* element = MakeGarbageCollected<HTMLUnknownElement>(tag_name, document);
   element->SetCustomElementState(CustomElementState::kFailed);
   return element;
 }
@@ -283,22 +284,22 @@ void CustomElement::EnqueueFormResetCallback(Element& element) {
   }
 }
 
-void CustomElement::EnqueueDisabledStateChangedCallback(Element& element,
-                                                        bool is_disabled) {
+void CustomElement::EnqueueFormDisabledCallback(Element& element,
+                                                bool is_disabled) {
   auto& definition = *DefinitionForElementWithoutCheck(element);
-  if (definition.HasDisabledStateChangedCallback()) {
-    Enqueue(element, CustomElementReactionFactory::CreateDisabledStateChanged(
+  if (definition.HasFormDisabledCallback()) {
+    Enqueue(element, CustomElementReactionFactory::CreateFormDisabled(
                          definition, is_disabled));
   }
 }
 
-void CustomElement::EnqueueRestoreStateCallback(
+void CustomElement::EnqueueFormStateRestoreCallback(
     Element& element,
     const FileOrUSVStringOrFormData& value,
     const String& mode) {
   auto& definition = *DefinitionForElementWithoutCheck(element);
-  if (definition.HasRestoreStateCallback()) {
-    Enqueue(element, CustomElementReactionFactory::CreateRestoreState(
+  if (definition.HasFormStateRestoreCallback()) {
+    Enqueue(element, CustomElementReactionFactory::CreateFormStateRestore(
                          definition, value, mode));
   }
 }

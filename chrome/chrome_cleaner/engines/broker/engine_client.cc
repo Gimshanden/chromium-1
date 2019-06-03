@@ -31,10 +31,8 @@
 #include "chrome/chrome_cleaner/pup_data/pup_data.h"
 #include "chrome/chrome_cleaner/settings/settings.h"
 #include "chrome/chrome_cleaner/zip_archiver/sandboxed_zip_archiver.h"
-#include "components/chrome_cleaner/public/constants/constants.h"
 #include "components/chrome_cleaner/public/constants/result_codes.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
-#include "sandbox/win/src/sandbox_factory.h"
 
 using base::WaitableEvent;
 
@@ -59,7 +57,8 @@ using ResultCallback = base::OnceCallback<void(uint32_t)>;
 // example when this is used to wrap SaveResultCallback it must be destroyed on
 // the Mojo thread. The easiest way to ensure this is to call
 // CallbackWithErrorHandling from the Mojo thread and never use base::Passed on
-// the resulting ScopedCallbackRunner to pass it another sequence.
+// the resulting WrapCallbackWithDefaultInvokeIfNotRun to pass it another
+// sequence.
 ResultCallback CallbackWithErrorHandling(ResultCallback callback) {
   return mojo::WrapCallbackWithDefaultInvokeIfNotRun(
       std::move(callback), EngineResultCode::kSandboxUnavailable);
@@ -134,18 +133,18 @@ void EngineClient::InitializeReadOnlyCallbacks() {
       interface_metadata_observer_.get());
 }
 
-bool EngineClient::InitializeCleaningCallbacks(
-    const std::vector<UwSId>& enabled_uws) {
-  // |archive| = nullptr means the quarantine feature is disabled.
-  std::unique_ptr<SandboxedZipArchiver> archiver = nullptr;
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kQuarantineSwitch)) {
+bool EngineClient::InitializeCleaningCallbacks() {
+  std::unique_ptr<ZipArchiver> archiver = nullptr;
+  if (archiver_for_testing_) {
+    archiver = std::move(archiver_for_testing_);
+  } else {
     if (!InitializeQuarantine(&archiver))
       return false;
   }
 
   std::unique_ptr<chrome_cleaner::FileRemoverAPI> file_remover =
       CreateFileRemoverWithDigestVerifier(
-          enabled_uws, std::move(archiver),
+          std::move(archiver),
           base::BindRepeating(&EngineClient::SetRebootRequired,
                               base::Unretained(this)));
   sandbox_cleaner_requests_ = std::make_unique<CleanerEngineRequestsImpl>(
@@ -158,20 +157,24 @@ bool EngineClient::InitializeCleaningCallbacks(
 }
 
 bool EngineClient::InitializeQuarantine(
-    std::unique_ptr<SandboxedZipArchiver>* archiver) {
+    std::unique_ptr<ZipArchiver>* archiver) {
   base::FilePath quarantine_folder;
   if (!InitializeQuarantineFolder(&quarantine_folder)) {
     LOG(ERROR) << "Failed to initialize quarantine folder.";
     return false;
   }
+
+  std::unique_ptr<SandboxedZipArchiver> sbox_archiver;
   ResultCode result_code = SpawnZipArchiverSandbox(
       quarantine_folder, kQuarantinePassword, mojo_task_runner_,
-      connection_error_callback_, archiver);
+      connection_error_callback_, &sbox_archiver);
   if (result_code != RESULT_CODE_SUCCESS) {
     LOG(ERROR) << "Zip archiver initialization returned an error code: "
                << result_code;
     return false;
   }
+
+  *archiver = std::move(sbox_archiver);
   return true;
 }
 
@@ -375,7 +378,7 @@ uint32_t EngineClient::StartCleanup(const std::vector<UwSId>& enabled_uws,
     return EngineResultCode::kWrongState;
   }
 
-  if (!InitializeCleaningCallbacks(enabled_uws)) {
+  if (!InitializeCleaningCallbacks()) {
     LOG(ERROR) << "Failed to initialize cleaning callbacks.";
     return EngineResultCode::kCleanupInitializationFailed;
   }

@@ -12,16 +12,11 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "components/autofill_assistant/browser/actions/action_delegate.h"
+#include "components/autofill_assistant/browser/client_settings.h"
 #include "components/autofill_assistant/browser/element_precondition.h"
 #include "url/gurl.h"
 
 namespace autofill_assistant {
-
-namespace {
-// Time between two chip precondition checks.
-static constexpr base::TimeDelta kPreconditionChipCheckInterval =
-    base::TimeDelta::FromSeconds(1);
-}  // namespace
 
 PromptAction::PromptAction(const ActionProto& proto)
     : Action(proto), weak_ptr_factory_(this) {
@@ -33,7 +28,7 @@ PromptAction::~PromptAction() {}
 void PromptAction::InternalProcessAction(ActionDelegate* delegate,
                                          ProcessActionCallback callback) {
   if (proto_.prompt().choices_size() == 0) {
-    UpdateProcessedAction(OTHER_ACTION_STATUS);
+    UpdateProcessedAction(INVALID_ACTION);
     std::move(callback).Run(std::move(processed_action_proto_));
     return;
   }
@@ -48,7 +43,8 @@ void PromptAction::InternalProcessAction(ActionDelegate* delegate,
   if (HasNonemptyPreconditions() || HasAutoSelect()) {
     RunPeriodicChecks();
     timer_ = std::make_unique<base::RepeatingTimer>();
-    timer_->Start(FROM_HERE, kPreconditionChipCheckInterval,
+    timer_->Start(FROM_HERE,
+                  delegate->GetSettings().periodic_script_check_interval,
                   base::BindRepeating(&PromptAction::RunPeriodicChecks,
                                       weak_ptr_factory_.GetWeakPtr()));
   }
@@ -87,10 +83,9 @@ void PromptAction::CheckPreconditions() {
                              base::BindOnce(&PromptAction::OnPreconditionResult,
                                             weak_ptr_factory_.GetWeakPtr(), i));
   }
-  delegate_->RunElementChecks(
-      precondition_checker_.get(),
-      base::BindOnce(&PromptAction::OnPreconditionChecksDone,
-                     weak_ptr_factory_.GetWeakPtr()));
+  precondition_checker_->AddAllDoneCallback(base::BindOnce(
+      &PromptAction::OnPreconditionChecksDone, weak_ptr_factory_.GetWeakPtr()));
+  delegate_->RunElementChecks(precondition_checker_.get());
 }
 
 void PromptAction::OnPreconditionResult(size_t choice_index, bool result) {
@@ -111,28 +106,40 @@ void PromptAction::UpdateChips() {
 
   auto chips = std::make_unique<std::vector<Chip>>();
   for (int i = 0; i < proto_.prompt().choices_size(); i++) {
-    if (!precondition_results_[i])  // chip disabled
+    auto& choice_proto = proto_.prompt().choices(i);
+    // Don't show choices with no names, icon or types; they're likely just
+    // there for auto_select_if_element_exists.
+    if (!choice_proto.has_chip() && choice_proto.name().empty() &&
+        choice_proto.chip_icon() == NO_ICON &&
+        choice_proto.chip_type() == UNKNOWN_CHIP_TYPE)
       continue;
 
-    auto& choice_proto = proto_.prompt().choices(i);
-    chips->emplace_back();
-    Chip& chip = chips->back();
-    chip.text = choice_proto.name();
-    chip.type = choice_proto.chip_type();
+    // Hide chips whose precondition don't match.
+    if (!precondition_results_[i] && !choice_proto.allow_disabling())
+      continue;
+
+    if (choice_proto.has_chip()) {
+      chips->emplace_back(choice_proto.chip());
+    } else {
+      chips->emplace_back();
+      chips->back().text = choice_proto.name();
+      chips->back().type = choice_proto.chip_type();
+      chips->back().icon = choice_proto.chip_icon();
+    }
+
+    chips->back().disabled = !precondition_results_[i];
     chips->back().callback = base::BindOnce(&PromptAction::OnSuggestionChosen,
                                             weak_ptr_factory_.GetWeakPtr(), i);
   }
   SetDefaultChipType(chips.get());
-  delegate_->Prompt(std::move(chips),
-                    base::BindOnce(&PromptAction::OnTerminated,
-                                   weak_ptr_factory_.GetWeakPtr()));
+  delegate_->Prompt(std::move(chips));
   precondition_changed_ = false;
 }
 
 bool PromptAction::HasAutoSelect() {
   for (int i = 0; i < proto_.prompt().choices_size(); i++) {
-    Selector selector(
-        proto_.prompt().choices(i).auto_select_if_element_exists());
+    Selector selector =
+        Selector(proto_.prompt().choices(i).auto_select_if_element_exists());
     if (!selector.empty())
       return true;
   }
@@ -145,19 +152,18 @@ void PromptAction::CheckAutoSelect() {
   // Wait as long as necessary for one of the elements to show up. This is
   // cancelled by CancelPrompt()
   for (int i = 0; i < proto_.prompt().choices_size(); i++) {
-    Selector selector(
-        proto_.prompt().choices(i).auto_select_if_element_exists());
+    Selector selector =
+        Selector(proto_.prompt().choices(i).auto_select_if_element_exists());
     if (selector.empty())
       continue;
 
     auto_select_checker_->AddElementCheck(
-        kExistenceCheck, selector,
-        base::BindOnce(&PromptAction::OnAutoSelectElementExists,
-                       weak_ptr_factory_.GetWeakPtr(), i));
+        selector, base::BindOnce(&PromptAction::OnAutoSelectElementExists,
+                                 weak_ptr_factory_.GetWeakPtr(), i));
   }
-  delegate_->RunElementChecks(auto_select_checker_.get(),
-                              base::BindOnce(&PromptAction::OnAutoSelectDone,
-                                             weak_ptr_factory_.GetWeakPtr()));
+  auto_select_checker_->AddAllDoneCallback(base::BindOnce(
+      &PromptAction::OnAutoSelectDone, weak_ptr_factory_.GetWeakPtr()));
+  delegate_->RunElementChecks(auto_select_checker_.get());
 }
 
 void PromptAction::OnAutoSelectElementExists(int choice_index, bool exists) {
@@ -194,14 +200,4 @@ void PromptAction::OnSuggestionChosen(int choice_index) {
       proto_.prompt().choices(choice_index);
   std::move(callback_).Run(std::move(processed_action_proto_));
 }
-
-void PromptAction::OnTerminated() {
-  if (!callback_) {
-    NOTREACHED();
-    return;
-  }
-  UpdateProcessedAction(USER_ABORTED_ACTION);
-  std::move(callback_).Run(std::move(processed_action_proto_));
-}
-
 }  // namespace autofill_assistant

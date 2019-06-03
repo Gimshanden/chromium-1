@@ -241,7 +241,7 @@ def _ComputeTraceEventsThreadTimeForBlinkPerf(
 
 
 class _BlinkPerfMeasurement(legacy_page_test.LegacyPageTest):
-  """Tuns a blink performance test and reports the results."""
+  """Runs a blink performance test and reports the results."""
 
   def __init__(self):
     super(_BlinkPerfMeasurement, self).__init__()
@@ -478,6 +478,7 @@ class BlinkPerfImageDecoder(_BlinkPerfBenchmark):
 
 
 @benchmark.Info(emails=['eae@chromium.org'],
+                component='Blink>Layout',
                 documentation_url='https://bit.ly/blink-perf-benchmarks')
 class BlinkPerfLayout(_BlinkPerfBenchmark):
   SUBDIR = 'layout'
@@ -488,6 +489,7 @@ class BlinkPerfLayout(_BlinkPerfBenchmark):
 
 
 @benchmark.Info(emails=['dmurph@chromium.org'],
+                component='Blink>Storage',
                 documentation_url='https://bit.ly/blink-perf-benchmarks')
 class BlinkPerfOWPStorage(_BlinkPerfBenchmark):
   SUBDIR = 'owp_storage'
@@ -555,3 +557,17 @@ class BlinkPerfShadowDOM(_BlinkPerfBenchmark):
   # crbug.com/937716.
   def SetExtraBrowserOptions(self, options):
     options.AppendExtraBrowserArgs(['--enable-blink-features=ShadowDOMV0'])
+
+@benchmark.Info(emails=['vmpstr@chromium.org'],
+                component='Blink>Paint',
+                documentation_url='https://bit.ly/blink-perf-benchmarks')
+class BlinkPerfDisplayLocking(_BlinkPerfBenchmark):
+  SUBDIR = 'display_locking'
+
+  @classmethod
+  def Name(cls):
+    return 'blink_perf.display_locking'
+
+  def SetExtraBrowserOptions(self, options):
+    options.AppendExtraBrowserArgs(['--enable-blink-features=DisplayLocking'])
+

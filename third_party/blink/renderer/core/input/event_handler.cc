@@ -73,6 +73,7 @@
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
+#include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
@@ -271,8 +272,8 @@ void EventHandler::PerformHitTest(const HitTestLocation& location,
   }
   const HitTestRequest& request = result.GetHitTestRequest();
   if (!request.ReadOnly()) {
-    frame_->GetDocument()->UpdateHoverActiveState(request,
-                                                  result.InnerElement());
+    frame_->GetDocument()->UpdateHoverActiveState(
+        request.Active(), !request.Move(), result.InnerElement());
   }
 }
 
@@ -291,21 +292,32 @@ HitTestResult EventHandler::HitTestResultAtLocation(
       LocalFrameView* frame_view = frame_->View();
       LocalFrameView* main_view = main_frame.View();
       if (frame_view && main_view) {
+        HitTestLocation adjusted_location;
         if (location.IsRectBasedTest()) {
           DCHECK(location.IsRectilinear());
-          LayoutPoint main_content_point =
-              main_view->ConvertFromRootFrame(frame_view->ConvertToRootFrame(
-                  location.BoundingBox().Location()));
-          HitTestLocation adjusted_location(
-              (LayoutRect(main_content_point, location.BoundingBox().Size())));
-          return main_frame.GetEventHandler().HitTestResultAtLocation(
-              adjusted_location, hit_type, stop_node, no_lifecycle_update);
+          if (hit_type & HitTestRequest::kHitTestVisualOverflow) {
+            // Apply ancestor transforms to location rect
+            PhysicalRect local_rect =
+                PhysicalRectToBeNoop(location.BoundingBox());
+            PhysicalRect main_frame_rect =
+                frame_view->GetLayoutView()->LocalToAncestorRect(
+                    local_rect, main_view->GetLayoutView(),
+                    kTraverseDocumentBoundaries);
+            adjusted_location = HitTestLocation(main_frame_rect.ToLayoutRect());
+          } else {
+            // Don't apply ancestor transforms to bounding box
+            LayoutPoint main_content_point =
+                main_view->ConvertFromRootFrame(frame_view->ConvertToRootFrame(
+                    location.BoundingBox().Location()));
+            adjusted_location = HitTestLocation(
+                LayoutRect(main_content_point, location.BoundingBox().Size()));
+          }
         } else {
-          HitTestLocation adjusted_location(main_view->ConvertFromRootFrame(
+          adjusted_location = HitTestLocation(main_view->ConvertFromRootFrame(
               frame_view->ConvertToRootFrame(location.Point())));
-          return main_frame.GetEventHandler().HitTestResultAtLocation(
-              adjusted_location, hit_type, stop_node, no_lifecycle_update);
         }
+        return main_frame.GetEventHandler().HitTestResultAtLocation(
+            adjusted_location, hit_type, stop_node, no_lifecycle_update);
       }
     }
   }
@@ -876,14 +888,9 @@ WebInputEventResult EventHandler::HandleMouseMoveOrLeaveEvent(
 
   if (RuntimeEnabledFeatures::MiddleClickAutoscrollEnabled()) {
     if (Page* page = frame_->GetPage()) {
-      if (mouse_event.GetType() == WebInputEvent::kMouseLeave &&
-          mouse_event.button != WebPointerProperties::Button::kMiddle) {
-        page->GetAutoscrollController().StopMiddleClickAutoscroll(frame_);
-      } else {
-        page->GetAutoscrollController().HandleMouseMoveForMiddleClickAutoscroll(
-            frame_, mouse_event_manager_->LastKnownMouseScreenPosition(),
-            mouse_event.button == WebPointerProperties::Button::kMiddle);
-      }
+      page->GetAutoscrollController().HandleMouseMoveForMiddleClickAutoscroll(
+          frame_, mouse_event_manager_->LastKnownMouseScreenPosition(),
+          mouse_event.button == WebPointerProperties::Button::kMiddle);
     }
   }
 
@@ -924,10 +931,12 @@ WebInputEventResult EventHandler::HandleMouseMoveOrLeaveEvent(
   // might actually be some other frame above this one at the specified
   // co-ordinate. So we must force the hit-test to fail, while still clearing
   // hover/active state.
-  if (force_leave)
-    frame_->GetDocument()->UpdateHoverActiveState(request, nullptr);
-  else
+  if (force_leave) {
+    frame_->GetDocument()->UpdateHoverActiveState(request.Active(),
+                                                  !request.Move(), nullptr);
+  } else {
     mev = GetMouseEventTarget(request, mouse_event);
+  }
 
   if (hovered_node_result)
     *hovered_node_result = mev.GetHitTestResult();
@@ -1323,12 +1332,6 @@ bool EventHandler::HasPointerCapture(PointerId pointer_id,
   }
 }
 
-void EventHandler::ProcessPendingPointerCaptureForPointerLock(
-    const WebMouseEvent& mouse_event) {
-  pointer_event_manager_->ProcessPendingPointerCaptureForPointerLock(
-      mouse_event);
-}
-
 void EventHandler::ElementRemoved(Element* target) {
   pointer_event_manager_->ElementRemoved(target);
   if (target)
@@ -1552,13 +1555,13 @@ bool EventHandler::BestContextMenuNodeForHitTestResult(
                                       HeapVector<Member<Node>>(nodes));
 }
 
-// Update the hover and active state across all frames for this gesture.
-// This logic is different than the mouse case because mice send MouseLeave
-// events to frames as they're exited.  With gestures, a single event
+// Update the hover and active state across all frames.  This logic is
+// different than the mouse case because mice send MouseLeave events to frames
+// as they're exited.  With gestures or manual applications, a single event
 // conceptually both 'leaves' whatever frame currently had hover and enters a
-// new frame
-void EventHandler::UpdateGestureHoverActiveState(const HitTestRequest& request,
-                                                 Element* inner_element) {
+// new frame so we need to update state in the old frame chain as well.
+void EventHandler::UpdateCrossFrameHoverActiveState(bool is_active,
+                                                    Element* inner_element) {
   DCHECK_EQ(frame_, &frame_->LocalFrameRoot());
 
   HeapVector<Member<LocalFrame>> new_hover_frame_chain;
@@ -1567,7 +1570,7 @@ void EventHandler::UpdateGestureHoverActiveState(const HitTestRequest& request,
   // Insert the ancestors of the frame having the new hovered element to the
   // frame chain.  The frame chain doesn't include the main frame to avoid the
   // redundant work that cleans the hover state because the hover state for the
-  // main frame is updated by calling Document::updateHoverActiveState.
+  // main frame is updated by calling Document::UpdateHoverActiveState.
   while (new_hover_frame_in_document && new_hover_frame_in_document != frame_) {
     new_hover_frame_chain.push_back(new_hover_frame_in_document);
     Frame* parent_frame = new_hover_frame_in_document->Tree().Parent();
@@ -1603,14 +1606,18 @@ void EventHandler::UpdateGestureHoverActiveState(const HitTestRequest& request,
       old_hover_element_in_cur_doc = doc->HoverElement();
       // If the old hovered frame is different from the new hovered frame.
       // we should clear the old hovered element from the old hovered frame.
-      if (new_hover_frame != old_hover_frame)
-        doc->UpdateHoverActiveState(request, nullptr);
+      if (new_hover_frame != old_hover_frame) {
+        doc->UpdateHoverActiveState(is_active,
+                                    /*update_active_chain=*/true, nullptr);
+      }
     }
   }
 
   // Recursively set the new active/hover states on every frame in the chain of
   // innerElement.
-  frame_->GetDocument()->UpdateHoverActiveState(request, inner_element);
+  frame_->GetDocument()->UpdateHoverActiveState(is_active,
+                                                /*update_active_chain=*/true,
+                                                inner_element);
 }
 
 // Update the mouseover/mouseenter/mouseout/mouseleave events across all frames
@@ -1738,8 +1745,9 @@ GestureEventWithHitTestResults EventHandler::TargetGestureEvent(
   // Now apply hover/active state to the final target.
   HitTestRequest request(hit_type | HitTestRequest::kAllowChildFrameContent);
   if (!request.ReadOnly()) {
-    UpdateGestureHoverActiveState(
-        request, event_with_hit_test_results.GetHitTestResult().InnerElement());
+    UpdateCrossFrameHoverActiveState(
+        request.Active(),
+        event_with_hit_test_results.GetHitTestResult().InnerElement());
   }
 
   if (should_keep_active_for_min_interval) {
@@ -1926,11 +1934,6 @@ WebInputEventResult EventHandler::ShowNonLocatedContextMenu(
 
   static const int kContextMenuMargin = 1;
 
-#if defined(OS_WIN)
-  int right_aligned = ::GetSystemMetrics(SM_MENUDROPALIGNMENT);
-#else
-  int right_aligned = 0;
-#endif
   IntPoint location_in_root_frame;
 
   Element* focused_element =
@@ -1945,7 +1948,7 @@ WebInputEventResult EventHandler::ShowNonLocatedContextMenu(
         FirstRectForRange(selection.ComputeVisibleSelectionInDOMTree()
                               .ToNormalizedEphemeralRange());
 
-    int x = right_aligned ? first_rect.MaxX() : first_rect.X();
+    int x = first_rect.X();
     // In a multiline edit, firstRect.maxY() would end up on the next line, so
     // take the midpoint.
     int y = (first_rect.MaxY() + first_rect.Y()) / 2;
@@ -1956,10 +1959,7 @@ WebInputEventResult EventHandler::ShowNonLocatedContextMenu(
         visual_viewport.ViewportToRootFrame(clipped_rect.Center());
   } else {
     location_in_root_frame = IntPoint(
-        right_aligned
-            ? visual_viewport.VisibleRect(kIncludeScrollbars).MaxX() -
-                  kContextMenuMargin
-            : visual_viewport.GetScrollOffset().Width() + kContextMenuMargin,
+        visual_viewport.GetScrollOffset().Width() + kContextMenuMargin,
         visual_viewport.GetScrollOffset().Height() + kContextMenuMargin);
   }
 
@@ -1981,7 +1981,8 @@ WebInputEventResult EventHandler::ShowNonLocatedContextMenu(
   HitTestLocation location(location_in_root_frame);
   HitTestResult result(request, location);
   result.SetInnerNode(target_node);
-  doc->UpdateHoverActiveState(request, result.InnerElement());
+  doc->UpdateHoverActiveState(request.Active(), !request.Move(),
+                              result.InnerElement());
 
   // The contextmenu event is a mouse event even when invoked using the
   // keyboard.  This is required for web compatibility.
@@ -2067,8 +2068,8 @@ void EventHandler::HoverTimerFired(TimerBase*) {
           mouse_event_manager_->LastKnownMousePositionInViewport()));
       HitTestResult result(request, location);
       layout_object->HitTest(location, result);
-      frame_->GetDocument()->UpdateHoverActiveState(request,
-                                                    result.InnerElement());
+      frame_->GetDocument()->UpdateHoverActiveState(
+          request.Active(), !request.Move(), result.InnerElement());
     }
   }
 }
@@ -2082,7 +2083,7 @@ void EventHandler::ActiveIntervalTimerFired(TimerBase*) {
     HitTestRequest request(HitTestRequest::kTouchEvent |
                            HitTestRequest::kRelease);
     frame_->GetDocument()->UpdateHoverActiveState(
-        request, last_deferred_tap_element_.Get());
+        request.Active(), !request.Move(), last_deferred_tap_element_.Get());
   }
   last_deferred_tap_element_ = nullptr;
 }
@@ -2293,9 +2294,13 @@ MouseEventWithHitTestResults EventHandler::GetMouseEventTarget(
     if (capture_target) {
       LayoutObject* layout_object = capture_target->GetLayoutObject();
 
+      // TODO(eirage): Is kIgnoreTransforms correct here?
       LayoutPoint local_point =
-          layout_object ? LayoutPoint(layout_object->AbsoluteToLocal(
-                              FloatPoint(document_point)))
+          layout_object ? layout_object
+                              ->AbsoluteToLocalPoint(
+                                  PhysicalOffsetToBeNoop(document_point),
+                                  kIgnoreTransforms)
+                              .ToLayoutPoint()
                         : document_point;
 
       result.SetNodeAndPosition(capture_target, local_point);
@@ -2304,8 +2309,8 @@ MouseEventWithHitTestResults EventHandler::GetMouseEventTarget(
       result.SetURLElement(capture_target->EnclosingLinkEventParentOrSelf());
 
       if (!request.ReadOnly()) {
-        frame_->GetDocument()->UpdateHoverActiveState(request,
-                                                      result.InnerElement());
+        frame_->GetDocument()->UpdateHoverActiveState(
+            request.Active(), !request.Move(), result.InnerElement());
       }
 
       return MouseEventWithHitTestResults(

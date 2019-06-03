@@ -12,8 +12,7 @@
 #include <vector>
 
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/public/interfaces/session_controller.mojom.h"
+#include "ash/public/cpp/session/session_controller.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -99,9 +98,7 @@
 #include "components/user_manager/user_type.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/device_local_account_util.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/chromeos/resources/grit/ui_chromeos_resources.h"
@@ -206,12 +203,6 @@ void MaybeStartBluetoothLogging(const AccountId& account_id) {
                       base::CompareCase::INSENSITIVE_ASCII)) {
     return;
   }
-  const std::vector<std::string> board =
-      base::SplitString(base::SysInfo::GetLsbReleaseBoard(), "-",
-                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  const std::string board_name = board[0];
-  if (board_name != "eve" && board_name != "nocturne")
-    return;
   chromeos::UpstartClient::Get()->StartJob(kBluetoothLoggingUpstartJob, {},
                                            EmptyVoidDBusMethodCallback());
 }
@@ -518,20 +509,6 @@ user_manager::UserList ChromeUserManagerImpl::GetUsersAllowedForMultiProfile()
   }
 
   return result;
-}
-
-user_manager::UserList
-ChromeUserManagerImpl::GetUsersAllowedForSupervisedUsersCreation() const {
-  CrosSettings* cros_settings = CrosSettings::Get();
-  bool allow_new_user = true;
-  cros_settings->GetBoolean(kAccountsPrefAllowNewUser, &allow_new_user);
-  bool supervised_users_allowed = AreSupervisedUsersAllowed();
-
-  // Restricted either by policy or by owner.
-  if (!allow_new_user || !supervised_users_allowed)
-    return user_manager::UserList();
-
-  return GetUsersAllowedAsSupervisedUserManagers(GetUsers());
 }
 
 user_manager::UserList ChromeUserManagerImpl::GetUnlockUsers() const {
@@ -1433,11 +1410,8 @@ void ChromeUserManagerImpl::NotifyUserAddedToSession(
 void ChromeUserManagerImpl::OnUserNotAllowed(const std::string& user_email) {
   LOG(ERROR) << "Shutdown session because a user is not allowed to be in the "
                 "current session";
-  ash::mojom::SessionControllerPtr session_controller;
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(ash::mojom::kServiceName, &session_controller);
-  session_controller->ShowMultiprofilesSessionAbortedDialog(user_email);
+  ash::SessionController::Get()->ShowMultiprofilesSessionAbortedDialog(
+      user_email);
   chrome::RecordDialogCreation(
       chrome::DialogIdentifier::MULTIPROFILES_SESSION_ABORTED);
 }

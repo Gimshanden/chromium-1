@@ -14,8 +14,10 @@
   <template>
     <style include="settings-shared">
       :host {
+        box-sizing: border-box;
         display: block;
-        margin-top: 8px;
+        padding-bottom: 2px;
+        padding-top: 8px;
       }
 
       a[href],
@@ -94,11 +96,11 @@
         attr-for-selected="href" on-iron-activate="onSelectorActivate_"
         role="navigation" on-click="onLinkClick_">
 <if expr="chromeos">
-      <a href="/internet">
+      <a href="/internet" hidden="[[!pageVisibility.internet]]">
         <iron-icon icon="settings:network-wifi"></iron-icon>
         $i18n{internetPageTitle}
       </a>
-      <a href="/bluetooth">
+      <a href="/bluetooth" hidden="[[!pageVisibility.bluetooth]]">
         <iron-icon icon="cr:bluetooth"></iron-icon>
         $i18n{bluetoothPageTitle}
       </a>
@@ -113,6 +115,13 @@
         <iron-icon icon="cr:person"></iron-icon>
         $i18n{peoplePageTitle}
       </a>
+<if expr="chromeos">
+      <a id="parentalControls" href="/parentalControls"
+          hidden="[[!showParentalControls]]">
+        <iron-icon icon="cr20:kite"></iron-icon>
+        $i18n{parentalControlsPageTitle}
+      </a>
+</if>
       <a id="autofill" href="/autofill"
           hidden="[[!pageVisibility.autofill]]">
         <iron-icon icon="settings:assignment"></iron-icon>
@@ -124,7 +133,7 @@
         $i18n{appearancePageTitle}
       </a>
 <if expr="chromeos">
-      <a href="/device">
+      <a href="/device" hidden="[[!pageVisibility.device]]">
         <iron-icon icon="settings:laptop-chromebook"></iron-icon>
         $i18n{devicePageTitle}
       </a>
@@ -134,15 +143,21 @@
         $i18n{searchPageTitle}
       </a>
 <if expr="chromeos">
+      <a href="/apps" hidden="[[!showApps]]">
+        <iron-icon icon="settings:apps"></iron-icon>
+        $i18n{appsPageTitle}
+      </a>
       <a href="/androidApps" hidden="[[!showAndroidApps]]">
         <iron-icon icon="settings:play-prism"></iron-icon>
         $i18n{androidAppsPageTitle}
       </a>
-</if>
-<if expr="chromeos">
       <a href="/crostini" hidden="[[!showCrostini]]">
         <iron-icon icon="settings:crostini-mascot"></iron-icon>
         $i18n{crostiniPageTitle}
+      </a>
+      <a href="/pluginVm" hidden="[[!showPluginVm]]">
+        <iron-icon icon="settings:plugin-vm"></iron-icon>
+        $i18n{pluginVmPageTitle}
       </a>
 </if>
 <if expr="not chromeos">
@@ -168,7 +183,7 @@
         <iron-selector id="subMenu" selectable="a" attr-for-selected="href"
             role="navigation" on-click="onLinkClick_">
 <if expr="chromeos">
-          <a href="/dateTime">
+          <a href="/dateTime" hidden="[[!pageVisibility.dateTime]]">
             <iron-icon icon="settings:access-time"></iron-icon>
             $i18n{dateTimePageTitle}
           </a>
@@ -185,7 +200,7 @@
             <iron-icon icon="cr:file-download"></iron-icon>
             $i18n{downloadsPageTitle}
           </a>
-          <a href="/printing">
+          <a href="/printing" hidden="[[!pageVisibility.printing]]">
             <iron-icon icon="cr:print"></iron-icon>
             $i18n{printingPageTitle}
           </a>

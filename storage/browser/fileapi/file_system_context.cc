@@ -46,10 +46,8 @@ namespace storage {
 
 namespace {
 
-QuotaClient* CreateQuotaClient(
-    FileSystemContext* context,
-    bool is_incognito) {
-  return new FileSystemQuotaClient(context, is_incognito);
+QuotaClient* CreateQuotaClient(FileSystemContext* context) {
+  return new FileSystemQuotaClient(context);
 }
 
 void DidGetMetadataForResolveURL(const base::FilePath& path,
@@ -193,8 +191,7 @@ FileSystemContext::FileSystemContext(
 
   if (quota_manager_proxy) {
     // Quota client assumes all backends have registered.
-    quota_manager_proxy->RegisterClient(CreateQuotaClient(
-            this, options.is_incognito()));
+    quota_manager_proxy->RegisterClient(CreateQuotaClient(this));
   }
 
   sandbox_backend_->Initialize(this);
@@ -487,12 +484,10 @@ bool FileSystemContext::CanServeURLRequest(const FileSystemURL& url) const {
   // We never support accessing files in isolated filesystems via an URL.
   if (url.mount_type() == kFileSystemTypeIsolated)
     return false;
-#if defined(OS_CHROMEOS)
   if (url.type() == kFileSystemTypeTemporary &&
       sandbox_backend_->enable_temporary_file_system_in_incognito()) {
     return true;
   }
-#endif
   return !is_incognito_ || !FileSystemContext::IsSandboxFileSystem(url.type());
 }
 

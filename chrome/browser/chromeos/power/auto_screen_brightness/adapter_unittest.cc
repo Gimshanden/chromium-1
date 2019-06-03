@@ -10,7 +10,7 @@
 
 #include "ash/public/cpp/ash_pref_names.h"
 #include "base/memory/ptr_util.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
@@ -61,21 +61,15 @@ class FakeModeller : public Modeller {
   FakeModeller() = default;
   ~FakeModeller() override = default;
 
-  void InitModellerWithCurves(
-      const base::Optional<MonotoneCubicSpline>& global_curve,
-      const base::Optional<MonotoneCubicSpline>& personal_curve) {
+  void InitModellerWithModel(const Model& model) {
     DCHECK(!modeller_initialized_);
     modeller_initialized_ = true;
-    if (global_curve)
-      global_curve_.emplace(*global_curve);
-
-    if (personal_curve)
-      personal_curve_.emplace(*personal_curve);
+    model_ = model;
   }
 
   void ReportModelTrained(const MonotoneCubicSpline& personal_curve) {
     DCHECK(modeller_initialized_);
-    personal_curve_.emplace(personal_curve);
+    model_.personal_curve = personal_curve;
     for (auto& observer : observers_)
       observer.OnModelTrained(personal_curve);
   }
@@ -83,7 +77,7 @@ class FakeModeller : public Modeller {
   void ReportModelInitialized() {
     DCHECK(modeller_initialized_);
     for (auto& observer : observers_)
-      observer.OnModelInitialized(global_curve_, personal_curve_);
+      observer.OnModelInitialized(model_);
   }
 
   // Modeller overrides:
@@ -91,7 +85,7 @@ class FakeModeller : public Modeller {
     DCHECK(observer);
     observers_.AddObserver(observer);
     if (modeller_initialized_)
-      observer->OnModelInitialized(global_curve_, personal_curve_);
+      observer->OnModelInitialized(model_);
   }
 
   void RemoveObserver(Modeller::Observer* observer) override {
@@ -101,8 +95,7 @@ class FakeModeller : public Modeller {
 
  private:
   bool modeller_initialized_ = false;
-  base::Optional<MonotoneCubicSpline> global_curve_;
-  base::Optional<MonotoneCubicSpline> personal_curve_;
+  Model model_;
 
   base::ObserverList<Observer> observers_;
 };
@@ -133,6 +126,7 @@ class TestObserver : public PowerManagerClient::Observer {
 
 }  // namespace
 
+// TODO(jiameng): add more unit tests on AdapterDecision related histograms.
 class AdapterTest : public testing::Test {
  public:
   AdapterTest()
@@ -150,13 +144,17 @@ class AdapterTest : public testing::Test {
 
     chromeos::PowerManagerClient::Get()->AddObserver(&test_observer_);
 
-    global_curve_.emplace(MonotoneCubicSpline({-4, 12, 20}, {30, 80, 100}));
-    personal_curve_.emplace(MonotoneCubicSpline({-4, 12, 20}, {20, 60, 100}));
+    global_curve_ = MonotoneCubicSpline::CreateMonotoneCubicSpline(
+        {-4, 12, 20}, {30, 80, 100});
+    personal_curve_ = MonotoneCubicSpline::CreateMonotoneCubicSpline(
+        {-4, 12, 20}, {20, 60, 100});
+    DCHECK(global_curve_);
+    DCHECK(personal_curve_);
   }
 
   void TearDown() override {
     adapter_.reset();
-    base::TaskScheduler::GetInstance()->FlushForTesting();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
     chromeos::PowerManagerClient::Shutdown();
   }
 
@@ -174,13 +172,6 @@ class AdapterTest : public testing::Test {
 
     chromeos::power::auto_screen_brightness::MetricsReporter::
         RegisterLocalStatePrefs(registry.get());
-
-    // Same default values as used in the actual pref store.
-    registry->RegisterIntegerPref(ash::prefs::kPowerAcScreenBrightnessPercent,
-                                  -1, PrefRegistry::PUBLIC);
-    registry->RegisterIntegerPref(
-        ash::prefs::kPowerBatteryScreenBrightnessPercent, -1,
-        PrefRegistry::PUBLIC);
 
     sync_preferences::PrefServiceSyncable* regular_prefs =
         factory.CreateSyncable(registry.get()).release();
@@ -204,27 +195,29 @@ class AdapterTest : public testing::Test {
     if (!params.empty()) {
       scoped_feature_list_.InitAndEnableFeatureWithParameters(
           features::kAutoScreenBrightness, params);
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          features::kAutoScreenBrightness);
     }
 
     adapter_ = Adapter::CreateForTesting(
         profile_.get(), &fake_als_reader_, &fake_brightness_monitor_,
         &fake_modeller_, &fake_model_config_loader_,
-        nullptr /* metrics_reporter */, chromeos::PowerManagerClient::Get(),
-        thread_bundle_.GetMockTickClock());
+        nullptr /* metrics_reporter */, thread_bundle_.GetMockTickClock());
+    adapter_->Init();
     thread_bundle_.RunUntilIdle();
   }
 
   // Sets up all required input for Adapter and then creates Adapter.
   void Init(AlsReader::AlsInitStatus als_reader_status,
             BrightnessMonitor::Status brightness_monitor_status,
-            const base::Optional<MonotoneCubicSpline>& global_curve,
-            const base::Optional<MonotoneCubicSpline>& personal_curve,
+            const Model& model,
             const base::Optional<ModelConfig>& model_config,
             const std::map<std::string, std::string>& params,
             bool brightness_set_by_policy = false) {
     fake_als_reader_.set_als_init_status(als_reader_status);
     fake_brightness_monitor_.set_status(brightness_monitor_status);
-    fake_modeller_.InitModellerWithCurves(global_curve, personal_curve);
+    fake_modeller_.InitModellerWithModel(model);
     if (model_config) {
       fake_model_config_loader_.set_model_config(model_config.value());
     }
@@ -238,9 +231,10 @@ class AdapterTest : public testing::Test {
   }
 
   // Returns a valid ModelConfig.
-  ModelConfig GetTestModelConfig(const std::string& metrics_key = "abc") {
+  ModelConfig GetTestModelConfig(bool enabled = true) {
     ModelConfig model_config;
     model_config.auto_brightness_als_horizon_seconds = 5.0;
+    model_config.enabled = enabled;
     model_config.log_lux = {
         3.69, 4.83, 6.54, 7.68, 8.25, 8.82,
     };
@@ -248,7 +242,7 @@ class AdapterTest : public testing::Test {
         36.14, 47.62, 85.83, 93.27, 93.27, 100,
     };
 
-    model_config.metrics_key = metrics_key;
+    model_config.metrics_key = "abc";
     model_config.model_als_horizon_seconds = 3.0;
     return model_config;
   }
@@ -260,9 +254,11 @@ class AdapterTest : public testing::Test {
 
   void ReportUserBrightnessChangeRequest(double old_brightness_percent,
                                          double new_brightness_percent) {
+    // Report a user-brightness-change-requested signal before a
+    // user-brightness-changed signal to simulate the real brightness monitor.
+    fake_brightness_monitor_.ReportUserBrightnessChangeRequested();
     fake_brightness_monitor_.ReportUserBrightnessChanged(
         old_brightness_percent, new_brightness_percent);
-    fake_brightness_monitor_.ReportUserBrightnessChangeRequested();
     thread_bundle_.RunUntilIdle();
   }
 
@@ -303,7 +299,6 @@ class AdapterTest : public testing::Test {
       {"darkening_log_lux_threshold", "0.00001"},
       {"stabilization_threshold", "100000000"},
       {"model_curve", "2"},
-      {"auto_brightness_als_horizon_seconds", "5"},
       {"user_adjustment_effect", "0"},
   };
 
@@ -318,7 +313,7 @@ class AdapterTest : public testing::Test {
 // AlsReader is |kDisabled| when Adapter is created.
 TEST_F(AdapterTest, AlsReaderDisabledOnInit) {
   Init(AlsReader::AlsInitStatus::kDisabled, BrightnessMonitor::Status::kSuccess,
-       global_curve_, base::nullopt /* personal_curve */, GetTestModelConfig(),
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
@@ -327,7 +322,7 @@ TEST_F(AdapterTest, AlsReaderDisabledOnInit) {
 // BrightnessMonitor is |kDisabled| when Adapter is created.
 TEST_F(AdapterTest, BrightnessMonitorDisabledOnInit) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kDisabled,
-       global_curve_, base::nullopt /* personal_curve */, GetTestModelConfig(),
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
@@ -336,8 +331,7 @@ TEST_F(AdapterTest, BrightnessMonitorDisabledOnInit) {
 // Modeller is |kDisabled| when Adapter is created.
 TEST_F(AdapterTest, ModellerDisabledOnInit) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       base::nullopt /* global_curve */, base::nullopt /* personal_curve */,
-       GetTestModelConfig(), default_params_);
+       Model(), GetTestModelConfig(), default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
 }
@@ -345,8 +339,7 @@ TEST_F(AdapterTest, ModellerDisabledOnInit) {
 // ModelConfigLoader has an invalid config, hence Modeller is disabled.
 TEST_F(AdapterTest, ModelConfigLoaderDisabledOnInit) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, base::nullopt /* personal_curve */, ModelConfig(),
-       default_params_);
+       Model(global_curve_, base::nullopt, 0), ModelConfig(), default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
 }
@@ -354,8 +347,8 @@ TEST_F(AdapterTest, ModelConfigLoaderDisabledOnInit) {
 // AlsReader is |kDisabled| on later notification.
 TEST_F(AdapterTest, AlsReaderDisabledOnNotification) {
   Init(AlsReader::AlsInitStatus::kInProgress,
-       BrightnessMonitor::Status::kSuccess, global_curve_,
-       base::nullopt /* personal_curve */, GetTestModelConfig(),
+       BrightnessMonitor::Status::kSuccess,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
@@ -368,8 +361,8 @@ TEST_F(AdapterTest, AlsReaderDisabledOnNotification) {
 // AlsReader is |kSuccess| on later notification.
 TEST_F(AdapterTest, AlsReaderEnabledOnNotification) {
   Init(AlsReader::AlsInitStatus::kInProgress,
-       BrightnessMonitor::Status::kSuccess, global_curve_,
-       base::nullopt /* personal_curve */, GetTestModelConfig(),
+       BrightnessMonitor::Status::kSuccess,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
@@ -387,8 +380,8 @@ TEST_F(AdapterTest, AlsReaderEnabledOnNotification) {
 // BrightnessMonitor is |kDisabled| on later notification.
 TEST_F(AdapterTest, BrightnessMonitorDisabledOnNotification) {
   Init(AlsReader::AlsInitStatus::kSuccess,
-       BrightnessMonitor::Status::kInitializing, global_curve_,
-       base::nullopt /* personal_curve */, GetTestModelConfig(),
+       BrightnessMonitor::Status::kInitializing,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
@@ -401,8 +394,8 @@ TEST_F(AdapterTest, BrightnessMonitorDisabledOnNotification) {
 // BrightnessMonitor is |kSuccess| on later notification.
 TEST_F(AdapterTest, BrightnessMonitorEnabledOnNotification) {
   Init(AlsReader::AlsInitStatus::kSuccess,
-       BrightnessMonitor::Status::kInitializing, global_curve_,
-       base::nullopt /* personal_curve */, GetTestModelConfig(),
+       BrightnessMonitor::Status::kInitializing,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(),
        default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
@@ -425,7 +418,7 @@ TEST_F(AdapterTest, ModellerDisabledOnNotification) {
   thread_bundle_.RunUntilIdle();
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
 
-  fake_modeller_.InitModellerWithCurves(base::nullopt, base::nullopt);
+  fake_modeller_.InitModellerWithModel(Model());
   fake_modeller_.ReportModelInitialized();
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
   EXPECT_FALSE(adapter_->GetGlobalCurveForTesting());
@@ -441,7 +434,8 @@ TEST_F(AdapterTest, ModellerEnabledOnNotification) {
   thread_bundle_.RunUntilIdle();
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
 
-  fake_modeller_.InitModellerWithCurves(global_curve_, personal_curve_);
+  fake_modeller_.InitModellerWithModel(
+      Model(global_curve_, personal_curve_, 0));
   fake_modeller_.ReportModelInitialized();
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
@@ -453,8 +447,7 @@ TEST_F(AdapterTest, ModellerEnabledOnNotification) {
 // ModelConfigLoader reports an invalid config on later notification.
 TEST_F(AdapterTest, InvalidModelConfigOnNotification) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, base::nullopt /* personal_curve */, base::nullopt,
-       default_params_);
+       Model(global_curve_, base::nullopt, 0), base::nullopt, default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
 
@@ -470,8 +463,7 @@ TEST_F(AdapterTest, InvalidModelConfigOnNotification) {
 // ModelConfigLoader reports a valid config on later notification.
 TEST_F(AdapterTest, ValidModelConfigOnNotification) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, base::nullopt /* personal_curve */, base::nullopt,
-       default_params_);
+       Model(global_curve_, base::nullopt, 0), base::nullopt, default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kInitializing);
 
@@ -489,7 +481,8 @@ TEST_F(AdapterTest, ValidModelConfigOnNotification) {
 // |auto_brightness_als_horizon_seconds|, brightness is changed.
 TEST_F(AdapterTest, FirstAlsAfterAlsReaderInitTime) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -508,7 +501,8 @@ TEST_F(AdapterTest, FirstAlsAfterAlsReaderInitTime) {
 // changed.
 TEST_F(AdapterTest, FirstAlsAtAlsReaderInitTime) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -525,7 +519,8 @@ TEST_F(AdapterTest, FirstAlsAtAlsReaderInitTime) {
 
 TEST_F(AdapterTest, SequenceOfBrightnessUpdatesWithDefaultParams) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
@@ -593,7 +588,8 @@ TEST_F(AdapterTest, SequenceOfBrightnessUpdatesWithDefaultParams) {
 // the adapter because |user_adjustment_effect| is 0 (disabled).
 TEST_F(AdapterTest, UserBrightnessChangeAlsReadingExists) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -633,7 +629,7 @@ TEST_F(AdapterTest, UserBrightnessChangeAlsReadingExistsContinue) {
   // UserAdjustmentEffect::kContinueAuto = 2.
   params["user_adjustment_effect"] = "2";
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -676,7 +672,8 @@ TEST_F(AdapterTest, UserBrightnessChangeAlsReadingExistsContinue) {
 // brightness change comes when there is no ALS reading.
 TEST_F(AdapterTest, UserBrightnessChangeAlsReadingAbsent) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -715,7 +712,7 @@ TEST_F(AdapterTest, UserBrightnessChangeAlsReadingAbsentContinue) {
   // UserAdjustmentEffect::kContinueAuto = 2.
   params["user_adjustment_effect"] = "2";
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -755,7 +752,7 @@ TEST_F(AdapterTest, BrighteningThreshold) {
   std::map<std::string, std::string> params = default_params_;
   params["brightening_log_lux_threshold"] = "100";
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
@@ -809,7 +806,7 @@ TEST_F(AdapterTest, DarkeningThreshold) {
   std::map<std::string, std::string> params = default_params_;
   params["darkening_log_lux_threshold"] = "100";
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   ForwardTimeAndReportAls({10, 20, 30, 40});
   EXPECT_EQ(test_observer_.num_changes(), 0);
@@ -846,7 +843,7 @@ TEST_F(AdapterTest, StablizationThreshold) {
   std::map<std::string, std::string> params = default_params_;
   params["stabilization_threshold"] = "0.00001";
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   ForwardTimeAndReportAls({10, 20, 30, 40, 50});
   EXPECT_EQ(test_observer_.num_changes(), 1);
@@ -870,11 +867,13 @@ TEST_F(AdapterTest, StablizationThreshold) {
 // stabilization.
 TEST_F(AdapterTest, AlsHorizon) {
   std::map<std::string, std::string> params = default_params_;
-  params["auto_brightness_als_horizon_seconds"] = "1";
   // Small |stabilization_threshold|.
   params["stabilization_threshold"] = "0.00001";
+  ModelConfig test_config = GetTestModelConfig();
+  test_config.auto_brightness_als_horizon_seconds = 1;
+
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), test_config, params);
 
   ForwardTimeAndReportAls({10});
   EXPECT_EQ(test_observer_.num_changes(), 1);
@@ -895,8 +894,7 @@ TEST_F(AdapterTest, UsePersonalCurve) {
 
   // Init modeller with only a global curve.
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, base::nullopt /* personal_curve */, GetTestModelConfig(),
-       params);
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -928,12 +926,80 @@ TEST_F(AdapterTest, UsePersonalCurve) {
                        adapter_->GetCurrentAvgLogAlsForTesting().value()));
 }
 
+TEST_F(AdapterTest, UsePersonalCurveAfter3) {
+  std::map<std::string, std::string> params = default_params_;
+  params["model_curve"] = "1";
+  params["min_model_iteration_count"] = "3";
+
+  // Init modeller with only a global curve.
+  Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(), params);
+
+  EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
+
+  // Sufficient ALS data has come in but no brightness change is triggered
+  // because there is no personal curve.
+  ForwardTimeAndReportAls({1, 2, 3, 4, 5, 6, 7, 8});
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Personal curve is received, it does not lead to any immediate brightness
+  // change.
+  thread_bundle_.FastForwardBy(base::TimeDelta::FromSeconds(1));
+  fake_modeller_.ReportModelTrained(*personal_curve_);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another ALS comes in, which does not trigger a brightness change.
+  ReportAls(20);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another training is done.
+  thread_bundle_.FastForwardBy(base::TimeDelta::FromSeconds(1));
+  fake_modeller_.ReportModelTrained(*personal_curve_);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another ALS comes in, which does not trigger a brightness change.
+  ReportAls(30);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another training is done.
+  const base::Optional<MonotoneCubicSpline> personal_curve_2 =
+      MonotoneCubicSpline::CreateMonotoneCubicSpline({-4, 12, 20},
+                                                     {30, 60, 100});
+  DCHECK(personal_curve_2);
+
+  thread_bundle_.FastForwardBy(base::TimeDelta::FromSeconds(1));
+  fake_modeller_.ReportModelTrained(*personal_curve_2);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another ALS comes in, which triggers a brightness change.
+  ReportAls(40);
+  EXPECT_EQ(test_observer_.num_changes(), 1);
+  EXPECT_EQ(test_observer_.GetCause(),
+            power_manager::BacklightBrightnessChange_Cause_MODEL);
+
+  CheckAvgLog({7, 8, 20, 30, 40},
+              adapter_->GetCurrentAvgLogAlsForTesting().value());
+
+  // Brightness is changed according to the personal curve.
+  EXPECT_DOUBLE_EQ(test_observer_.GetBrightnessPercent(),
+                   personal_curve_2->Interpolate(
+                       adapter_->GetCurrentAvgLogAlsForTesting().value()));
+}
+
 TEST_F(AdapterTest, UseGlobalCurve) {
   std::map<std::string, std::string> params = default_params_;
   params["model_curve"] = "0";
+  // This param has no effect.
+  params["min_model_iteration_count"] = "3";
 
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -963,8 +1029,8 @@ TEST_F(AdapterTest, UseGlobalCurve) {
 
 TEST_F(AdapterTest, BrightnessSetByPolicy) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_,
-       true /* brightness_set_by_policy */);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_, true /* brightness_set_by_policy */);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
 
@@ -978,7 +1044,8 @@ TEST_F(AdapterTest, FeatureDisabled) {
   std::map<std::string, std::string> empty_params;
 
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), empty_params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       empty_params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
 
@@ -993,9 +1060,69 @@ TEST_F(AdapterTest, FeatureDisabled) {
   EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
 }
 
+TEST_F(AdapterTest, FeatureEnabledConfigDisabled) {
+  // Feature flag is enabled, but model config is disabled. Final effect is
+  // disabled.
+  Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
+       Model(global_curve_, personal_curve_, 0),
+       GetTestModelConfig(false /* enabled */), default_params_);
+
+  EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kDisabled);
+
+  // Global and personal curves are received, but they won't be used to change
+  // brightness.
+  EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
+  EXPECT_TRUE(adapter_->GetPersonalCurveForTesting());
+
+  // No brightness is changed.
+  ForwardTimeAndReportAls({1, 2, 3, 4, 5, 6, 7, 8});
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+}
+
+TEST_F(AdapterTest, FeatureEnabledConfigEnabled) {
+  // Both feature flag and model config are enabled.
+  std::map<std::string, std::string> params = default_params_;
+  params["model_curve"] = "1";
+
+  // Init modeller with only a global curve.
+  Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
+       Model(global_curve_, base::nullopt, 0), GetTestModelConfig(), params);
+
+  EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
+
+  // Sufficient ALS data has come in but no brightness change is triggered
+  // because there is no personal curve.
+  ForwardTimeAndReportAls({1, 2, 3, 4, 5, 6, 7, 8});
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Personal curve is received, it does not lead to any immediate brightness
+  // change.
+  thread_bundle_.FastForwardBy(base::TimeDelta::FromSeconds(1));
+  fake_modeller_.ReportModelTrained(*personal_curve_);
+  EXPECT_EQ(test_observer_.num_changes(), 0);
+  EXPECT_EQ(adapter_->GetCurrentAvgLogAlsForTesting(), base::nullopt);
+
+  // Another ALS comes in, which triggers a brightness change.
+  ReportAls(20);
+  EXPECT_EQ(test_observer_.num_changes(), 1);
+  EXPECT_EQ(test_observer_.GetCause(),
+            power_manager::BacklightBrightnessChange_Cause_MODEL);
+
+  CheckAvgLog({5, 6, 7, 8, 20},
+              adapter_->GetCurrentAvgLogAlsForTesting().value());
+
+  // Brightness is changed according to the personal curve.
+  EXPECT_DOUBLE_EQ(test_observer_.GetBrightnessPercent(),
+                   personal_curve_->Interpolate(
+                       adapter_->GetCurrentAvgLogAlsForTesting().value()));
+}
+
 TEST_F(AdapterTest, ValidParameters) {
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   histogram_tester_.ExpectTotalCount("AutoScreenBrightness.ParameterError", 0);
 }
@@ -1005,7 +1132,7 @@ TEST_F(AdapterTest, InvalidParameters) {
   params["user_adjustment_effect"] = "10";
 
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   histogram_tester_.ExpectUniqueSample(
       "AutoScreenBrightness.ParameterError",
@@ -1015,7 +1142,8 @@ TEST_F(AdapterTest, InvalidParameters) {
 TEST_F(AdapterTest, UserAdjustmentEffectDisable) {
   // |default_params_| sets the effect to disable.
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), default_params_);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(),
+       default_params_);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
@@ -1056,7 +1184,7 @@ TEST_F(AdapterTest, UserAdjustmentEffectPause) {
   params["user_adjustment_effect"] = "1";
 
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
@@ -1128,48 +1256,7 @@ TEST_F(AdapterTest, UserAdjustmentEffectContinue) {
   params["user_adjustment_effect"] = "2";
 
   Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig(), params);
-
-  EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
-  EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());
-  EXPECT_EQ(*adapter_->GetGlobalCurveForTesting(), *global_curve_);
-  EXPECT_TRUE(adapter_->GetPersonalCurveForTesting());
-  EXPECT_EQ(*adapter_->GetPersonalCurveForTesting(), *personal_curve_);
-
-  // Brightness is changed for the 1st time.
-  ForwardTimeAndReportAls({1, 2, 3, 4, 5});
-  EXPECT_EQ(test_observer_.num_changes(), 1);
-  CheckAvgLog({1, 2, 3, 4, 5},
-              adapter_->GetCurrentAvgLogAlsForTesting().value());
-
-  ForwardTimeAndReportAls({10});
-  // User manual adjustment doesn't disable adapter.
-  ReportUserBrightnessChangeRequest(40.0, 50.0);
-  CheckAvgLog({2, 3, 4, 5, 10},
-              adapter_->GetCurrentAvgLogAlsForTesting().value());
-
-  EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
-  EXPECT_TRUE(adapter_->IsAppliedForTesting());
-
-  ForwardTimeAndReportAls({100, 101, 102, 103});
-  CheckAvgLog({2, 3, 4, 5, 10},
-              adapter_->GetCurrentAvgLogAlsForTesting().value());
-
-  ForwardTimeAndReportAls({104});
-  EXPECT_EQ(test_observer_.num_changes(), 2);
-  CheckAvgLog({100, 101, 102, 103, 104},
-              adapter_->GetCurrentAvgLogAlsForTesting().value());
-}
-
-// Default user adjustment effect for atlas is Continue.
-TEST_F(AdapterTest, UserAdjustmentEffectContinueDefaultForAtlas) {
-  std::map<std::string, std::string> params = default_params_;
-  // User adjustment effect for Atlas is only Continue when it's not explicitly
-  // set by the finch params.
-  params.erase("user_adjustment_effect");
-
-  Init(AlsReader::AlsInitStatus::kSuccess, BrightnessMonitor::Status::kSuccess,
-       global_curve_, personal_curve_, GetTestModelConfig("atlas"), params);
+       Model(global_curve_, personal_curve_, 0), GetTestModelConfig(), params);
 
   EXPECT_EQ(adapter_->GetStatusForTesting(), Adapter::Status::kSuccess);
   EXPECT_TRUE(adapter_->GetGlobalCurveForTesting());

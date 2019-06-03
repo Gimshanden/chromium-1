@@ -20,7 +20,6 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "build/build_config.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/navigation_request.h"
 #include "content/browser/frame_host/navigation_throttle_runner.h"
@@ -35,13 +34,6 @@
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "third_party/blink/public/platform/web_mixed_content_context_type.h"
 #include "url/gurl.h"
-
-#if defined(OS_ANDROID)
-#include "base/android/scoped_java_ref.h"
-#include "content/browser/android/navigation_handle_proxy.h"
-#endif
-
-struct FrameHostMsg_DidCommitProvisionalLoad_Params;
 
 namespace content {
 
@@ -59,13 +51,12 @@ class SiteInstanceImpl;
 // NavigationHandleImpl ownership is then transferred to the RenderFrameHost in
 // which the navigation will commit. It is finaly destroyed when the navigation
 // commits.
-class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
-                                            NavigationThrottleRunner::Delegate {
+class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle {
  public:
   ~NavigationHandleImpl() override;
 
   // NavigationHandle implementation:
-  int64_t GetNavigationId() const override;
+  int64_t GetNavigationId() override;
   const GURL& GetURL() override;
   SiteInstanceImpl* GetStartingSiteInstance() override;
   bool IsInMainFrame() override;
@@ -83,7 +74,7 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   const Referrer& GetReferrer() override;
   bool HasUserGesture() override;
   ui::PageTransition GetPageTransition() override;
-  const NavigationUIData* GetNavigationUIData() override;
+  NavigationUIData* GetNavigationUIData() override;
   bool IsExternalProtocol() override;
   net::Error GetNetErrorCode() override;
   RenderFrameHostImpl* GetRenderFrameHost() override;
@@ -105,7 +96,7 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   void RegisterThrottleForTesting(
       std::unique_ptr<NavigationThrottle> navigation_throttle) override;
   bool IsDeferredForTesting() override;
-  bool WasStartedFromContextMenu() const override;
+  bool WasStartedFromContextMenu() override;
   const GURL& GetSearchableFormURL() override;
   const std::string& GetSearchableFormEncoding() override;
   ReloadType GetReloadType() override;
@@ -127,14 +118,6 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
 
   const std::string& GetOriginPolicy() const;
 
-  // Resume and CancelDeferredNavigation must only be called by the
-  // NavigationThrottle that is currently deferring the navigation.
-  // |resuming_throttle| and |cancelling_throttle| are the throttles calling
-  // these methods.
-  void Resume(NavigationThrottle* resuming_throttle);
-  void CancelDeferredNavigation(NavigationThrottle* cancelling_throttle,
-                                NavigationThrottle::ThrottleCheckResult result);
-
   // Simulates the navigation resuming. Most callers should just let the
   // deferring NavigationThrottle do the resuming.
   void CallResumeForTesting();
@@ -142,12 +125,6 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   NavigationData* GetNavigationData() override;
   void RegisterSubresourceOverride(
       mojom::TransferrableURLLoaderPtr transferrable_loader) override;
-
-#if defined(OS_ANDROID)
-  // Returns a reference to this NavigationHandle Java counterpart. It is used
-  // by Java WebContentsObservers.
-  base::android::ScopedJavaGlobalRef<jobject> java_navigation_handle();
-#endif
 
   // Used in tests.
   NavigationRequest::NavigationHandleState state_for_testing() const {
@@ -201,46 +178,6 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   typedef base::OnceCallback<void(NavigationThrottle::ThrottleCheckResult)>
       ThrottleChecksFinishedCallback;
 
-  // Called when the URLRequest will start in the network stack.  |callback|
-  // will be called when all throttle checks have completed. This will allow
-  // the caller to cancel the navigation or let it proceed.
-  void WillStartRequest(ThrottleChecksFinishedCallback callback);
-
-  // Updates the state of the navigation handle after encountering a server
-  // redirect.
-  void UpdateStateFollowingRedirect(
-      const GURL& new_referrer_url,
-      ThrottleChecksFinishedCallback callback);
-
-  // Called when the URLRequest will be redirected in the network stack.
-  // |callback| will be called when all throttles check have completed. This
-  // will allow the caller to cancel the navigation or let it proceed.
-  // This will also inform the delegate that the request was redirected.
-  //
-  // |post_redirect_process| is the renderer process we expect to
-  // use to commit the navigation now that it has been redirected. It can be
-  // null if there is no live process that can be used. In that case, a suitable
-  // renderer process will be created at commit time.
-  void WillRedirectRequest(
-      const GURL& new_referrer_url,
-      RenderProcessHost* post_redirect_process,
-      ThrottleChecksFinishedCallback callback);
-
-  // Called when the URLRequest will fail. |callback| will be
-  // called when all throttles check have completed. This will allow the caller
-  // to explicitly cancel the navigation (with a custom error code and/or
-  // custom error page HTML) or let the failure proceed as normal.
-  void WillFailRequest(ThrottleChecksFinishedCallback callback);
-
-  // Called when the URLRequest has delivered response headers and metadata.
-  // |callback| will be called when all throttle checks have completed,
-  // allowing the caller to cancel the navigation or let it proceed.
-  // NavigationHandle will not call |callback| with a result of DEFER.
-  // If the result is PROCEED, then 'ReadyToCommitNavigation' will be called
-  // just before calling |callback|.
-  void WillProcessResponse(
-      ThrottleChecksFinishedCallback callback);
-
   // Returns the FrameTreeNode this navigation is happening in.
   FrameTreeNode* frame_tree_node() const {
     return navigation_request_->frame_tree_node();
@@ -250,18 +187,6 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   // |state_| and inform the delegate.
   void ReadyToCommitNavigation(bool is_error);
 
-  // Called when the navigation was committed. This will update the |state_|.
-  // |navigation_entry_committed| indicates whether the navigation changed which
-  // NavigationEntry is current.
-  // |did_replace_entry| is true if the committed entry has replaced the
-  // existing one. A non-user initiated redirect causes such replacement.
-  void DidCommitNavigation(
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-      bool navigation_entry_committed,
-      bool did_replace_entry,
-      const GURL& previous_url,
-      NavigationType navigation_type);
-
   // Called during commit. Takes ownership of the embedder's NavigationData
   // instance. This NavigationData may have been cloned prior to being added
   // here.
@@ -270,14 +195,13 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   }
 
   NavigationUIData* navigation_ui_data() const {
-    return navigation_ui_data_.get();
+    return navigation_request_->navigation_ui_data();
   }
 
-  const GURL& base_url() { return base_url_; }
+  const GURL& base_url() { return navigation_request_->base_url(); }
 
   NavigationType navigation_type() {
-    DCHECK_GE(state(), NavigationRequest::DID_COMMIT);
-    return navigation_type_;
+    return navigation_request_->navigation_type();
   }
 
   void set_response_headers_for_testing(
@@ -312,7 +236,7 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   }
 
   NavigationThrottle* GetDeferringThrottleForTesting() const {
-    return throttle_runner_.GetDeferringThrottle();
+    return navigation_request_->GetDeferringThrottleForTesting();
   }
 
   // Whether the navigation was sent to be committed in a renderer by the
@@ -336,41 +260,20 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   // |navigation_start| comes from the CommonNavigationParams associated with
   // this navigation.
   NavigationHandleImpl(NavigationRequest* navigation_request,
-                       const std::vector<GURL>& redirect_chain,
                        int pending_nav_entry_id,
-                       std::unique_ptr<NavigationUIData> navigation_ui_data,
-                       net::HttpRequestHeaders request_headers,
-                       const Referrer& sanitized_referrer);
-
-  // NavigationThrottleRunner::Delegate:
-  void OnNavigationEventProcessed(
-      NavigationThrottleRunner::Event event,
-      NavigationThrottle::ThrottleCheckResult result) override;
-
-  void OnWillStartRequestProcessed(
-      NavigationThrottle::ThrottleCheckResult result);
-  void OnWillRedirectRequestProcessed(
-      NavigationThrottle::ThrottleCheckResult result);
-  void OnWillFailRequestProcessed(
-      NavigationThrottle::ThrottleCheckResult result);
-  void OnWillProcessResponseProcessed(
-      NavigationThrottle::ThrottleCheckResult result);
-
-  void CancelDeferredNavigationInternal(
-      NavigationThrottle::ThrottleCheckResult result);
+                       net::HttpRequestHeaders request_headers);
 
   // Helper function to run and reset the |complete_callback_|. This marks the
   // end of a round of NavigationThrottleChecks.
   void RunCompleteCallback(NavigationThrottle::ThrottleCheckResult result);
 
+  void SetCompleteCallback(ThrottleChecksFinishedCallback callback) {
+    complete_callback_ = std::move(callback);
+  }
+
   NavigationRequest::NavigationHandleState state() const {
     return navigation_request_->handle_state();
   }
-
-  // Checks for attempts to navigate to a page that is already referenced more
-  // than once in the frame's ancestors.  This is a helper function used by
-  // WillStartRequest and WillRedirectRequest to prevent the navigation.
-  bool IsSelfReferentialURL();
 
   // Called if READY_TO_COMMIT -> COMMIT state transition takes an unusually
   // long time.
@@ -383,16 +286,15 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   void StopCommitTimeout();
   void RestartCommitTimeout();
 
+  // TODO(zetamoo): Remove once |ready_to_commit_time_| is owned by
+  // NavigationRequest.
+  base::TimeTicks ready_to_commit_time() const { return ready_to_commit_time_; }
+
   // The NavigationRequest that owns this NavigationHandle.
   NavigationRequest* navigation_request_;
 
   // See NavigationHandle for a description of those member variables.
-  Referrer sanitized_referrer_;
   net::Error net_error_code_;
-  bool was_redirected_;
-  bool did_replace_entry_;
-  bool should_update_history_;
-  bool subframe_entry_committed_;
 
   // The headers used for the request.
   net::HttpRequestHeaders request_headers_;
@@ -440,24 +342,14 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   // Embedder data from the IO thread tied to this navigation.
   std::unique_ptr<NavigationData> navigation_data_;
 
-  // Embedder data from the UI thread tied to this navigation.
-  std::unique_ptr<NavigationUIData> navigation_ui_data_;
-
   // The unique id to identify this to navigation with.
   int64_t navigation_id_;
-
-  // The chain of redirects.
-  std::vector<GURL> redirect_chain_;
 
   // Stores the reload type, or NONE if it's not a reload.
   ReloadType reload_type_;
 
   // Stores the restore type, or NONE it it's not a restore.
   RestoreType restore_type_;
-
-  GURL previous_url_;
-  GURL base_url_;
-  NavigationType navigation_type_;
 
   // Which proxy server was used for this navigation, if any.
   net::ProxyServer proxy_server_;
@@ -468,16 +360,6 @@ class CONTENT_EXPORT NavigationHandleImpl : public NavigationHandle,
   // Allows to override response_headers_ in tests.
   // TODO(clamy): Clean this up once the architecture of unit tests is better.
   scoped_refptr<net::HttpResponseHeaders> response_headers_for_testing_;
-
-  // Owns the NavigationThrottles associated with this navigation, and is
-  // responsible for notifying them about the various navigation events.
-  NavigationThrottleRunner throttle_runner_;
-
-#if defined(OS_ANDROID)
-  // For each C++ NavigationHandle, there is a Java counterpart. It is the JNI
-  // bridge in between the two.
-  std::unique_ptr<NavigationHandleProxy> navigation_handle_proxy_;
-#endif
 
   base::WeakPtrFactory<NavigationHandleImpl> weak_factory_;
 

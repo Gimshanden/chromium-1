@@ -223,13 +223,13 @@ const AXPosition AXPosition::FromPosition(
   DCHECK(container_node->IsContainerNode());
   if (container->AccessibilityIsIgnored()) {
     container = container->ParentObjectUnignored();
-    // |container_node| could potentially become nullptr if the unignored parent
-    // is an anonymous layout block.
+    if (!container)
+      return {};
+
+    // |container_node| could potentially become nullptr if the unignored
+    // parent is an anonymous layout block.
     container_node = container->GetNode();
   }
-
-  if (!container)
-    return {};
 
   AXPosition ax_position(*container);
   // |ComputeNodeAfterPosition| returns nullptr for "after children"
@@ -241,16 +241,17 @@ const AXPosition AXPosition::FromPosition(
     } else {
       const AXObject* ax_child =
           ax_object_cache_impl->GetOrCreate(node_after_position);
-      DCHECK(ax_child);
-
-      if (ax_child->AccessibilityIsIgnored()) {
-        // Find the closest DOM sibling that is unignored in the accessibility
-        // tree.
+      // |ax_child| might be nullptr because not all DOM nodes can have AX
+      // objects. For example, the "head" element has no corresponding AX
+      // object.
+      if (!ax_child || ax_child->AccessibilityIsIgnored()) {
+        // Find the closest DOM sibling that is present and unignored in the
+        // accessibility tree.
         switch (adjustment_behavior) {
           case AXPositionAdjustmentBehavior::kMoveRight: {
             const AXObject* next_child = FindNeighboringUnignoredObject(
                 *document, *node_after_position,
-                ToContainerNodeOrNull(container_node), adjustment_behavior);
+                DynamicTo<ContainerNode>(container_node), adjustment_behavior);
             if (next_child) {
               return CreatePositionBeforeObject(*next_child,
                                                 adjustment_behavior);
@@ -262,7 +263,7 @@ const AXPosition AXPosition::FromPosition(
           case AXPositionAdjustmentBehavior::kMoveLeft: {
             const AXObject* previous_child = FindNeighboringUnignoredObject(
                 *document, *node_after_position,
-                ToContainerNodeOrNull(container_node), adjustment_behavior);
+                DynamicTo<ContainerNode>(container_node), adjustment_behavior);
             if (previous_child) {
               // |CreatePositionAfterObject| cannot be used here because it will
               // try to create a position before the object that comes after
@@ -759,15 +760,13 @@ String AXPosition::ToString() const {
   if (IsTextPosition()) {
     builder.Append("AX text position in ");
     builder.Append(container_object_->ToString());
-    builder.Append(", ");
-    builder.Append(String::Format("%d", TextOffset()));
+    builder.AppendFormat(", %d", TextOffset());
     return builder.ToString();
   }
 
   builder.Append("AX object anchored position in ");
   builder.Append(container_object_->ToString());
-  builder.Append(", ");
-  builder.Append(String::Format("%d", ChildIndex()));
+  builder.AppendFormat(", %d", ChildIndex());
   return builder.ToString();
 }
 

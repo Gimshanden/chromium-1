@@ -31,6 +31,7 @@
 #include "components/error_page/common/localized_error.h"
 #include "components/error_page/common/net_error_info.h"
 #include "components/grit/components_resources.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/security_interstitials/core/common/interfaces/interstitial_commands.mojom.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
@@ -59,6 +60,7 @@
 #include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_history_item.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/zlib/google/compression_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
 #include "url/gurl.h"
@@ -98,7 +100,8 @@ NetErrorHelperCore::FrameType GetFrameType(RenderFrame* render_frame) {
 
 #if defined(OS_ANDROID)
 bool IsOfflineContentOnNetErrorFeatureEnabled() {
-  return base::FeatureList::IsEnabled(features::kNewNetErrorPageUI);
+  return offline_pages::IsOfflinePagesEnabled() &&
+         base::FeatureList::IsEnabled(features::kNewNetErrorPageUI);
 }
 #else   // OS_ANDROID
 bool IsOfflineContentOnNetErrorFeatureEnabled() {
@@ -109,9 +112,10 @@ bool IsOfflineContentOnNetErrorFeatureEnabled() {
 #if defined(OS_ANDROID)
 bool IsAutoFetchFeatureEnabled() {
   // This feature is incompatible with OfflineContentOnNetError, so don't allow
-  // both.
+  // both. Disabled for touchless builds.
   return !IsOfflineContentOnNetErrorFeatureEnabled() &&
-         base::FeatureList::IsEnabled(features::kAutoFetchOnNetErrorPage);
+         base::FeatureList::IsEnabled(features::kAutoFetchOnNetErrorPage) &&
+         offline_pages::IsOfflinePagesEnabled();
 }
 #else   // OS_ANDROID
 bool IsAutoFetchFeatureEnabled() {
@@ -160,14 +164,11 @@ NetErrorHelper::NetErrorHelper(RenderFrame* render_frame)
   RenderThread::Get()->AddObserver(this);
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   bool auto_reload_enabled =
-      command_line->HasSwitch(switches::kEnableOfflineAutoReload);
-  bool auto_reload_visible_only =
-      command_line->HasSwitch(switches::kEnableOfflineAutoReloadVisibleOnly);
+      command_line->HasSwitch(switches::kEnableAutoReload);
   // TODO(mmenke): Consider only creating a NetErrorHelperCore for main frames.
   // subframes don't need any of the NetErrorHelperCore's extra logic.
   core_.reset(new NetErrorHelperCore(this,
                                      auto_reload_enabled,
-                                     auto_reload_visible_only,
                                      !render_frame->IsHidden()));
 
   render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
@@ -381,8 +382,16 @@ LocalizedError::PageState NetErrorHelper::GenerateLocalizedErrorPage(
   error_html->clear();
 
   int resource_id = IDR_NET_ERROR_HTML;
-  const base::StringPiece template_html(
+  std::string extracted_string;
+  base::StringPiece template_html(
       ui::ResourceBundle::GetSharedInstance().GetRawDataResource(resource_id));
+  if (ui::ResourceBundle::GetSharedInstance().IsGzipped(resource_id)) {
+    base::StringPiece compressed_html = template_html;
+    extracted_string.resize(compression::GetUncompressedSize(compressed_html));
+    template_html.set(extracted_string.data(), extracted_string.size());
+    bool success = compression::GzipUncompress(compressed_html, template_html);
+    DCHECK(success);
+  }
 
   LocalizedError::PageState page_state = LocalizedError::GetPageState(
       error.reason(), error.domain(), error.url(), is_failed_post,
@@ -482,6 +491,12 @@ void NetErrorHelper::FetchNavigationCorrections(
   correction_fetcher_->SetMethod("POST");
   correction_fetcher_->SetBody(navigation_correction_request_body);
   correction_fetcher_->SetHeader("Content-Type", "application/json");
+
+  // Since the page is trying to fetch cross-origin resources (which would
+  // be protected by CORB in no-cors mode), we need to ask for CORS.  See also
+  // https://crbug.com/932542.
+  correction_fetcher_->SetFetchRequestMode(
+      network::mojom::FetchRequestMode::kCors);
 
   // Prevent CORB from triggering on this request by setting an Origin header.
   correction_fetcher_->SetHeader("Origin", "null");

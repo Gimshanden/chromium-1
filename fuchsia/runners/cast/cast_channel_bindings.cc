@@ -24,41 +24,39 @@
 const char kMessagePortName[] = "cast.__platform__.channel";
 
 CastChannelBindings::CastChannelBindings(
-    chromium::web::Frame* frame,
+    fuchsia::web::Frame* frame,
     NamedMessagePortConnector* connector,
-    chromium::cast::CastChannelPtr channel_consumer,
-    base::OnceClosure on_error_closure)
+    chromium::cast::CastChannelPtr channel_consumer)
     : frame_(frame),
       connector_(connector),
-      on_error_closure_(std::move(on_error_closure)),
       channel_consumer_(std::move(channel_consumer)) {
   DCHECK(connector_);
   DCHECK(frame_);
 
-  channel_consumer_.set_error_handler([this](zx_status_t status) mutable {
-    ZX_LOG(ERROR, status) << " Agent disconnected";
-    std::move(on_error_closure_).Run();
+  channel_consumer_.set_error_handler([](zx_status_t status) mutable {
+    ZX_LOG(ERROR, status) << "Cast Channel FIDL client disconnected";
   });
 
   connector->Register(
       kMessagePortName,
       base::BindRepeating(&CastChannelBindings::OnMasterPortReceived,
-                          base::Unretained(this)),
-      frame_);
+                          base::Unretained(this)));
 
   base::FilePath assets_path;
   CHECK(base::PathService::Get(base::DIR_ASSETS, &assets_path));
-  frame_->AddJavaScriptBindings(
+  frame_->AddBeforeLoadJavaScript(
       static_cast<uint64_t>(CastPlatformBindingsId::CAST_CHANNEL), {"*"},
       cr_fuchsia::MemBufferFromFile(
           base::File(assets_path.AppendASCII(
                          "fuchsia/runners/cast/cast_channel_bindings.js"),
                      base::File::FLAG_OPEN | base::File::FLAG_READ)),
-      [](bool success) { CHECK(success) << "JavaScript injection error."; });
+      [](fuchsia::web::Frame_AddBeforeLoadJavaScript_Result result) {
+        CHECK(result.is_response()) << "JavaScript injection error.";
+      });
 }
 
 CastChannelBindings::~CastChannelBindings() {
-  connector_->Unregister(frame_, kMessagePortName);
+  connector_->Unregister(kMessagePortName);
 }
 
 void CastChannelBindings::OnMasterPortError() {
@@ -66,10 +64,10 @@ void CastChannelBindings::OnMasterPortError() {
 }
 
 void CastChannelBindings::OnMasterPortReceived(
-    chromium::web::MessagePortPtr port) {
+    fidl::InterfaceHandle<fuchsia::web::MessagePort> port) {
   DCHECK(port);
 
-  master_port_ = std::move(port);
+  master_port_ = port.Bind();
   master_port_.set_error_handler([this](zx_status_t status) {
     ZX_LOG_IF(WARNING, status != ZX_ERR_PEER_CLOSED, status)
         << "Cast Channel master port disconnected.";
@@ -80,25 +78,27 @@ void CastChannelBindings::OnMasterPortReceived(
 }
 
 void CastChannelBindings::OnCastChannelMessageReceived(
-    chromium::web::WebMessage message) {
-  if (!message.incoming_transfer ||
-      !message.incoming_transfer->is_message_port()) {
+    fuchsia::web::WebMessage message) {
+  if (!message.has_incoming_transfer() ||
+      !(message.incoming_transfer().size() == 1) ||
+      !message.incoming_transfer().at(0).is_message_port()) {
     LOG(WARNING) << "Received a CastChannel without a message port.";
     OnMasterPortError();
     return;
   }
 
-  SendChannelToConsumer(message.incoming_transfer->message_port().Bind());
+  SendChannelToConsumer(
+      message.mutable_incoming_transfer()->at(0).message_port().Bind());
 
   master_port_->ReceiveMessage(fit::bind_member(
       this, &CastChannelBindings::OnCastChannelMessageReceived));
 }
 
 void CastChannelBindings::SendChannelToConsumer(
-    chromium::web::MessagePortPtr channel) {
+    fuchsia::web::MessagePortPtr channel) {
   if (consumer_ready_for_port_) {
     consumer_ready_for_port_ = false;
-    channel_consumer_->OnOpened(
+    channel_consumer_->Open(
         std::move(channel),
         fit::bind_member(this, &CastChannelBindings::OnConsumerReadyForPort));
   } else {
@@ -112,7 +112,7 @@ void CastChannelBindings::OnConsumerReadyForPort() {
   consumer_ready_for_port_ = true;
   if (!connected_channel_queue_.empty()) {
     // Deliver the next enqueued channel.
-    chromium::web::MessagePortPtr next_port =
+    fuchsia::web::MessagePortPtr next_port =
         std::move(connected_channel_queue_.back());
     SendChannelToConsumer(std::move(next_port));
     connected_channel_queue_.pop_back();

@@ -6,8 +6,10 @@ package org.chromium.chrome.browser.tabmodel;
 
 import android.util.SparseArray;
 
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.List;
 
@@ -21,7 +23,7 @@ public class TabModelSelectorTabObserver extends EmptyTabObserver {
     private final SparseArray<Tab> mTabsToClose = new SparseArray<>();
 
     /**
-     * Constructs an observer that should be notified of tabs changes for all tabs owned
+     * Constructs an observer that should be notified of tab changes for all tabs owned
      * by a specified {@link TabModelSelector}.  Any Tabs created after this call will be
      * observed as well, and Tabs removed will no longer have their information broadcast.
      *
@@ -62,7 +64,10 @@ public class TabModelSelectorTabObserver extends EmptyTabObserver {
 
             @Override
             public void tabRemoved(Tab tab) {
-                tab.removeObserver(TabModelSelectorTabObserver.this);
+                // Post the removal of the observer so that other tab events are notified
+                // before removing the tab observer (e.g. detach tab from activity).
+                PostTask.postTask(UiThreadTaskTraits.DEFAULT,
+                        () -> tab.removeObserver(TabModelSelectorTabObserver.this));
                 onTabUnregistered(tab);
             }
 

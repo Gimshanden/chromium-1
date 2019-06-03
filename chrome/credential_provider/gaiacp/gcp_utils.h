@@ -196,6 +196,15 @@ HRESULT GetCommandLineForEntrypoint(HINSTANCE dll_handle,
                                     const wchar_t* entrypoint,
                                     base::CommandLine* command_line);
 
+// Looks up the name associated to the |sid| (if any). Returns an error on any
+// failure or no name is associated with the |sid|.
+HRESULT LookupLocalizedNameBySid(PSID sid, base::string16* localized_name);
+
+// Looks up the name associated to the well known |sid_type| (if any). Returns
+// an error on any failure or no name is associated with the |sid_type|.
+HRESULT LookupLocalizedNameForWellKnownSid(WELL_KNOWN_SID_TYPE sid_type,
+                                           base::string16* localized_name);
+
 // Handles the writing and deletion of a startup sentinel file used to ensure
 // that the GCPW does not crash continuously on startup and render the
 // winlogon process unusable.
@@ -210,14 +219,14 @@ base::string16 GetSelectedLanguage();
 
 // Securely clear a base::Value that may be a dictionary value that may
 // have a password field.
-void SecurelyClearDictionaryValue(std::unique_ptr<base::Value>* value);
+void SecurelyClearDictionaryValue(base::Optional<base::Value>* value);
 
 // Helpers to get strings from base::Values that are expected to be
 // DictionaryValues.
-base::string16 GetDictString(const base::Value* dict, const char* name);
+base::string16 GetDictString(const base::Value& dict, const char* name);
 base::string16 GetDictString(const std::unique_ptr<base::Value>& dict,
                              const char* name);
-std::string GetDictStringUTF8(const base::Value* dict, const char* name);
+std::string GetDictStringUTF8(const base::Value& dict, const char* name);
 std::string GetDictStringUTF8(const std::unique_ptr<base::Value>& dict,
                               const char* name);
 

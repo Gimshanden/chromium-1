@@ -301,12 +301,8 @@ _NAMED_TYPE_INFO = {
       'GL_TRANSFORM_FEEDBACK_ACTIVE',
       'GL_TRANSFORM_FEEDBACK_BUFFER_BINDING',
       'GL_TRANSFORM_FEEDBACK_PAUSED',
-      'GL_TRANSFORM_FEEDBACK_BUFFER_SIZE',
-      'GL_TRANSFORM_FEEDBACK_BUFFER_START',
       'GL_UNIFORM_BUFFER_BINDING',
       'GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT',
-      'GL_UNIFORM_BUFFER_SIZE',
-      'GL_UNIFORM_BUFFER_START',
       'GL_UNPACK_IMAGE_HEIGHT',
       'GL_UNPACK_ROW_LENGTH',
       'GL_UNPACK_SKIP_IMAGES',
@@ -748,6 +744,7 @@ _NAMED_TYPE_INFO = {
       'GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM',
       'GL_COMMANDS_COMPLETED_CHROMIUM',
       'GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM',
+      'GL_PROGRAM_COMPLETION_QUERY_CHROMIUM',
     ],
   },
   'RenderBufferParameter': {
@@ -3887,22 +3884,6 @@ _FUNCTION_INFO = {
     'extension': 'CHROMIUM_lose_context',
     'trace_level': 1,
   },
-  'GenSyncTokenCHROMIUM': {
-    'type': 'NoCommand',
-    'extension': "CHROMIUM_sync_point",
-  },
-  'GenUnverifiedSyncTokenCHROMIUM': {
-    'type': 'NoCommand',
-    'extension': "CHROMIUM_sync_point",
-  },
-  'VerifySyncTokensCHROMIUM' : {
-    'type': 'NoCommand',
-    'extension': "CHROMIUM_sync_point",
-  },
-  'WaitSyncTokenCHROMIUM': {
-    'type': 'NoCommand',
-    'extension': "CHROMIUM_sync_point",
-  },
   'DiscardBackbufferCHROMIUM': {
     'type': 'Custom',
     'extension': True,
@@ -4277,11 +4258,11 @@ _FUNCTION_INFO = {
     'extension': 'MESA_framebuffer_flip_y',
     'extension_flag': 'mesa_framebuffer_flip_y',
   },
-  'FramebufferTextureMultiviewLayeredANGLE': {
-    'decoder_func': 'DoFramebufferTextureMultiviewLayeredANGLE',
+  'FramebufferTextureMultiviewOVR': {
+    'decoder_func': 'DoFramebufferTextureMultiviewOVR',
     'unit_test': False,
-    'extension': 'ANGLE_multiview',
-    'extension_flag': 'angle_multiview',
+    'extension': 'OVR_multiview2',
+    'extension_flag': 'ovr_multiview2',
     'trace_level': 1,
     'es3': True
   },

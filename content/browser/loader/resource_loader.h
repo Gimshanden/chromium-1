@@ -73,10 +73,11 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
                           const net::RedirectInfo& redirect_info,
                           bool* defer) override;
   void OnAuthRequired(net::URLRequest* request,
-                      net::AuthChallengeInfo* info) override;
+                      const net::AuthChallengeInfo& info) override;
   void OnCertificateRequested(net::URLRequest* request,
                               net::SSLCertRequestInfo* info) override;
   void OnSSLCertificateError(net::URLRequest* request,
+                             int net_error,
                              const net::SSLInfo& info,
                              bool fatal) override;
   void OnResponseStarted(net::URLRequest* request, int net_error) override;

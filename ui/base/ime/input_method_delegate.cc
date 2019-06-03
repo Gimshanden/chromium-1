@@ -4,7 +4,6 @@
 
 #include "ui/base/ime/input_method_delegate.h"
 
-#include "base/callback.h"
 #include "ui/events/event.h"
 
 namespace ui {

@@ -31,15 +31,12 @@ class ArcOemCryptoClient;
 class CecServiceClient;
 class CiceroneClient;
 class ConciergeClient;
-class CrasAudioClient;
 class CrosDisksClient;
 class DBusClientsBrowser;
-class DBusClientsCommon;
 class DBusThreadManagerSetter;
 class DebugDaemonClient;
-class DiagnosticsdClient;
 class EasyUnlockClient;
-class GsmSMSClient;
+class GnubbyClient;
 class ImageBurnerClient;
 class ImageLoaderClient;
 class LorgnetteManagerClient;
@@ -57,6 +54,8 @@ class SmbProviderClient;
 class SMSClient;
 class UpdateEngineClient;
 class VirtualFileProviderClient;
+class VmPluginDispatcherClient;
+class WilcoDtcSupportdClient;
 
 // THIS CLASS IS BEING DEPRECATED. See README.md for guidelines and
 // https://crbug.com/647367 for details.
@@ -123,29 +122,32 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) DBusThreadManager {
   CecServiceClient* GetCecServiceClient();
   CiceroneClient* GetCiceroneClient();
   ConciergeClient* GetConciergeClient();
-  CrasAudioClient* GetCrasAudioClient();
   CrosDisksClient* GetCrosDisksClient();
   DebugDaemonClient* GetDebugDaemonClient();
-  DiagnosticsdClient* GetDiagnosticsdClient();
   EasyUnlockClient* GetEasyUnlockClient();
-  GsmSMSClient* GetGsmSMSClient();
+  GnubbyClient* GetGnubbyClient();
   ImageBurnerClient* GetImageBurnerClient();
   ImageLoaderClient* GetImageLoaderClient();
   LorgnetteManagerClient* GetLorgnetteManagerClient();
-  ModemMessagingClient* GetModemMessagingClient();
   OobeConfigurationClient* GetOobeConfigurationClient();
   RuntimeProbeClient* GetRuntimeProbeClient();
   SeneschalClient* GetSeneschalClient();
+  SmbProviderClient* GetSmbProviderClient();
+  UpdateEngineClient* GetUpdateEngineClient();
+  VirtualFileProviderClient* GetVirtualFileProviderClient();
+  VmPluginDispatcherClient* GetVmPluginDispatcherClient();
+  WilcoDtcSupportdClient* GetWilcoDtcSupportdClient();
+
+  // DEPRECATED, DO NOT USE. The static getter for each of these classes should
+  // be used instead. TODO(stevenjb): Remove. https://crbug.com/948390.
+  ModemMessagingClient* GetModemMessagingClient();
+  SMSClient* GetSMSClient();
   ShillDeviceClient* GetShillDeviceClient();
   ShillIPConfigClient* GetShillIPConfigClient();
   ShillManagerClient* GetShillManagerClient();
   ShillProfileClient* GetShillProfileClient();
   ShillServiceClient* GetShillServiceClient();
   ShillThirdPartyVpnDriverClient* GetShillThirdPartyVpnDriverClient();
-  SmbProviderClient* GetSmbProviderClient();
-  SMSClient* GetSMSClient();
-  UpdateEngineClient* GetUpdateEngineClient();
-  VirtualFileProviderClient* GetVirtualFileProviderClient();
 
  private:
   friend class DBusThreadManagerSetter;
@@ -165,9 +167,6 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) DBusThreadManager {
   // Whether to use real or fake dbus clients.
   const bool use_real_clients_;
 
-  // Clients used by multiple processes.
-  std::unique_ptr<DBusClientsCommon> clients_common_;
-
   // Clients used only by the browser process. Null in other processes.
   std::unique_ptr<DBusClientsBrowser> clients_browser_;
 
@@ -181,20 +180,13 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) DBusThreadManagerSetter {
 
   void SetCiceroneClient(std::unique_ptr<CiceroneClient> client);
   void SetConciergeClient(std::unique_ptr<ConciergeClient> client);
-  void SetCrasAudioClient(std::unique_ptr<CrasAudioClient> client);
   void SetCrosDisksClient(std::unique_ptr<CrosDisksClient> client);
   void SetDebugDaemonClient(std::unique_ptr<DebugDaemonClient> client);
+  void SetGnubbyClient(std::unique_ptr<GnubbyClient> client);
   void SetImageBurnerClient(std::unique_ptr<ImageBurnerClient> client);
   void SetImageLoaderClient(std::unique_ptr<ImageLoaderClient> client);
   void SetSeneschalClient(std::unique_ptr<SeneschalClient> client);
   void SetRuntimeProbeClient(std::unique_ptr<RuntimeProbeClient> client);
-  void SetShillDeviceClient(std::unique_ptr<ShillDeviceClient> client);
-  void SetShillIPConfigClient(std::unique_ptr<ShillIPConfigClient> client);
-  void SetShillManagerClient(std::unique_ptr<ShillManagerClient> client);
-  void SetShillServiceClient(std::unique_ptr<ShillServiceClient> client);
-  void SetShillProfileClient(std::unique_ptr<ShillProfileClient> client);
-  void SetShillThirdPartyVpnDriverClient(
-      std::unique_ptr<ShillThirdPartyVpnDriverClient> client);
   void SetSmbProviderClient(std::unique_ptr<SmbProviderClient> client);
   void SetUpdateEngineClient(std::unique_ptr<UpdateEngineClient> client);
 

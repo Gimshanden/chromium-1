@@ -45,14 +45,13 @@ using base::Time;
 
 namespace {
 
-std::unique_ptr<base::Value> CookieKeyedLoadNetLogCallback(
-    const std::string& key,
-    net::NetLogCaptureMode capture_mode) {
+base::Value CookieKeyedLoadNetLogCallback(const std::string& key,
+                                          net::NetLogCaptureMode capture_mode) {
   if (!capture_mode.include_cookies_and_credentials())
-    return nullptr;
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString("key", key);
-  return dict;
+    return base::Value();
+  base::DictionaryValue dict;
+  dict.SetString("key", key);
+  return std::move(dict);
 }
 
 // Used to populate a histogram for problems when loading cookies.
@@ -158,13 +157,22 @@ namespace {
 
 // Version number of the database.
 //
-// Version 10 - 2018/02/13 - https://chromium-review.googlesource.com/906675
+// Version 11 - 2019/04/17 - https://crrev.com/c/1570416
+// Version 10 - 2018/02/13 - https://crrev.com/c/906675
 // Version 9  - 2015/04/17 - https://codereview.chromium.org/1083623003
+//
+// Unsupported versions:
 // Version 8  - 2015/02/23 - https://codereview.chromium.org/876973003
 // Version 7  - 2013/12/16 - https://codereview.chromium.org/24734007
 // Version 6  - 2013/04/23 - https://codereview.chromium.org/14208017
 // Version 5  - 2011/12/05 - https://codereview.chromium.org/8533013
 // Version 4  - 2009/09/01 - https://codereview.chromium.org/183021
+//
+// Version 11 renames the "firstpartyonly" column to "samesite", and changes any
+// stored values of kCookieSameSiteNoRestriction into
+// kCookieSameSiteUnspecified to reflect the fact that those cookies were set
+// without a SameSite attribute specified. A value of kCookieSameSiteExtended
+// for "samesite" is now also supported.
 //
 // Version 10 removes the uniqueness constraint on the creation time (which
 // was not propagated up the stack and caused problems in
@@ -206,8 +214,8 @@ namespace {
 // Version 3 updated the database to include the last access time, so we can
 // expire them in decreasing order of use when we've reached the maximum
 // number of cookies.
-const int kCurrentVersionNumber = 10;
-const int kCompatibleVersionNumber = 10;
+const int kCurrentVersionNumber = 11;
+const int kCompatibleVersionNumber = 11;
 
 }  // namespace
 
@@ -471,9 +479,11 @@ CookiePriority DBCookiePriorityToCookiePriority(DBCookiePriority value) {
 
 // Possible values for the 'samesite' column
 enum DBCookieSameSite {
+  kCookieSameSiteUnspecified = -1,
   kCookieSameSiteNoRestriction = 0,
   kCookieSameSiteLax = 1,
   kCookieSameSiteStrict = 2,
+  kCookieSameSiteExtended = 3
 };
 
 DBCookieSameSite CookieSameSiteToDBCookieSameSite(CookieSameSite value) {
@@ -484,10 +494,14 @@ DBCookieSameSite CookieSameSiteToDBCookieSameSite(CookieSameSite value) {
       return kCookieSameSiteLax;
     case CookieSameSite::STRICT_MODE:
       return kCookieSameSiteStrict;
+    case CookieSameSite::EXTENDED_MODE:
+      return kCookieSameSiteExtended;
+    case CookieSameSite::UNSPECIFIED:
+      return kCookieSameSiteUnspecified;
   }
 
   NOTREACHED();
-  return kCookieSameSiteNoRestriction;
+  return kCookieSameSiteUnspecified;
 }
 
 CookieSameSite DBCookieSameSiteToCookieSameSite(DBCookieSameSite value) {
@@ -498,10 +512,14 @@ CookieSameSite DBCookieSameSiteToCookieSameSite(DBCookieSameSite value) {
       return CookieSameSite::LAX_MODE;
     case kCookieSameSiteStrict:
       return CookieSameSite::STRICT_MODE;
+    case kCookieSameSiteExtended:
+      return CookieSameSite::EXTENDED_MODE;
+    case kCookieSameSiteUnspecified:
+      return CookieSameSite::UNSPECIFIED;
   }
 
   NOTREACHED();
-  return CookieSameSite::DEFAULT_MODE;
+  return CookieSameSite::UNSPECIFIED;
 }
 
 // Increments a specified TimeDelta by the duration between this object's
@@ -531,7 +549,7 @@ bool CreateV10Schema(sql::Database* db) {
   DCHECK(!db->DoesTableExist("cookies"));
 
   std::string stmt(base::StringPrintf(
-      "CREATE TABLE cookies ("
+      "CREATE TABLE cookies("
       "creation_utc INTEGER NOT NULL,"
       "host_key TEXT NOT NULL,"
       "name TEXT NOT NULL,"
@@ -540,15 +558,45 @@ bool CreateV10Schema(sql::Database* db) {
       "expires_utc INTEGER NOT NULL,"
       "is_secure INTEGER NOT NULL,"
       "is_httponly INTEGER NOT NULL,"
-      "last_access_utc INTEGER NOT NULL, "
-      "has_expires INTEGER NOT NULL DEFAULT 1, "
+      "last_access_utc INTEGER NOT NULL,"
+      "has_expires INTEGER NOT NULL DEFAULT 1,"
       "is_persistent INTEGER NOT NULL DEFAULT 1,"
       "priority INTEGER NOT NULL DEFAULT %d,"
       "encrypted_value BLOB DEFAULT '',"
       "firstpartyonly INTEGER NOT NULL DEFAULT %d,"
       "UNIQUE (host_key, name, path))",
       CookiePriorityToDBCookiePriority(COOKIE_PRIORITY_DEFAULT),
-      CookieSameSiteToDBCookieSameSite(CookieSameSite::DEFAULT_MODE)));
+      CookieSameSiteToDBCookieSameSite(CookieSameSite::NO_RESTRICTION)));
+  if (!db->Execute(stmt.c_str()))
+    return false;
+
+  return true;
+}
+
+// Initializes the cookies table, returning true on success.
+// The table cannot exist when calling this function.
+bool CreateV11Schema(sql::Database* db) {
+  DCHECK(!db->DoesTableExist("cookies"));
+
+  std::string stmt(base::StringPrintf(
+      "CREATE TABLE cookies("
+      "creation_utc INTEGER NOT NULL,"
+      "host_key TEXT NOT NULL,"
+      "name TEXT NOT NULL,"
+      "value TEXT NOT NULL,"
+      "path TEXT NOT NULL,"
+      "expires_utc INTEGER NOT NULL,"
+      "is_secure INTEGER NOT NULL,"
+      "is_httponly INTEGER NOT NULL,"
+      "last_access_utc INTEGER NOT NULL,"
+      "has_expires INTEGER NOT NULL DEFAULT 1,"
+      "is_persistent INTEGER NOT NULL DEFAULT 1,"
+      "priority INTEGER NOT NULL DEFAULT %d,"
+      "encrypted_value BLOB DEFAULT '',"
+      "samesite INTEGER NOT NULL DEFAULT %d,"
+      "UNIQUE (host_key, name, path))",
+      CookiePriorityToDBCookiePriority(COOKIE_PRIORITY_DEFAULT),
+      CookieSameSiteToDBCookieSameSite(CookieSameSite::UNSPECIFIED)));
   if (!db->Execute(stmt.c_str()))
     return false;
 
@@ -711,7 +759,7 @@ bool SQLitePersistentCookieStore::Backend::CreateDatabaseSchema() {
   if (db()->DoesTableExist("cookies"))
     return true;
 
-  return CreateV10Schema(db());
+  return CreateV11Schema(db());
 }
 
 bool SQLitePersistentCookieStore::Backend::DoInitializeDatabase() {
@@ -806,14 +854,14 @@ bool SQLitePersistentCookieStore::Backend::LoadCookiesForDomains(
     smt.Assign(db()->GetCachedStatement(
         SQL_FROM_HERE,
         "SELECT creation_utc, host_key, name, value, encrypted_value, path, "
-        "expires_utc, is_secure, is_httponly, firstpartyonly, "
+        "expires_utc, is_secure, is_httponly, samesite, "
         "last_access_utc, has_expires, is_persistent, priority "
         "FROM cookies WHERE host_key = ?"));
   } else {
     smt.Assign(db()->GetCachedStatement(
         SQL_FROM_HERE,
         "SELECT creation_utc, host_key, name, value, encrypted_value, path, "
-        "expires_utc, is_secure, is_httponly, firstpartyonly, last_access_utc, "
+        "expires_utc, is_secure, is_httponly, samesite, last_access_utc, "
         "has_expires, is_persistent, priority FROM cookies WHERE host_key = ? "
         "AND is_persistent = 1"));
   }
@@ -911,174 +959,6 @@ bool SQLitePersistentCookieStore::Backend::MakeCookiesFromSQLStatement(
 base::Optional<int>
 SQLitePersistentCookieStore::Backend::DoMigrateDatabaseSchema() {
   int cur_version = meta_table()->GetVersionNumber();
-  if (cur_version == 2) {
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-    if (!db()->Execute("ALTER TABLE cookies ADD COLUMN last_access_utc "
-                       "INTEGER DEFAULT 0") ||
-        !db()->Execute("UPDATE cookies SET last_access_utc = creation_utc")) {
-      LOG(WARNING) << "Unable to update cookie database to version 3.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-  }
-
-  if (cur_version == 3) {
-    // The time epoch changed for Mac & Linux in this version to match Windows.
-    // This patch came after the main epoch change happened, so some
-    // developers have "good" times for cookies added by the more recent
-    // versions. So we have to be careful to only update times that are under
-    // the old system (which will appear to be from before 1970 in the new
-    // system). The magic number used below is 1970 in our time units.
-    sql::Transaction transaction(db());
-    transaction.Begin();
-#if !defined(OS_WIN)
-    ignore_result(db()->Execute(
-        "UPDATE cookies "
-        "SET creation_utc = creation_utc + 11644473600000000 "
-        "WHERE rowid IN "
-        "(SELECT rowid FROM cookies WHERE "
-        "creation_utc > 0 AND creation_utc < 11644473600000000)"));
-    ignore_result(
-        db()->Execute("UPDATE cookies "
-                      "SET expires_utc = expires_utc + 11644473600000000 "
-                      "WHERE rowid IN "
-                      "(SELECT rowid FROM cookies WHERE "
-                      "expires_utc > 0 AND expires_utc < 11644473600000000)"));
-    ignore_result(db()->Execute(
-        "UPDATE cookies "
-        "SET last_access_utc = last_access_utc + 11644473600000000 "
-        "WHERE rowid IN "
-        "(SELECT rowid FROM cookies WHERE "
-        "last_access_utc > 0 AND last_access_utc < 11644473600000000)"));
-#endif
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    transaction.Commit();
-  }
-
-  if (cur_version == 4) {
-    const base::TimeTicks start_time = base::TimeTicks::Now();
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-    if (!db()->Execute("ALTER TABLE cookies "
-                       "ADD COLUMN has_expires INTEGER DEFAULT 1") ||
-        !db()->Execute("ALTER TABLE cookies "
-                       "ADD COLUMN persistent INTEGER DEFAULT 1")) {
-      LOG(WARNING) << "Unable to update cookie database to version 5.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-    UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV5",
-                        base::TimeTicks::Now() - start_time);
-  }
-
-  if (cur_version == 5) {
-    const base::TimeTicks start_time = base::TimeTicks::Now();
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-    // Alter the table to add the priority column with a default value.
-    std::string stmt(base::StringPrintf(
-        "ALTER TABLE cookies ADD COLUMN priority INTEGER DEFAULT %d",
-        CookiePriorityToDBCookiePriority(COOKIE_PRIORITY_DEFAULT)));
-    if (!db()->Execute(stmt.c_str())) {
-      LOG(WARNING) << "Unable to update cookie database to version 6.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-    UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV6",
-                        base::TimeTicks::Now() - start_time);
-  }
-
-  if (cur_version == 6) {
-    const base::TimeTicks start_time = base::TimeTicks::Now();
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-    // Alter the table to add empty "encrypted value" column.
-    if (!db()->Execute("ALTER TABLE cookies "
-                       "ADD COLUMN encrypted_value BLOB DEFAULT ''")) {
-      LOG(WARNING) << "Unable to update cookie database to version 7.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-    UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV7",
-                        base::TimeTicks::Now() - start_time);
-  }
-
-  if (cur_version == 7) {
-    const base::TimeTicks start_time = base::TimeTicks::Now();
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-    // Alter the table to add a 'firstpartyonly' column.
-    if (!db()->Execute("ALTER TABLE cookies "
-                       "ADD COLUMN firstpartyonly INTEGER DEFAULT 0")) {
-      LOG(WARNING) << "Unable to update cookie database to version 8.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-    UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV8",
-                        base::TimeTicks::Now() - start_time);
-  }
-
-  if (cur_version == 8) {
-    const base::TimeTicks start_time = base::TimeTicks::Now();
-    sql::Transaction transaction(db());
-    if (!transaction.Begin())
-      return base::nullopt;
-
-    if (!db()->Execute("DROP INDEX IF EXISTS cookie_times")) {
-      LOG(WARNING)
-          << "Unable to drop table cookie_times in update to version 9.";
-      return base::nullopt;
-    }
-
-    if (!db()->Execute(
-            "CREATE INDEX IF NOT EXISTS domain ON cookies(host_key)")) {
-      LOG(WARNING) << "Unable to create index domain in update to version 9.";
-      return base::nullopt;
-    }
-
-    if (!db()->Execute(
-            "CREATE INDEX IF NOT EXISTS is_transient ON cookies(persistent) "
-            "where persistent != 1")) {
-      LOG(WARNING)
-          << "Unable to create index is_transient in update to version 9.";
-      return base::nullopt;
-    }
-    ++cur_version;
-    meta_table()->SetVersionNumber(cur_version);
-    meta_table()->SetCompatibleVersionNumber(
-        std::min(cur_version, kCompatibleVersionNumber));
-    transaction.Commit();
-    UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV9",
-                        base::TimeTicks::Now() - start_time);
-  }
-
   if (cur_version == 9) {
     const base::TimeTicks start_time = base::TimeTicks::Now();
     sql::Transaction transaction(db());
@@ -1124,6 +1004,49 @@ SQLitePersistentCookieStore::Backend::DoMigrateDatabaseSchema() {
     transaction.Commit();
     UMA_HISTOGRAM_TIMES("Cookie.TimeDatabaseMigrationToV10",
                         base::TimeTicks::Now() - start_time);
+  }
+
+  if (cur_version == 10) {
+    SCOPED_UMA_HISTOGRAM_TIMER("Cookie.TimeDatabaseMigrationToV11");
+    sql::Transaction transaction(db());
+    if (!transaction.Begin())
+      return base::nullopt;
+
+    // Copy the data into a new table, renaming the firstpartyonly column to
+    // samesite.
+    if (!db()->Execute("DROP TABLE IF EXISTS cookies_old; "
+                       "ALTER TABLE cookies RENAME TO cookies_old"))
+      return base::nullopt;
+    if (!CreateV11Schema(db()))
+      return base::nullopt;
+    if (!db()->Execute(
+            "INSERT INTO cookies "
+            "(creation_utc, host_key, name, value, path, expires_utc, "
+            "is_secure, is_httponly, last_access_utc, has_expires, "
+            "is_persistent, priority, encrypted_value, samesite) "
+            "SELECT creation_utc, host_key, name, value, path, expires_utc, "
+            "       is_secure, is_httponly, last_access_utc, has_expires, "
+            "       is_persistent, priority, encrypted_value, firstpartyonly "
+            "FROM cookies_old")) {
+      return base::nullopt;
+    }
+    if (!db()->Execute("DROP TABLE cookies_old"))
+      return base::nullopt;
+
+    // Update stored SameSite values of kCookieSameSiteNoRestriction into
+    // kCookieSameSiteUnspecified.
+    std::string update_stmt(base::StringPrintf(
+        "UPDATE cookies SET samesite=%d WHERE samesite=%d",
+        CookieSameSiteToDBCookieSameSite(CookieSameSite::UNSPECIFIED),
+        CookieSameSiteToDBCookieSameSite(CookieSameSite::NO_RESTRICTION)));
+    if (!db()->Execute(update_stmt.c_str()))
+      return base::nullopt;
+
+    ++cur_version;
+    meta_table()->SetVersionNumber(cur_version);
+    meta_table()->SetCompatibleVersionNumber(
+        std::min(cur_version, kCompatibleVersionNumber));
+    transaction.Commit();
   }
 
   // Put future migration cases here.
@@ -1224,9 +1147,11 @@ void SQLitePersistentCookieStore::Backend::DoCommit() {
 
   sql::Statement add_smt(db()->GetCachedStatement(
       SQL_FROM_HERE,
+      // TODO(chlily): These are out of order with respect to the schema
+      // declaration. Fix this.
       "INSERT INTO cookies (creation_utc, host_key, name, value, "
       "encrypted_value, path, expires_utc, is_secure, is_httponly, "
-      "firstpartyonly, last_access_utc, has_expires, is_persistent, priority) "
+      "samesite, last_access_utc, has_expires, is_persistent, priority) "
       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
   if (!add_smt.is_valid())
     return;

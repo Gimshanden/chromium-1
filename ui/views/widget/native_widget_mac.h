@@ -16,13 +16,14 @@
 class NativeWidgetMacNSWindow;
 #endif
 
-namespace views_bridge_mac {
+namespace remote_cocoa {
+class ApplicationHost;
 namespace mojom {
 class BridgedNativeWidget;
 class CreateWindowParams;
 class ValidateUserInterfaceItemResult;
 }  // namespace mojom
-}  // namespace views_bridge_mac
+}  // namespace remote_cocoa
 
 namespace views {
 namespace test {
@@ -31,7 +32,6 @@ class MockNativeWidgetMac;
 class WidgetTest;
 }
 
-class BridgeFactoryHost;
 class BridgedNativeWidgetImpl;
 class BridgedNativeWidgetHostImpl;
 
@@ -69,7 +69,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   // -[NSUserInterfaceValidations validateUserInterfaceItem].
   virtual void ValidateUserInterfaceItem(
       int32_t command,
-      views_bridge_mac::mojom::ValidateUserInterfaceItemResult* result) {}
+      remote_cocoa::mojom::ValidateUserInterfaceItemResult* result) {}
 
   // Execute the chrome command |command| with |window_open_disposition|. If
   // |is_before_first_responder| then only call ExecuteCommand if the command
@@ -185,7 +185,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
  protected:
   virtual void PopulateCreateWindowParams(
       const Widget::InitParams& widget_params,
-      views_bridge_mac::mojom::CreateWindowParams* params) {}
+      remote_cocoa::mojom::CreateWindowParams* params) {}
 
   // Creates the NSWindow that will be passed to the BridgedNativeWidgetImpl.
   // Called by InitNativeWidget. The return value will be autoreleased.
@@ -194,12 +194,12 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   // are autoreleased, and will crash if the window has a more precise
   // lifetime.
   virtual NativeWidgetMacNSWindow* CreateNSWindow(
-      const views_bridge_mac::mojom::CreateWindowParams* params);
+      const remote_cocoa::mojom::CreateWindowParams* params);
 
   // Return the BridgeFactoryHost that is to be used for creating this window
   // and all of its child windows. This will return nullptr if the native
   // windows are to be created in the current process.
-  virtual BridgeFactoryHost* GetBridgeFactoryHost();
+  virtual remote_cocoa::ApplicationHost* GetRemoteCocoaApplicationHost();
 
   // Called after the window has been initialized. Allows subclasses to perform
   // additional initialization.
@@ -208,12 +208,8 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   // Optional hook for subclasses invoked by WindowDestroying().
   virtual void OnWindowDestroying(gfx::NativeWindow window) {}
 
-  // Redispatch a keyboard event using the widget's window's CommandDispatcher.
-  // Return true if the event is handled.
-  bool RedispatchKeyEvent(NSEvent* event);
-
   internal::NativeWidgetDelegate* delegate() { return delegate_; }
-  views_bridge_mac::mojom::BridgedNativeWidget* bridge() const;
+  remote_cocoa::mojom::BridgedNativeWidget* bridge() const;
   BridgedNativeWidgetImpl* bridge_impl() const;
   BridgedNativeWidgetHostImpl* bridge_host() const {
     return bridge_host_.get();

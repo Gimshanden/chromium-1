@@ -22,7 +22,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/component_updater/crl_set_component_installer.h"
-#include "chrome/browser/component_updater/sth_set_component_installer.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/chrome_mojo_proxy_resolver_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -40,13 +39,16 @@
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "components/variations/variations_associated_data.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/cors_exempt_headers.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mime_handler_view_mode.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/common/user_agent.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
@@ -171,13 +173,6 @@ network::mojom::HttpAuthStaticParamsPtr CreateHttpAuthStaticParams(
       local_state->GetString(prefs::kGSSAPILibraryName);
 #endif
 
-#if defined(OS_CHROMEOS)
-  policy::BrowserPolicyConnectorChromeOS* connector =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  auth_static_params->allow_gssapi_library_load =
-      connector->IsActiveDirectoryManaged();
-#endif
-
   return auth_static_params;
 }
 
@@ -210,6 +205,14 @@ network::mojom::HttpAuthDynamicParamsPtr CreateHttpAuthDynamicParams(
   auth_dynamic_params->android_negotiate_account_type =
       local_state->GetString(prefs::kAuthAndroidNegotiateAccountType);
 #endif  // defined(OS_ANDROID)
+
+#if defined(OS_CHROMEOS)
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
+  auth_dynamic_params->allow_gssapi_library_load =
+      connector->IsActiveDirectoryManaged() ||
+      local_state->GetBoolean(prefs::kKerberosEnabled);
+#endif
 
   return auth_dynamic_params;
 }
@@ -445,6 +448,10 @@ SystemNetworkContextManager::SystemNetworkContextManager(
                              auth_pref_callback);
 #endif  // defined(OS_ANDROID)
 
+#if defined(OS_CHROMEOS)
+  pref_change_registrar_.Add(prefs::kKerberosEnabled, auth_pref_callback);
+#endif  // defined(OS_CHROMEOS)
+
   enable_referrers_.Init(
       prefs::kEnableReferrers, local_state_,
       base::BindRepeating(&SystemNetworkContextManager::UpdateReferrersEnabled,
@@ -500,7 +507,6 @@ void SystemNetworkContextManager::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kEnableReferrers, true);
 
   registry->RegisterBooleanPref(prefs::kQuickCheckEnabled, true);
-  registry->RegisterBooleanPref(prefs::kPacHttpsUrlStrippingEnabled, true);
 }
 
 void SystemNetworkContextManager::OnNetworkServiceCreated(
@@ -514,6 +520,48 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
   network_service->SetUpHttpAuth(CreateHttpAuthStaticParams(local_state_));
   network_service->ConfigureHttpAuthPrefs(
       CreateHttpAuthDynamicParams(local_state_));
+
+  // TODO(lukasza): https://crbug.com/944162: Once
+  // kMimeHandlerViewInCrossProcessFrame feature ships, unconditionally include
+  // the MIME types below in GetNeverSniffedMimeTypes in
+  // services/network/cross_origin_read_blocking.cc.  Without
+  // kMimeHandlerViewInCrossProcessFrame feature, PDFs and other similar
+  // MimeHandlerView-handled resources may be fetched from a cross-origin
+  // renderer (see https://crbug.com/929300).
+  if (content::MimeHandlerViewMode::UsesCrossProcessFrame()) {
+    network_service->AddExtraMimeTypesForCorb(
+        {"application/msexcel",
+         "application/mspowerpoint",
+         "application/msword",
+         "application/msword-template",
+         "application/pdf",
+         "application/vnd.ces-quickpoint",
+         "application/vnd.ces-quicksheet",
+         "application/vnd.ces-quickword",
+         "application/vnd.ms-excel",
+         "application/vnd.ms-excel.sheet.macroenabled.12",
+         "application/vnd.ms-powerpoint",
+         "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+         "application/vnd.ms-word",
+         "application/vnd.ms-word.document.12",
+         "application/vnd.ms-word.document.macroenabled.12",
+         "application/vnd.msword",
+         "application/"
+         "vnd.openxmlformats-officedocument.presentationml.presentation",
+         "application/"
+         "vnd.openxmlformats-officedocument.presentationml.template",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+         "application/"
+         "vnd.openxmlformats-officedocument.wordprocessingml.document",
+         "application/"
+         "vnd.openxmlformats-officedocument.wordprocessingml.template",
+         "application/vnd.presentation-openxml",
+         "application/vnd.presentation-openxmlm",
+         "application/vnd.spreadsheet-openxml",
+         "application/vnd.wordprocessing-openxml",
+         "text/csv"});
+  }
 
   // The system NetworkContext must be created first, since it sets
   // |primary_network_context| to true.
@@ -552,10 +600,6 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
 
   // Asynchronously reapply the most recently received CRLSet (if any).
   component_updater::CRLSetPolicy::ReconfigureAfterNetworkRestart();
-
-  // Asynchronously reapply the most recently received STHs (if any).
-  component_updater::STHSetComponentInstallerPolicy::
-      ReconfigureAfterNetworkRestart();
 }
 
 void SystemNetworkContextManager::DisableQuic() {
@@ -586,9 +630,10 @@ network::mojom::NetworkContextParamsPtr
 SystemNetworkContextManager::CreateDefaultNetworkContextParams() {
   network::mojom::NetworkContextParamsPtr network_context_params =
       network::mojom::NetworkContextParams::New();
+  content::UpdateCorsExemptHeader(network_context_params.get());
+  variations::UpdateCorsExemptHeaderForVariations(network_context_params.get());
 
-  network_context_params->enable_brotli =
-      base::FeatureList::IsEnabled(features::kBrotliEncoding);
+  network_context_params->enable_brotli = true;
 
   network_context_params->user_agent = GetUserAgent();
 
@@ -618,15 +663,12 @@ SystemNetworkContextManager::CreateDefaultNetworkContextParams() {
       LOG(ERROR) << "Cannot use V8 Proxy resolver in single process mode.";
     } else {
       network_context_params->proxy_resolver_factory =
-          ChromeMojoProxyResolverFactory::CreateWithStrongBinding()
-              .PassInterface();
+          ChromeMojoProxyResolverFactory::CreateWithSelfOwnedReceiver();
     }
   }
 
   network_context_params->pac_quick_check_enabled =
       local_state_->GetBoolean(prefs::kQuickCheckEnabled);
-  network_context_params->dangerously_allow_pac_access_to_secure_urls =
-      !local_state_->GetBoolean(prefs::kPacHttpsUrlStrippingEnabled);
 
   // Use the SystemNetworkContextManager to populate and update SSL
   // configuration. The SystemNetworkContextManager is owned by the
@@ -643,7 +685,6 @@ SystemNetworkContextManager::CreateDefaultNetworkContextParams() {
     network::mojom::CTLogInfoPtr log_info = network::mojom::CTLogInfo::New();
     log_info->public_key = std::string(ct_log.log_key, ct_log.log_key_length);
     log_info->name = ct_log.log_name;
-    log_info->dns_api_endpoint = ct_log.log_dns_domain;
     network_context_params->ct_logs.push_back(std::move(log_info));
   }
 
@@ -726,8 +767,7 @@ SystemNetworkContextManager::CreateNetworkContextParams() {
 
   network_context_params->primary_network_context = true;
 
-  proxy_config_monitor_.AddToNetworkContextParams(
-      network_context_params.get());
+  proxy_config_monitor_.AddToNetworkContextParams(network_context_params.get());
 
   return network_context_params;
 }

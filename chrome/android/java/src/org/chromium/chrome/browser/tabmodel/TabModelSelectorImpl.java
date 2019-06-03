@@ -193,6 +193,16 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
             public void onNavigationEntriesDeleted(Tab tab) {
                 mTabSaver.addTabToSaveQueue(tab);
             }
+
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean attached) {
+                if (!attached) getModel(tab.isIncognito()).removeTab(tab);
+            }
+
+            @Override
+            public void onCloseContents(Tab tab) {
+                closeTab(tab);
+            }
         };
     }
 

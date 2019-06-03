@@ -10,9 +10,9 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/unguessable_token.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker_mode.mojom-shared.h"
 #include "third_party/blink/public/platform/code_cache_loader.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_document_subresource_filter.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -55,12 +55,6 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
   REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
 
   virtual ~WebWorkerFetchContext() = default;
-
-  // Used to copy a worker fetch context between worker threads.
-  virtual scoped_refptr<WebWorkerFetchContext> CloneForNestedWorker(
-      scoped_refptr<base::SingleThreadTaskRunner>) {
-    return nullptr;
-  }
 
   // Set a raw pointer of a WaitableEvent which will be signaled from the main
   // thread when the worker's GlobalScope is terminated, which will terminate
@@ -112,7 +106,7 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
 
   // The top-frame-origin for the worker. For a dedicated worker this is the
   // top-frame origin of the page that created the worker. For a shared worker
-  // this is unset.
+  // or a service worker this is unset.
   virtual base::Optional<WebSecurityOrigin> TopFrameOrigin() const = 0;
 
   // Reports the certificate error to the browser process.
@@ -124,7 +118,7 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
   virtual void DidRunInsecureContent(const WebSecurityOrigin&,
                                      const WebURL& insecure_url) {}
 
-  virtual void SetApplicationCacheHostID(int id) {}
+  virtual void SetApplicationCacheHostID(const base::UnguessableToken& id) {}
 
   // Sets the builder object of WebDocumentSubresourceFilter on the main thread
   // which will be used in TakeSubresourceFilter() to create a

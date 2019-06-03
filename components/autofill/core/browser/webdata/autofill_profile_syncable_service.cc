@@ -14,13 +14,13 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/autofill_profile_comparator.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile_comparator.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
 // TODO(crbug.com/904390): Remove when the investigation is over.
 #include "components/autofill/core/browser/autofill_profile_sync_util.h"
-#include "components/autofill/core/browser/country_names.h"
-#include "components/autofill/core/browser/form_group.h"
+#include "components/autofill/core/browser/data_model/form_group.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/autofill_constants.h"
@@ -608,33 +608,21 @@ AutofillProfileSyncableService::CreateOrUpdateProfile(
 
 void AutofillProfileSyncableService::ActOnChange(
      const AutofillProfileChange& change) {
-  DCHECK(
-      (change.type() == AutofillProfileChange::REMOVE &&
-       !change.data_model()) ||
-      (change.type() != AutofillProfileChange::REMOVE && change.data_model()));
+  DCHECK(change.data_model());
   DCHECK(sync_processor_);
 
-  if (change.data_model() &&
-      change.data_model()->record_type() != AutofillProfile::LOCAL_PROFILE) {
+  if (change.data_model()->record_type() != AutofillProfile::LOCAL_PROFILE) {
     return;
   }
 
   // TODO(crbug.com/904390): Remove when the investigation is over.
   bool is_converted_from_server = false;
-  if (change.type() == AutofillProfileChange::REMOVE) {
-    // The profile is not available any more so we cannot compare its value,
-    // instead we use a rougher test based on the id - whether it is a local
-    // GUID or a server id. As a result, it has a different semantics compared
-    // to AddOrUpdate.
-    is_converted_from_server = !base::IsValidGUID(change.key());
-  } else {
-    // |webdata_backend_|, used by GetAutofillTable() may be null in unit-tests.
-    if (webdata_backend_ != nullptr) {
-      std::vector<std::unique_ptr<AutofillProfile>> server_profiles;
-      GetAutofillTable()->GetServerProfiles(&server_profiles);
-      is_converted_from_server = IsLocalProfileEqualToServerProfile(
-          server_profiles, *change.data_model(), app_locale_);
-    }
+  // |webdata_backend_|, used by GetAutofillTable() may be null in unit-tests.
+  if (webdata_backend_ != nullptr) {
+    std::vector<std::unique_ptr<AutofillProfile>> server_profiles;
+    GetAutofillTable()->GetServerProfiles(&server_profiles);
+    is_converted_from_server = IsLocalProfileEqualToServerProfile(
+        server_profiles, *change.data_model(), app_locale_);
   }
 
   syncer::SyncChangeList new_changes;
@@ -674,13 +662,10 @@ void AutofillProfileSyncableService::ActOnChange(
       break;
     }
     case AutofillProfileChange::REMOVE: {
-      // Removals have no data_model() so this change can still be for a
-      // SERVER_PROFILE. Rule it out by a lookup in profiles_map_.
       if (profiles_map_.find(change.key()) != profiles_map_.end()) {
-        AutofillProfile empty_profile(change.key(), std::string());
         new_changes.push_back(
             syncer::SyncChange(FROM_HERE, syncer::SyncChange::ACTION_DELETE,
-                               CreateData(empty_profile)));
+                               CreateData(*(change.data_model()))));
         profiles_map_.erase(change.key());
         // TODO(crbug.com/904390): Remove when the investigation is over.
         ReportAutofillProfileDeleteOrigin(

@@ -32,6 +32,7 @@ static_library("shared") {
     "avatar_icon_util.h",
     "identity_utils.cc",
     "identity_utils.h",
+    "set_accounts_in_cookie_result.h",
     "signin_metrics.cc",
     "signin_metrics.h",
     "signin_pref_names.cc",
@@ -80,6 +81,10 @@ static_library("internals") {
     "gaia_cookie_manager_service.h",
     "oauth2_token_service_delegate_android.cc",
     "oauth2_token_service_delegate_android.h",
+    "oauth_multilogin_helper.cc",
+    "oauth_multilogin_helper.h",
+    "oauth_multilogin_token_fetcher.cc",
+    "oauth_multilogin_token_fetcher.h",
     "profile_oauth2_token_service.cc",
     "profile_oauth2_token_service.h",
     "profile_oauth2_token_service_delegate_chromeos.cc",
@@ -102,7 +107,6 @@ static_library("internals") {
     ":shared",
     ":signin_buildflags",
     "//base",
-    "//components/data_use_measurement/core",
     "//components/image_fetcher/core",
     "//components/keyed_service/core",
     "//components/prefs",
@@ -134,12 +138,16 @@ static_library("browser") {
     "account_reconcilor_delegate.h",
     "chrome_connected_header_helper.cc",
     "chrome_connected_header_helper.h",
+    "consistency_cookie_manager_base.cc",
+    "consistency_cookie_manager_base.h",
     "cookie_settings_util.cc",
     "cookie_settings_util.h",
     "dice_account_reconcilor_delegate.cc",
     "dice_account_reconcilor_delegate.h",
     "dice_header_helper.cc",
     "dice_header_helper.h",
+    "identity_manager_wrapper.cc",
+    "identity_manager_wrapper.h",
     "mice_account_reconcilor_delegate.cc",
     "mice_account_reconcilor_delegate.h",
     "mirror_account_reconcilor_delegate.cc",
@@ -186,7 +194,6 @@ static_library("browser") {
   ]
   deps = [
     "//base:i18n",
-    "//components/data_use_measurement/core",
     "//components/google/core/browser",
     "//components/metrics",
     "//components/os_crypt",
@@ -204,6 +211,14 @@ static_library("browser") {
       "signin_status_metrics_provider.cc",
       "signin_status_metrics_provider_delegate.cc",
     ]
+  }
+
+  if (is_android) {
+    sources += [
+      "consistency_cookie_manager_android.cc",
+      "consistency_cookie_manager_android.h",
+    ]
+    deps += [ "android:jni_headers" ]
   }
 
   if (!enable_dice_support) {
@@ -262,9 +277,10 @@ source_set("unit_tests") {
     "device_id_helper_unittest.cc",
     "dice_account_reconcilor_delegate_unittest.cc",
     "gaia_cookie_manager_service_unittest.cc",
-    "identity_utils_unittest.cc",
     "mice_account_reconcilor_delegate_unittest.cc",
     "mutable_profile_oauth2_token_service_delegate_unittest.cc",
+    "oauth_multilogin_helper_unittest.cc",
+    "oauth_multilogin_token_fetcher_unittest.cc",
     "profile_oauth2_token_service_delegate_chromeos_unittest.cc",
     "signin_error_controller_unittest.cc",
     "signin_header_helper_unittest.cc",
@@ -306,6 +322,13 @@ source_set("unit_tests") {
     ]
 
     deps += [ "//chromeos/components/account_manager" ]
+  }
+
+  if (is_android) {
+    sources += [
+      "consistency_cookie_manager_unittest.cc",
+      "oauth2_token_service_delegate_android_unittest.cc",
+    ]
   }
 
   if (!enable_dice_support) {

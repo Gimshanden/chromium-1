@@ -21,10 +21,12 @@
 #include "chrome/browser/ui/app_list/search/arc/arc_app_reinstall_app_result.h"
 #include "chrome/browser/ui/app_list/search/chrome_search_result.h"
 #include "chrome/browser/ui/app_list/search/common/url_icon_source.h"
+#include "chrome/common/pref_names.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/session/arc_bridge_service.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "extensions/grit/extensions_browser_resources.h"
 
@@ -255,6 +257,19 @@ void ArcAppReinstallSearchProvider::StartFetch() {
   if (app_instance == nullptr)
     return;
 
+  if (profile_->GetPrefs()->IsManagedPreference(
+          prefs::kAppReinstallRecommendationEnabled) &&
+      !profile_->GetPrefs()->GetBoolean(
+          prefs::kAppReinstallRecommendationEnabled)) {
+    // This user profile is managed, and the app reinstall recommendation is
+    // switched off. This is updated dynamically, usually, so we need to update
+    // the loaded value and return.
+    OnGetAppReinstallCandidates(base::Time::UnixEpoch(),
+                                arc::mojom::AppReinstallState::REQUEST_SUCCESS,
+                                {});
+    return;
+  }
+
   app_instance->GetAppReinstallCandidates(base::BindOnce(
       &ArcAppReinstallSearchProvider::OnGetAppReinstallCandidates,
       weak_ptr_factory_.GetWeakPtr(), base::Time::Now()));
@@ -265,10 +280,12 @@ void ArcAppReinstallSearchProvider::OnGetAppReinstallCandidates(
     arc::mojom::AppReinstallState state,
     std::vector<arc::mojom::AppReinstallCandidatePtr> results) {
   RecordUmaResponseParseResult(state);
-  DCHECK_NE(start_time, base::Time::UnixEpoch());
-  UMA_HISTOGRAM_TIMES(kAppListLatency, base::Time::Now() - start_time);
-  UMA_HISTOGRAM_COUNTS_100(kAppListCounts, results.size());
 
+  // fake result insertion is indicated by unix epoch start time.
+  if (start_time != base::Time::UnixEpoch()) {
+    UMA_HISTOGRAM_TIMES(kAppListLatency, base::Time::Now() - start_time);
+    UMA_HISTOGRAM_COUNTS_100(kAppListCounts, results.size());
+  }
   if (state != arc::mojom::AppReinstallState::REQUEST_SUCCESS) {
     LOG(ERROR) << "Failed to get reinstall candidates: " << state;
     return;
@@ -447,17 +464,19 @@ void ArcAppReinstallSearchProvider::SetTimerForTesting(
   app_fetch_timer_ = std::move(timer);
 }
 
-void ArcAppReinstallSearchProvider::OnOpened(const std::string& id) {
-  UpdateStateTime(profile_, id, kOpenTime);
+void ArcAppReinstallSearchProvider::OnOpened(const std::string& package_name) {
+  UpdateStateTime(profile_, package_name, kOpenTime);
   int64_t impression_count;
-  if (GetStateInt64(profile_, id, kImpressionCount, &impression_count)) {
+  if (GetStateInt64(profile_, package_name, kImpressionCount,
+                    &impression_count)) {
     UMA_HISTOGRAM_COUNTS_100(kAppListImpressionsBeforeOpen, impression_count);
   }
   UpdateResults();
 }
 
-void ArcAppReinstallSearchProvider::OnVisibilityChanged(const std::string& id,
-                                                        bool visibility) {
+void ArcAppReinstallSearchProvider::OnVisibilityChanged(
+    const std::string& package_name,
+    bool visibility) {
   if (!visibility) {
     // do not update state when showing, update when we hide.
     return;
@@ -468,17 +487,21 @@ void ArcAppReinstallSearchProvider::OnVisibilityChanged(const std::string& id,
   const base::TimeDelta now = base::Time::Now().ToDeltaSinceWindowsEpoch();
   base::TimeDelta latest_impression;
   int64_t impression_count;
-  if (!GetStateInt64(profile_, id, kImpressionCount, &impression_count)) {
+  if (!GetStateInt64(profile_, package_name, kImpressionCount,
+                     &impression_count)) {
     impression_count = 0;
   }
   // Get impression count and time. If neither is set, set them.
   // If they're set, update if appropriate.
-  if (!GetStateTime(profile_, id, kImpressionTime, &latest_impression) ||
+  if (!GetStateTime(profile_, package_name, kImpressionTime,
+                    &latest_impression) ||
       impression_count == 0 ||
       (now - latest_impression >
        base::TimeDelta::FromSeconds(kNewImpressionTime.Get()))) {
-    UpdateStateTime(profile_, id, kImpressionTime);
-    SetStateInt64(profile_, id, kImpressionCount, impression_count + 1);
+    UpdateStateTime(profile_, package_name, kImpressionTime);
+    SetStateInt64(profile_, package_name, kImpressionCount,
+                  impression_count + 1);
+    UpdateResults();
   }
 }
 

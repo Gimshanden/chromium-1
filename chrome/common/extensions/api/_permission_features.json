@@ -66,15 +66,6 @@
       "platform_app", "extension", "legacy_packaged_app", "hosted_app"
     ]
   },
-  "bookmarkManagerPrivate": {
-    "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"],
-    "whitelist": [
-      "D5736E4B5CF695CB93A2FB57E4FDC6E5AFAB6FE2", // http://crbug.com/312900
-      "D57DE394F36DC1C3220E7604C575D29C51A6C495", // http://crbug.com/319444
-      "3F65507A3B39259B38C8173C6FFA3D12DF64CCE9"  // http://crbug.com/371562
-    ]
-  },
   "bookmarks": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"]
@@ -148,7 +139,8 @@
       "A9A9FC0228ADF541F0334F22BEFB8F9C245B21D7",  // http://crbug.com/839189
       "46578A13607D38F1DC8E280C4F499FB0A2F9565C",  // http://crbug.com/841089
       "898FB5A39687D210766B8998BA4530B99C9E6586",  // http://crbug.com/841089
-      "82F30B65397BC3E4ADE627BBD857AB8A58210648"   // http://crbug.com/841089
+      "82F30B65397BC3E4ADE627BBD857AB8A58210648",  // http://crbug.com/841089
+      "C74B2AF138F9EDECD04D0965AB36CA66C8290466"   // http://crbug.com/957772
     ]
   },
   "clipboardRead": {
@@ -359,12 +351,6 @@
       "58B0C2968C335964D5433E89CA4D86628A0E3D4B"   // http://crbug.com/673004
     ]
   }],
-  "firstRunPrivate": {
-    "channel": "stable",
-    "extension_types": ["platform_app"],
-    "location": "component",
-    "platforms": ["chromeos"]
-  },
   "fontSettings": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"]
@@ -449,6 +435,16 @@
                                                    // (staging)
     ]
   },
+  "loginScreenUi": {
+    "channel": "dev",
+    "extension_types": ["login_screen_extension"],
+    "location": "policy",
+    "platforms": ["chromeos"],
+    "whitelist": [
+      "7FE4A999359A456C4B0FB7B7AD85CEA29CA50519", // chrome.loginScreenUi test extension
+      "E219EE36A3B40612FD2A8CD6937B03EF0C97D3FE"  // Imprivata (login screen)
+    ]
+  },
   "webcamPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "platform_app"],
@@ -500,7 +496,8 @@
         "5F57A9AE8DFF5D6BB09DF8606270402612E871E5",  // http://crbug.com/422624
         "46578A13607D38F1DC8E280C4F499FB0A2F9565C",  // http://crbug.com/819404
         "898FB5A39687D210766B8998BA4530B99C9E6586",  // http://crbug.com/819404
-        "82F30B65397BC3E4ADE627BBD857AB8A58210648"   // http://crbug.com/819404
+        "82F30B65397BC3E4ADE627BBD857AB8A58210648",  // http://crbug.com/819404
+        "C74B2AF138F9EDECD04D0965AB36CA66C8290466"   // http://crbug.com/957772
       ]
     },
     {

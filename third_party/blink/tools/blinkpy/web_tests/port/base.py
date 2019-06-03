@@ -174,13 +174,16 @@ class Port(object):
 
     FLAG_EXPECTATIONS_PREFIX = 'FlagExpectations'
 
+    # The following is used for concetenating WebDriver test names.
+    WEBDRIVER_SUBTEST_SEPARATOR = '>>'
+
     # The following two constants must match. When adding a new WPT root, also
     # remember to add an alias rule to third_party/wpt/wpt.config.json.
     # WPT_DIRS maps WPT roots on the file system to URL prefixes on wptserve.
-    # The order matters: the empty URL prefix MUST be the last one.
+    # The order matters: '/' MUST be the last URL prefix.
     WPT_DIRS = collections.OrderedDict([
-        ('wpt_internal', 'wpt_internal/'),
-        ('external/wpt', ''),
+        ('wpt_internal', '/wpt_internal/'),
+        ('external/wpt', '/'),
     ])
     # WPT_REGEX captures: 1. the root directory of WPT relative to web_tests
     # (without a trailing slash), 2. the path of the test within WPT (without a
@@ -257,6 +260,14 @@ class Port(object):
     def additional_driver_flags(self):
         # Clone list to avoid mutating option state.
         flags = list(self.get_option('additional_driver_flag', []))
+
+        # Disable LayoutNG unless explicitly enabled during transition period to
+        # avoid having to unnecessarily update test expectations every time the flag
+        # is flipped and to allow us to update expectations one bot at a time.
+        # TODO(eae): Remove once LayoutNG launches. https://crbug.com/961437
+        if not '--enable-blink-features=LayoutNG' in flags:
+            flags += ['--disable-blink-features=LayoutNG']
+
         if flags and flags[0] == self.primary_driver_flag():
             flags = flags[1:]
         if self.driver_name() == self.CONTENT_SHELL_NAME:
@@ -451,6 +462,11 @@ class Port(object):
         executable = self._path_to_image_diff()
         # Although we are handed 'old', 'new', image_diff wants 'new', 'old'.
         command = [executable, '--diff', actual_filename, expected_filename, diff_filename]
+        # Notifies image_diff to allow a tolerance when calculating the pixel
+        # diff. To account for variances when the tests are ran on an actual
+        # GPU.
+        if self.get_option('fuzzy_diff'):
+            command.append('--fuzzy-diff')
 
         result = None
         err_str = None
@@ -735,7 +751,7 @@ class Port(object):
                 tests.extend(self._wpt_test_urls_matching_paths(paths))
         else:
             tests.extend(self._all_virtual_tests(suites))
-            tests.extend([wpt_path + test for wpt_path in self.WPT_DIRS
+            tests.extend([wpt_path + self.TEST_PATH_SEPARATOR + test for wpt_path in self.WPT_DIRS
                           for test in self._wpt_manifest(wpt_path).all_urls()])
 
         return tests
@@ -798,9 +814,9 @@ class Port(object):
         # Convert '/' to the platform-specific separator.
         path = self._filesystem.normpath(path)
         manifest_path = self._filesystem.join(self.web_tests_dir(), path, MANIFEST_NAME)
-        if not self._filesystem.exists(manifest_path):
-            _log.error('Manifest not found at %s. Remove the --no-manifest-update argument to generate it.', manifest_path)
-            return WPTManifest('{}')
+        if not self._filesystem.exists(manifest_path) or self.get_option('manifest_update', True):
+            _log.debug('Generating MANIFEST.json for %s...', path)
+            WPTManifest.ensure_manifest(self, path)
         return WPTManifest(self._filesystem.read_text_file(manifest_path))
 
     def is_slow_wpt_test(self, test_file):
@@ -809,8 +825,7 @@ class Port(object):
             return False
         wpt_path = match.group(1)
         path_in_wpt = match.group(2)
-        # WPTManifest.is_slow_test() takes a WPT URL with the leading slash.
-        return self._wpt_manifest(wpt_path).is_slow_test('/' + path_in_wpt)
+        return self._wpt_manifest(wpt_path).is_slow_test(path_in_wpt)
 
     def test_key(self, test_name):
         """Turns a test name into a pair of sublists: the natural sort key of the
@@ -1383,6 +1398,7 @@ class Port(object):
         """
         return filter(None, [
             self.path_to_generic_test_expectations_file(),
+            self.path_to_webdriver_expectations_file(),
             self._filesystem.join(self.web_tests_dir(), 'NeverFixTests'),
             self._filesystem.join(self.web_tests_dir(), 'StaleTestExpectations'),
             self._filesystem.join(self.web_tests_dir(), 'SlowTests'),
@@ -1636,9 +1652,7 @@ class Port(object):
     def _wpt_test_urls(self, wpt_path, paths):
         tests = []
         for test_url_path in self._wpt_manifest(wpt_path).all_urls():
-            if test_url_path[0] == '/':
-                test_url_path = test_url_path[1:]
-
+            assert not test_url_path.startswith('/')
             full_test_url_path = wpt_path + '/' + test_url_path
 
             for path in paths:
@@ -1774,6 +1788,22 @@ class Port(object):
                 raise TestRunException(exit_codes.SYS_DEPS_EXIT_STATUS, message)
         return result
 
+    def split_webdriver_test_name(self, test_name):
+        """Splits a WebDriver test name into a filename and a subtest name and
+        returns both of them. E.g.
+
+        abd::foo.html -> (abd, foo.html)
+        """
+        separator_index = test_name.find(self.WEBDRIVER_SUBTEST_SEPARATOR)
+        if separator_index == -1:
+            return test_name
+        webdriver_test_name = test_name[:separator_index]
+        separator_len = len(self.WEBDRIVER_SUBTEST_SEPARATOR)
+        subtest_suffix = test_name[separator_index + separator_len:]
+        return (webdriver_test_name, subtest_suffix)
+
+    def add_webdriver_subtest_suffix(self, test_name, subtest_name):
+        return test_name + self.WEBDRIVER_SUBTEST_SEPARATOR + subtest_name
 
 
 class VirtualTestSuite(object):

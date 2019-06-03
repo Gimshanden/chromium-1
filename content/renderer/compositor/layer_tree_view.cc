@@ -16,8 +16,8 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task/post_task.h"
-#include "base/task/task_scheduler/task_scheduler.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "cc/animation/animation_host.h"
@@ -52,113 +52,6 @@ class Layer;
 }
 
 namespace content {
-namespace {
-
-using ReportTimeCallback = blink::WebLayerTreeView::ReportTimeCallback;
-
-void RecordSwapTimeToPresentationTime(base::TimeTicks swap_time,
-                                      base::TimeTicks presentation_time) {
-  DCHECK(!swap_time.is_null());
-  bool presentation_time_is_valid =
-      !presentation_time.is_null() && (presentation_time > swap_time);
-  UMA_HISTOGRAM_BOOLEAN("PageLoad.Internal.Renderer.PresentationTime.Valid",
-                        presentation_time_is_valid);
-  if (presentation_time_is_valid) {
-    // This measures from 1ms to 10seconds.
-    UMA_HISTOGRAM_TIMES(
-        "PageLoad.Internal.Renderer.PresentationTime.DeltaFromSwapTime",
-        presentation_time - swap_time);
-  }
-}
-
-// Enables measuring and reporting both presentation times and swap times in
-// swap promises.
-class ReportTimeSwapPromise : public cc::SwapPromise {
- public:
-  ReportTimeSwapPromise(ReportTimeCallback callback,
-                        scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-                        base::WeakPtr<LayerTreeView> layer_tree_view);
-  ~ReportTimeSwapPromise() override;
-
-  void DidActivate() override {}
-  void WillSwap(viz::CompositorFrameMetadata* metadata) override;
-  void DidSwap() override;
-  void DidNotSwap(DidNotSwapReason reason) override;
-  int64_t TraceId() const override;
-
- private:
-  ReportTimeCallback callback_;
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::WeakPtr<LayerTreeView> layer_tree_view_;
-  uint32_t frame_token_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(ReportTimeSwapPromise);
-};
-
-ReportTimeSwapPromise::ReportTimeSwapPromise(
-    ReportTimeCallback callback,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    base::WeakPtr<LayerTreeView> layer_tree_view)
-    : callback_(std::move(callback)),
-      task_runner_(std::move(task_runner)),
-      layer_tree_view_(std::move(layer_tree_view)) {}
-
-ReportTimeSwapPromise::~ReportTimeSwapPromise() {}
-
-void ReportTimeSwapPromise::WillSwap(viz::CompositorFrameMetadata* metadata) {
-  DCHECK_GT(metadata->frame_token, 0u);
-  // The interval between the current swap and its presentation time is reported
-  // in UMA (see corresponding code in DidSwap() below).
-  frame_token_ = metadata->frame_token;
-}
-
-void ReportTimeSwapPromise::DidSwap() {
-  DCHECK_GT(frame_token_, 0u);
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          [](base::TimeTicks timestamp, ReportTimeCallback callback,
-             base::WeakPtr<LayerTreeView> layer_tree_view, int frame_token) {
-            std::move(callback).Run(
-                blink::WebLayerTreeView::SwapResult::kDidSwap, timestamp);
-            if (layer_tree_view) {
-              layer_tree_view->AddPresentationCallback(
-                  frame_token,
-                  base::BindOnce(&RecordSwapTimeToPresentationTime, timestamp));
-            }
-          },
-          base::TimeTicks::Now(), std::move(callback_), layer_tree_view_,
-          frame_token_));
-}
-
-void ReportTimeSwapPromise::DidNotSwap(
-    cc::SwapPromise::DidNotSwapReason reason) {
-  blink::WebLayerTreeView::SwapResult result;
-  switch (reason) {
-    case cc::SwapPromise::DidNotSwapReason::SWAP_FAILS:
-      result = blink::WebLayerTreeView::SwapResult::kDidNotSwapSwapFails;
-      break;
-    case cc::SwapPromise::DidNotSwapReason::COMMIT_FAILS:
-      result = blink::WebLayerTreeView::SwapResult::kDidNotSwapCommitFails;
-      break;
-    case cc::SwapPromise::DidNotSwapReason::COMMIT_NO_UPDATE:
-      result = blink::WebLayerTreeView::SwapResult::kDidNotSwapCommitNoUpdate;
-      break;
-    case cc::SwapPromise::DidNotSwapReason::ACTIVATION_FAILS:
-      result = blink::WebLayerTreeView::SwapResult::kDidNotSwapActivationFails;
-      break;
-  }
-  // During a failed swap, return the current time regardless of whether we're
-  // using presentation or swap timestamps.
-  task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(callback_), result,
-                                                   base::TimeTicks::Now()));
-}
-
-int64_t ReportTimeSwapPromise::TraceId() const {
-  return 0;
-}
-
-}  // namespace
 
 LayerTreeView::LayerTreeView(
     LayerTreeViewDelegate* delegate,
@@ -188,7 +81,7 @@ void LayerTreeView::Initialize(
   params.main_task_runner = main_thread_;
   params.mutator_host = animation_host_.get();
   params.ukm_recorder_factory = std::move(ukm_recorder_factory);
-  if (base::TaskScheduler::GetInstance()) {
+  if (base::ThreadPoolInstance::Get()) {
     // The image worker thread needs to allow waiting since it makes discardable
     // shared memory allocations which need to make synchronous calls to the
     // IO thread.
@@ -235,19 +128,10 @@ bool LayerTreeView::IsSurfaceSynchronizationEnabled() const {
   return layer_tree_host_->GetSettings().enable_surface_synchronization;
 }
 
-void LayerTreeView::SetNeedsForcedRedraw() {
-  layer_tree_host_->SetNeedsCommitWithForcedRedraw();
-}
-
 std::unique_ptr<cc::SwapPromiseMonitor>
 LayerTreeView::CreateLatencyInfoSwapPromiseMonitor(ui::LatencyInfo* latency) {
   return std::make_unique<cc::LatencyInfoSwapPromiseMonitor>(
       latency, layer_tree_host_->GetSwapPromiseManager(), nullptr);
-}
-
-void LayerTreeView::QueueSwapPromise(
-    std::unique_ptr<cc::SwapPromise> swap_promise) {
-  layer_tree_host_->QueueSwapPromise(std::move(swap_promise));
 }
 
 int LayerTreeView::GetSourceFrameNumber() const {
@@ -301,11 +185,6 @@ void LayerTreeView::SetNonBlinkManagedRootLayer(
   layer_tree_host_->SetNonBlinkManagedRootLayer(std::move(layer));
 }
 
-void LayerTreeView::HeuristicsForGpuRasterizationUpdated(
-    bool matches_heuristics) {
-  layer_tree_host_->SetHasGpuRasterizationTrigger(matches_heuristics);
-}
-
 void LayerTreeView::SetNeedsBeginFrame() {
   layer_tree_host_->SetNeedsAnimate();
 }
@@ -333,14 +212,6 @@ bool LayerTreeView::HaveScrollEventHandlers() const {
   return layer_tree_host_->have_scroll_event_handlers();
 }
 
-bool LayerTreeView::CompositeIsSynchronous() const {
-  if (!compositor_thread_) {
-    DCHECK(!layer_tree_host_->GetSettings().single_thread_proxy_scheduler);
-    return true;
-  }
-  return false;
-}
-
 void LayerTreeView::SetLayerTreeFrameSink(
     std::unique_ptr<cc::LayerTreeFrameSink> layer_tree_frame_sink) {
   if (!layer_tree_frame_sink) {
@@ -348,26 +219,6 @@ void LayerTreeView::SetLayerTreeFrameSink(
     return;
   }
   layer_tree_host_->SetLayerTreeFrameSink(std::move(layer_tree_frame_sink));
-}
-
-void LayerTreeView::SynchronouslyComposite(bool raster) {
-  DCHECK(CompositeIsSynchronous());
-  if (!layer_tree_host_->IsVisible())
-    return;
-
-  if (in_synchronous_compositor_update_) {
-    // Web tests can use a nested message loop to pump frames while inside a
-    // frame, but the compositor does not support this. In this case, we only
-    // run blink's lifecycle updates.
-    delegate_->BeginMainFrame(base::TimeTicks::Now());
-    delegate_->UpdateVisualState();
-    return;
-  }
-
-  DCHECK(!in_synchronous_compositor_update_);
-  base::AutoReset<bool> inside_composite(&in_synchronous_compositor_update_,
-                                         true);
-  layer_tree_host_->Composite(base::TimeTicks::Now(), raster);
 }
 
 std::unique_ptr<cc::ScopedDeferMainFrameUpdate>
@@ -379,8 +230,9 @@ void LayerTreeView::StartDeferringCommits(base::TimeDelta timeout) {
   layer_tree_host_->StartDeferringCommits(timeout);
 }
 
-void LayerTreeView::StopDeferringCommits() {
-  layer_tree_host_->StopDeferringCommits();
+void LayerTreeView::StopDeferringCommits(
+    cc::PaintHoldingCommitTrigger trigger) {
+  layer_tree_host_->StopDeferringCommits(trigger);
 }
 
 int LayerTreeView::LayerTreeId() const {
@@ -402,45 +254,6 @@ void LayerTreeView::SetBrowserControlsHeight(float top_height,
 
 void LayerTreeView::SetBrowserControlsShownRatio(float ratio) {
   layer_tree_host_->SetBrowserControlsShownRatio(ratio);
-}
-
-void LayerTreeView::RequestDecode(const cc::PaintImage& image,
-                                  base::OnceCallback<void(bool)> callback) {
-  layer_tree_host_->QueueImageDecode(image, std::move(callback));
-
-  // If we're compositing synchronously, the SetNeedsCommit call which will be
-  // issued by |layer_tree_host_| is not going to cause a commit, due to the
-  // fact that this would make web tests slow and cause flakiness. However,
-  // in this case we actually need a commit to transfer the decode requests to
-  // the impl side. So, force a commit to happen.
-  if (CompositeIsSynchronous()) {
-    const bool raster = true;
-    layer_tree_host_->GetTaskRunnerProvider()->MainThreadTaskRunner()->PostTask(
-        FROM_HERE, base::BindOnce(&LayerTreeView::SynchronouslyComposite,
-                                  weak_factory_.GetWeakPtr(), raster));
-  }
-}
-
-void LayerTreeView::RequestPresentationCallback(base::OnceClosure callback) {
-  layer_tree_host_->RequestPresentationTimeForNextFrame(base::BindOnce(
-      [](base::OnceClosure callback,
-         const gfx::PresentationFeedback& feedback) {
-        std::move(callback).Run();
-      },
-      std::move(callback)));
-  SetNeedsForcedRedraw();
-  if (CompositeIsSynchronous()) {
-    main_thread_->PostTask(
-        FROM_HERE, base::BindOnce(&LayerTreeView::SynchronouslyComposite,
-                                  weak_factory_.GetWeakPtr(), /*raster=*/true));
-  } else {
-    layer_tree_host_->SetNeedsCommit();
-  }
-}
-
-void LayerTreeView::SetOverscrollBehavior(
-    const cc::OverscrollBehavior& behavior) {
-  layer_tree_host_->SetOverscrollBehavior(behavior);
 }
 
 void LayerTreeView::WillBeginMainFrame() {
@@ -603,8 +416,11 @@ void LayerTreeView::SetRasterColorSpace(const gfx::ColorSpace& color_space) {
   layer_tree_host_->SetRasterColorSpace(color_space);
 }
 
-void LayerTreeView::SetExternalPageScaleFactor(float page_scale_factor) {
-  layer_tree_host_->SetExternalPageScaleFactor(page_scale_factor);
+void LayerTreeView::SetExternalPageScaleFactor(
+    float page_scale_factor,
+    bool is_external_pinch_gesture_active) {
+  layer_tree_host_->SetExternalPageScaleFactor(
+      page_scale_factor, is_external_pinch_gesture_active);
 }
 
 void LayerTreeView::ClearCachesOnNextCommit() {
@@ -613,13 +429,6 @@ void LayerTreeView::ClearCachesOnNextCommit() {
 
 void LayerTreeView::SetContentSourceId(uint32_t id) {
   layer_tree_host_->SetContentSourceId(id);
-}
-
-void LayerTreeView::NotifySwapTime(ReportTimeCallback callback) {
-  QueueSwapPromise(std::make_unique<ReportTimeSwapPromise>(
-      std::move(callback),
-      layer_tree_host_->GetTaskRunnerProvider()->MainThreadTaskRunner(),
-      weak_factory_.GetWeakPtr()));
 }
 
 void LayerTreeView::RequestBeginMainFrameNotExpected(bool new_state) {
@@ -654,8 +463,8 @@ void LayerTreeView::AddPresentationCallback(
   DCHECK_LE(presentation_callbacks_.size(), 25u);
 }
 
-void LayerTreeView::SetURLForUkm(const GURL& url) {
-  layer_tree_host_->SetURLForUkm(url);
+void LayerTreeView::SetSourceURL(ukm::SourceId source_id, const GURL& url) {
+  layer_tree_host_->SetSourceURL(source_id, url);
 }
 
 void LayerTreeView::ReleaseLayerTreeFrameSink() {

@@ -23,12 +23,11 @@ import android.support.customtabs.TrustedWebUtils;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Log;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.chrome.browser.browserservices.BrowserSessionContentUtils;
-import org.chromium.chrome.browser.browserservices.trustedwebactivityui.splashscreen.SplashScreenController;
+import org.chromium.chrome.browser.browserservices.trustedwebactivityui.splashscreen.TwaSplashController;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
@@ -44,8 +43,6 @@ import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomiza
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.searchwidget.SearchActivity;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
-import org.chromium.chrome.browser.upgrade.UpgradeActivity;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.browser.vr.VrModuleProvider;
@@ -203,26 +200,13 @@ public class LaunchIntentDispatcher implements IntentHandler.IntentHandlerDelega
             return Action.FINISH_ACTIVITY;
         }
 
-        // Check if we should launch the ChromeTabbedActivity.
-        if (!mIsCustomTabIntent && !FeatureUtilities.isDocumentMode(mActivity)) {
-            return dispatchToTabbedActivity();
-        }
-
         // Check if we should launch a Custom Tab.
         if (mIsCustomTabIntent) {
-                launchCustomTabActivity();
-
+            launchCustomTabActivity();
             return Action.FINISH_ACTIVITY;
         }
 
-        // Force a user to migrate to document mode, if necessary.
-        if (DocumentModeAssassin.getInstance().isMigrationNecessary()) {
-            Log.d(TAG, "Diverting to UpgradeActivity via " + mActivity.getClass().getName());
-            UpgradeActivity.launchInstance(mActivity, mIntent);
-            return Action.FINISH_ACTIVITY_REMOVE_TASK;
-        }
-
-        return Action.CONTINUE;
+        return dispatchToTabbedActivity();
     }
 
     @Override
@@ -272,6 +256,11 @@ public class LaunchIntentDispatcher implements IntentHandler.IntentHandlerDelega
      */
     public static boolean isCustomTabIntent(Intent intent) {
         if (intent == null) return false;
+        // CCT is disabled in noTouch mode except for some Chrome-internal exceptions.
+        if (FeatureUtilities.isNoTouchModeEnabled()
+                && !IntentHandler.wasIntentSenderChrome(intent)) {
+            return false;
+        }
         if (CustomTabsIntent.shouldAlwaysUseBrowserUI(intent)
                 || !intent.hasExtra(CustomTabsIntent.EXTRA_SESSION)) {
             return false;
@@ -415,7 +404,7 @@ public class LaunchIntentDispatcher implements IntentHandler.IntentHandlerDelega
         // Allow disk writes during startActivity() to avoid strict mode violations on some
         // Samsung devices, see https://crbug.com/796548.
         try (StrictModeContext smc = StrictModeContext.allowDiskWrites()) {
-            if (SplashScreenController.handleIntent(mActivity, launchIntent)) {
+            if (TwaSplashController.handleIntent(mActivity, launchIntent)) {
                 return;
             }
 

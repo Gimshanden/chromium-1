@@ -59,6 +59,7 @@ public class CachedImageFetcherTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
+        ImageFetcherBridge.setupForTesting(mImageFetcherBridge);
         mCachedImageFetcher = Mockito.spy(new CachedImageFetcher(mImageFetcherBridge));
         Mockito.doReturn(URL).when(mImageFetcherBridge).getFilePath(anyObject());
         doAnswer((InvocationOnMock invocation) -> {
@@ -80,7 +81,7 @@ public class CachedImageFetcherTest {
 
         // Verify metrics have been reported.
         verify(mImageFetcherBridge)
-                .reportEvent(eq(UMA_CLIENT_NAME), eq(CachedImageFetcherEvent.JAVA_DISK_CACHE_HIT));
+                .reportEvent(eq(UMA_CLIENT_NAME), eq(ImageFetcherEvent.JAVA_DISK_CACHE_HIT));
         verify(mImageFetcherBridge).reportCacheHitTime(eq(UMA_CLIENT_NAME), eq(START_TIME));
     }
 
@@ -90,7 +91,8 @@ public class CachedImageFetcherTest {
                 (Bitmap bitmap) -> { assertEquals(bitmap, mBitmap); }, null, START_TIME);
 
         verify(mImageFetcherBridge)
-                .fetchImage(anyInt(), eq(URL), eq(UMA_CLIENT_NAME), anyInt(), anyInt(), any());
+                .fetchImage(eq(ImageFetcherConfig.DISK_CACHE_ONLY), eq(URL), eq(UMA_CLIENT_NAME),
+                        anyInt(), anyInt(), any());
     }
 
     @Test
@@ -104,8 +106,8 @@ public class CachedImageFetcherTest {
         verify(mImageFetcherBridge)
                 .fetchImage(anyInt(), eq(URL), eq(UMA_CLIENT_NAME), anyInt(), anyInt(), any());
         verify(mImageFetcherBridge)
-                .fetchImage(
-                        anyInt(), eq(URL), eq(UMA_CLIENT_NAME + "2"), anyInt(), anyInt(), any());
+                .fetchImage(eq(ImageFetcherConfig.DISK_CACHE_ONLY), eq(URL),
+                        eq(UMA_CLIENT_NAME + "2"), anyInt(), anyInt(), any());
     }
 
     @Test
@@ -114,11 +116,11 @@ public class CachedImageFetcherTest {
                 (BaseGifImage gif) -> { assertEquals(gif, mGif); }, mGif, START_TIME);
 
         verify(mImageFetcherBridge, never()) // Should never make it to native.
-                .fetchGif(eq(URL), eq(UMA_CLIENT_NAME), any());
+                .fetchGif(anyInt(), eq(URL), eq(UMA_CLIENT_NAME), any());
 
         // Verify metrics have been reported.
         verify(mImageFetcherBridge)
-                .reportEvent(eq(UMA_CLIENT_NAME), eq(CachedImageFetcherEvent.JAVA_DISK_CACHE_HIT));
+                .reportEvent(eq(UMA_CLIENT_NAME), eq(ImageFetcherEvent.JAVA_DISK_CACHE_HIT));
         verify(mImageFetcherBridge).reportCacheHitTime(eq(UMA_CLIENT_NAME), anyLong());
     }
 
@@ -127,6 +129,8 @@ public class CachedImageFetcherTest {
         mCachedImageFetcher.continueFetchGifAfterDisk(URL, UMA_CLIENT_NAME,
                 (BaseGifImage gif) -> { assertEquals(gif, mGif); }, null, START_TIME);
 
-        verify(mImageFetcherBridge).fetchGif(eq(URL), eq(UMA_CLIENT_NAME), any());
+        verify(mImageFetcherBridge)
+                .fetchGif(eq(ImageFetcherConfig.DISK_CACHE_ONLY), eq(URL), eq(UMA_CLIENT_NAME),
+                        any());
     }
 }

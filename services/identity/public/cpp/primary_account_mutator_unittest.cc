@@ -10,6 +10,8 @@
 #include "base/scoped_observer.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/signin/core/browser/signin_metrics.h"
+#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "services/identity/public/cpp/identity_test_environment.h"
 #include "services/identity/public/cpp/identity_test_utils.h"
 #include "testing/platform_test.h"
@@ -41,12 +43,6 @@ using PrimaryAccountClearedCallback =
     base::RepeatingCallback<void(const CoreAccountInfo&)>;
 
 // This callback will be invoked every time the IdentityManager::Observer
-// method OnPrimaryAccountSigninFailed is invoked. The parameter will be
-// a reference to the authentication error.
-using PrimaryAccountSigninFailedCallback =
-    base::RepeatingCallback<void(const GoogleServiceAuthError&)>;
-
-// This callback will be invoked every time the IdentityManager::Observer
 // method OnRefreshTokenRemoved is invoked. The parameter will be a reference
 // to the account_id whose token was removed.
 using RefreshTokenRemovedCallback =
@@ -60,15 +56,11 @@ class ClearPrimaryAccountTestObserver
   ClearPrimaryAccountTestObserver(
       identity::IdentityManager* identity_manager,
       PrimaryAccountClearedCallback on_primary_account_cleared,
-      PrimaryAccountSigninFailedCallback on_primary_account_signin_failed,
       RefreshTokenRemovedCallback on_refresh_token_removed)
       : on_primary_account_cleared_(std::move(on_primary_account_cleared)),
-        on_primary_account_signin_failed_(
-            std::move(on_primary_account_signin_failed)),
         on_refresh_token_removed_(std::move(on_refresh_token_removed)),
         scoped_observer_(this) {
     DCHECK(on_primary_account_cleared_);
-    DCHECK(on_primary_account_signin_failed_);
     DCHECK(on_refresh_token_removed_);
     scoped_observer_.Add(identity_manager);
   }
@@ -78,18 +70,13 @@ class ClearPrimaryAccountTestObserver
     on_primary_account_cleared_.Run(account_info);
   }
 
-  void OnPrimaryAccountSigninFailed(
-      const GoogleServiceAuthError& error) override {
-    on_primary_account_signin_failed_.Run(error);
-  }
-
-  void OnRefreshTokenRemovedForAccount(const std::string& account_id) override {
+  void OnRefreshTokenRemovedForAccount(
+      const CoreAccountId& account_id) override {
     on_refresh_token_removed_.Run(account_id);
   }
 
  private:
   PrimaryAccountClearedCallback on_primary_account_cleared_;
-  PrimaryAccountSigninFailedCallback on_primary_account_signin_failed_;
   RefreshTokenRemovedCallback on_refresh_token_removed_;
   ScopedObserver<identity::IdentityManager, identity::IdentityManager::Observer>
       scoped_observer_;
@@ -165,12 +152,6 @@ void RunClearPrimaryAccountTest(
                              const CoreAccountInfo&) { quit_closure.Run(); },
                           run_loop.QuitClosure());
 
-  // Authentication error should not occur.
-  PrimaryAccountSigninFailedCallback primary_account_signin_failed_callback =
-      base::BindRepeating([](const GoogleServiceAuthError&) {
-        FAIL() << "auth should not fail";
-      });
-
   // Track Observer token removal notification.
   base::flat_set<std::string> observed_removals;
   RefreshTokenRemovedCallback refresh_token_removed_callback =
@@ -183,7 +164,7 @@ void RunClearPrimaryAccountTest(
 
   ClearPrimaryAccountTestObserver scoped_observer(
       identity_manager, primary_account_cleared_callback,
-      primary_account_signin_failed_callback, refresh_token_removed_callback);
+      refresh_token_removed_callback);
 
   primary_account_mutator->ClearPrimaryAccount(
       account_action, signin_metrics::SIGNOUT_TEST,
@@ -209,9 +190,9 @@ void RunClearPrimaryAccountTest(
       EXPECT_TRUE(identity_manager->HasAccountWithRefreshToken(
           secondary_account_info.account_id));
       EXPECT_TRUE(base::ContainsKey(observed_removals,
-                                    former_primary_account.account_id));
+                                    former_primary_account.account_id.id));
       EXPECT_FALSE(base::ContainsKey(observed_removals,
-                                     secondary_account_info.account_id));
+                                     secondary_account_info.account_id.id));
       break;
     case RemoveAccountExpectation::kRemoveAll:
       EXPECT_FALSE(identity_manager->HasAccountWithRefreshToken(
@@ -219,9 +200,9 @@ void RunClearPrimaryAccountTest(
       EXPECT_FALSE(identity_manager->HasAccountWithRefreshToken(
           secondary_account_info.account_id));
       EXPECT_TRUE(base::ContainsKey(observed_removals,
-                                    former_primary_account.account_id));
+                                    former_primary_account.account_id.id));
       EXPECT_TRUE(base::ContainsKey(observed_removals,
-                                    secondary_account_info.account_id));
+                                    secondary_account_info.account_id.id));
       break;
   }
 }
@@ -229,28 +210,6 @@ void RunClearPrimaryAccountTest(
 }  // namespace
 
 using PrimaryAccountMutatorTest = PlatformTest;
-
-// Checks that the method to control whether setting the primary account is
-// working correctly and that the setting is respected by SetPrimaryAccount().
-TEST_F(PrimaryAccountMutatorTest, SetSettingPrimaryAccountAllowed) {
-  base::test::ScopedTaskEnvironment task_environment;
-  identity::IdentityTestEnvironment environment;
-
-  identity::IdentityManager* identity_manager = environment.identity_manager();
-  identity::PrimaryAccountMutator* primary_account_mutator =
-      identity_manager->GetPrimaryAccountMutator();
-
-  // Abort the test if the current platform does not support mutation of the
-  // primary account (the returned PrimaryAccountMutator* will be null).
-  if (!primary_account_mutator)
-    return;
-
-  primary_account_mutator->SetSettingPrimaryAccountAllowed(false);
-  EXPECT_FALSE(primary_account_mutator->IsSettingPrimaryAccountAllowed());
-
-  primary_account_mutator->SetSettingPrimaryAccountAllowed(true);
-  EXPECT_TRUE(primary_account_mutator->IsSettingPrimaryAccountAllowed());
-}
 
 // Checks that setting the primary account works.
 TEST_F(PrimaryAccountMutatorTest, SetPrimaryAccount) {
@@ -354,7 +313,10 @@ TEST_F(PrimaryAccountMutatorTest, SetPrimaryAccount_AlreadyHasPrimaryAccount) {
 TEST_F(PrimaryAccountMutatorTest,
        SetPrimaryAccount_SettingPrimaryAccountForbidden) {
   base::test::ScopedTaskEnvironment task_environment;
-  identity::IdentityTestEnvironment environment;
+
+  sync_preferences::TestingPrefServiceSyncable pref_service;
+  identity::IdentityTestEnvironment environment(
+      /*test_url_loader_factory=*/nullptr, &pref_service);
 
   identity::IdentityManager* identity_manager = environment.identity_manager();
   identity::PrimaryAccountMutator* primary_account_mutator =
@@ -368,8 +330,8 @@ TEST_F(PrimaryAccountMutatorTest,
   AccountInfo primary_account_info =
       environment.MakeAccountAvailable(kPrimaryAccountEmail);
 
-  primary_account_mutator->SetSettingPrimaryAccountAllowed(false);
-  EXPECT_FALSE(primary_account_mutator->IsSettingPrimaryAccountAllowed());
+  // Configure prefs so that setting the primary account is disallowed.
+  pref_service.SetBoolean(prefs::kSigninAllowed, false);
 
   EXPECT_FALSE(identity_manager->HasPrimaryAccount());
   EXPECT_FALSE(primary_account_mutator->SetPrimaryAccount(

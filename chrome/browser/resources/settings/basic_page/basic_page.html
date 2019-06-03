@@ -16,15 +16,17 @@
 <link rel="import" href="../settings_page_css.html">
 
 <if expr="chromeos">
+<link rel="import" href="../app_management_page/app_management_page.html">
 <link rel="import" href="../android_apps_page/android_apps_browser_proxy.html">
 <link rel="import" href="../android_apps_page/android_apps_page.html">
 <link rel="import" href="../bluetooth_page/bluetooth_page.html">
-<link rel="import" href="../kiosk_next_shell_page/kiosk_next_shell_page.html">
 <link rel="import" href="../crostini_page/crostini_page.html">
+<link rel="import" href="../plugin_vm_page/plugin_vm_page.html">
 <link rel="import" href="../kiosk_next_shell_page/kiosk_next_shell_page.html">
 <link rel="import" href="../device_page/device_page.html">
 <link rel="import" href="../internet_page/internet_page.html">
 <link rel="import" href="../multidevice_page/multidevice_page.html">
+<link rel="import" href="../parental_controls_page/parental_controls_page.html">
 </if>
 
 <if expr="not chromeos">
@@ -143,6 +145,15 @@
             </settings-people-page>
           </settings-section>
         </template>
+<if expr="chromeos">
+        <template is="dom-if" if="[[showParentalControls]]" restamp>
+          <settings-section page-title="$i18n{parentalControlsPageTitle}"
+              section="parentalControls">
+            <settings-parental-controls-page>
+            </settings-parental-controls-page>
+          </settings-section>
+        </template>
+</if>
         <template is="dom-if" if="[[showPage_(pageVisibility.autofill)]]"
             restamp>
           <settings-section page-title="$i18n{autofillPageTitle}"
@@ -174,19 +185,16 @@
         <template is="dom-if" if="[[showPage_(pageVisibility.search)]]" restamp>
           <settings-section page-title="$i18n{searchPageTitle}"
               section="search">
-<if expr="chromeos">
-            <settings-search-page prefs="{{prefs}}"
-                 arc-enabled="[[prefs.arc.enabled.value]]"
-                 voice-interaction-value-prop-accepted="[[
-                     prefs.arc.voice_interaction_value_prop.accepted.value]]">
-            </settings-search-page>
-</if>
-<if expr="not chromeos">
             <settings-search-page prefs="{{prefs}}"></settings-search-page>
-</if>
           </settings-section>
         </template>
 <if expr="chromeos">
+        <template is="dom-if" if="[[showApps]]" restamp>
+          <settings-section page-title="$i18n{appsPageTitle}" section="apps">
+            <settings-app-management-page>
+            </settings-app-management-page>
+          </settings-section>
+        </template>
         <template is="dom-if" if="[[shouldCreateAndroidAppsSection_(
             showAndroidApps, pageVisibility)]]" restamp>
           <settings-section page-title="$i18n{androidAppsPageTitle}"
@@ -212,6 +220,13 @@
             <settings-crostini-page prefs="{{prefs}}"
                 allow-crostini="[[allowCrostini_]]">
             </settings-crostini-page>
+          </settings-section>
+        </template>
+        <template is="dom-if" if="[[showPluginVm]]" restamp>
+          <settings-section page-title="$i18n{pluginVmPageTitle}"
+              section="pluginVm">
+            <settings-plugin-vm-page prefs="{{prefs}}">
+            </settings-plugin-vm-page>
           </settings-section>
         </template>
 </if>
@@ -302,7 +317,9 @@
                 restamp>
               <settings-section page-title="$i18n{a11yPageTitle}"
                   section="a11y">
-                <settings-a11y-page prefs="{{prefs}}"></settings-a11y-page>
+                <settings-a11y-page prefs="{{prefs}}"
+                    page-visibility="[[pageVisibility.a11y]]">
+                </settings-a11y-page>
               </settings-section>
             </template>
 <if expr="not chromeos">
@@ -318,7 +335,9 @@
                 restamp>
               <settings-section page-title="$i18n{resetPageTitle}"
                   section="reset">
-                <settings-reset-page prefs="{{prefs}}"></settings-reset-page>
+                <settings-reset-page prefs="{{prefs}}"
+                    page-visibility="[[pageVisibility.reset]]">
+                </settings-reset-page>
               </settings-section>
             </template>
           </div>

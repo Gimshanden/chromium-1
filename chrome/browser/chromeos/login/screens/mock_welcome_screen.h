@@ -9,7 +9,7 @@
 
 #include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/welcome_screen.h"
-#include "chrome/browser/chromeos/login/screens/welcome_view.h"
+#include "chrome/browser/ui/webui/chromeos/login/welcome_screen_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace chromeos {
@@ -22,7 +22,7 @@ class MockWelcomeScreen : public WelcomeScreen {
 
   MOCK_METHOD0(Show, void());
   MOCK_METHOD0(Hide, void());
-  MOCK_METHOD2(SetConfiguration, void(base::Value* configuration, bool notify));
+  MOCK_METHOD1(SetConfiguration, void(base::Value* configuration));
 
   void ExitScreen();
 

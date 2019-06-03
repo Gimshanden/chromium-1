@@ -11,7 +11,6 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.support.annotation.Nullable;
-import android.support.v4.content.ContextCompat;
 import android.view.View;
 
 import com.google.android.gms.common.ConnectionResult;
@@ -54,7 +53,8 @@ import org.chromium.chrome.browser.signin.GoogleActivityController;
 import org.chromium.chrome.browser.survey.SurveyController;
 import org.chromium.chrome.browser.tab.AuthenticatorNavigationInterceptor;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.touchless.TouchlessUiController;
+import org.chromium.chrome.browser.touchless.TouchlessModelCoordinator;
+import org.chromium.chrome.browser.touchless.TouchlessUiCoordinator;
 import org.chromium.chrome.browser.ui.ImmersiveModeManager;
 import org.chromium.chrome.browser.usage_stats.DigitalWellbeingClient;
 import org.chromium.chrome.browser.webapps.GooglePlayWebApkInstallDelegate;
@@ -65,6 +65,7 @@ import org.chromium.components.signin.AccountManagerDelegate;
 import org.chromium.components.signin.SystemAccountManagerDelegate;
 import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.policy.AppRestrictionsProvider;
 import org.chromium.policy.CombinedPolicyProvider;
 import org.chromium.services.service_manager.InterfaceRegistry;
@@ -284,18 +285,8 @@ public abstract class AppHooks {
     }
 
     /**
-     * Starts a service from {@code intent} with the expectation that it will make itself a
-     * foreground service with {@link android.app.Service#startForeground(int, Notification)}.
-     *
-     * @param intent The {@link Intent} to fire to start the service.
-     */
-    public void startForegroundService(Intent intent) {
-        ContextCompat.startForegroundService(ContextUtils.getApplicationContext(), intent);
-    }
-
-    /**
      * Upgrades a service from background to foreground after calling
-     * {@link #startForegroundService(Intent)}.
+     * {@link Service#startForegroundService(Intent)}.
      * @param service The service to be foreground.
      * @param id The notification id.
      * @param notification The notification attached to the foreground service.
@@ -389,18 +380,17 @@ public abstract class AppHooks {
 
     /**
      * @param activity An activity for access to different features.
-     * @return A new {@link TouchlessUiController} instance.
+     * @return A new {@link TouchlessModelCoordinator} instance.
      */
-    public TouchlessUiController createTouchlessUiController(ChromeActivity activity) {
+    public TouchlessModelCoordinator createTouchlessModelCoordinator(Activity activity) {
         return null;
     }
 
     /**
-     * Get the UI controller from the activity if it exists.
-     * @param activity The activity to get the UI controller from.
-     * @return The UI controller or null.
+     * @param activity An activity for access to different features.
+     * @return A new {@link TouchlessUiCoordinator} instance.
      */
-    public TouchlessUiController getTouchlessUiControllerForActivity(ChromeActivity activity) {
+    public TouchlessUiCoordinator createTouchlessUiCoordinator(ChromeActivity activity) {
         return null;
     }
 
@@ -448,9 +438,14 @@ public abstract class AppHooks {
      * @param renderFrameHost The RenderFrameHost the Interface Registry is for.
      */
     public void registerChromeRenderFrameHostInterfaces(
-            InterfaceRegistry registry, RenderFrameHost renderFrameHost) {
-        return;
-    }
+            InterfaceRegistry registry, RenderFrameHost renderFrameHost) {}
+
+    /**
+     * @param registry The Chrome interface registry for the WebContents.
+     * @param webContents The WebContents the Interface Registry is for.
+     */
+    public void registerChromeWebContentsInterfaces(
+            InterfaceRegistry registry, WebContents webContents) {}
 
     /**
      * @param contentView The root content view for the containing activity.
@@ -459,4 +454,28 @@ public abstract class AppHooks {
     public @Nullable ImmersiveModeManager createImmersiveModeManager(View contentView) {
         return null;
     }
+
+    /**
+     * @param view {@link View} to define the area on.
+     * @param left Left The left coordinate of the area.
+     * @param top The top coordinate of the area.
+     * @param right The right coordinate of the area.
+     * @param bottom The bottom coordinate of the area.
+     * @return A {@link Runnable} that sets the input space in which swipe triggers navigation.
+     */
+    public Runnable createNavigationInputAreaSetter(
+            View view, int left, int top, int right, int bottom) {
+        return () -> {};
+    }
+
+    /**
+     * Starts monitoring network quality. Must be called after native initialization is complete.
+     */
+    public void startMonitoringNetworkQuality() {}
+
+    /**
+     * Starts the observer for listening to system settings changes. Must be called on
+     * ChromeActivity initialization.
+     */
+    public void startSystemSettingsObserver() {}
 }

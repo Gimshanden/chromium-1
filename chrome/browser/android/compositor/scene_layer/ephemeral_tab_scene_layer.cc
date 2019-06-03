@@ -3,17 +3,16 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/android/compositor/scene_layer/ephemeral_tab_scene_layer.h"
-#include "base/android/jni_android.h"
-#include "base/android/jni_array.h"
+#include "base/android/jni_string.h"
 #include "cc/layers/solid_color_layer.h"
 #include "chrome/browser/android/compositor/layer/ephemeral_tab_layer.h"
-#include "content/public/browser/android/compositor.h"
+#include "chrome/browser/profiles/profile_android.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/EphemeralTabSceneLayer_jni.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/view_android.h"
-#include "ui/gfx/android/java_bitmap.h"
 
+using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
 
@@ -51,10 +50,26 @@ void EphemeralTabSceneLayer::SetResourceIds(JNIEnv* env,
                                             jint bar_background_resource_id,
                                             jint bar_shadow_resource_id,
                                             jint panel_icon_resource_id,
+                                            jint drag_handlebar_resource_id,
+                                            jint open_tab_icon_resource_id,
                                             jint close_icon_resource_id) {
   ephemeral_tab_layer_->SetResourceIds(
       text_resource_id, bar_background_resource_id, bar_shadow_resource_id,
-      panel_icon_resource_id, close_icon_resource_id);
+      panel_icon_resource_id, drag_handlebar_resource_id,
+      open_tab_icon_resource_id, close_icon_resource_id);
+}
+
+void EphemeralTabSceneLayer::GetFavicon(JNIEnv* env,
+                                        const JavaParamRef<jobject>& object,
+                                        const JavaParamRef<jobject>& jprofile,
+                                        const JavaParamRef<jstring>& jurl,
+                                        jint size) {
+  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
+  DCHECK(profile);
+  if (!profile)
+    return;
+  ephemeral_tab_layer_->GetLocalFaviconImageForURL(
+      profile, ConvertJavaStringToUTF8(env, jurl), size);
 }
 
 void EphemeralTabSceneLayer::Update(JNIEnv* env,
@@ -77,12 +92,14 @@ void EphemeralTabSceneLayer::Update(JNIEnv* env,
                                     jfloat panel_height,
                                     jint bar_background_color,
                                     jfloat bar_margin_side,
+                                    jfloat bar_margin_top,
                                     jfloat bar_height,
                                     jboolean bar_border_visible,
                                     jfloat bar_border_height,
                                     jboolean bar_shadow_visible,
                                     jfloat bar_shadow_opacity,
                                     jint icon_color,
+                                    jint drag_handlebar_color,
                                     jboolean progress_bar_visible,
                                     jfloat progress_bar_height,
                                     jfloat progress_bar_opacity,
@@ -107,13 +124,14 @@ void EphemeralTabSceneLayer::Update(JNIEnv* env,
   // Move the base page contents up.
   content_container_->SetPosition(gfx::PointF(0.0f, base_page_offset));
   ephemeral_tab_layer_->SetProperties(
-      title_view_resource_id, caption_view_resource_id,
+      web_contents, title_view_resource_id, caption_view_resource_id,
       caption_animation_percentage, text_layer_min_height,
       title_caption_spacing, caption_visible,
       progress_bar_background_resource_id, progress_bar_resource_id, dp_to_px,
       content_layer, panel_x, panel_y, panel_width, panel_height,
-      bar_background_color, bar_margin_side, bar_height, bar_border_visible,
-      bar_border_height, bar_shadow_visible, bar_shadow_opacity, icon_color,
+      bar_background_color, bar_margin_side, bar_margin_top, bar_height,
+      bar_border_visible, bar_border_height, bar_shadow_visible,
+      bar_shadow_opacity, icon_color, drag_handlebar_color,
       progress_bar_visible, progress_bar_height, progress_bar_opacity,
       progress_bar_completion);
   // Make the layer visible if it is not already.

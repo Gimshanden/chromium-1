@@ -21,7 +21,7 @@
 #include "chrome/browser/chromeos/power/auto_screen_brightness/metrics_reporter.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/model_config.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/model_config_loader.h"
-#include "chrome/browser/chromeos/power/auto_screen_brightness/modeller.h"
+#include "chrome/browser/chromeos/power/auto_screen_brightness/modeller_impl.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/monotone_cubic_spline.h"
 #include "chrome/browser/chromeos/power/auto_screen_brightness/utils.h"
 #include "chromeos/dbus/power/power_manager_client.h"
@@ -95,9 +95,13 @@ class Adapter : public AlsReader::Observer,
         base::TimeDelta::FromSeconds(4);
 
     UserAdjustmentEffect user_adjustment_effect =
-        UserAdjustmentEffect::kDisableAuto;
+        UserAdjustmentEffect::kPauseAuto;
 
     std::string metrics_key;
+
+    // If |model_curve| is |kPersonal| then we only use a personal curve if the
+    // the model has been trained at least |min_model_iteration_count|.
+    int min_model_iteration_count = 1;
   };
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -143,7 +147,10 @@ class Adapter : public AlsReader::Observer,
     kMinimalAlsChange = 7,
     // Adapter should only use personal curves but none is available.
     kMissingPersonalCurve = 8,
-    kMaxValue = kMissingPersonalCurve
+    // Adapter should only use a personal curve that has been trained for a min
+    // number of iterations.
+    kWaitingForTrainedPersonalCurve = 9,
+    kMaxValue = kWaitingForTrainedPersonalCurve
   };
 
   struct AdapterDecision {
@@ -167,9 +174,11 @@ class Adapter : public AlsReader::Observer,
           BrightnessMonitor* brightness_monitor,
           Modeller* modeller,
           ModelConfigLoader* model_config_loader,
-          MetricsReporter* metrics_reporter,
-          chromeos::PowerManagerClient* power_manager_client);
+          MetricsReporter* metrics_reporter);
   ~Adapter() override;
+
+  // Must be called before the Adapter is used.
+  void Init();
 
   // AlsReader::Observer overrides:
   void OnAmbientLightUpdated(int lux) override;
@@ -183,14 +192,13 @@ class Adapter : public AlsReader::Observer,
 
   // Modeller::Observer overrides:
   void OnModelTrained(const MonotoneCubicSpline& brightness_curve) override;
-  void OnModelInitialized(
-      const base::Optional<MonotoneCubicSpline>& global_curve,
-      const base::Optional<MonotoneCubicSpline>& personal_curve) override;
+  void OnModelInitialized(const Model& model) override;
 
   // ModelConfigLoader::Observer overrides:
   void OnModelConfigLoaded(base::Optional<ModelConfig> model_config) override;
 
   // chromeos::PowerManagerClient::Observer overrides:
+  void PowerManagerBecameAvailable(bool service_is_ready) override;
   void SuspendDone(const base::TimeDelta& sleep_duration) override;
 
   Status GetStatusForTesting() const;
@@ -217,7 +225,6 @@ class Adapter : public AlsReader::Observer,
       Modeller* modeller,
       ModelConfigLoader* model_config_loader,
       MetricsReporter* metrics_reporter,
-      chromeos::PowerManagerClient* power_manager_client,
       const base::TickClock* tick_clock);
 
  private:
@@ -227,21 +234,22 @@ class Adapter : public AlsReader::Observer,
           Modeller* modeller,
           ModelConfigLoader* model_config_loader,
           MetricsReporter* metrics_reporter,
-          chromeos::PowerManagerClient* power_manager_client,
           const base::TickClock* tick_clock);
 
-  // Called by |OnModelConfigLoaded|. It will initialize all params used by
+  // Called by |OnModelConfigLoaded| and only if |model_config| has been checked
+  // as valid by ModelConfigLoader. It will initialize all params used by
   // the modeller from |model_config| and also other experiment flags. If
   // any param is invalid, it will disable the adapter.
   void InitParams(const ModelConfig& model_config);
-
-  // Called when powerd becomes available.
-  void OnPowerManagerServiceAvailable(bool service_is_ready);
 
   // Called to update |adapter_status_| when there's some status change from
   // AlsReader, BrightnessMonitor, Modeller, power manager and after
   // |InitParams|.
   void UpdateStatus();
+
+  // Called after adapter is initialized. It sets metrics reporter's device
+  // class if metrics reporter is set up.
+  void SetMetricsReporterDeviceClass();
 
   // Checks whether brightness should be changed.
   // This is generally the case when the brightness hasn't been manually
@@ -256,9 +264,9 @@ class Adapter : public AlsReader::Observer,
   void AdjustBrightness(BrightnessChangeCause cause, double log_als_avg);
 
   // Calculates brightness from given |ambient_log_lux| based on either
-  // |global_curve_| or |personal_curve_| (as specified by the experiment
-  // params). It's only safe to call this method when |CanAdjustBrightness|
-  // returns a |BrightnessChangeCause| in its decision.
+  // |model_.global_curve| or |model_.personal_curve| (as specified by the
+  // experiment params). It's only safe to call this method when
+  // |CanAdjustBrightness| returns a |BrightnessChangeCause| in its decision.
   double GetBrightnessBasedOnAmbientLogLux(double ambient_log_lux) const;
 
   // Called when brightness is changed by the model or user. This function
@@ -277,24 +285,34 @@ class Adapter : public AlsReader::Observer,
                         double new_brightness,
                         BrightnessChangeCause cause) const;
 
+  // Logs AdapterDecision. Also logs ratio of user brightness change to model
+  // brightness change if previous brightness change was triggered by the model.
+  // Only called when user changes brightness manually, i.e. when
+  // |OnUserBrightnessChanged| is called.
+  // |old_brightness_percent| and |new_brightness_percent| should come directly
+  // from BrightnessMonitor, and values are between 0 and 100.
+  void LogAdapterDecision(
+      base::TimeTicks first_recent_user_brightness_request_time,
+      const AdapterDecision& decision,
+      double old_brightness_percent,
+      double new_brightness_percent) const;
+
   Profile* const profile_;
 
-  ScopedObserver<AlsReader, AlsReader::Observer> als_reader_observer_;
+  ScopedObserver<AlsReader, AlsReader::Observer> als_reader_observer_{this};
   ScopedObserver<BrightnessMonitor, BrightnessMonitor::Observer>
-      brightness_monitor_observer_;
-  ScopedObserver<Modeller, Modeller::Observer> modeller_observer_;
+      brightness_monitor_observer_{this};
+  ScopedObserver<Modeller, Modeller::Observer> modeller_observer_{this};
 
   ScopedObserver<ModelConfigLoader, ModelConfigLoader::Observer>
-      model_config_loader_observer_;
+      model_config_loader_observer_{this};
 
   ScopedObserver<chromeos::PowerManagerClient,
                  chromeos::PowerManagerClient::Observer>
-      power_manager_client_observer_;
+      power_manager_client_observer_{this};
 
   // Used to report daily metrics to UMA. This may be null in unit tests.
   MetricsReporter* metrics_reporter_;
-
-  chromeos::PowerManagerClient* const power_manager_client_;
 
   Params params_;
 
@@ -313,15 +331,18 @@ class Adapter : public AlsReader::Observer,
 
   base::Optional<bool> brightness_monitor_success_;
 
-  // |model_config_exists_| will remain nullopt until |OnModelConfigLoaded| is
-  // called. Its value will then be set to true if the input model config exists
-  // (not nullopt), else its value will be false.
-  base::Optional<bool> model_config_exists_;
+  // |enabled_by_model_configs_| will remain nullopt until |OnModelConfigLoaded|
+  // is called. Its value will then be set to true if the input model config
+  // exists (not nullopt), and if |InitParams| properly sets params and checks
+  // the model is enabled.
+  base::Optional<bool> enabled_by_model_configs_;
 
   bool model_initialized_ = false;
 
   base::Optional<bool> power_manager_service_available_;
 
+  // |adapter_status_| should only be set to |kDisabled| or |kSuccess| by
+  // |UpdateStatus|.
   Status adapter_status_ = Status::kInitializing;
 
   // This is set to true whenever a user makes a manual adjustment, and if
@@ -331,13 +352,28 @@ class Adapter : public AlsReader::Observer,
   // to check |adapter_disabled_by_user_adjustment_|.
   bool adapter_disabled_by_user_adjustment_ = false;
 
+  // When user changes brightness, they may press the brightness button several
+  // times to reach their ideal brightness. In this process, the adapter's
+  // |OnUserBrightnessChangeRequested| will be called for each button press,
+  // followed by |OnUserBrightnessChanged| when user finishes with their
+  // brightness change.
+  // |first_recent_user_brightness_request_time_| is set to the time when the
+  // first |OnUserBrightnessChangeRequested| is called, and will be unset
+  // when |OnUserBrightnessChanged| is called. We use this to ensure we only
+  // log the elapsed time between previous model adjustment and the 1st user
+  // brightness adjustment action.
+  base::Optional<base::TimeTicks> first_recent_user_brightness_request_time_;
+  base::Optional<AdapterDecision>
+      decision_at_first_recent_user_brightness_request_;
+
+  int model_iteration_count_at_user_brightness_change_ = 0;
+
   // The thresholds are calculated from the |average_log_ambient_lux_|.
   // They are only updated when brightness is changed (either by user or model).
   base::Optional<double> brightening_threshold_;
   base::Optional<double> darkening_threshold_;
 
-  base::Optional<MonotoneCubicSpline> global_curve_;
-  base::Optional<MonotoneCubicSpline> personal_curve_;
+  Model model_;
 
   // |average_log_ambient_lux_| is only recorded when screen brightness is
   // changed by either model or user. New thresholds will be calculated from it.
@@ -349,14 +385,16 @@ class Adapter : public AlsReader::Observer,
   // Last time brightness was changed by the model.
   base::TimeTicks latest_model_brightness_change_time_;
 
+  // Brightness change triggered by the model. It's only unset if model changes
+  // brightness when there's no pior recorded brightness level.
+  base::Optional<double> model_brightness_change_;
+
   // Current recorded brightness. It can be either the user requested brightness
   // or the model requested brightness.
   base::Optional<double> current_brightness_;
 
   // Used to record number of model-triggered brightness changes.
   int model_brightness_change_counter_ = 1;
-
-  base::WeakPtrFactory<Adapter> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(Adapter);
 };

@@ -53,8 +53,8 @@
 // Avoid using allowances outside of unit tests. In unit tests, use allowances
 // with the suffix "ForTesting".
 //
-// Prefer making blocking calls from tasks posted to base::TaskScheduler with
-// base::MayBlock().
+// Prefer making blocking calls from tasks posted to base::ThreadPoolInstance
+// with base::MayBlock().
 //
 // Instead of waiting on a WaitableEvent or a ConditionVariable, prefer putting
 // the work that should happen after the wait in a continuation callback and
@@ -137,9 +137,10 @@ class BrowserShutdownProfileDumper;
 class BrowserTestBase;
 class CategorizedWorkerPool;
 class DesktopCaptureDevice;
-class DWriteFontLookupTableBuilder;
 class GpuProcessTransportFactory;
+class InProcessUtilityThread;
 class NestedMessagePumpAndroid;
+class RenderWidgetHostViewMac;
 class RTCVideoDecoder;
 class RTCVideoDecoderAdapter;
 class RTCVideoEncoder;
@@ -184,6 +185,9 @@ namespace media {
 class AudioInputDevice;
 class AudioOutputDevice;
 class BlockingUrlProtocol;
+}
+namespace memory_instrumentation {
+class OSMetrics;
 }
 namespace midi {
 class TaskService;  // https://crbug.com/796830
@@ -335,9 +339,11 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class android_webview::ScopedAllowInitGLBindings;
   friend class content::BrowserProcessSubThread;
   friend class content::GpuProcessTransportFactory;
+  friend class content::RenderWidgetHostViewMac;  // http://crbug.com/121917
   friend class content::WebContentsViewMac;
   friend class cronet::CronetPrefsManager;
   friend class cronet::CronetURLRequestContext;
+  friend class memory_instrumentation::OSMetrics;
   friend class mojo::CoreLibraryInitializer;
   friend class resource_coordinator::TabManagerDelegate;  // crbug.com/778703
   friend class ui::MaterialDesignController;
@@ -389,7 +395,6 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
   friend class chrome_cleaner::SystemReportComponent;
   friend class content::BrowserMainLoop;
   friend class content::BrowserProcessSubThread;
-  friend class content::DWriteFontLookupTableBuilder;
   friend class content::ServiceWorkerContextClient;
   friend class content::SessionStorageDatabase;
   friend class functions::ExecScriptScopedAllowBaseSyncPrimitives;
@@ -449,6 +454,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class base::ScopedAllowThreadRecallForStackSamplingProfiler;
   friend class base::StackSamplingProfiler;
   friend class content::DesktopCaptureDevice;
+  friend class content::InProcessUtilityThread;
   friend class content::RTCVideoDecoder;
   friend class content::RTCVideoDecoderAdapter;
   friend class content::RTCVideoEncoder;

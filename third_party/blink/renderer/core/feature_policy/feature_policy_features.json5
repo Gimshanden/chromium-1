@@ -45,6 +45,66 @@
       feature_policy_name: "camera",
     },
     {
+      name: "ClientHintDPR",
+      feature_policy_name: "ch-dpr",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintDeviceMemory",
+      feature_policy_name: "ch-device-memory",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintDownlink",
+      feature_policy_name: "ch-downlink",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintECT",
+      feature_policy_name: "ch-ect",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintLang",
+      feature_policy_name: "ch-lang",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintRTT",
+      feature_policy_name: "ch-rtt",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintUA",
+      feature_policy_name: "ch-ua",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintUAArch",
+      feature_policy_name: "ch-ua-arch",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintUAPlatform",
+      feature_policy_name: "ch-ua-platform",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintUAModel",
+      feature_policy_name: "ch-ua-model",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintViewportWidth",
+      feature_policy_name: "ch-viewport-width",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
+      name: "ClientHintWidth",
+      feature_policy_name: "ch-width",
+      depends_on: ["ClientHintsFeaturePolicy"],
+    },
+    {
       name: "DocumentDomain",
       feature_policy_name: "document-domain",
       depends_on: ["ExperimentalProductivityFeatures"],
@@ -55,8 +115,28 @@
       depends_on: ["ExperimentalProductivityFeatures"],
     },
     {
+      name: "DownloadsWithoutUserActivation",
+      feature_policy_name: "downloads-without-user-activation",
+      depends_on: ["FeaturePolicyForSandbox"],
+    },
+    {
       name: "EncryptedMedia",
       feature_policy_name: "encrypted-media",
+    },
+    {
+      name: "ExecutionWhileOutOfViewport",
+      feature_policy_name: "execution-while-out-of-viewport",
+      depends_on: ["FreezeFramesOnVisibility"],
+    },
+    {
+      name: "ExecutionWhileNotRendered",
+      feature_policy_name: "execution-while-not-rendered",
+      depends_on: ["FreezeFramesOnVisibility"],
+    },
+    {
+      name: "FocusWithoutUserActivation",
+      feature_policy_name: "focus-without-user-activation",
+      depends_on: ["BlockingFocusWithoutUserActivation"],
     },
     {
       name: "FontDisplay",
@@ -105,6 +185,11 @@
       name: "LazyLoad",
       feature_policy_name: "lazyload",
       depends_on: ["ExperimentalProductivityFeatures"],
+    },
+    {
+      name: "LoadingFrameDefaultEager",
+      feature_policy_name: "loading-frame-default-eager",
+      depends_on: ["ExperimentalProductivityFeatures"]
     },
     {
       name: "Magnetometer",

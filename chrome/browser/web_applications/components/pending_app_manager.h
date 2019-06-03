@@ -10,9 +10,12 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/web_applications/components/install_options.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "url/gurl.h"
 
 namespace web_app {
@@ -27,6 +30,11 @@ enum class InstallResultCode;
 // should wait for the update request to finish before uninstalling the app.
 class PendingAppManager {
  public:
+  enum class SynchronizeResult {
+    kSuccess = 0,
+    kFailed = 1,
+  };
+
   using OnceInstallCallback =
       base::OnceCallback<void(const GURL& app_url, InstallResultCode code)>;
   using RepeatingInstallCallback =
@@ -34,9 +42,13 @@ class PendingAppManager {
                                    InstallResultCode code)>;
   using UninstallCallback =
       base::RepeatingCallback<void(const GURL& app_url, bool succeeded)>;
+  using SynchronizeCallback =
+      base::OnceCallback<void(SynchronizeResult result)>;
 
   PendingAppManager();
   virtual ~PendingAppManager();
+
+  virtual void Shutdown() = 0;
 
   // Queues an installation operation with the highest priority. Essentially
   // installing the app immediately if there are no ongoing operations or
@@ -77,16 +89,53 @@ class PendingAppManager {
   // All apps in |desired_apps_install_options| should have |install_source| as
   // their source.
   //
+  // Once all installs/uninstalls are complete, |callback| will be run with the
+  // success/failure status of the synchronization.
+  //
   // Note that this returns after queueing work (installation and
   // uninstallation) to be done. It does not wait until that work is complete.
   void SynchronizeInstalledApps(
       std::vector<InstallOptions> desired_apps_install_options,
-      InstallSource install_source);
+      InstallSource install_source,
+      SynchronizeCallback callback);
 
   // Returns the app id for |url| if the PendingAppManager is aware of it.
-  virtual base::Optional<std::string> LookupAppId(const GURL& url) const = 0;
+  virtual base::Optional<AppId> LookupAppId(const GURL& url) const = 0;
+
+  // Returns whether the PendingAppManager has installed an app with |app_id|
+  // from |install_source|.
+  virtual bool HasAppIdWithInstallSource(
+      const AppId& app_id,
+      web_app::InstallSource install_source) const = 0;
 
  private:
+  struct SynchronizeRequest {
+    SynchronizeRequest(SynchronizeCallback callback, int remaining_requests);
+    ~SynchronizeRequest();
+
+    SynchronizeRequest& operator=(SynchronizeRequest&&);
+    SynchronizeRequest(SynchronizeRequest&& other);
+
+    SynchronizeCallback callback;
+    int remaining_requests;
+    SynchronizeResult result = SynchronizeResult::kSuccess;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(SynchronizeRequest);
+  };
+
+  void InstallForSynchronizeCallback(InstallSource source,
+                                     const GURL& app_url,
+                                     InstallResultCode code);
+  void UninstallForSynchronizeCallback(InstallSource source,
+                                       const GURL& app_url,
+                                       bool succeeded);
+  void OnAppSynchronized(InstallSource source, bool succeeded);
+
+  base::flat_map<InstallSource, SynchronizeRequest> synchronize_requests_;
+
+  base::WeakPtrFactory<PendingAppManager> weak_ptr_factory_{this};
+
   DISALLOW_COPY_AND_ASSIGN(PendingAppManager);
 };
 

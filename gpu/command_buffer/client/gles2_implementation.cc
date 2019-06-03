@@ -1355,6 +1355,22 @@ void GLES2Implementation::Flush() {
   FlushHelper();
 }
 
+// InterfaceBase implementation.
+void GLES2Implementation::GenSyncTokenCHROMIUM(GLbyte* sync_token) {
+  ImplementationBase::GenSyncToken(sync_token);
+}
+void GLES2Implementation::GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) {
+  ImplementationBase::GenUnverifiedSyncToken(sync_token);
+}
+void GLES2Implementation::VerifySyncTokensCHROMIUM(GLbyte** sync_tokens,
+                                                   GLsizei count) {
+  ImplementationBase::VerifySyncTokens(sync_tokens, count);
+}
+void GLES2Implementation::WaitSyncTokenCHROMIUM(const GLbyte* sync_token) {
+  ImplementationBase::WaitSyncToken(sync_token);
+}
+
+// ImplementationBase implementation.
 void GLES2Implementation::IssueShallowFlush() {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glShallowFlushCHROMIUM()");
@@ -6062,6 +6078,7 @@ void GLES2Implementation::BeginQueryEXT(GLenum target, GLuint id) {
     case GL_LATENCY_QUERY_CHROMIUM:
     case GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM:
     case GL_GET_ERROR_QUERY_CHROMIUM:
+    case GL_PROGRAM_COMPLETION_QUERY_CHROMIUM:
       break;
     case GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM:
     case GL_COMMANDS_COMPLETED_CHROMIUM:
@@ -6430,6 +6447,7 @@ GLuint GLES2Implementation::CreateAndTexStorage2DSharedImageCHROMIUM(
   const Mailbox& mailbox = *reinterpret_cast<const Mailbox*>(mailbox_data);
   DCHECK(mailbox.Verify()) << "CreateAndTexStorage2DSharedImageCHROMIUM was "
                               "passed an invalid mailbox.";
+  DCHECK(mailbox.IsSharedImage());
   GLuint client_id;
   GetIdHandler(SharedIdNamespaces::kTextures)->MakeIds(this, 0, 1, &client_id);
   helper_->CreateAndTexStorage2DSharedImageINTERNALImmediate(client_id, GL_NONE,
@@ -6454,6 +6472,7 @@ GLES2Implementation::CreateAndTexStorage2DSharedImageWithInternalFormatCHROMIUM(
   DCHECK(mailbox.Verify())
       << "CreateAndTexStorage2DSharedImageWithInternalFormatCHROMIUM was "
          "passed an invalid mailbox.";
+  DCHECK(mailbox.IsSharedImage());
   GLuint client_id;
   GetIdHandler(SharedIdNamespaces::kTextures)->MakeIds(this, 0, 1, &client_id);
   helper_->CreateAndTexStorage2DSharedImageINTERNALImmediate(
@@ -6661,93 +6680,6 @@ bool GLES2Implementation::CanDecodeWithHardwareAcceleration(
     base::span<const uint8_t> encoded_data) const {
   NOTREACHED();
   return false;
-}
-
-void GLES2Implementation::GenSyncTokenCHROMIUM(GLbyte* sync_token) {
-  if (!sync_token) {
-    SetGLError(GL_INVALID_VALUE, "glGenSyncTokenCHROMIUM", "empty sync_token");
-    return;
-  }
-
-  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
-  helper_->InsertFenceSync(fence_sync);
-  helper_->CommandBufferHelper::OrderingBarrier();
-  gpu_control_->EnsureWorkVisible();
-
-  // Copy the data over after setting the data to ensure alignment.
-  SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
-                            gpu_control_->GetCommandBufferID(), fence_sync);
-  sync_token_data.SetVerifyFlush();
-  memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
-}
-
-void GLES2Implementation::GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) {
-  if (!sync_token) {
-    SetGLError(GL_INVALID_VALUE, "glGenUnverifiedSyncTokenCHROMIUM",
-               "empty sync_token");
-    return;
-  }
-
-  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
-  helper_->InsertFenceSync(fence_sync);
-  helper_->CommandBufferHelper::OrderingBarrier();
-
-  // Copy the data over after setting the data to ensure alignment.
-  SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
-                            gpu_control_->GetCommandBufferID(), fence_sync);
-  memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
-}
-
-void GLES2Implementation::VerifySyncTokensCHROMIUM(GLbyte** sync_tokens,
-                                                   GLsizei count) {
-  bool requires_synchronization = false;
-  for (GLsizei i = 0; i < count; ++i) {
-    if (sync_tokens[i]) {
-      SyncToken sync_token;
-      memcpy(&sync_token, sync_tokens[i], sizeof(sync_token));
-
-      if (sync_token.HasData() && !sync_token.verified_flush()) {
-        if (!GetVerifiedSyncTokenForIPC(sync_token, &sync_token)) {
-          SetGLError(GL_INVALID_VALUE, "glVerifySyncTokensCHROMIUM",
-                     "Cannot verify sync token using this context.");
-          return;
-        }
-        requires_synchronization = true;
-        DCHECK(sync_token.verified_flush());
-      }
-
-      // Set verify bit on empty sync tokens too.
-      sync_token.SetVerifyFlush();
-
-      memcpy(sync_tokens[i], &sync_token, sizeof(sync_token));
-    }
-  }
-
-  // Ensure all the fence syncs are visible on GPU service.
-  if (requires_synchronization)
-    gpu_control_->EnsureWorkVisible();
-}
-
-void GLES2Implementation::WaitSyncTokenCHROMIUM(const GLbyte* sync_token_data) {
-  if (!sync_token_data)
-    return;
-
-  // Copy the data over before data access to ensure alignment.
-  SyncToken sync_token, verified_sync_token;
-  memcpy(&sync_token, sync_token_data, sizeof(SyncToken));
-
-  if (!sync_token.HasData())
-    return;
-
-  if (!GetVerifiedSyncTokenForIPC(sync_token, &verified_sync_token)) {
-    SetGLError(GL_INVALID_VALUE, "glWaitSyncTokenCHROMIUM",
-               "Cannot wait on sync_token which has not been verified");
-    return;
-  }
-
-  // Enqueue sync token in flush after inserting command so that it's not
-  // included in an automatic flush.
-  gpu_control_->WaitSyncToken(verified_sync_token);
 }
 
 namespace {

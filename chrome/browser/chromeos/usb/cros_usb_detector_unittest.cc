@@ -11,6 +11,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/chromeos/crostini/crostini_manager.h"
+#include "chrome/browser/chromeos/crostini/crostini_pref_names.h"
+#include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/usb/cros_usb_detector.h"
 #include "chrome/browser/notifications/notification_display_service.h"
@@ -24,10 +26,10 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_cicerone_client.h"
 #include "chromeos/dbus/fake_concierge_client.h"
-#include "device/usb/public/cpp/fake_usb_device_info.h"
-#include "device/usb/public/cpp/fake_usb_device_manager.h"
-#include "device/usb/public/mojom/device.mojom.h"
-#include "device/usb/public/mojom/device_manager.mojom.h"
+#include "services/device/public/cpp/test/fake_usb_device_info.h"
+#include "services/device/public/cpp/test/fake_usb_device_manager.h"
+#include "services/device/public/mojom/usb_device.mojom.h"
+#include "services/device/public/mojom/usb_manager.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "url/gurl.h"
@@ -129,12 +131,14 @@ class CrosUsbDetectorTest : public BrowserWithTestWindowTest {
 
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
+    crostini_test_helper_.reset(new crostini::CrostiniTestHelper(profile()));
     scoped_feature_list_.InitWithFeatures(
         {chromeos::features::kCrostiniUsbSupport,
          chromeos::features::kCrostiniUsbAllowUnsupported},
         {});
     profile_manager()->SetLoggedIn(true);
     chromeos::ProfileHelper::Get()->SetActiveUserIdForTesting(kProfileName);
+
     TestingBrowserProcess::GetGlobal()->SetSystemNotificationHelper(
         std::make_unique<SystemNotificationHelper>());
     display_service_ = std::make_unique<NotificationDisplayServiceTester>(
@@ -148,6 +152,7 @@ class CrosUsbDetectorTest : public BrowserWithTestWindowTest {
   }
 
   void TearDown() override {
+    crostini_test_helper_.reset();
     BrowserWithTestWindowTest::TearDown();
   }
 
@@ -175,6 +180,8 @@ class CrosUsbDetectorTest : public BrowserWithTestWindowTest {
   std::unique_ptr<chromeos::CrosUsbDetector> cros_usb_detector_;
 
   base::test::ScopedFeatureList scoped_feature_list_;
+
+  std::unique_ptr<crostini::CrostiniTestHelper> crostini_test_helper_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CrosUsbDetectorTest);

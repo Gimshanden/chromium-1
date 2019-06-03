@@ -43,7 +43,10 @@ class TestNetworkContext : public mojom::NetworkContext {
   void GetCookieManager(mojom::CookieManagerRequest cookie_manager) override {}
   void GetRestrictedCookieManager(
       mojom::RestrictedCookieManagerRequest restricted_cookie_manager,
-      const url::Origin& origin) override {}
+      const url::Origin& origin,
+      bool is_service_worker,
+      int32_t process_id,
+      int32_t routing_id) override {}
   void ClearNetworkingHistorySince(
       base::Time start_time,
       ClearNetworkingHistorySinceCallback callback) override {}
@@ -54,10 +57,6 @@ class TestNetworkContext : public mojom::NetworkContext {
   void ComputeHttpCacheSize(base::Time start_time,
                             base::Time end_time,
                             ComputeHttpCacheSizeCallback callback) override {}
-  void ClearChannelIds(base::Time start_time,
-                       base::Time end_time,
-                       mojom::ClearDataFilterPtr filter,
-                       ClearChannelIdsCallback callback) override {}
   void ClearHostCache(mojom::ClearDataFilterPtr filter,
                       ClearHostCacheCallback callback) override {}
   void ClearHttpAuthCache(base::Time start_time,
@@ -157,7 +156,7 @@ class TestNetworkContext : public mojom::NetworkContext {
   void WriteCacheMetadata(const GURL& url,
                           net::RequestPriority priority,
                           base::Time expected_response_time,
-                          const std::vector<uint8_t>& data) override {}
+                          mojo_base::BigBuffer data) override {}
   void VerifyCertForSignedExchange(
       const scoped_refptr<net::X509Certificate>& certificate,
       const GURL& url,
@@ -186,6 +185,7 @@ class TestNetworkContext : public mojom::NetworkContext {
       const scoped_refptr<net::X509Certificate>& certificate,
       const std::string& hostname,
       const std::string& ocsp_response,
+      const std::string& sct_list,
       VerifyCertificateForTestingCallback callback) override {}
   void PreconnectSockets(uint32_t num_streams,
                          const GURL& url,
@@ -216,6 +216,8 @@ class TestNetworkContext : public mojom::NetworkContext {
   void LookupBasicAuthCredentials(
       const GURL& url,
       LookupBasicAuthCredentialsCallback callback) override {}
+  void GetOriginPolicyManager(
+      mojom::OriginPolicyManagerRequest request) override {}
 };
 
 }  // namespace network

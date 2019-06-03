@@ -173,6 +173,12 @@ class MetaBuildWrapper(object):
                             help='look up the command for a given config or '
                                  'builder')
     AddCommonOptions(subp)
+    subp.add_argument('--quiet', default=False, action='store_true',
+                      help='Print out just the arguments, '
+                           'do not emulate the output of the gen subcommand.')
+    subp.add_argument('--recursive', default=False, action='store_true',
+                      help='Lookup arguments from imported files, '
+                           'implies --quiet')
     subp.set_defaults(func=self.CmdLookup)
 
     subp = subps.add_parser(
@@ -330,12 +336,15 @@ class MetaBuildWrapper(object):
 
   def CmdLookup(self):
     vals = self.Lookup()
-    cmd = self.GNCmd('gen', '_path_')
-    gn_args = self.GNArgs(vals)
-    self.Print('\nWriting """\\\n%s""" to _path_/args.gn.\n' % gn_args)
-    env = None
+    gn_args = self.GNArgs(vals, expand_imports=self.args.recursive)
+    if self.args.quiet or self.args.recursive:
+      self.Print(gn_args, end='')
+    else:
+      cmd = self.GNCmd('gen', '_path_')
+      self.Print('\nWriting """\\\n%s""" to _path_/args.gn.\n' % gn_args)
+      env = None
 
-    self.PrintCmd(cmd, env)
+      self.PrintCmd(cmd, env)
     return 0
 
   def CmdRun(self):
@@ -343,13 +352,17 @@ class MetaBuildWrapper(object):
     if not vals:
       return 1
     if self.args.build:
+      self.Print('')
       ret = self.Build(self.args.target)
       if ret:
         return ret
+
+    self.Print('')
     ret = self.RunGNIsolate(vals)
     if ret:
       return ret
 
+    self.Print('')
     if self.args.swarmed:
       return self._RunUnderSwarming(self.args.path, self.args.target)
     else:
@@ -399,9 +412,9 @@ class MetaBuildWrapper(object):
       ('infra/tools/luci/logdog/butler/${platform}',
        'git_revision:e1abc57be62d198b5c2f487bfb2fa2d2eb0e867c'),
       ('infra/tools/luci/vpython-native/${platform}',
-       'git_revision:2973c0809cdc7122b7123e42b163a54d4983503f'),
+       'git_revision:cc09450f1c27c0034ec08b1f6d63bbc298294763'),
       ('infra/tools/luci/vpython/${platform}',
-       'git_revision:2973c0809cdc7122b7123e42b163a54d4983503f'),
+       'git_revision:cc09450f1c27c0034ec08b1f6d63bbc298294763'),
     ]
     for pkg, vers in cipd_packages:
       cmd.append('--cipd-package=.swarming_module:%s:%s' % (pkg, vers))
@@ -441,8 +454,24 @@ class MetaBuildWrapper(object):
         '-I', isolate_server,
         '--namespace', namespace,
       ]
-    ret, out, _ = self.Run(cmd, force_verbose=False)
+
+    # Talking to the isolateserver may fail because we're not logged in.
+    # We trap the command explicitly and rewrite the error output so that
+    # the error message is actually correct for a Chromium check out.
+    self.PrintCmd(cmd, env=None)
+    ret, out, err = self.Run(cmd, force_verbose=False)
     if ret:
+      self.Print('  -> returned %d' % ret)
+      if out:
+        self.Print(out, end='')
+      if err:
+        # The swarming client will return an exit code of 2 (via
+        # argparse.ArgumentParser.error()) and print a message to indicate
+        # that auth failed, so we have to parse the message to check.
+        if (ret == 2 and 'Please login to' in err):
+          err = err.replace(' auth.py', ' tools/swarming_client/auth.py')
+          self.Print(err, end='', file=sys.stderr)
+
       return ret
 
     isolated_hash = out.splitlines()[0].split()[0]
@@ -458,6 +487,7 @@ class MetaBuildWrapper(object):
     self._AddBaseSoftware(cmd)
     if self.args.extra_args:
       cmd += ['--'] + self.args.extra_args
+    self.Print('')
     ret, _, _ = self.Run(cmd, force_verbose=True, buffer_output=False)
     return ret
 
@@ -945,15 +975,22 @@ class MetaBuildWrapper(object):
     win = self.platform == 'win32' or 'target_os="win"' in vals['gn_args']
     possible_runtime_deps_rpaths = {}
     for target in ninja_targets:
+      target_type = isolate_map[target]['type']
+      label = isolate_map[target]['label']
+      stamp_runtime_deps = 'obj/%s.stamp.runtime_deps' % label.replace(':', '/')
       # TODO(https://crbug.com/876065): 'official_tests' use
       # type='additional_compile_target' to isolate tests. This is not the
       # intended use for 'additional_compile_target'.
-      if (isolate_map[target]['type'] == 'additional_compile_target' and
+      if (target_type == 'additional_compile_target' and
           target != 'official_tests'):
         # By definition, additional_compile_targets are not tests, so we
         # shouldn't generate isolates for them.
         raise MBErr('Cannot generate isolate for %s since it is an '
                     'additional_compile_target.' % target)
+      elif fuchsia or ios or target_type == 'generated_script':
+        # iOS and Fuchsia targets end up as groups.
+        # generated_script targets are always actions.
+        rpaths = [stamp_runtime_deps]
       elif android:
         # Android targets may be either android_apk or executable. The former
         # will result in runtime_deps associated with the stamp file, while the
@@ -961,20 +998,16 @@ class MetaBuildWrapper(object):
         label = isolate_map[target]['label']
         rpaths = [
             target + '.runtime_deps',
-            'obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
-      elif ios or fuchsia:
-        # iOS and Fuchsia targets end up as groups.
-        label = isolate_map[target]['label']
-        rpaths = ['obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
-      elif (isolate_map[target]['type'] == 'script' or
-            isolate_map[target]['type'] == 'fuzzer' or
+            stamp_runtime_deps]
+      elif (target_type == 'script' or
+            target_type == 'fuzzer' or
             isolate_map[target].get('label_type') == 'group'):
         # For script targets, the build target is usually a group,
         # for which gn generates the runtime_deps next to the stamp file
         # for the label, which lives under the obj/ directory, but it may
         # also be an executable.
         label = isolate_map[target]['label']
-        rpaths = ['obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
+        rpaths = [stamp_runtime_deps]
         if win:
           rpaths += [ target + '.exe.runtime_deps' ]
         else:
@@ -1084,7 +1117,7 @@ class MetaBuildWrapper(object):
     return [gn_path, subcommand, path] + list(args)
 
 
-  def GNArgs(self, vals):
+  def GNArgs(self, vals, expand_imports=False):
     if vals['cros_passthrough']:
       if not 'GN_ARGS' in os.environ:
         raise MBErr('MB is expecting GN_ARGS to be in the environment')
@@ -1108,26 +1141,34 @@ class MetaBuildWrapper(object):
     if android_version_name:
       gn_args += ' android_default_version_name="%s"' % android_version_name
 
-    # Canonicalize the arg string into a sorted, newline-separated list
-    # of key-value pairs, and de-dup the keys if need be so that only
-    # the last instance of each arg is listed.
-    gn_args = gn_helpers.ToGNString(gn_helpers.FromGNArgs(gn_args))
+    args_gn_lines = []
+    parsed_gn_args = {}
 
     # If we're using the Simple Chrome SDK, add a comment at the top that
     # points to the doc. This must happen after the gn_helpers.ToGNString()
     # call above since gn_helpers strips comments.
     if vals['cros_passthrough']:
-      simplechrome_comment = [
+      args_gn_lines.extend([
           '# These args are generated via the Simple Chrome SDK. See the link',
           '# below for more details:',
           '# https://chromium.googlesource.com/chromiumos/docs/+/master/simple_chrome_workflow.md',  # pylint: disable=line-too-long
-      ]
-      gn_args = '%s\n%s' % ('\n'.join(simplechrome_comment), gn_args)
+      ])
 
     args_file = vals.get('args_file', None)
     if args_file:
-      gn_args = ('import("%s")\n' % vals['args_file']) + gn_args
-    return gn_args
+      if expand_imports:
+        content = self.ReadFile(self.ToAbsPath(args_file))
+        parsed_gn_args = gn_helpers.FromGNArgs(content)
+      else:
+        args_gn_lines.append('import("%s")' % args_file)
+
+    # Canonicalize the arg string into a sorted, newline-separated list
+    # of key-value pairs, and de-dup the keys if need be so that only
+    # the last instance of each arg is listed.
+    parsed_gn_args.update(gn_helpers.FromGNArgs(gn_args))
+    args_gn_lines.append(gn_helpers.ToGNString(parsed_gn_args))
+
+    return '\n'.join(args_gn_lines)
 
   def GetIsolateCommand(self, target, vals):
     isolate_map = self.ReadIsolateMap()
@@ -1154,7 +1195,8 @@ class MetaBuildWrapper(object):
     test_type = isolate_map[target]['type']
 
     executable = isolate_map[target].get('executable', target)
-    executable_suffix = '.exe' if is_win else ''
+    executable_suffix = isolate_map[target].get(
+        'executable_suffix', '.exe' if is_win else '')
 
     cmdline = []
     extra_files = [
@@ -1166,7 +1208,12 @@ class MetaBuildWrapper(object):
       self.WriteFailureAndRaise('We should not be isolating %s.' % target,
                                 output_path=None)
 
-    if test_type == 'fuzzer':
+    if test_type == 'generated_script':
+      cmdline = [
+          '../../testing/test_env.py',
+          isolate_map[target]['script'],
+      ]
+    elif test_type == 'fuzzer':
       cmdline = [
         '../../testing/test_env.py',
         '../../tools/code_coverage/run_fuzz_target.py',
@@ -1474,7 +1521,7 @@ class MetaBuildWrapper(object):
     if self.args.jobs:
       ninja_cmd.extend(['-j', '%d' % self.args.jobs])
     ninja_cmd.append(target)
-    ret, _, _ = self.Run(ninja_cmd, force_verbose=False, buffer_output=False)
+    ret, _, _ = self.Run(ninja_cmd, buffer_output=False)
     return ret
 
   def Run(self, cmd, env=None, force_verbose=True, buffer_output=True):

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <dawn/dawncpp.h>
-
 #include "gpu/command_buffer/client/webgpu_implementation.h"
 #include "gpu/command_buffer/tests/webgpu_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -13,14 +11,12 @@ namespace {
 
 class MockFenceOnCompletionCallback {
  public:
-  MOCK_METHOD2(Call,
-               void(DawnFenceCompletionStatus status,
-                    DawnCallbackUserdata userdata));
+  MOCK_METHOD2(Call, void(DawnFenceCompletionStatus status, void* userdata));
 };
 
 std::unique_ptr<MockFenceOnCompletionCallback> mockFenceOnCompletionCallback;
 void ToMockFenceOnCompletionCallback(DawnFenceCompletionStatus status,
-                                     DawnCallbackUserdata userdata) {
+                                     void* userdata) {
   mockFenceOnCompletionCallback->Call(status, userdata);
 }
 
@@ -99,11 +95,10 @@ TEST_F(WebGPUFenceTest, OnCompletion) {
   dawn::Fence fence = queue.CreateFence(&fence_desc);
   queue.Signal(fence, 2u);
 
-  DawnCallbackUserdata userdata = 9847;
   EXPECT_CALL(*mockFenceOnCompletionCallback,
-              Call(DAWN_FENCE_COMPLETION_STATUS_SUCCESS, userdata))
+              Call(DAWN_FENCE_COMPLETION_STATUS_SUCCESS, this))
       .Times(1);
-  fence.OnCompletion(2u, ToMockFenceOnCompletionCallback, userdata);
+  fence.OnCompletion(2u, ToMockFenceOnCompletionCallback, this);
   WaitForFence(device, fence, 2u);
 }
 

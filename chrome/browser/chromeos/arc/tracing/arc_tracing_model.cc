@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <inttypes.h>
+
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_model.h"
 
 #include "base/json/json_reader.h"
@@ -19,6 +21,8 @@ constexpr char kTracingMarkWrite[] = ": tracing_mark_write: ";
 constexpr int kTracingMarkWriteLength = sizeof(kTracingMarkWrite) - 1;
 constexpr char kCpuIdle[] = ": cpu_idle: ";
 constexpr int kCpuIdleLength = sizeof(kCpuIdle) - 1;
+constexpr char kIntelGpuFreqChange[] = ": intel_gpu_freq_change: ";
+constexpr int kIntelGpuFreqChangeLength = sizeof(kIntelGpuFreqChange) - 1;
 constexpr char kSchedWakeUp[] = ": sched_wakeup: ";
 constexpr int kSchedWakeUpLength = sizeof(kSchedWakeUp) - 1;
 constexpr char kSchedSwitch[] = ": sched_switch: ";
@@ -98,7 +102,7 @@ struct GraphicsEventsContext {
 };
 
 bool HandleGraphicsEvent(GraphicsEventsContext* context,
-                         double timestamp,
+                         uint64_t timestamp,
                          uint32_t tid,
                          const std::string& line,
                          size_t event_position) {
@@ -162,7 +166,7 @@ bool HandleGraphicsEvent(GraphicsEventsContext* context,
 }
 
 bool HandleCpuIdle(AllCpuEvents* all_cpu_events,
-                   double timestamp,
+                   uint64_t timestamp,
                    uint32_t cpu_id,
                    uint32_t tid,
                    const std::string& line,
@@ -173,7 +177,7 @@ bool HandleCpuIdle(AllCpuEvents* all_cpu_events,
   }
   uint32_t state;
   uint32_t cpu_id_from_event;
-  if (sscanf(&line[event_position], "state=%d cpu_id=%d", &state,
+  if (sscanf(&line[event_position], "state=%" SCNu32 " cpu_id=%" SCNu32, &state,
              &cpu_id_from_event) != 2 ||
       cpu_id != cpu_id_from_event) {
     LOG(ERROR) << "Failed to parse cpu_idle event: " << line;
@@ -187,7 +191,7 @@ bool HandleCpuIdle(AllCpuEvents* all_cpu_events,
 }
 
 bool HandleSchedWakeUp(AllCpuEvents* all_cpu_events,
-                       double timestamp,
+                       uint64_t timestamp,
                        uint32_t cpu_id,
                        uint32_t tid,
                        const std::string& line,
@@ -195,9 +199,40 @@ bool HandleSchedWakeUp(AllCpuEvents* all_cpu_events,
   const char* data = strstr(&line[event_position], " pid=");
   uint32_t target_tid;
   uint32_t target_priority;
+  uint32_t success;
   uint32_t target_cpu_id;
-  if (!data || sscanf(data, " pid=%d prio=%d target_cpu=%d", &target_tid,
-                      &target_priority, &target_cpu_id) != 3) {
+  if (!data) {
+    LOG(ERROR) << "Failed to parse sched_wakeup event: " << line;
+    return false;
+  }
+
+  bool parsed = false;
+
+  // Try different kernel formats. In case one does not match, don't attempt to
+  // use it in the future.
+  {
+    static bool use_this = true;
+    if (!parsed && use_this) {
+      parsed =
+          sscanf(data, " pid=%" SCNu32 " prio=%" SCNu32 " target_cpu=%" SCNu32,
+                 &target_tid, &target_priority, &target_cpu_id) == 3;
+      use_this = parsed;
+    }
+  }
+
+  {
+    static bool use_this = true;
+    if (!parsed && use_this) {
+      parsed =
+          sscanf(data,
+                 " pid=%" SCNu32 " prio=%" SCNu32 " success=%" SCNu32
+                 " target_cpu=%" SCNu32,
+                 &target_tid, &target_priority, &success, &target_cpu_id) == 4;
+      use_this = parsed;
+    }
+  }
+
+  if (!parsed) {
     LOG(ERROR) << "Failed to parse sched_wakeup event: " << line;
     return false;
   }
@@ -212,7 +247,7 @@ bool HandleSchedWakeUp(AllCpuEvents* all_cpu_events,
 }
 
 bool HandleSchedSwitch(AllCpuEvents* all_cpu_events,
-                       double timestamp,
+                       uint64_t timestamp,
                        uint32_t cpu_id,
                        uint32_t tid,
                        const std::string& line,
@@ -228,6 +263,21 @@ bool HandleSchedSwitch(AllCpuEvents* all_cpu_events,
 
   return AddAllCpuEvent(all_cpu_events, cpu_id, timestamp,
                         ArcCpuEvent::Type::kActive, next_tid);
+}
+
+bool HandleGpuFreq(ValueEvents* value_events,
+                   uint64_t timestamp,
+                   const std::string& line,
+                   size_t event_position) {
+  int new_freq = -1;
+  if (sscanf(&line[event_position], "new_freq=%d", &new_freq) != 1) {
+    LOG(ERROR) << "Failed to parse GPU freq event: " << line;
+    return false;
+  }
+
+  value_events->emplace_back(timestamp, ArcValueEvent::Type::kGpuFreq,
+                             new_freq);
+  return true;
 }
 
 }  // namespace
@@ -352,8 +402,8 @@ bool ArcTracingModel::ProcessEvent(base::ListValue* events) {
   // for others may appear after children. Sort by ts time.
   std::sort(parsed_events.begin(), parsed_events.end(),
             [](const auto& lhs, const auto& rhs) {
-              const int64_t lhs_timestamp = lhs->GetTimestamp();
-              const int64_t rhs_timestamp = rhs->GetTimestamp();
+              const uint64_t lhs_timestamp = lhs->GetTimestamp();
+              const uint64_t rhs_timestamp = rhs->GetTimestamp();
               if (lhs_timestamp != rhs_timestamp)
                 return lhs_timestamp < rhs->GetTimestamp();
               return lhs->GetDuration() > rhs->GetDuration();
@@ -421,12 +471,13 @@ bool ArcTracingModel::ConvertSysTraces(const std::string& sys_traces) {
       return false;
     }
 
-    if (cpu_model_.thread_map().find(tid) == cpu_model_.thread_map().end()) {
+    if (system_model_.thread_map().find(tid) ==
+        system_model_.thread_map().end()) {
       int thread_name_start = 0;
       while (line[thread_name_start] == ' ')
         ++thread_name_start;
-      cpu_model_.thread_map()[tid] = ArcCpuModel::ThreadInfo(
-          ArcCpuModel::kUnknownPid,
+      system_model_.thread_map()[tid] = ArcSystemModel::ThreadInfo(
+          ArcSystemModel::kUnknownPid,
           line.substr(thread_name_start, 16 - thread_name_start));
     }
 
@@ -445,12 +496,14 @@ bool ArcTracingModel::ConvertSysTraces(const std::string& sys_traces) {
     }
     const size_t separator_position =
         ParseUint32(line, pos_dot + 1, ':', &timestamp_low);
-    if (separator_position == std::string::npos) {
+    // We expect to have parsed exactly six digits after the decimal point, to
+    // match the scaling factor used just below.
+    if (separator_position != pos_dot + 7) {
       LOG(ERROR) << "Cannot parse timestamp in trace event: " << line;
       return false;
     }
 
-    const double timestamp = 1000000L * timestamp_high + timestamp_low;
+    const uint64_t timestamp = 1000000LL * timestamp_high + timestamp_low;
     if (timestamp < min_timestamp_ || timestamp >= max_timestamp_)
       continue;
 
@@ -461,22 +514,28 @@ bool ArcTracingModel::ConvertSysTraces(const std::string& sys_traces) {
         return false;
       }
     } else if (!strncmp(&line[separator_position], kCpuIdle, kCpuIdleLength)) {
-      if (!HandleCpuIdle(&cpu_model_.all_cpu_events(), timestamp, cpu_id, tid,
-                         line, separator_position + kCpuIdleLength)) {
+      if (!HandleCpuIdle(&system_model_.all_cpu_events(), timestamp, cpu_id,
+                         tid, line, separator_position + kCpuIdleLength)) {
         return false;
       }
     } else if (!strncmp(&line[separator_position], kSchedWakeUp,
                         kSchedWakeUpLength)) {
-      if (!HandleSchedWakeUp(&cpu_model_.all_cpu_events(), timestamp, cpu_id,
+      if (!HandleSchedWakeUp(&system_model_.all_cpu_events(), timestamp, cpu_id,
                              tid, line,
                              separator_position + kSchedWakeUpLength)) {
         return false;
       }
     } else if (!strncmp(&line[separator_position], kSchedSwitch,
                         kSchedSwitchLength)) {
-      if (!HandleSchedSwitch(&cpu_model_.all_cpu_events(), timestamp, cpu_id,
+      if (!HandleSchedSwitch(&system_model_.all_cpu_events(), timestamp, cpu_id,
                              tid, line,
                              separator_position + kSchedSwitchLength)) {
+        return false;
+      }
+    } else if (!strncmp(&line[separator_position], kIntelGpuFreqChange,
+                        kIntelGpuFreqChangeLength)) {
+      if (!HandleGpuFreq(&system_model_.memory_events(), timestamp, line,
+                         separator_position + kIntelGpuFreqChangeLength)) {
         return false;
       }
     }

@@ -52,8 +52,7 @@ class ActivationWaiter : public X11PropertyChangeWaiter {
 // An event handler which counts the number of mouse moves it has seen.
 class MouseMoveCounterHandler : public ui::EventHandler {
  public:
-  MouseMoveCounterHandler() : count_(0) {
-  }
+  MouseMoveCounterHandler() = default;
   ~MouseMoveCounterHandler() override = default;
 
   // ui::EventHandler:
@@ -67,7 +66,7 @@ class MouseMoveCounterHandler : public ui::EventHandler {
   }
 
  private:
-  int count_;
+  int count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(MouseMoveCounterHandler);
 };
@@ -248,8 +247,8 @@ TEST_F(DesktopWindowTreeHostX11Test, InputMethodFocus) {
   EXPECT_FALSE(widget->IsActive());
   // TODO(shuchen): uncomment the below check once the
   // "default-focused-input-method" logic is removed in aura::WindowTreeHost.
-  //EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,
-  //          widget->GetInputMethod()->GetTextInputType());
+  // EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,
+  //           widget->GetInputMethod()->GetTextInputType());
 
   widget->Activate();
   ActivationWaiter waiter(

@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/discardable_handle.h"
 #include "gpu/command_buffer/service/decoder_client.h"
+#include "gpu/command_buffer/service/gl_stream_texture_image.h"
 #include "gpu/command_buffer/service/gpu_fence_manager.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/multi_draw_manager.h"
@@ -1299,8 +1300,7 @@ error::Error GLES2DecoderPassthroughImpl::DoFramebufferTextureLayer(
   return error::kNoError;
 }
 
-error::Error
-GLES2DecoderPassthroughImpl::DoFramebufferTextureMultiviewLayeredANGLE(
+error::Error GLES2DecoderPassthroughImpl::DoFramebufferTextureMultiviewOVR(
     GLenum target,
     GLenum attachment,
     GLuint texture,
@@ -1312,7 +1312,7 @@ GLES2DecoderPassthroughImpl::DoFramebufferTextureMultiviewLayeredANGLE(
                 "Cannot change the attachments of the default framebuffer.");
     return error::kNoError;
   }
-  api()->glFramebufferTextureMultiviewLayeredANGLEFn(
+  api()->glFramebufferTextureMultiviewOVRFn(
       target, attachment,
       GetTextureServiceID(api(), texture, resources_, false), level,
       base_view_index, num_views);
@@ -2227,11 +2227,14 @@ error::Error GLES2DecoderPassthroughImpl::DoLineWidth(GLfloat width) {
 error::Error GLES2DecoderPassthroughImpl::DoLinkProgram(GLuint program) {
   TRACE_EVENT0("gpu", "GLES2DecoderPassthroughImpl::DoLinkProgram");
   SCOPED_UMA_HISTOGRAM_TIMER("GPU.PassthroughDoLinkProgramTime");
-  api()->glLinkProgramFn(GetProgramServiceID(program, resources_));
+  GLuint program_service_id = GetProgramServiceID(program, resources_);
+  api()->glLinkProgramFn(program_service_id);
 
   // Program linking can be very slow.  Exit command processing to allow for
   // context preemption and GPU watchdog checks.
   ExitCommandProcessingEarly();
+
+  linking_program_service_id_ = program_service_id;
 
   return error::kNoError;
 }
@@ -3361,6 +3364,9 @@ error::Error GLES2DecoderPassthroughImpl::DoBeginQueryEXT(
   if (!sync)
     return error::kOutOfBounds;
 
+  if (target == GL_PROGRAM_COMPLETION_QUERY_CHROMIUM) {
+    linking_program_service_id_ = 0u;
+  }
   if (IsEmulatedQueryTarget(target)) {
     if (active_queries_.find(target) != active_queries_.end()) {
       InsertError(GL_INVALID_OPERATION, "Query already active on target.");
@@ -3455,6 +3461,10 @@ error::Error GLES2DecoderPassthroughImpl::DoEndQueryEXT(GLenum target,
       pending_query.buffer_shadow_update_fence = gl::GLFence::Create();
       pending_query.buffer_shadow_updates = std::move(buffer_shadow_updates_);
       buffer_shadow_updates_.clear();
+      break;
+
+    case GL_PROGRAM_COMPLETION_QUERY_CHROMIUM:
+      pending_query.program_service_id = linking_program_service_id_;
       break;
 
     default:
@@ -3726,6 +3736,9 @@ error::Error GLES2DecoderPassthroughImpl::DoResizeCHROMIUM(GLuint width,
         break;
       case GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM:
         surface_color_space = gl::GLSurface::ColorSpace::SCRGB_LINEAR;
+        break;
+      case GL_COLOR_SPACE_HDR10_CHROMIUM:
+        surface_color_space = gl::GLSurface::ColorSpace::HDR10;
         break;
       case GL_COLOR_SPACE_SRGB_CHROMIUM:
         surface_color_space = gl::GLSurface::ColorSpace::SRGB;
@@ -4870,7 +4883,8 @@ error::Error GLES2DecoderPassthroughImpl::DoBindFragDataLocationIndexedEXT(
     GLuint colorNumber,
     GLuint index,
     const char* name) {
-  NOTIMPLEMENTED();
+  api()->glBindFragDataLocationIndexedFn(
+      GetProgramServiceID(program, resources_), colorNumber, index, name);
   return error::kNoError;
 }
 
@@ -4878,7 +4892,8 @@ error::Error GLES2DecoderPassthroughImpl::DoBindFragDataLocationEXT(
     GLuint program,
     GLuint colorNumber,
     const char* name) {
-  NOTIMPLEMENTED();
+  api()->glBindFragDataLocationFn(GetProgramServiceID(program, resources_),
+                                  colorNumber, name);
   return error::kNoError;
 }
 
@@ -4886,7 +4901,8 @@ error::Error GLES2DecoderPassthroughImpl::DoGetFragDataIndexEXT(
     GLuint program,
     const char* name,
     GLint* index) {
-  NOTIMPLEMENTED();
+  *index = api()->glGetFragDataIndexFn(GetProgramServiceID(program, resources_),
+                                       name);
   return error::kNoError;
 }
 
@@ -4894,8 +4910,38 @@ error::Error
 GLES2DecoderPassthroughImpl::DoUniformMatrix4fvStreamTextureMatrixCHROMIUM(
     GLint location,
     GLboolean transpose,
-    const volatile GLfloat* defaultValue) {
-  NOTIMPLEMENTED();
+    const volatile GLfloat* transform) {
+  constexpr GLenum kTextureTarget = GL_TEXTURE_EXTERNAL_OES;
+  scoped_refptr<TexturePassthrough> bound_texture =
+      bound_textures_[static_cast<size_t>(
+          GLenumToTextureTarget(kTextureTarget))][active_texture_unit_]
+          .texture;
+  if (!bound_texture) {
+    InsertError(GL_INVALID_OPERATION, "no texture bound");
+    return error::kNoError;
+  }
+
+  float gl_matrix[16] = {};
+
+  GLStreamTextureImage* image =
+      bound_texture->GetStreamLevelImage(kTextureTarget, 0);
+  if (image) {
+    gfx::Transform st_transform(gfx::Transform::kSkipInitialization);
+    gfx::Transform pre_transform(gfx::Transform::kSkipInitialization);
+    image->GetTextureMatrix(gl_matrix);
+    st_transform.matrix().setColMajorf(gl_matrix);
+    // const_cast is safe, because setColMajorf only does a memcpy.
+    // TODO(piman): can we remove this assumption without having to introduce
+    // an extra copy?
+    pre_transform.matrix().setColMajorf(const_cast<const GLfloat*>(transform));
+    gfx::Transform(pre_transform, st_transform).matrix().asColMajorf(gl_matrix);
+  } else {
+    // Missing stream texture. Treat matrix as identity.
+    memcpy(gl_matrix, const_cast<const GLfloat*>(transform), sizeof(gl_matrix));
+  }
+
+  api()->glUniformMatrix4fvFn(location, 1, transpose, gl_matrix);
+
   return error::kNoError;
 }
 
@@ -4906,7 +4952,28 @@ error::Error GLES2DecoderPassthroughImpl::DoOverlayPromotionHintCHROMIUM(
     GLint display_y,
     GLint display_width,
     GLint display_height) {
-  NOTIMPLEMENTED();
+  if (texture == 0) {
+    return error::kNoError;
+  }
+
+  scoped_refptr<TexturePassthrough> passthrough_texture = nullptr;
+  if (!resources_->texture_object_map.GetServiceID(texture,
+                                                   &passthrough_texture) ||
+      passthrough_texture == nullptr) {
+    InsertError(GL_INVALID_VALUE, "invalid texture id");
+    return error::kNoError;
+  }
+
+  GLStreamTextureImage* image =
+      passthrough_texture->GetStreamLevelImage(GL_TEXTURE_EXTERNAL_OES, 0);
+  if (!image) {
+    InsertError(GL_INVALID_OPERATION, "texture has no StreamTextureImage");
+    return error::kNoError;
+  }
+
+  image->NotifyPromotionHint(promotion_hint != GL_FALSE, display_x, display_y,
+                             display_width, display_height);
+
   return error::kNoError;
 }
 

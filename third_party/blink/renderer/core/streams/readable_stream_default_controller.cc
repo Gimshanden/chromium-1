@@ -6,12 +6,12 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/streams/miscellaneous_operations.h"
+#include "third_party/blink/renderer/core/streams/promise_handler.h"
 #include "third_party/blink/renderer/core/streams/queue_with_sizes.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_reader.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_native.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_reader.h"
 #include "third_party/blink/renderer/core/streams/stream_algorithms.h"
 #include "third_party/blink/renderer/core/streams/stream_promise_resolver.h"
-#include "third_party/blink/renderer/core/streams/stream_script_function.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/to_v8.h"
@@ -226,6 +226,45 @@ base::Optional<double> ReadableStreamDefaultController::GetDesiredSize() const {
   }
 }
 
+bool ReadableStreamDefaultController::CanCloseOrEnqueue(
+    const ReadableStreamDefaultController* controller) {
+  // https://streams.spec.whatwg.org/#readable-stream-default-controller-can-close-or-enqueue
+  // 1. Let state be controller.[[controlledReadableStream]].[[state]].
+  const auto state = controller->controlled_readable_stream_->state_;
+
+  // 2. If controller.[[closeRequested]] is false and state is "readable",
+  //    return true.
+  // 3. Otherwise, return false.
+  return !controller->is_close_requested_ &&
+         state == ReadableStreamNative::kReadable;
+}
+
+bool ReadableStreamDefaultController::HasBackpressure(
+    const ReadableStreamDefaultController* controller) {
+  // https://streams.spec.whatwg.org/#rs-default-controller-has-backpressure
+  // 1. If ! ReadableStreamDefaultControllerShouldCallPull(controller) is true,
+  //    return false.
+  // 2. Otherwise, return true.
+  return !ShouldCallPull(controller);
+}
+
+// Used internally by enqueue() and also by TransformStream.
+const char* ReadableStreamDefaultController::EnqueueExceptionMessage(
+    const ReadableStreamDefaultController* controller) {
+  if (controller->is_close_requested_) {
+    return "Cannot enqueue a chunk into a readable stream that is closed or "
+           "has been requested to be closed";
+  }
+
+  const ReadableStreamNative* stream = controller->controlled_readable_stream_;
+  const auto state = stream->state_;
+  if (state == ReadableStreamNative::kErrored) {
+    return "Cannot enqueue a chunk into an errored readable stream";
+  }
+  DCHECK(state == ReadableStreamNative::kClosed);
+  return "Cannot enqueue a chunk into a closed readable stream";
+}
+
 void ReadableStreamDefaultController::Trace(Visitor* visitor) {
   visitor->Trace(cancel_algorithm_);
   visitor->Trace(controlled_readable_stream_);
@@ -339,11 +378,11 @@ void ReadableStreamDefaultController::CallPullIfNeeded(
   auto pull_promise =
       controller->pull_algorithm_->Run(script_state, 0, nullptr);
 
-  class ResolveFunction : public StreamScriptFunction {
+  class ResolveFunction final : public PromiseHandler {
    public:
     ResolveFunction(ScriptState* script_state,
                     ReadableStreamDefaultController* controller)
-        : StreamScriptFunction(script_state), controller_(controller) {}
+        : PromiseHandler(script_state), controller_(controller) {}
 
     void CallWithLocal(v8::Local<v8::Value>) override {
       // 7. Upon fulfillment of pullPromise,
@@ -363,18 +402,18 @@ void ReadableStreamDefaultController::CallPullIfNeeded(
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(controller_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
     const Member<ReadableStreamDefaultController> controller_;
   };
 
-  class RejectFunction : public StreamScriptFunction {
+  class RejectFunction final : public PromiseHandler {
    public:
     RejectFunction(ScriptState* script_state,
                    ReadableStreamDefaultController* controller)
-        : StreamScriptFunction(script_state), controller_(controller) {}
+        : PromiseHandler(script_state), controller_(controller) {}
 
     void CallWithLocal(v8::Local<v8::Value> e) override {
       // 8. Upon rejection of pullPromise with reason e,
@@ -384,7 +423,7 @@ void ReadableStreamDefaultController::CallPullIfNeeded(
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(controller_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
@@ -444,28 +483,6 @@ void ReadableStreamDefaultController::ClearAlgorithms(
 
   // 3. Set controller.[[strategySizeAlgorithm]] to undefined.
   controller->strategy_size_algorithm_ = nullptr;
-}
-
-bool ReadableStreamDefaultController::HasBackpressure(
-    const ReadableStreamDefaultController* controller) {
-  // https://streams.spec.whatwg.org/#rs-default-controller-has-backpressure
-  // 1. If ! ReadableStreamDefaultControllerShouldCallPull(controller) is true,
-  //    return false.
-  // 2. Otherwise, return true.
-  return !ShouldCallPull(controller);
-}
-
-bool ReadableStreamDefaultController::CanCloseOrEnqueue(
-    const ReadableStreamDefaultController* controller) {
-  // https://streams.spec.whatwg.org/#readable-stream-default-controller-can-close-or-enqueue
-  // 1. Let state be controller.[[controlledReadableStream]].[[state]].
-  const auto state = controller->controlled_readable_stream_->state_;
-
-  // 2. If controller.[[closeRequested]] is false and state is "readable",
-  //    return true.
-  // 3. Otherwise, return false.
-  return !controller->is_close_requested_ &&
-         state == ReadableStreamNative::kReadable;
 }
 
 void ReadableStreamDefaultController::SetUp(
@@ -529,11 +546,11 @@ void ReadableStreamDefaultController::SetUp(
   }
   DCHECK(!exception_state.HadException());
 
-  class ResolveFunction : public StreamScriptFunction {
+  class ResolveFunction final : public PromiseHandler {
    public:
     ResolveFunction(ScriptState* script_state,
                     ReadableStreamDefaultController* controller)
-        : StreamScriptFunction(script_state), controller_(controller) {}
+        : PromiseHandler(script_state), controller_(controller) {}
 
     void CallWithLocal(v8::Local<v8::Value>) override {
       //  11. Upon fulfillment of startPromise,
@@ -553,18 +570,18 @@ void ReadableStreamDefaultController::SetUp(
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(controller_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
     const Member<ReadableStreamDefaultController> controller_;
   };
 
-  class RejectFunction : public StreamScriptFunction {
+  class RejectFunction final : public PromiseHandler {
    public:
     RejectFunction(ScriptState* script_state,
                    ReadableStreamDefaultController* controller)
-        : StreamScriptFunction(script_state), controller_(controller) {}
+        : PromiseHandler(script_state), controller_(controller) {}
 
     void CallWithLocal(v8::Local<v8::Value> r) override {
       //  12. Upon rejection of startPromise with reason r,
@@ -574,7 +591,7 @@ void ReadableStreamDefaultController::SetUp(
 
     void Trace(Visitor* visitor) override {
       visitor->Trace(controller_);
-      StreamScriptFunction::Trace(visitor);
+      PromiseHandler::Trace(visitor);
     }
 
    private:
@@ -641,23 +658,6 @@ void ReadableStreamDefaultController::SetUpFromUnderlyingSource(
   SetUp(script_state, stream, controller, start_algorithm, pull_algorithm,
         cancel_algorithm, high_water_mark, size_algorithm,
         enable_blink_lock_notifications, exception_state);
-}
-
-// Used internally by enqueue() and also by TransformStream.
-const char* ReadableStreamDefaultController::EnqueueExceptionMessage(
-    const ReadableStreamDefaultController* controller) {
-  if (controller->is_close_requested_) {
-    return "Cannot enqueue a chunk into a readable stream that is closed or "
-           "has been requested to be closed";
-  }
-
-  const ReadableStreamNative* stream = controller->controlled_readable_stream_;
-  const auto state = stream->state_;
-  if (state == ReadableStreamNative::kErrored) {
-    return "Cannot enqueue a chunk into an errored readable stream";
-  }
-  DCHECK(state == ReadableStreamNative::kClosed);
-  return "Cannot enqueue a chunk into a closed readable stream";
 }
 
 }  // namespace blink

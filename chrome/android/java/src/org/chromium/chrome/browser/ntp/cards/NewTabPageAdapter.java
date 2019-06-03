@@ -40,18 +40,17 @@ import java.util.Set;
  */
 public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         implements ListObservable.ListObserver<PartialBindCallback> {
-    private final SuggestionsUiDelegate mUiDelegate;
-    private final ContextMenuManager mContextMenuManager;
-    private final OfflinePageBridge mOfflinePageBridge;
+    protected final SuggestionsUiDelegate mUiDelegate;
+    protected final ContextMenuManager mContextMenuManager;
+    protected final OfflinePageBridge mOfflinePageBridge;
 
-    private final @Nullable View mAboveTheFoldView;
-    private final UiConfig mUiConfig;
-    private SuggestionsRecyclerView mRecyclerView;
+    protected final @Nullable View mAboveTheFoldView;
+    protected final UiConfig mUiConfig;
+    protected SuggestionsRecyclerView mRecyclerView;
 
     private final InnerNode<NewTabPageViewHolder, PartialBindCallback> mRoot;
 
     private final SectionList mSections;
-    private final AllDismissedItem mAllDismissed;
     private final Footer mFooter;
 
     private final RemoteSuggestionsStatusObserver mRemoteSuggestionsStatusObserver;
@@ -76,10 +75,9 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         mUiConfig = uiConfig;
         mRoot = new InnerNode<>();
         mSections = new SectionList(mUiDelegate, offlinePageBridge);
-        mAllDismissed = new AllDismissedItem();
 
         if (mAboveTheFoldView != null) mRoot.addChildren(new AboveTheFoldItem());
-        mRoot.addChildren(mAllDismissed, mSections);
+        mRoot.addChildren(mSections);
 
         mFooter = new Footer();
         mRoot.addChildren(mFooter);
@@ -89,7 +87,7 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         mRemoteSuggestionsStatusObserver = new RemoteSuggestionsStatusObserver();
         mUiDelegate.addDestructionObserver(mRemoteSuggestionsStatusObserver);
 
-        updateAllDismissedVisibility();
+        updateFooterVisibility();
         mRoot.addObserver(this);
     }
 
@@ -130,9 +128,6 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
 
             case ItemViewType.FOOTER:
                 return new Footer.ViewHolder(mRecyclerView, mUiDelegate.getNavigationDelegate());
-
-            case ItemViewType.ALL_DISMISSED:
-                return new AllDismissedItem.ViewHolder(mRecyclerView, mSections);
         }
 
         assert false : viewType;
@@ -177,16 +172,14 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         return RecyclerView.NO_POSITION;
     }
 
-    private void updateAllDismissedVisibility() {
+    private void updateFooterVisibility() {
         boolean areRemoteSuggestionsEnabled =
                 mUiDelegate.getSuggestionsSource().areRemoteSuggestionsEnabled();
-        boolean allDismissed = hasAllBeenDismissed() && !areArticlesLoading();
         boolean isArticleSectionVisible = mSections.getSection(KnownCategories.ARTICLES) != null;
 
-        mAllDismissed.setVisible(areRemoteSuggestionsEnabled && allDismissed);
         // Always hide footer when in touchless mode since the learn more link will be shown in the
         // context menu.
-        mFooter.setVisible(!SuggestionsConfig.scrollToLoad() && !allDismissed
+        mFooter.setVisible(!SuggestionsConfig.scrollToLoad()
                 && (areRemoteSuggestionsEnabled || isArticleSectionVisible)
                 && SuggestionsConfig.isTouchless());
     }
@@ -213,7 +206,7 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         assert child == mRoot;
         notifyItemRangeInserted(itemPosition, itemCount);
 
-        updateAllDismissedVisibility();
+        updateFooterVisibility();
     }
 
     @Override
@@ -221,7 +214,7 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
         assert child == mRoot;
         notifyItemRangeRemoved(itemPosition, itemCount);
 
-        updateAllDismissedVisibility();
+        updateFooterVisibility();
     }
 
     @Override
@@ -314,7 +307,7 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder>
                 @CategoryInt int category, @CategoryStatus int newStatus) {
             if (!SnippetsBridge.isCategoryRemote(category)) return;
 
-            updateAllDismissedVisibility();
+            updateFooterVisibility();
         }
 
         @Override

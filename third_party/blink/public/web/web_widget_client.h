@@ -34,9 +34,11 @@
 #include <memory>
 
 #include "cc/input/layer_selection_bound.h"
+#include "cc/input/overscroll_behavior.h"
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_drag_operation.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
 #include "third_party/blink/public/platform/web_intrinsic_sizing_info.h"
 #include "third_party/blink/public/platform/web_layer_tree_view.h"
 #include "third_party/blink/public/platform/web_point.h"
@@ -50,6 +52,8 @@
 class SkBitmap;
 
 namespace cc {
+struct ElementId;
+class PaintImage;
 struct ViewportLayers;
 }
 
@@ -162,11 +166,26 @@ class WebWidgetClient {
   virtual void DidOverscroll(const WebFloatSize& overscroll_delta,
                              const WebFloatSize& accumulated_overscroll,
                              const WebFloatPoint& position_in_viewport,
-                             const WebFloatSize& velocity_in_viewport,
-                             const cc::OverscrollBehavior& behavior) {}
+                             const WebFloatSize& velocity_in_viewport) {}
 
-  // Called to update if pointerrawmove events should be sent.
-  virtual void HasPointerRawMoveEventHandlers(bool) {}
+  // Requests that a gesture of |injected_type| be reissued at a later point in
+  // time. |injected_type| is required to be one of
+  // GestureScroll{Begin,Update,End}. The dispatched gesture will scroll the
+  // ScrollableArea identified by |scrollable_area_element_id| by the given
+  // delta + granularity.
+  virtual void InjectGestureScrollEvent(
+      WebGestureDevice device,
+      const WebFloatSize& delta,
+      ui::input_types::ScrollGranularity granularity,
+      cc::ElementId scrollable_area_element_id,
+      WebInputEvent::Type injected_type) {}
+
+  // Set the browser's behavior when overscroll happens, e.g. whether to glow
+  // or navigate.
+  virtual void SetOverscrollBehavior(const cc::OverscrollBehavior&) {}
+
+  // Called to update if pointerrawupdate events should be sent.
+  virtual void HasPointerRawUpdateEventHandlers(bool) {}
 
   // Called to update if touch events should be sent.
   virtual void HasTouchEventHandlers(bool) {}
@@ -234,11 +253,16 @@ class WebWidgetClient {
                                             bool down) {}
   virtual void FallbackCursorModeSetCursorVisibility(bool visible) {}
 
+  // Informs the compositor if gpu raster will be allowed, or it is blocked
+  // based on heuristics from the content of the page.
+  virtual void SetAllowGpuRasterization(bool) {}
+
   // Sets the current page scale factor and minimum / maximum limits. Both
   // limits are initially 1 (no page scale allowed).
-  virtual void SetPageScaleFactorAndLimits(float page_scale_factor,
-                                           float minimum,
-                                           float maximum) {}
+  virtual void SetPageScaleStateAndLimits(float page_scale_factor,
+                                          bool is_pinch_gesture_active,
+                                          float minimum,
+                                          float maximum) {}
 
   // Starts an animation of the page scale to a target scale factor and scroll
   // offset.
@@ -249,6 +273,33 @@ class WebWidgetClient {
                                        bool use_anchor,
                                        float new_page_scale,
                                        double duration_sec) {}
+
+  // Requests an image decode and will have the |callback| run asynchronously
+  // when it completes. Forces a new main frame to occur that will trigger
+  // pushing the decode through the compositor.
+  virtual void RequestDecode(const cc::PaintImage& image,
+                             base::OnceCallback<void(bool)> callback) {}
+
+  // SwapResult mirrors the values of cc::SwapPromise::DidNotSwapReason, and
+  // should be kept consistent with it. SwapResult additionally adds a success
+  // value (kDidSwap).
+  // These values are written to logs. New enum values can be added, but
+  // existing enums must never be renumbered, deleted or reused.
+  enum SwapResult {
+    kDidSwap = 0,
+    kDidNotSwapSwapFails = 1,
+    kDidNotSwapCommitFails = 2,
+    kDidNotSwapCommitNoUpdate = 3,
+    kDidNotSwapActivationFails = 4,
+    kSwapResultMax,
+  };
+  using ReportTimeCallback =
+      base::OnceCallback<void(SwapResult, base::TimeTicks)>;
+
+  // The |callback| will be fired when the corresponding renderer frame is
+  // submitted (still called "swapped") to the display compositor (either with
+  // DidSwap or DidNotSwap).
+  virtual void NotifySwapTime(ReportTimeCallback callback) {}
 };
 
 }  // namespace blink

@@ -388,8 +388,7 @@ size_t PaintController::FindOutOfOrderCachedItemForward(
 #endif
     // Ensure our paint invalidation tests don't trigger the less performant
     // situation which should be rare.
-    LOG(WARNING) << "Can't find cached display item: " << id.client.DebugName()
-                 << " " << id.ToString();
+    DLOG(WARNING) << "Can't find cached display item: " << id;
   }
   return kNotFound;
 }
@@ -433,12 +432,11 @@ void PaintController::CopyCachedSubsequence(size_t begin_index,
     // Visual rect change should not happen in a cached subsequence.
     // However, because of different method of pixel snapping in different
     // paths, there are false positives. Just log an error.
-    if (cached_item->VisualRect() !=
-        FloatRect(cached_item->Client().VisualRect())) {
-      LOG(ERROR) << "Visual rect changed in a cached subsequence: "
-                 << cached_item->Client().DebugName()
-                 << " old=" << cached_item->VisualRect().ToString()
-                 << " new=" << cached_item->Client().VisualRect().ToString();
+    if (cached_item->VisualRect() != cached_item->Client().VisualRect()) {
+      DLOG(ERROR) << "Visual rect changed in a cached subsequence: "
+                  << cached_item->Client().DebugName()
+                  << " old=" << cached_item->VisualRect()
+                  << " new=" << cached_item->Client().VisualRect();
     }
 #endif
 
@@ -511,46 +509,52 @@ void PaintController::CommitNewDisplayItems() {
 }
 
 void PaintController::FinishCycle() {
-  if (usage_ == kTransient)
-    return;
-
+  if (usage_ != kTransient) {
 #if DCHECK_IS_ON()
-  DCHECK(new_display_item_list_.IsEmpty());
-  DCHECK(new_paint_chunks_.IsInInitialState());
+    DCHECK(new_display_item_list_.IsEmpty());
+    DCHECK(new_paint_chunks_.IsInInitialState());
 #endif
 
-  if (committed_) {
-    committed_ = false;
+    if (committed_) {
+      committed_ = false;
 
-    // Validate display item clients that have validly cached subsequence or
-    // display items in this PaintController.
-    for (auto& item : current_cached_subsequences_) {
-      if (item.key->IsCacheable())
-        item.key->Validate();
+      // Validate display item clients that have validly cached subsequence or
+      // display items in this PaintController.
+      for (auto& item : current_cached_subsequences_) {
+        if (item.key->IsCacheable())
+          item.key->Validate();
+      }
+      for (const auto& item : current_paint_artifact_->GetDisplayItemList()) {
+        const auto& client = item.Client();
+        client.ClearPartialInvalidationVisualRect();
+        if (client.IsCacheable())
+          client.Validate();
+      }
+      for (const auto& chunk : current_paint_artifact_->PaintChunks()) {
+        if (chunk.id.client.IsCacheable())
+          chunk.id.client.Validate();
+      }
     }
-    for (const auto& item : current_paint_artifact_->GetDisplayItemList()) {
-      const auto& client = item.Client();
-      client.ClearPartialInvalidationVisualRect();
-      if (client.IsCacheable())
-        client.Validate();
-    }
-    for (const auto& chunk : current_paint_artifact_->PaintChunks()) {
-      if (chunk.id.client.IsCacheable())
-        chunk.id.client.Validate();
-    }
+
+    current_paint_artifact_->FinishCycle();
   }
 
-  current_paint_artifact_->FinishCycle();
-
+  if (VLOG_IS_ON(1)) {
+    // Only log for non-transient paint controllers. There is an additional
+    // paint controller used by BlinkGenPropertyTrees to collect foreign layers,
+    // and this can be logged by removing the "usage_ != kTransient" condition.
+    if (usage_ != kTransient) {
+      LOG(ERROR) << "PaintController::FinishCycle() completed";
 #if DCHECK_IS_ON()
-  if (VLOG_IS_ON(2)) {
-    LOG(ERROR) << "PaintController::FinishCycle() done";
-    if (VLOG_IS_ON(3))
-      ShowDebugDataWithRecords();
-    else
-      ShowDebugData();
-  }
+      if (VLOG_IS_ON(3))
+        ShowDebugDataWithPaintRecords();
+      else if (VLOG_IS_ON(2))
+        ShowDebugData();
+      else if (VLOG_IS_ON(1))
+        ShowCompactDebugData();
 #endif
+    }
+  }
 }
 
 void PaintController::ClearPropertyTreeChangedStateTo(
@@ -734,9 +738,8 @@ void PaintController::CheckDuplicatePaintChunkId(const PaintChunk::Id& id) {
       const auto& chunk = new_paint_chunks_.PaintChunkAt(index);
       if (chunk.id == id) {
         ShowDebugData();
-        NOTREACHED() << "New paint chunk id " << id.ToString().Utf8().data()
-                     << " has duplicated id with previous chuck "
-                     << chunk.ToString().Utf8().data();
+        NOTREACHED() << "New paint chunk id " << id
+                     << " has duplicated id with previous chuck " << chunk;
       }
     }
   }

@@ -28,18 +28,20 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.browserservices.Origin;
 import org.chromium.chrome.browser.browserservices.OriginVerifier;
 import org.chromium.chrome.browser.browserservices.OriginVerifier.OriginVerificationListener;
+import org.chromium.chrome.browser.browserservices.permissiondelegation.NotificationPermissionUpdater;
 import org.chromium.chrome.browser.browserservices.trustedwebactivityui.controller.TrustedWebActivityVerifier.VerificationStatus;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
-import org.chromium.chrome.browser.customtabs.TabObserverRegistrar;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
-import org.chromium.chrome.browser.init.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tab.TabObserverRegistrar;
 import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
@@ -79,6 +81,8 @@ public class TrustedWebActivityVerifierTest {
     @Mock OriginVerifier.Factory mOriginVerifierFactory;
     @Mock CustomTabActivityTabProvider mTabProvider;
     @Mock Tab mTab;
+    @Mock NotificationPermissionUpdater mNotificationPermissionUpdater;
+    @Mock ChromeActivity mChromeActivity;
     @Captor ArgumentCaptor<TabObserver> mTabObserverCaptor;
 
     private final FakeOriginVerifier mOriginVerifier = new FakeOriginVerifier();
@@ -97,7 +101,8 @@ public class TrustedWebActivityVerifierTest {
         mVerifier = new TrustedWebActivityVerifier(() -> mClientAppDataRecorder,
                 mIntentDataProvider, mCustomTabsConnection, mLifecycleDispatcher,
                 mTabObserverRegistrar, mOriginVerifierFactory,
-                mTabProvider);
+                mTabProvider, mChromeActivity, mNotificationPermissionUpdater);
+        // TODO(peconn): Add check on permission updated being updated.
     }
 
     @Test

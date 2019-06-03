@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/use_counter.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_type_policy.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
@@ -28,7 +27,7 @@ TrustedTypePolicy* TrustedTypePolicyFactory::createPolicy(
     ExceptionState& exception_state) {
   UseCounter::Count(GetExecutionContext(),
                     WebFeature::kTrustedTypesCreatePolicy);
-  if (origin_trials::TrustedDOMTypesEnabled(GetExecutionContext()) &&
+  if (RuntimeEnabledFeatures::TrustedDOMTypesEnabled(GetExecutionContext()) &&
       !GetExecutionContext()
            ->GetContentSecurityPolicy()
            ->AllowTrustedTypePolicy(policy_name)) {
@@ -68,7 +67,8 @@ TrustedTypePolicy* TrustedTypePolicyFactory::getExposedPolicy(
 }
 
 TrustedTypePolicyFactory::TrustedTypePolicyFactory(ExecutionContext* context)
-    : ContextClient(context) {
+    : ContextClient(context),
+      empty_html_(MakeGarbageCollected<TrustedHTML>("")) {
   UseCounter::Count(context, WebFeature::kTrustedTypesEnabled);
 }
 
@@ -124,6 +124,10 @@ bool TrustedTypePolicyFactory::isURL(ScriptState* script_state,
          wrapper_type_info->Equals(V8TrustedURL::GetWrapperTypeInfo());
 }
 
+TrustedHTML* TrustedTypePolicyFactory::emptyHTML() const {
+  return empty_html_.Get();
+}
+
 void TrustedTypePolicyFactory::CountTrustedTypeAssignmentError() {
   if (!hadAssignmentError) {
     UseCounter::Count(GetExecutionContext(),
@@ -135,6 +139,7 @@ void TrustedTypePolicyFactory::CountTrustedTypeAssignmentError() {
 void TrustedTypePolicyFactory::Trace(blink::Visitor* visitor) {
   ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
+  visitor->Trace(empty_html_);
   visitor->Trace(policy_map_);
 }
 

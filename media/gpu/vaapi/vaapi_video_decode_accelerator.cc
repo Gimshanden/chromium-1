@@ -64,18 +64,9 @@ void ReportToUMA(VAVDADecoderFailure failure) {
                             VAVDA_DECODER_FAILURES_MAX + 1);
 }
 
-// Returns true if the CPU is an Intel Kaby/Gemini/Sky Lake or later.
-// Cpu platform id's are referenced from the following file in kernel source
-// arch/x86/include/asm/intel-family.h
-bool IsKabyLakeOrLater() {
-  constexpr int kPentiumAndLaterFamily = 0x06;
-  constexpr int kFirstKabyLakeModelId = 0x8E;
-  static base::CPU cpuid;
-  static bool is_kaby_lake_or_later =
-      cpuid.family() == kPentiumAndLaterFamily &&
-      cpuid.model() >= kFirstKabyLakeModelId;
-  return is_kaby_lake_or_later;
-}
+// Returns true if the CPU is an Intel Gemini Lake or later (including Kaby
+// Lake) Cpu platform id's are referenced from the following file in kernel
+// source arch/x86/include/asm/intel-family.h
 bool IsGeminiLakeOrLater() {
   constexpr int kPentiumAndLaterFamily = 0x06;
   constexpr int kGeminiLakeModelId = 0x7A;
@@ -166,8 +157,8 @@ VaapiVideoDecodeAccelerator::VaapiVideoDecodeAccelerator(
       bind_image_cb_(bind_image_cb),
       weak_this_factory_(this) {
   weak_this_ = weak_this_factory_.GetWeakPtr();
-  va_surface_release_cb_ = BindToCurrentLoop(
-      base::Bind(&VaapiVideoDecodeAccelerator::RecycleVASurfaceID, weak_this_));
+  va_surface_release_cb_ = BindToCurrentLoop(base::BindRepeating(
+      &VaapiVideoDecodeAccelerator::RecycleVASurfaceID, weak_this_));
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "media::VaapiVideoDecodeAccelerator",
       base::ThreadTaskRunnerHandle::Get());
@@ -289,10 +280,12 @@ void VaapiVideoDecodeAccelerator::OutputPicture(
   if (!client_)
     return;
 
+  Picture client_picture(output_id, input_id, visible_rect,
+                         picture_color_space.ToGfxColorSpace(),
+                         picture->AllowOverlay());
+  client_picture.set_read_lock_fences_enabled(true);
   // Notify the |client_| a picture is ready to be consumed.
-  client_->PictureReady(Picture(output_id, input_id, visible_rect,
-                                picture_color_space.ToGfxColorSpace(),
-                                picture->AllowOverlay()));
+  client_->PictureReady(client_picture);
 }
 
 void VaapiVideoDecodeAccelerator::TryOutputPicture() {
@@ -461,7 +454,8 @@ void VaapiVideoDecodeAccelerator::DecodeTask() {
             base::BindOnce(
                 &VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange,
                 weak_this_, decoder_->GetRequiredNumOfPictures(),
-                decoder_->GetPicSize(), decoder_->GetNumReferenceFrames()));
+                decoder_->GetPicSize(), decoder_->GetNumReferenceFrames(),
+                decoder_->GetVisibleRect()));
         // We'll get rescheduled once ProvidePictureBuffers() finishes.
         return;
 
@@ -501,7 +495,8 @@ void VaapiVideoDecodeAccelerator::DecodeTask() {
 void VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange(
     size_t num_pics,
     gfx::Size size,
-    size_t num_reference_frames) {
+    size_t num_reference_frames,
+    const gfx::Rect& visible_rect) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!awaiting_va_surfaces_recycle_);
   DCHECK_GT(num_pics, num_reference_frames);
@@ -515,6 +510,7 @@ void VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange(
   awaiting_va_surfaces_recycle_ = true;
 
   requested_pic_size_ = size;
+  requested_visible_rect_ = visible_rect;
 
   if (buffer_allocation_mode_ == BufferAllocationMode::kSuperReduced) {
     // Add one to the reference frames for the one being currently egressed.
@@ -527,7 +523,7 @@ void VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange(
     requested_num_pics_ = num_pics - num_reference_frames + 1;
   } else {
     requested_num_reference_frames_ = 0;
-    requested_num_pics_ = num_pics;
+    requested_num_pics_ = num_pics + num_extra_pics_;
   }
 
   VLOGF(2) << " |requested_num_pics_| = " << requested_num_pics_
@@ -585,15 +581,14 @@ void VaapiVideoDecodeAccelerator::TryFinishSurfaceSetChange() {
   const VideoPixelFormat format = GfxBufferFormatToVideoPixelFormat(
       vaapi_picture_factory_->GetBufferFormat());
   task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&Client::ProvidePictureBuffers, client_,
-                     requested_num_pics_, format, 1, requested_pic_size_,
-                     vaapi_picture_factory_->GetGLTextureTarget()));
+      FROM_HERE, base::BindOnce(&Client::ProvidePictureBuffersWithVisibleRect,
+                                client_, requested_num_pics_, format, 1,
+                                requested_pic_size_, requested_visible_rect_,
+                                vaapi_picture_factory_->GetGLTextureTarget()));
   // |client_| may respond via AssignPictureBuffers().
 }
 
-void VaapiVideoDecodeAccelerator::Decode(
-    const BitstreamBuffer& bitstream_buffer) {
+void VaapiVideoDecodeAccelerator::Decode(BitstreamBuffer bitstream_buffer) {
   Decode(bitstream_buffer.ToDecoderBuffer(), bitstream_buffer.id());
 }
 
@@ -1018,7 +1013,7 @@ scoped_refptr<VASurface> VaapiVideoDecodeAccelerator::CreateSurface() {
 
     return new VASurface(id, requested_pic_size_,
                          vaapi_wrapper_->va_surface_format(),
-                         va_surface_release_cb_);
+                         base::BindOnce(va_surface_release_cb_));
   }
 
   // Find the first |available_va_surfaces_| id such that the associated
@@ -1034,7 +1029,7 @@ scoped_refptr<VASurface> VaapiVideoDecodeAccelerator::CreateSurface() {
         base::Erase(available_va_surfaces_, va_surface_id);
         return new VASurface(va_surface_id, requested_pic_size_,
                              vaapi_wrapper_->va_surface_format(),
-                             va_surface_release_cb_);
+                             base::BindOnce(va_surface_release_cb_));
       }
     }
   }
@@ -1069,19 +1064,23 @@ VaapiVideoDecodeAccelerator::GetSupportedProfiles() {
 }
 
 VaapiVideoDecodeAccelerator::BufferAllocationMode
-VaapiVideoDecodeAccelerator::DecideBufferAllocationMode() const {
+VaapiVideoDecodeAccelerator::DecideBufferAllocationMode() {
   // TODO(crbug.com/912295): Enable a better BufferAllocationMode for IMPORT
   // |output_mode_| as well.
   if (output_mode_ == VideoDecodeAccelerator::Config::OutputMode::IMPORT)
     return BufferAllocationMode::kNormal;
 
-  // On KabyLake, GeminiLake and later we can pass to libva the client's
+  // On Gemini Lake, Kaby Lake and later we can pass to libva the client's
   // PictureBuffers to decode onto, which skips the use of the Vpp unit and its
   // associated format reconciliation copy, avoiding all internal buffer
-  // allocations.
-  // TODO(crbug.com/822346,crbug.com/910986): Enable other codecs/platforms.
-  if ((IsKabyLakeOrLater() || IsGeminiLakeOrLater()) &&
-      profile_ == VP9PROFILE_PROFILE0) {
+  // allocations.  This only works for H264, VP8 and VP9.
+  // TODO(crbug.com/911754): Enable for VP9 Profile 2.
+  if (IsGeminiLakeOrLater() && profile_ != VP9PROFILE_PROFILE2) {
+    // Add one to the reference frames for the one being currently egressed, and
+    // an extra allocation for both |client_| and |decoder_|, see
+    // crrev.com/c/1576560.
+    if (profile_ != VP9PROFILE_PROFILE0)
+      num_extra_pics_ = 3;
     return BufferAllocationMode::kNone;
   }
 

@@ -71,7 +71,7 @@ Polymer({
 
     /**
      * Dictionary defining page visibility.
-     * @type {!GuestModePageVisibility}
+     * @type {!PageVisibility}
      */
     pageVisibility: Object,
 
@@ -139,6 +139,18 @@ Polymer({
       },
       readOnly: true,
     },
+
+    /**
+     * True if Chrome OS Kerberos support is enabled.
+     * @private
+     */
+    isKerberosEnabled_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('isKerberosEnabled');
+      },
+      readOnly: true,
+    },
     // </if>
 
     /** @private {!Map<string, string>} */
@@ -151,27 +163,26 @@ Polymer({
               settings.routes.SYNC.path,
               loadTimeData.getBoolean('unifiedConsentEnabled') ?
                   '#sync-setup' :
-                  '#sync-status .subpage-arrow button');
+                  '#sync-status .subpage-arrow');
         }
         // <if expr="not chromeos">
         if (settings.routes.MANAGE_PROFILE) {
           map.set(
               settings.routes.MANAGE_PROFILE.path,
               loadTimeData.getBoolean('diceEnabled') ?
-                  '#edit-profile .subpage-arrow button' :
-                  '#picture-subpage-trigger .subpage-arrow button');
+                  '#edit-profile .subpage-arrow' :
+                  '#picture-subpage-trigger .subpage-arrow');
         }
         // </if>
         // <if expr="chromeos">
         if (settings.routes.CHANGE_PICTURE) {
           map.set(
               settings.routes.CHANGE_PICTURE.path,
-              '#picture-subpage-trigger .subpage-arrow button');
+              '#picture-subpage-trigger .subpage-arrow');
         }
         if (settings.routes.LOCK_SCREEN) {
           map.set(
-              settings.routes.LOCK_SCREEN.path,
-              '#lock-screen-subpage-trigger .subpage-arrow button');
+              settings.routes.LOCK_SCREEN.path, '#lock-screen-subpage-trigger');
         }
         if (settings.routes.ACCOUNTS) {
           map.set(
@@ -181,7 +192,12 @@ Polymer({
         if (settings.routes.ACCOUNT_MANAGER) {
           map.set(
               settings.routes.ACCOUNT_MANAGER.path,
-              '#account-manager-subpage-trigger .subpage-arrow button');
+              '#account-manager-subpage-trigger');
+        }
+        if (settings.routes.KERBEROS_ACCOUNTS) {
+          map.set(
+              settings.routes.KERBEROS_ACCOUNTS.path,
+              '#kerberos-accounts-subpage-trigger');
         }
         // </if>
         return map;
@@ -422,9 +438,29 @@ Polymer({
     settings.navigateTo(settings.routes.ACCOUNT_MANAGER);
   },
 
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onKerberosAccountsTap_: function(e) {
+    settings.navigateTo(settings.routes.KERBEROS_ACCOUNTS);
+  },
+
   /** @private */
   onManageOtherPeople_: function() {
     settings.navigateTo(settings.routes.ACCOUNTS);
+  },
+
+  /** @private */
+  shouldShowAccountManager_: function() {
+    return this.isAccountManagerEnabled_ &&
+        this.pageVisibility.people.googleAccounts;
+  },
+
+  /** @private */
+  shouldShowKerberos_: function() {
+    return this.isKerberosEnabled_ &&
+        this.pageVisibility.people.kerberosAccounts;
   },
   // </if>
 

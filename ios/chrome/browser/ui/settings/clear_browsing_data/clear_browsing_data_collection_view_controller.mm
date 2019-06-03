@@ -72,6 +72,14 @@
 #pragma mark Initialization
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
+  ClearBrowsingDataManager* manager = [[ClearBrowsingDataManager alloc]
+      initWithBrowserState:browserState
+                  listType:ClearBrowsingDataListType::kListTypeCollectionView];
+  return [self initWithBrowserState:browserState manager:manager];
+}
+
+- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
+                             manager:(ClearBrowsingDataManager*)manager {
   DCHECK(browserState);
   UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
   self = [super initWithLayout:layout
@@ -80,16 +88,13 @@
     self.accessibilityTraits |= UIAccessibilityTraitButton;
 
     _browserState = browserState;
-    _dataManager = [[ClearBrowsingDataManager alloc]
-        initWithBrowserState:browserState
-                    listType:ClearBrowsingDataListType::
-                                 kListTypeCollectionView];
+    _dataManager = manager;
     _dataManager.linkDelegate = self;
     _dataManager.consumer = self;
 
     self.title = l10n_util::GetNSString(IDS_IOS_CLEAR_BROWSING_DATA_TITLE);
     self.collectionViewAccessibilityIdentifier =
-        kClearBrowsingDataCollectionViewAccessibilityIdentifier;
+        kClearBrowsingDataViewAccessibilityIdentifier;
   }
   return self;
 }
@@ -205,8 +210,7 @@
     case ItemTypeTimeRange: {
       UIViewController* controller =
           [[TimeRangeSelectorTableViewController alloc]
-              initWithPrefs:_browserState->GetPrefs()
-                   delegate:self.dataManager];
+              initWithPrefs:_browserState->GetPrefs()];
       [self.navigationController pushViewController:controller animated:YES];
       break;
     }

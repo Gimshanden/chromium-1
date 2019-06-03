@@ -11,10 +11,11 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
-class FallbackCursorChromeClient : public EmptyChromeClient {
+class FallbackCursorChromeClient : public RenderingTestChromeClient {
  public:
   FallbackCursorChromeClient() {}
 
@@ -41,17 +42,19 @@ class FallbackCursorChromeClient : public EmptyChromeClient {
   DISALLOW_COPY_AND_ASSIGN(FallbackCursorChromeClient);
 };
 
-class FallbackCursorEventManagerTest : public RenderingTest {
+class FallbackCursorEventManagerTest : public RenderingTest,
+                                       private ScopedFallbackCursorModeForTest {
  protected:
   FallbackCursorEventManagerTest()
       : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()),
-        chrome_client_(MakeGarbageCollected<FallbackCursorChromeClient>()) {
-    RuntimeEnabledFeatures::SetFallbackCursorModeEnabled(true);
-  }
+        ScopedFallbackCursorModeForTest(true),
+        chrome_client_(MakeGarbageCollected<FallbackCursorChromeClient>()) {}
 
   ~FallbackCursorEventManagerTest() override {}
 
-  ChromeClient& GetChromeClient() const override { return *chrome_client_; }
+  RenderingTestChromeClient& GetChromeClient() const override {
+    return *chrome_client_;
+  }
 
   FallbackCursorChromeClient& GetFallbackCursorChromeClient() const {
     return *chrome_client_;

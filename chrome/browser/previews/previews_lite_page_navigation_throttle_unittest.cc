@@ -4,6 +4,7 @@
 
 #include "chrome/browser/previews/previews_lite_page_navigation_throttle.h"
 
+#include <map>
 #include <memory>
 
 #include "base/command_line.h"
@@ -14,8 +15,11 @@
 #include "base/test/scoped_task_environment.h"
 #include "chrome/browser/previews/previews_lite_page_decider.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/previews/core/previews_features.h"
+#include "components/variations/variations_associated_data.h"
 #include "content/public/browser/navigation_handle.h"
 #include "net/http/http_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -119,15 +123,24 @@ TEST(PreviewsLitePageNavigationThrottleTest, TestGetPreviewsURL) {
   };
 
   for (const TestCase& test_case : kTestCases) {
+    variations::testing::ClearAllVariationParams();
+
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         data_reduction_proxy::switches::kDataReductionProxyExperiment,
         test_case.experiment_cmd_line);
 
     base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeatureWithParameters(
-        previews::features::kLitePageServerPreviews,
-        {{"previews_host", test_case.previews_host},
-         {"lite_page_preview_experiment", test_case.experiment_variation}});
+    std::map<std::string, std::string> server_experiment_params;
+    server_experiment_params[data_reduction_proxy::params::
+                                 GetDataSaverServerExperimentsOptionName()] =
+        test_case.experiment_variation;
+
+    scoped_feature_list.InitWithFeaturesAndParameters(
+        {{data_reduction_proxy::features::kDataReductionProxyServerExperiments,
+          {server_experiment_params}},
+         {previews::features::kLitePageServerPreviews,
+          {{"previews_host", test_case.previews_host}}}},
+        {});
 
     EXPECT_EQ(PreviewsLitePageNavigationThrottle::GetPreviewsURLForURL(
                   GURL(test_case.original_url)),

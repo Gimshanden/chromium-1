@@ -44,12 +44,9 @@ bool ConnectionStateChanged(const NetworkState* network,
   if (network->is_captive_portal() != prev_is_captive_portal)
     return true;
   std::string connection_state = network->connection_state();
-  // Treat 'idle' and 'disconnect' the same.
   bool prev_idle = prev_connection_state.empty() ||
-                   prev_connection_state == shill::kStateIdle ||
-                   prev_connection_state == shill::kStateDisconnect;
-  bool cur_idle = connection_state == shill::kStateIdle ||
-                  connection_state == shill::kStateDisconnect;
+                   prev_connection_state == shill::kStateIdle;
+  bool cur_idle = connection_state == shill::kStateIdle;
   if (prev_idle || cur_idle)
     return prev_idle != cur_idle;
   return connection_state != prev_connection_state;
@@ -215,6 +212,10 @@ void NetworkStateHandler::RemoveObserver(NetworkStateHandlerObserver* observer,
       device_event_log::LOG_TYPE_NETWORK, device_event_log::LOG_LEVEL_DEBUG,
       base::StringPrintf("NetworkStateHandler::RemoveObserver: 0x%p",
                          observer));
+}
+
+bool NetworkStateHandler::HasObserver(NetworkStateHandlerObserver* observer) {
+  return observers_.HasObserver(observer);
 }
 
 NetworkStateHandler::TechnologyState NetworkStateHandler::GetTechnologyState(
@@ -685,7 +686,7 @@ void NetworkStateHandler::AddTetherNetworkState(const std::string& guid,
   tether_network_state->set_update_received();
   tether_network_state->set_update_requested(false);
   tether_network_state->set_connectable(true);
-  tether_network_state->set_carrier(carrier);
+  tether_network_state->set_tether_carrier(carrier);
   tether_network_state->set_battery_percentage(battery_percentage);
   tether_network_state->set_tether_has_connected_to_host(has_connected_to_host);
   tether_network_state->set_signal_strength(signal_strength);
@@ -714,7 +715,7 @@ bool NetworkStateHandler::UpdateTetherNetworkProperties(
     return false;
   }
 
-  tether_network_state->set_carrier(carrier);
+  tether_network_state->set_tether_carrier(carrier);
   tether_network_state->set_battery_percentage(battery_percentage);
   tether_network_state->set_signal_strength(signal_strength);
   network_list_sorted_ = false;
@@ -854,7 +855,7 @@ bool NetworkStateHandler::AssociateTetherNetworkStateWithWifiNetwork(
 
 void NetworkStateHandler::SetTetherNetworkStateDisconnected(
     const std::string& guid) {
-  SetTetherNetworkStateConnectionState(guid, shill::kStateDisconnect);
+  SetTetherNetworkStateConnectionState(guid, shill::kStateIdle);
 }
 
 void NetworkStateHandler::SetTetherNetworkStateConnecting(
@@ -1500,6 +1501,9 @@ void NetworkStateHandler::ManagedStateListChanged(
       devices += (*iter)->name();
     }
     NET_LOG_EVENT("DeviceList", devices);
+    // A change to the device list may affect the default Cellular network, so
+    // call SortNetworkList here.
+    SortNetworkList(true /* ensure_cellular */);
     NotifyDeviceListChanged();
   } else {
     NOTREACHED();
@@ -1570,10 +1574,14 @@ void NetworkStateHandler::SortNetworkList(bool ensure_cellular) {
             std::back_inserter(network_list_));
   network_list_sorted_ = true;
 
-  // If we have > 1 Cellular NetworkState and we have created a default Cellular
-  // NetworkState, remove it.
-  if (ensure_cellular && cellular_count > 1 && have_default_cellular)
-    RemoveDefaultCellularNetwork();
+  if (ensure_cellular && have_default_cellular) {
+    // If we have created a default Cellular NetworkState, and we have > 1
+    // Cellular NetworkState or no Cellular device, remove it.
+    if (cellular_count > 1 ||
+        !GetDeviceStateByType(NetworkTypePattern::Cellular())) {
+      RemoveDefaultCellularNetwork();
+    }
+  }
 }
 
 void NetworkStateHandler::UpdateNetworkStats() {

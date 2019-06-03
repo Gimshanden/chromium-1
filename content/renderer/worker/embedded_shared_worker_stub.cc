@@ -15,7 +15,6 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/network_service_util.h"
 #include "content/public/common/origin_util.h"
-#include "content/renderer/appcache/web_application_cache_host_impl.h"
 #include "content/renderer/loader/child_url_loader_factory_bundle.h"
 #include "content/renderer/loader/navigation_response_override_parameters.h"
 #include "content/renderer/loader/web_worker_fetch_context_impl.h"
@@ -38,52 +37,12 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/web/web_application_cache_host.h"
 #include "third_party/blink/public/web/web_shared_worker.h"
 #include "third_party/blink/public/web/web_shared_worker_client.h"
 #include "url/origin.h"
 
 namespace content {
-
-namespace {
-
-class SharedWorkerWebApplicationCacheHostImpl
-    : public WebApplicationCacheHostImpl {
- public:
-  SharedWorkerWebApplicationCacheHostImpl(
-      blink::WebApplicationCacheHostClient* client,
-      int appcache_host_id,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-      : WebApplicationCacheHostImpl(client,
-                                    appcache_host_id,
-                                    MSG_ROUTING_NONE,
-                                    std::move(task_runner)) {}
-
-  // Main resource loading is different for workers. The main resource is
-  // loaded by the worker using WorkerClassicScriptLoader.
-  // These overrides are stubbed out.
-  void WillStartMainResourceRequest(
-      const blink::WebURL& url,
-      const blink::WebString& method,
-      const WebApplicationCacheHost* spawning_host) override {}
-  void DidReceiveResponseForMainResource(
-      const blink::WebURLResponse&) override {}
-
-  // Cache selection is also different for workers. We know at construction
-  // time what cache to select and do so then.
-  // These overrides are stubbed out.
-  void SelectCacheWithoutManifest() override {}
-  bool SelectCacheWithManifest(const blink::WebURL& manifestURL) override {
-    return true;
-  }
-
-  // blink::mojom::AppCacheFrontend:
-  void LogMessage(blink::mojom::ConsoleMessageLevel log_level,
-                  const std::string& message) override {}
-  void SetSubresourceFactory(
-      network::mojom::URLLoaderFactoryPtr url_loader_factory) override {}
-};
-
-}  // namespace
 
 EmbeddedSharedWorkerStub::EmbeddedSharedWorkerStub(
     blink::mojom::SharedWorkerInfoPtr info,
@@ -94,9 +53,8 @@ EmbeddedSharedWorkerStub::EmbeddedSharedWorkerStub(
     blink::mojom::WorkerContentSettingsProxyPtr content_settings,
     blink::mojom::ServiceWorkerProviderInfoForWorkerPtr
         service_worker_provider_info,
-    int appcache_host_id,
-    network::mojom::URLLoaderFactoryAssociatedPtrInfo
-        main_script_loader_factory,
+    const base::UnguessableToken& appcache_host_id,
+    network::mojom::URLLoaderFactoryPtr main_script_loader_factory,
     blink::mojom::WorkerMainScriptLoadParamsPtr main_script_load_params,
     std::unique_ptr<blink::URLLoaderFactoryBundleInfo>
         subresource_loader_factory_bundle_info,
@@ -115,7 +73,7 @@ EmbeddedSharedWorkerStub::EmbeddedSharedWorkerStub(
   // The ID of the precreated AppCacheHost can be valid only when the
   // NetworkService is enabled.
   DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService) ||
-         appcache_host_id == blink::mojom::kAppCacheNoHostId);
+         appcache_host_id.is_empty());
 
   if (main_script_load_params) {
     response_override_ =
@@ -215,23 +173,28 @@ void EmbeddedSharedWorkerStub::WorkerContextDestroyed() {
   delete this;
 }
 
-void EmbeddedSharedWorkerStub::SelectAppCacheID(int64_t app_cache_id) {
+void EmbeddedSharedWorkerStub::SelectAppCacheID(
+    int64_t app_cache_id,
+    base::OnceClosure completion_callback) {
   if (app_cache_host_) {
     // app_cache_host_ could become stale as it's owned by blink's
     // DocumentLoader. This method is assumed to be called while it's valid.
-    app_cache_host_->SelectCacheForSharedWorker(app_cache_id);
+    app_cache_host_->SelectCacheForSharedWorker(app_cache_id,
+                                                std::move(completion_callback));
+  } else {
+    std::move(completion_callback).Run();
   }
 }
 
 std::unique_ptr<blink::WebApplicationCacheHost>
 EmbeddedSharedWorkerStub::CreateApplicationCacheHost(
     blink::WebApplicationCacheHostClient* client) {
-  std::unique_ptr<WebApplicationCacheHostImpl> host =
-      std::make_unique<SharedWorkerWebApplicationCacheHostImpl>(
+  auto host = blink::WebApplicationCacheHost::
+      CreateWebApplicationCacheHostForSharedWorker(
           client, appcache_host_id_,
           impl_->GetTaskRunner(blink::TaskType::kNetworking));
   app_cache_host_ = host.get();
-  return std::move(host);
+  return host;
 }
 
 std::unique_ptr<blink::WebServiceWorkerNetworkProvider>

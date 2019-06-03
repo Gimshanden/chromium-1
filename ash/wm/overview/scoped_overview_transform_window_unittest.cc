@@ -5,13 +5,16 @@
 #include "ash/wm/overview/scoped_overview_transform_window.h"
 
 #include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/window_state.h"
 #include "base/test/scoped_feature_list.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ash {
 
@@ -209,16 +212,13 @@ TEST_F(ScopedOverviewTransformWindowTest, TransformingPillaredRect) {
 // Tests the cases when very wide or tall windows enter overview mode.
 TEST_F(ScopedOverviewTransformWindowTest, ExtremeWindowBounds) {
   // Add three windows which in overview mode will be considered wide, tall and
-  // normal. Window |wide|, with size (400, 160) will be resized to (200, 160)
-  // when the 400x200 is rotated to 200x400, and should be considered a normal
+  // normal. Window |wide|, with size (400, 160) will be resized to (300, 160)
+  // when the 400x300 is rotated to 300x400, and should be considered a normal
   // overview window after display change.
-  UpdateDisplay("400x200");
-  std::unique_ptr<aura::Window> wide =
-      CreateTestWindow(gfx::Rect(10, 10, 400, 160));
-  std::unique_ptr<aura::Window> tall =
-      CreateTestWindow(gfx::Rect(10, 10, 50, 200));
-  std::unique_ptr<aura::Window> normal =
-      CreateTestWindow(gfx::Rect(10, 10, 200, 200));
+  UpdateDisplay("400x300");
+  std::unique_ptr<aura::Window> wide = CreateTestWindow(gfx::Rect(400, 160));
+  std::unique_ptr<aura::Window> tall = CreateTestWindow(gfx::Rect(100, 300));
+  std::unique_ptr<aura::Window> normal = CreateTestWindow(gfx::Rect(300, 300));
 
   ScopedOverviewTransformWindow scoped_wide(nullptr, wide.get());
   ScopedOverviewTransformWindow scoped_tall(nullptr, tall.get());
@@ -245,6 +245,40 @@ TEST_F(ScopedOverviewTransformWindowTest, ExtremeWindowBounds) {
   EXPECT_EQ(GridWindowFillMode::kNormal, scoped_wide.type());
   EXPECT_EQ(GridWindowFillMode::kPillarBoxed, scoped_tall.type());
   EXPECT_EQ(GridWindowFillMode::kNormal, scoped_normal.type());
+}
+
+// Tests that transients which should be invisible in overview do not have their
+// transforms or opacities altered.
+TEST_F(ScopedOverviewTransformWindowTest, InvisibleTransients) {
+  auto window = CreateTestWindow(gfx::Rect(200, 200));
+  auto child = CreateTestWindow(gfx::Rect(100, 190, 100, 10),
+                                aura::client::WINDOW_TYPE_POPUP);
+  auto child2 = CreateTestWindow(gfx::Rect(0, 190, 100, 10),
+                                 aura::client::WINDOW_TYPE_POPUP);
+  ::wm::AddTransientChild(window.get(), child.get());
+  ::wm::AddTransientChild(window.get(), child2.get());
+
+  child2->SetProperty(kHideInOverviewKey, true);
+
+  for (auto* it : {window.get(), child.get(), child2.get()}) {
+    it->SetTransform(gfx::Transform());
+    it->layer()->SetOpacity(1.f);
+  }
+
+  ScopedOverviewTransformWindow scoped_window(nullptr, window.get());
+  scoped_window.SetOpacity(0.5f);
+  EXPECT_EQ(0.5f, window->layer()->opacity());
+  EXPECT_EQ(0.5f, child->layer()->opacity());
+  EXPECT_EQ(0.f, child2->layer()->opacity());
+  EXPECT_TRUE(window->IsVisible());
+  EXPECT_TRUE(child->IsVisible());
+  EXPECT_FALSE(child2->IsVisible());
+
+  gfx::Transform transform(1.f, 0.f, 0.f, 1.f, 10.f, 10.f);
+  SetTransform(window.get(), transform);
+  EXPECT_EQ(transform, window->transform());
+  EXPECT_EQ(transform, child->transform());
+  EXPECT_TRUE(child2->transform().IsIdentity());
 }
 
 class ScopedOverviewTransformWindowWithMaskTest

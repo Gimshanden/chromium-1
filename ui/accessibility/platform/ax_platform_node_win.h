@@ -1,3 +1,4 @@
+//
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -11,6 +12,7 @@
 #include <uiautomation.h>
 #include <wrl/client.h>
 
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,6 +25,8 @@
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_text_utils.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
+#include "ui/accessibility/platform/ax_platform_text_boundary.h"
+#include "ui/gfx/range/range.h"
 
 // IMPORTANT!
 // These values are written to logs.  Do not renumber or delete
@@ -406,7 +410,7 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   void Destroy() override;
   int GetIndexInParent() override;
   base::string16 GetValue() const override;
-  base::string16 GetText() const override;
+  base::string16 GetHypertext() const override;
 
   //
   // IAccessible methods.
@@ -537,13 +541,13 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   // IAccessible2_3 methods.
   //
 
-  IFACEMETHODIMP get_selectionRanges(IA2Range** ranges, LONG* nRanges);
+  IFACEMETHODIMP get_selectionRanges(IA2Range** ranges, LONG* nRanges) override;
 
   //
   // IAccessible2_4 methods.
   //
 
-  IFACEMETHODIMP setSelectionRanges(LONG nRanges, IA2Range* ranges);
+  IFACEMETHODIMP setSelectionRanges(LONG nRanges, IA2Range* ranges) override;
 
   //
   // IAccessibleEx methods.
@@ -993,12 +997,28 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
                               REFIID riid,
                               void** object) override;
 
- public:
   // Support method for ITextRangeProvider::GetAttributeValue
   HRESULT GetTextAttributeValue(TEXTATTRIBUTEID attribute_id, VARIANT* result);
 
   // IRawElementProviderSimple support method.
   bool IsPatternProviderSupported(PATTERNID pattern_id);
+
+  // Helper to return the runtime id (without going through a SAFEARRAY)
+  using RuntimeIdArray = std::array<int, 2>;
+  void GetRuntimeIdArray(RuntimeIdArray& runtime_id);
+
+  // Updates the active composition range and fires UIA text edit event about
+  // composition (active or committed)
+  void OnActiveComposition(const gfx::Range& range,
+                           const base::string16& active_composition_text,
+                           bool is_composition_committed);
+  // Returns true if there is an active composition
+  bool HasActiveComposition() const;
+  // Returns the start/end offsets of the active composition
+  gfx::Range GetActiveCompositionOffsets() const;
+
+  // Helper to recursively find live-regions and fire a change event on them
+  void FireLiveRegionChangeRecursive();
 
  protected:
   // This is hard-coded; all products based on the Chromium engine will have the
@@ -1048,8 +1068,6 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   // Also, in IA2, text that includes embedded objects is called hypertext.
   // Returns true if the current object is an IA2 hyperlink.
   bool IsHyperlink();
-
-  bool IsSameHypertextCharacter(size_t old_char_index, size_t new_char_index);
   void ComputeHypertextRemovedAndInserted(size_t* start,
                                           size_t* old_len,
                                           size_t* new_len);
@@ -1057,9 +1075,6 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   // If offset is a member of IA2TextSpecialOffsets this function updates the
   // value of offset and returns, otherwise offset remains unchanged.
   void HandleSpecialTextOffset(LONG* offset);
-
-  // Convert from a IA2TextBoundaryType to a TextBoundaryType.
-  TextBoundaryType IA2TextBoundaryToTextBoundary(IA2TextBoundaryType type);
 
   // A helper to add the given string value to |attributes|.
   void AddAttributeToList(const char* name,
@@ -1137,8 +1152,9 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   SAFEARRAY* CreateUIAElementsArrayForReverseRelation(
       const ax::mojom::IntListAttribute& attribute);
 
-  // Return an array of automation elements given a vector
-  // of |AXNode| ids.
+  // Return an array of automation elements given a vector of |AXNode| ids.
+  // The caller should validate that all of the given ids are valid relation
+  // targets.
   SAFEARRAY* CreateUIAElementsArrayFromIdVector(std::vector<int32_t>& ids);
 
   // Return an array that contains the center x, y coordinates of the
@@ -1165,11 +1181,6 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
                     LONG start_offset,
                     TextBoundaryDirection direction);
 
-  // Return true if the index represents a text character.
-  bool IsText(const base::string16& text,
-              size_t index,
-              bool is_indexed_from_end = false);
-
   // Many MSAA methods take a var_id parameter indicating that the operation
   // should be performed on a particular child ID, rather than this object.
   // This method tries to figure out the target object from |var_id| and
@@ -1190,6 +1201,25 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   // Helper method for mutating the ISelectionItemProvider selected state
   HRESULT ISelectionItemProviderSetSelected(bool selected);
 
+  //
+  // Getters for UIA GetTextAttributeValue
+  //
+
+  // Lookup the LCID for the language this node is using
+  HRESULT GetCultureAttributeAsVariant(VARIANT* result) const;
+  // Converts an int attribute to a COLORREF
+  COLORREF GetIntAttributeAsCOLORREF(ax::mojom::IntAttribute attribute) const;
+  // Converts the ListStyle to UIA BulletStyle
+  BulletStyle ComputeUIABulletStyle() const;
+  // Helper to get the UIA StyleId enumeration for this node
+  LONG ComputeUIAStyleId() const;
+  // Converts IntAttribute::kHierarchicalLevel to UIA StyleId enumeration
+  static LONG AXHierarchicalLevelToUIAStyleId(int32_t hierarchical_level);
+  // Converts a ListStyle to UIA StyleId enumeration
+  static LONG AXListStyleToUIAStyleId(ax::mojom::ListStyle list_style);
+  // Convert mojom TextDirection to UIA FlowDirections enumeration
+  static FlowDirections TextDirectionToFlowDirections(ax::mojom::TextDirection);
+
   bool IsAncestorComboBox();
 
   // Helper method for getting the horizontal scroll percent.
@@ -1198,13 +1228,35 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
   // Helper method for getting the vertical scroll percent.
   double GetVerticalScrollPercent();
 
+  // Helper to get the UIA FontName for this node as a BSTR.
+  BSTR GetFontNameAttributeAsBSTR() const;
+
+  // Helper to get the UIA StyleName for this node as a BSTR.
+  BSTR GetStyleNameAttributeAsBSTR() const;
+
+  // Gets the TextDecorationLineStyle based on the provided int attribute.
+  TextDecorationLineStyle GetUIATextDecorationStyle(
+      const ax::mojom::IntAttribute int_attribute) const;
+
   // IRawElementProviderSimple support methods.
 
-  using PatternProviderFactoryMethod = HRESULT (*)(AXPlatformNodeWin*,
-                                                   IUnknown**);
+  using PatternProviderFactoryMethod = void (*)(AXPlatformNodeWin*, IUnknown**);
 
   PatternProviderFactoryMethod GetPatternProviderFactoryMethod(
       PATTERNID pattern_id);
+
+  // Fires UIA text edit event about composition (active or committed)
+  void FireUiaTextEditTextChangedEvent(
+      const gfx::Range& range,
+      const base::string16& active_composition_text,
+      bool is_composition_committed);
+
+  // Return true if the given element is valid enough to be returned as a value
+  // for a UIA relation property (e.g. ControllerFor).
+  static bool IsValidUiaRelationTarget(AXPlatformNode* ax_platform_node);
+
+  // Start and end offsets of an active composition
+  gfx::Range active_composition_range_;
 };
 
 }  // namespace ui

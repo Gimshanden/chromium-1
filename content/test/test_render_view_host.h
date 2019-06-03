@@ -71,16 +71,16 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
   void InitAsChild(gfx::NativeView parent_view) override {}
   void SetSize(const gfx::Size& size) override {}
   void SetBounds(const gfx::Rect& rect) override {}
-  gfx::NativeView GetNativeView() const override;
+  gfx::NativeView GetNativeView() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   ui::TextInputClient* GetTextInputClient() override;
-  bool HasFocus() const override;
+  bool HasFocus() override;
   void Show() override;
   void Hide() override;
   bool IsShowing() override;
   void WasUnOccluded() override;
   void WasOccluded() override;
-  gfx::Rect GetViewBounds() const override;
+  gfx::Rect GetViewBounds() override;
 #if defined(OS_MACOSX)
   void SetActive(bool active) override;
   void ShowDefinitionForSelection() override {}
@@ -112,8 +112,7 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
   void Focus() override {}
   void SetIsLoading(bool is_loading) override {}
   void UpdateCursor(const WebCursor& cursor) override {}
-  void RenderProcessGone(base::TerminationStatus status,
-                         int error_code) override;
+  void RenderProcessGone() override;
   void Destroy() override;
   void SetTooltipText(const base::string16& tooltip_text) override {}
   gfx::Rect GetBoundsInRootWindow() override;
@@ -136,11 +135,6 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
   void reset_did_change_compositor_frame_sink() {
     did_change_compositor_frame_sink_ = false;
   }
-#if defined(USE_AURA)
-  void ScheduleEmbed(ws::mojom::WindowTreeClientPtr client,
-                     base::OnceCallback<void(const base::UnguessableToken&)>
-                         callback) override {}
-#endif
   // viz::HostFrameSinkClient implementation.
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
   void OnFrameTokenChanged(uint32_t frame_token) override;
@@ -242,7 +236,7 @@ class TestRenderViewHost
   int opener_frame_route_id() const { return opener_frame_route_id_; }
 
   // RenderWidgetHost overrides (same value, but in the Mock* type)
-  MockRenderProcessHost* GetProcess() const override;
+  MockRenderProcessHost* GetProcess() override;
 
   bool CreateTestRenderView(const base::string16& frame_name,
                             int opener_frame_route_id,

@@ -9,21 +9,27 @@ import android.text.format.DateUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.browser.init.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.Destroyable;
+import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
 import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
 import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * Manages pref that can track the delay since the last stop of the tracked activity.
  */
-public class ChromeInactivityTracker implements StartStopWithNativeObserver, Destroyable {
+public class ChromeInactivityTracker
+        implements StartStopWithNativeObserver, PauseResumeWithNativeObserver, Destroyable {
     private static final String TAG = "InactivityTracker";
-    private static final String FEATURE_NAME = ChromeFeatureList.NTP_LAUNCH_AFTER_INACTIVITY;
-    private static final String NTP_LAUNCH_DELAY_IN_MINS_PARAM = "delay_in_mins";
+
     private static final long UNKNOWN_LAST_BACKGROUNDED_TIME = -1;
     private static final int UNKNOWN_LAUNCH_DELAY_MINS = -1;
     private static final int DEFAULT_LAUNCH_DELAY_IN_MINS = 5;
+
+    @VisibleForTesting
+    public static final String FEATURE_NAME = ChromeFeatureList.NTP_LAUNCH_AFTER_INACTIVITY;
+    @VisibleForTesting
+    public static final String NTP_LAUNCH_DELAY_IN_MINS_PARAM = "delay_in_mins";
 
     // Only true if the feature is enabled.
     private final boolean mIsEnabled;
@@ -86,12 +92,8 @@ public class ChromeInactivityTracker implements StartStopWithNativeObserver, Des
                 FEATURE_NAME, NTP_LAUNCH_DELAY_IN_MINS_PARAM, DEFAULT_LAUNCH_DELAY_IN_MINS);
 
         mIsEnabled = ChromeFeatureList.isEnabled(FEATURE_NAME);
-        if (mIsEnabled) {
-            mLifecycleDispatcher = lifecycleDispatcher;
-            mLifecycleDispatcher.register(this);
-        } else {
-            mLifecycleDispatcher = null;
-        }
+        mLifecycleDispatcher = lifecycleDispatcher;
+        mLifecycleDispatcher.register(this);
     }
 
     /**
@@ -103,7 +105,15 @@ public class ChromeInactivityTracker implements StartStopWithNativeObserver, Des
         ContextUtils.getAppSharedPreferences().edit().putLong(mPrefName, timeInMillis).apply();
     }
 
-    private long getLastBackgroundedTimeMs() {
+    /**
+     * Updates shared preferences such that the last backgrounded time is no
+     * longer valid. This will prevent multiple new intents from firing.
+     */
+    private void clearLastBackgroundedTimeInPrefs() {
+        setLastBackgroundedTimeInPrefs(UNKNOWN_LAST_BACKGROUNDED_TIME);
+    }
+
+    long getLastBackgroundedTimeMs() {
         return ContextUtils.getAppSharedPreferences().getLong(
                 mPrefName, UNKNOWN_LAST_BACKGROUNDED_TIME);
     }
@@ -146,12 +156,29 @@ public class ChromeInactivityTracker implements StartStopWithNativeObserver, Des
 
     @Override
     public void onStartWithNative() {
-        setLastBackgroundedTimeInPrefs(UNKNOWN_LAST_BACKGROUNDED_TIME);
         cancelCurrentTask();
     }
 
     @Override
+    public void onResumeWithNative() {
+        // We clear the backgrounded time here, rather than in #onStartWithNative, to give
+        // handlers the chance to respond to inactivity during any onStartWithNative handler
+        // regardless of ordering. onResume is always called after onStart, and it should be fine to
+        // consider Chrome active if it reaches onResume.
+        clearLastBackgroundedTimeInPrefs();
+    }
+
+    @Override
+    public void onPauseWithNative() {}
+
+    @Override
     public void onStopWithNative() {
+        // Always track the last backgrounded time in case others are using the pref.
+        long timeInMillis = System.currentTimeMillis();
+        setLastBackgroundedTimeInPrefs(timeInMillis);
+
+        if (!mIsEnabled) return;
+
         Log.i(TAG, "onStop, scheduling for " + mNtpLaunchDelayInMins + " minutes");
 
         cancelCurrentTask();
@@ -160,7 +187,6 @@ public class ChromeInactivityTracker implements StartStopWithNativeObserver, Des
             return;
         }
         mCurrentlyPostedInactiveCallback = new CancelableRunnableTask(mInactiveCallback);
-        setLastBackgroundedTimeInPrefs(System.currentTimeMillis());
         org.chromium.base.task.PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT,
                 mCurrentlyPostedInactiveCallback,
                 mNtpLaunchDelayInMins * DateUtils.MINUTE_IN_MILLIS);

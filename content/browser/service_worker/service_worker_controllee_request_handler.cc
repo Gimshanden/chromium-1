@@ -10,13 +10,12 @@
 #include "base/bind.h"
 #include "base/trace_event/trace_event.h"
 #include "components/offline_pages/buildflags/buildflags.h"
+#include "content/browser/navigation_subresource_loader_params.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_navigation_loader.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
-#include "content/browser/service_worker/service_worker_response_info.h"
-#include "content/common/navigation_subresource_loader_params.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_frame_host.h"
@@ -92,7 +91,6 @@ class ServiceWorkerControlleeRequestHandler::
 ServiceWorkerControlleeRequestHandler::ServiceWorkerControlleeRequestHandler(
     base::WeakPtr<ServiceWorkerContextCore> context,
     base::WeakPtr<ServiceWorkerProviderHost> provider_host,
-    base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
     network::mojom::FetchRequestMode request_mode,
     network::mojom::FetchCredentialsMode credentials_mode,
     network::mojom::FetchRedirectMode redirect_mode,
@@ -100,12 +98,9 @@ ServiceWorkerControlleeRequestHandler::ServiceWorkerControlleeRequestHandler(
     bool keepalive,
     ResourceType resource_type,
     blink::mojom::RequestContextType request_context_type,
-    network::mojom::RequestContextFrameType frame_type,
     scoped_refptr<network::ResourceRequestBody> body)
-    : ServiceWorkerRequestHandler(std::move(context),
-                                  std::move(provider_host),
-                                  std::move(blob_storage_context),
-                                  resource_type),
+    : context_(std::move(context)),
+      provider_host_(std::move(provider_host)),
       resource_type_(resource_type),
       request_mode_(request_mode),
       credentials_mode_(credentials_mode),
@@ -113,10 +108,8 @@ ServiceWorkerControlleeRequestHandler::ServiceWorkerControlleeRequestHandler(
       integrity_(integrity),
       keepalive_(keepalive),
       request_context_type_(request_context_type),
-      frame_type_(frame_type),
       body_(std::move(body)),
       force_update_started_(false),
-      use_network_(false),
       weak_factory_(this) {
   DCHECK(ServiceWorkerUtils::IsMainResourceType(resource_type));
 }
@@ -159,10 +152,6 @@ void ServiceWorkerControlleeRequestHandler::MaybeCreateLoader(
     std::move(callback).Run({});
     return;
   }
-
-  // In fallback cases we basically 'forward' the request, so we should
-  // never see use_network_ gets true.
-  DCHECK(!use_network_);
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   // Fall back for the subsequent offline page interceptor to load the offline
@@ -264,6 +253,7 @@ void ServiceWorkerControlleeRequestHandler::PrepareForMainResource(
 
   stripped_url_ = net::SimplifyUrlForRequest(url);
   provider_host_->UpdateUrls(stripped_url_, site_for_cookies);
+  registration_lookup_start_time_ = base::TimeTicks::Now();
   context_->storage()->FindRegistrationForDocument(
       stripped_url_, base::BindOnce(&ServiceWorkerControlleeRequestHandler::
                                         DidLookupRegistrationForMainResource,
@@ -280,6 +270,9 @@ void ServiceWorkerControlleeRequestHandler::
   // The job may have been destroyed before this was invoked.
   if (!loader())
     return;
+
+  ServiceWorkerMetrics::RecordLookupRegistrationTime(
+      status, base::TimeTicks::Now() - registration_lookup_start_time_);
 
   if (status != blink::ServiceWorkerStatusCode::kOk) {
     loader()->FallbackToNetwork();
@@ -451,7 +444,7 @@ void ServiceWorkerControlleeRequestHandler::
             ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN);
   ServiceWorkerMetrics::CountControlledPageLoad(
       active_version->site_for_uma(), stripped_url_,
-      resource_type_ == RESOURCE_TYPE_MAIN_FRAME);
+      resource_type_ == ResourceType::kMainFrame);
 
   if (IsResourceTypeFrame(resource_type_))
     provider_host_->AddServiceWorkerToUpdate(active_version);
@@ -540,11 +533,6 @@ void ServiceWorkerControlleeRequestHandler::OnUpdatedVersionStatusChanged(
       &ServiceWorkerControlleeRequestHandler::OnUpdatedVersionStatusChanged,
       weak_factory_.GetWeakPtr(), std::move(registration), version,
       std::move(disallow_controller)));
-}
-
-void ServiceWorkerControlleeRequestHandler::OnPrepareToRestart() {
-  use_network_ = true;
-  ClearJob();
 }
 
 ServiceWorkerVersion*

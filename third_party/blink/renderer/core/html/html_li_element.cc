@@ -34,10 +34,8 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLLIElement::HTMLLIElement(Document& document)
+HTMLLIElement::HTMLLIElement(Document& document)
     : HTMLElement(kLiTag, document) {}
-
-DEFINE_NODE_FACTORY(HTMLLIElement)
 
 bool HTMLLIElement::IsPresentationAttribute(const QualifiedName& name) const {
   if (name == kTypeAttr)

@@ -11,6 +11,12 @@
 
 #include "base/callback.h"
 #include "base/component_export.h"
+#include "base/memory/ref_counted.h"
+#include "device/fido/authenticator_get_assertion_response.h"
+#include "device/fido/authenticator_make_credential_response.h"
+#include "device/fido/ctap_get_assertion_request.h"
+#include "device/fido/ctap_make_credential_request.h"
+#include "device/fido/fido_constants.h"
 #include "third_party/microsoft_webauthn/webauthn.h"
 
 namespace device {
@@ -55,8 +61,12 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApi {
   virtual HRESULT CancelCurrentOperation(GUID* cancellation_id) = 0;
 
   virtual PCWSTR GetErrorName(HRESULT hr) = 0;
+
   virtual void FreeCredentialAttestation(PWEBAUTHN_CREDENTIAL_ATTESTATION) = 0;
+
   virtual void FreeAssertion(PWEBAUTHN_ASSERTION pWebAuthNAssertion) = 0;
+
+  virtual int Version() = 0;
 
  protected:
   WinWebAuthnApi();
@@ -66,6 +76,20 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApi {
   static void SetDefaultForTesting(WinWebAuthnApi* api);
   static void ClearDefaultForTesting();
 };
+
+std::pair<CtapDeviceResponseCode,
+          base::Optional<AuthenticatorMakeCredentialResponse>>
+AuthenticatorMakeCredentialBlocking(WinWebAuthnApi* webauthn_api,
+                                    HWND h_wnd,
+                                    GUID cancellation_id,
+                                    CtapMakeCredentialRequest request);
+
+std::pair<CtapDeviceResponseCode,
+          base::Optional<AuthenticatorGetAssertionResponse>>
+AuthenticatorGetAssertionBlocking(WinWebAuthnApi* webauthn_api,
+                                  HWND h_wnd,
+                                  GUID cancellation_id,
+                                  CtapGetAssertionRequest request);
 
 }  // namespace device
 

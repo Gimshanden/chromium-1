@@ -5,8 +5,8 @@
 #import "ios/chrome/browser/ui/location_bar/location_bar_steady_view.h"
 
 #include "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/ui/infobars/infobar_feature.h"
-#import "ios/chrome/browser/ui/location_bar/extended_touch_target_button.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_constants.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #import "ios/chrome/browser/ui/util/dynamic_type_util.h"
@@ -231,17 +231,14 @@ const CGFloat kButtonTrailingSpacing = 10;
 
     if (IsInfobarUIRebootEnabled()) {
       // Setup leading button.
-      _leadingButton =
-          [ExtendedTouchTargetButton buttonWithType:UIButtonTypeSystem];
+      _leadingButton = [InfobarBadgeButton buttonWithType:UIButtonTypeSystem];
       _leadingButton.translatesAutoresizingMaskIntoConstraints = NO;
-      // TODO(crbug.com/935804): Create constants variables for the magic
-      // numbers being used here if/when this stops being temporary.
-      _leadingButton.layer.cornerRadius = 15;
       [_locationButton addSubview:_leadingButton];
 
       // Setup and activate the leading button constraints.
       [NSLayoutConstraint activateConstraints:@[
-        [_leadingButton.widthAnchor constraintEqualToConstant:35],
+        [_leadingButton.widthAnchor
+            constraintEqualToAnchor:_leadingButton.heightAnchor],
         [_leadingButton.topAnchor constraintEqualToAnchor:self.topAnchor],
         [_leadingButton.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
         [_leadingButton.leadingAnchor
@@ -254,11 +251,19 @@ const CGFloat kButtonTrailingSpacing = 10;
 
   // Setup accessibility.
   _trailingButton.isAccessibilityElement = YES;
+  if (IsInfobarUIRebootEnabled()) {
+    _leadingButton.isAccessibilityElement = YES;
+    _leadingButton.accessibilityLabel =
+        l10n_util::GetNSString(IDS_IOS_INFOBAR_BADGES_PASSWORD_HINT);
+  }
   _locationButton.isAccessibilityElement = YES;
   _locationButton.accessibilityLabel =
       l10n_util::GetNSString(IDS_ACCNAME_LOCATION);
 
   _accessibleElements = [[NSMutableArray alloc] init];
+  if (IsInfobarUIRebootEnabled()) {
+    [_accessibleElements addObject:_leadingButton];
+  }
   [_accessibleElements addObject:_locationButton];
   [_accessibleElements addObject:_trailingButton];
 

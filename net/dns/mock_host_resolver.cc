@@ -290,20 +290,6 @@ HostCache* MockHostResolverBase::GetHostCache() {
   return cache_.get();
 }
 
-bool MockHostResolverBase::HasCached(base::StringPiece hostname,
-                                     HostCache::Entry::Source* source_out,
-                                     HostCache::EntryStaleness* stale_out,
-                                     bool* secure_out) const {
-  if (!cache_)
-    return false;
-
-  const HostCache::Key* key =
-      cache_->GetMatchingKey(hostname, source_out, stale_out);
-  if (key && secure_out != nullptr)
-    *secure_out = key->secure;
-  return !!key;
-}
-
 int MockHostResolverBase::LoadIntoCache(
     const HostPortPair& host,
     const base::Optional<ResolveHostParameters>& optional_parameters) {
@@ -437,6 +423,7 @@ void MockHostResolverBase::TriggerMdnsListeners(
 MockHostResolverBase::MockHostResolverBase(bool use_caching,
                                            int cache_invalidation_num)
     : last_request_priority_(DEFAULT_PRIORITY),
+      last_secure_dns_mode_override_(base::nullopt),
       synchronous_mode_(false),
       ondemand_mode_(false),
       initial_cache_invalidation_num_(cache_invalidation_num),
@@ -461,6 +448,8 @@ int MockHostResolverBase::Resolve(RequestImpl* request) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   last_request_priority_ = request->parameters().initial_priority;
+  last_secure_dns_mode_override_ =
+      request->parameters().secure_dns_mode_override;
   num_resolve_++;
   AddressList addresses;
   base::Optional<HostCache::EntryStaleness> stale_info;
@@ -627,12 +616,13 @@ MockHostResolverFactory::~MockHostResolverFactory() = default;
 
 std::unique_ptr<HostResolver> MockHostResolverFactory::CreateResolver(
     HostResolverManager* manager,
-    base::StringPiece host_mapping_rules) {
+    base::StringPiece host_mapping_rules,
+    bool enable_caching) {
   DCHECK(host_mapping_rules.empty());
 
   // Explicit new to access private constructor.
-  auto resolver = base::WrapUnique(
-      new MockHostResolverBase(use_caching_, cache_invalidation_num_));
+  auto resolver = base::WrapUnique(new MockHostResolverBase(
+      enable_caching && use_caching_, cache_invalidation_num_));
   if (rules_)
     resolver->set_rules(rules_.get());
   return resolver;
@@ -640,9 +630,10 @@ std::unique_ptr<HostResolver> MockHostResolverFactory::CreateResolver(
 
 std::unique_ptr<HostResolver> MockHostResolverFactory::CreateStandaloneResolver(
     NetLog* net_log,
-    const HostResolver::Options& options,
-    base::StringPiece host_mapping_rules) {
-  return CreateResolver(nullptr, host_mapping_rules);
+    const HostResolver::ManagerOptions& options,
+    base::StringPiece host_mapping_rules,
+    bool enable_caching) {
+  return CreateResolver(nullptr, host_mapping_rules, enable_caching);
 }
 
 //-----------------------------------------------------------------------------
@@ -952,13 +943,6 @@ HangingHostResolver::CreateRequest(
           : false;
   return std::make_unique<RequestImpl>(weak_ptr_factory_.GetWeakPtr(),
                                        is_local_only);
-}
-
-bool HangingHostResolver::HasCached(base::StringPiece hostname,
-                                    HostCache::Entry::Source* source_out,
-                                    HostCache::EntryStaleness* stale_out,
-                                    bool* secure_out) const {
-  return false;
 }
 
 //-----------------------------------------------------------------------------

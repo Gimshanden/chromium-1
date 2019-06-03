@@ -10,6 +10,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -87,6 +88,8 @@ const NodeType* SafeUnalias(const NodeType* node) {
 
 template <typename NodeType>
 class PaintPropertyNode : public RefCounted<NodeType> {
+  USING_FAST_MALLOC(PaintPropertyNode);
+
  public:
   // Parent property node, or nullptr if this is the root node.
   const NodeType* Parent() const { return parent_.get(); }
@@ -135,6 +138,14 @@ class PaintPropertyNode : public RefCounted<NodeType> {
 #endif
   }
 
+  int CcNodeId(int sequence_number) const {
+    return cc_sequence_number_ == sequence_number ? cc_node_id_ : -1;
+  }
+  void SetCcNodeId(int sequence_number, int id) const {
+    cc_sequence_number_ = sequence_number;
+    cc_node_id_ = id;
+  }
+
 #if DCHECK_IS_ON()
   String ToTreeString() const;
 
@@ -173,6 +184,11 @@ class PaintPropertyNode : public RefCounted<NodeType> {
   friend class ObjectPaintProperties;
 
   scoped_refptr<const NodeType> parent_;
+
+  // Caches the id of the associated cc property node. It's valid only when
+  // cc_sequence_number_ matches the sequence number of the cc property tree.
+  mutable int cc_node_id_ = -1;
+  mutable int cc_sequence_number_ = 0;
 
   // Indicates whether this node is an alias for its parent. Parent aliases are
   // nodes that do not affect rendering and are ignored for the purposes of

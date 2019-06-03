@@ -13,9 +13,11 @@
 #include "chromeos/dbus/shill/shill_manager_client.h"
 #include "chromeos/dbus/shill/shill_profile_client.h"
 #include "chromeos/dbus/shill/shill_service_client.h"
-#include "chromeos/network/network_state_handler.h"
+#include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
 
 namespace chromeos {
+
+class NetworkStateHandler;
 
 // Helper class for tests that use NetworkStateHandler. Handles initialization,
 // shutdown, and adds default profiles and a wifi device (but no services).
@@ -57,11 +59,16 @@ class NetworkStateTestHelper {
                           const std::string& key,
                           const base::Value& value);
 
-  std::unique_ptr<NetworkState> CreateStandaloneNetworkState(
+  network_config::mojom::NetworkStatePropertiesPtr
+  CreateStandaloneNetworkProperties(
       const std::string& id,
-      const std::string& type,
-      const std::string& connection_state,
+      network_config::mojom::NetworkType type,
+      network_config::mojom::ConnectionStateType connection_state,
       int signal_strength);
+
+  // Returns the path used for the shared and user profiles.
+  const char* ProfilePathShared();
+  const char* ProfilePathUser();
 
   // Returns the hash used for the user profile.
   const char* UserHash();
@@ -78,7 +85,7 @@ class NetworkStateTestHelper {
  private:
   void ConfigureCallback(const dbus::ObjectPath& result);
 
-  bool dbus_thread_manager_initialized_ = false;
+  bool shill_clients_initialized_ = false;
   std::string last_created_service_path_;
 
   ShillManagerClient::TestInterface* manager_test_;

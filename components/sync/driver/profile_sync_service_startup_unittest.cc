@@ -413,8 +413,8 @@ TEST_F(ProfileSyncServiceStartupTest, DisableSync) {
 TEST_F(ProfileSyncServiceStartupTest, StartRecoverDatatypePrefs) {
   // Clear the datatype preference fields (simulating bug 154940).
   pref_service()->ClearPref(prefs::kSyncKeepEverythingSynced);
-  for (ModelType type : UserSelectableTypes()) {
-    pref_service()->ClearPref(SyncPrefs::GetPrefNameForDataType(type));
+  for (UserSelectableType type : UserSelectableTypeSet::All()) {
+    pref_service()->ClearPref(SyncPrefs::GetPrefNameForTypeForTesting(type));
   }
 
   sync_prefs()->SetFirstSetupComplete();
@@ -437,8 +437,10 @@ TEST_F(ProfileSyncServiceStartupTest, StartRecoverDatatypePrefs) {
 TEST_F(ProfileSyncServiceStartupTest, StartDontRecoverDatatypePrefs) {
   // Explicitly set Keep Everything Synced to false and have only bookmarks
   // enabled.
-  sync_prefs()->SetDataTypesConfiguration(/*keep_everything_synced=*/false,
-                                          UserTypes(), {BOOKMARKS});
+  sync_prefs()->SetSelectedTypes(
+      /*keep_everything_synced=*/false,
+      /*choosable_types=*/UserSelectableTypeSet::All(),
+      /*chosen_types=*/{UserSelectableType::kBookmarks});
 
   sync_prefs()->SetFirstSetupComplete();
   CreateSyncService(ProfileSyncService::MANUAL_START);
@@ -629,10 +631,11 @@ TEST_F(ProfileSyncServiceStartupTest, FullStartupSequenceFirstTime) {
   // Once the engine calls back and says it's initialized, we're just waiting
   // for the user to finish the initial configuration (choosing data types etc.)
   // before actually syncing data.
+  ON_CALL(*sync_engine, IsInitialized()).WillByDefault(Return(true));
   sync_service()->OnEngineInitialized(ModelTypeSet(), WeakHandle<JsBackend>(),
                                       WeakHandle<DataTypeDebugInfoListener>(),
-                                      "test-guid", "test-session-name",
-                                      "test-birthday", "test-bag-of-chips",
+                                      "test-guid", "test-birthday",
+                                      "test-bag-of-chips",
                                       /*success=*/true);
   ASSERT_TRUE(sync_service()->IsEngineInitialized());
   EXPECT_EQ(SyncService::TransportState::PENDING_DESIRED_CONFIGURATION,
@@ -708,10 +711,11 @@ TEST_F(ProfileSyncServiceStartupTest, FullStartupSequenceNthTime) {
   // Once the engine calls back and says it's initialized, the DataTypeManager
   // will get configured, since initial setup is already done.
   EXPECT_CALL(*data_type_manager, Configure(_, _));
+  ON_CALL(*sync_engine, IsInitialized()).WillByDefault(Return(true));
   sync_service()->OnEngineInitialized(ModelTypeSet(), WeakHandle<JsBackend>(),
                                       WeakHandle<DataTypeDebugInfoListener>(),
-                                      "test-guid", "test-session-name",
-                                      "test-birthday", "test-bag-of-chips",
+                                      "test-guid", "test-birthday",
+                                      "test-bag-of-chips",
                                       /*success=*/true);
   ON_CALL(*data_type_manager, state())
       .WillByDefault(Return(DataTypeManager::CONFIGURING));

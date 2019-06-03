@@ -28,9 +28,11 @@
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "net/base/features.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/canonical_cookie_test_helpers.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -44,8 +46,6 @@
 #include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_util.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/default_channel_id_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -202,14 +202,14 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         cm,
         std::make_unique<CanonicalCookie>(
             "dom_1", "A", ".harvard.edu", "/", base::Time(), base::Time(),
-            base::Time(), false, false, CookieSameSite::DEFAULT_MODE,
+            base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
             COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
     EXPECT_TRUE(this->SetCanonicalCookie(
         cm,
         std::make_unique<CanonicalCookie>(
             "dom_2", "B", ".math.harvard.edu", "/", base::Time(), base::Time(),
-            base::Time(), false, false, CookieSameSite::DEFAULT_MODE,
+            base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
             COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
     EXPECT_TRUE(this->SetCanonicalCookie(
@@ -217,7 +217,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "dom_3", "C", ".bourbaki.math.harvard.edu", "/", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     // Host cookies
@@ -226,21 +226,21 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "host_1", "A", url_top_level_domain_plus_1, "/", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
     EXPECT_TRUE(this->SetCanonicalCookie(
         cm,
         std::make_unique<CanonicalCookie>(
             "host_2", "B", url_top_level_domain_plus_2, "/", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
     EXPECT_TRUE(this->SetCanonicalCookie(
         cm,
         std::make_unique<CanonicalCookie>(
             "host_3", "C", url_top_level_domain_plus_3, "/", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     // http_only cookie
@@ -249,7 +249,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "httpo_check", "A", url_top_level_domain_plus_2, "/", base::Time(),
             base::Time(), base::Time(), false, true,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     // same-site cookie
@@ -267,7 +267,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "sec_dom", "A", ".math.harvard.edu", "/", base::Time(),
             base::Time(), base::Time(), true, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "https", true /*modify_httponly*/));
 
     EXPECT_TRUE(this->SetCanonicalCookie(
@@ -275,7 +275,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "sec_host", "B", url_top_level_domain_plus_2, "/", base::Time(),
             base::Time(), base::Time(), true, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "https", true /*modify_httponly*/));
 
     // Domain path cookies
@@ -284,14 +284,14 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "dom_path_1", "A", ".math.harvard.edu", "/dir1", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
     EXPECT_TRUE(this->SetCanonicalCookie(
         cm,
         std::make_unique<CanonicalCookie>(
             "dom_path_2", "B", ".math.harvard.edu", "/dir1/dir2", base::Time(),
             base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     // Host path cookies
@@ -300,7 +300,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "host_path_1", "A", url_top_level_domain_plus_2, "/dir1",
             base::Time(), base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     EXPECT_TRUE(this->SetCanonicalCookie(
@@ -308,7 +308,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
         std::make_unique<CanonicalCookie>(
             "host_path_2", "B", url_top_level_domain_plus_2, "/dir1/dir2",
             base::Time(), base::Time(), base::Time(), false, false,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
         "http", true /*modify_httponly*/));
 
     EXPECT_EQ(14U, this->GetAllCookies(cm).size());
@@ -974,11 +974,11 @@ TEST_F(DeferredCookieTaskTest, DeferredSetAllCookies) {
   CookieList list;
   list.push_back(CanonicalCookie("A", "B", "." + http_www_foo_.domain(), "/",
                                  base::Time::Now(), base::Time(), base::Time(),
-                                 false, true, CookieSameSite::DEFAULT_MODE,
+                                 false, true, CookieSameSite::NO_RESTRICTION,
                                  COOKIE_PRIORITY_DEFAULT));
   list.push_back(CanonicalCookie("C", "D", "." + http_www_foo_.domain(), "/",
                                  base::Time::Now(), base::Time(), base::Time(),
-                                 false, true, CookieSameSite::DEFAULT_MODE,
+                                 false, true, CookieSameSite::NO_RESTRICTION,
                                  COOKIE_PRIORITY_DEFAULT));
 
   ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> call1;
@@ -1949,11 +1949,11 @@ TEST_F(CookieMonsterTest, BackingStoreCommunication) {
 
   const CookiesInputInfo input_info[] = {
       {GURL("http://a.b.foo.com"), "a", "1", "a.b.foo.com", "/path/to/cookie",
-       expires, false, false, CookieSameSite::DEFAULT_MODE,
+       expires, false, false, CookieSameSite::NO_RESTRICTION,
        COOKIE_PRIORITY_DEFAULT},
       {GURL("https://www.foo.com"), "b", "2", ".foo.com", "/path/from/cookie",
        expires + TimeDelta::FromSeconds(10), true, true,
-       CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT},
+       CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT},
       {GURL("https://foo.com"), "c", "3", "foo.com", "/another/path/to/cookie",
        base::Time::Now() + base::TimeDelta::FromSeconds(100), true, false,
        CookieSameSite::STRICT_MODE, COOKIE_PRIORITY_DEFAULT}};
@@ -2417,15 +2417,15 @@ TEST_F(CookieMonsterTest, SetAllCookies) {
   CookieList list;
   list.push_back(CanonicalCookie(
       "A", "B", "." + http_www_foo_.url().host(), "/", base::Time::Now(),
-      base::Time(), base::Time(), false, false, CookieSameSite::DEFAULT_MODE,
+      base::Time(), base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
       COOKIE_PRIORITY_DEFAULT));
   list.push_back(CanonicalCookie(
       "W", "X", "." + http_www_foo_.url().host(), "/bar", base::Time::Now(),
-      base::Time(), base::Time(), false, false, CookieSameSite::DEFAULT_MODE,
+      base::Time(), base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
       COOKIE_PRIORITY_DEFAULT));
   list.push_back(CanonicalCookie(
       "Y", "Z", "." + http_www_foo_.url().host(), "/", base::Time::Now(),
-      base::Time(), base::Time(), false, false, CookieSameSite::DEFAULT_MODE,
+      base::Time(), base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
       COOKIE_PRIORITY_DEFAULT));
 
   // SetAllCookies must not flush.
@@ -2513,7 +2513,8 @@ TEST_F(CookieMonsterTest, HistogramCheck) {
       std::make_unique<CanonicalCookie>(
           "a", "b", "a.url", "/", base::Time(),
           base::Time::Now() + base::TimeDelta::FromMinutes(59), base::Time(),
-          false, false, CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
+          false, false, CookieSameSite::NO_RESTRICTION,
+          COOKIE_PRIORITY_DEFAULT),
       "http", true /*modify_httponly*/));
 
   std::unique_ptr<base::HistogramSamples> samples2(
@@ -2638,7 +2639,7 @@ TEST_F(CookieMonsterTest, ControlCharacterPurge) {
       "\x05"
       "boo",
       "." + domain, path, now2, later, base::Time(), false, false,
-      CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT);
+      CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT);
   initial_cookies.push_back(std::move(cc));
 
   AddCookieToList(url, "hello=world; path=" + path, now3, &initial_cookies);
@@ -3221,6 +3222,173 @@ TEST_F(CookieMonsterTest, DeleteCookieWithInheritedTimestamps) {
   cm.DeleteCanonicalCookieAsync(*cookie, delete_callback.MakeCallback());
   delete_callback.WaitUntilDone();
   EXPECT_EQ(1U, delete_callback.result());
+}
+
+TEST_F(CookieMonsterTest, NoSmuggling) {
+  GURL url("http://www.example.com");
+  std::string cookie_line = "foo=bar; SameSite=Lax";
+
+  CookieMonster cm(nullptr, nullptr);
+  CookieOptions env_same_site;
+  env_same_site.set_same_site_cookie_context(
+      CookieOptions::SameSiteCookieContext::SAME_SITE_LAX);
+
+  CookieOptions env_cross_site;
+  env_cross_site.set_same_site_cookie_context(
+      CookieOptions::SameSiteCookieContext::CROSS_SITE);
+
+  // Cookie can be created successfully, since environment permits it.
+  auto cookie = CanonicalCookie::Create(url, cookie_line, base::Time::Now(),
+                                        env_same_site);
+  ASSERT_TRUE(cookie != nullptr);
+
+  // ... but the environment is re-checked on set, so if it's different, this
+  // may be rejected then.
+  ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+  cm.SetCanonicalCookieAsync(std::move(cookie), "http", env_cross_site,
+                             callback.MakeCallback());
+  callback.WaitUntilDone();
+  EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX,
+            callback.result());
+}
+
+// Test the CookiesWithoutSameSiteMustBeSecure experimental option (in
+// conjunction with SameSiteByDefaultCookies, which it depends upon).
+TEST_F(CookieMonsterTest, CookiesWithoutSameSiteMustBeSecure) {
+  auto cm = std::make_unique<CookieMonster>(nullptr, nullptr);
+  CookieOptions options;
+  options.set_same_site_cookie_context(
+      CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+  GURL secure_url("https://www.example1.test");
+  GURL insecure_url("http://www.example2.test");
+  CanonicalCookie::CookieInclusionStatus result;
+
+  // Enable both features.
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitWithFeatures(
+        {features::kSameSiteByDefaultCookies,
+         features::kCookiesWithoutSameSiteMustBeSecure} /* enabled_features */,
+        {} /* disabled_features */);
+
+    // Cookie set from a secure URL with SameSite enabled is not rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B; SameSite=Lax");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    CookieList cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].SameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL which defaults into LAX_MODE is not
+    // rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());  // We overwrote the previous cookie.
+    EXPECT_EQ(CookieSameSite::UNSPECIFIED, cookies[0].SameSite());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].GetEffectiveSameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL with SameSite=None and Secure is set.
+    result = SetCookieReturnStatus(cm.get(), secure_url,
+                                   "A=B; SameSite=None; Secure");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());
+    EXPECT_EQ(CookieSameSite::NO_RESTRICTION, cookies[0].SameSite());
+    EXPECT_TRUE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL with SameSite=None but not specifying Secure
+    // is rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B; SameSite=None");
+    EXPECT_EQ(
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_NONE_INSECURE,
+        result);
+
+    // Cookie set from an insecure URL with SameSite=None (which can't ever be
+    // secure because it's an insecure URL) is rejected.
+    result =
+        SetCookieReturnStatus(cm.get(), insecure_url, "A=B; SameSite=None");
+    EXPECT_EQ(
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_NONE_INSECURE,
+        result);
+
+    // Cookie set from an insecure URL which defaults into LAX_MODE is not
+    // rejected.
+    result = SetCookieReturnStatus(cm.get(), insecure_url, "A=B");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), insecure_url);
+    ASSERT_EQ(1u, cookies.size());  // We overwrote the previous cookie.
+    EXPECT_EQ(CookieSameSite::UNSPECIFIED, cookies[0].SameSite());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].GetEffectiveSameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+  }
+
+  // Only enable SameSiteByDefaultCookies, and not
+  // CookiesWithoutSameSiteMustBeSecure.
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitWithFeatures(
+        {features::kSameSiteByDefaultCookies} /* enabled_features */,
+        {features::
+             kCookiesWithoutSameSiteMustBeSecure} /* disabled_features */);
+
+    // Cookie set from a secure URL with SameSite enabled is not rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B; SameSite=Lax");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    CookieList cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].SameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL which defaults into LAX_MODE is not
+    // rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());  // We overwrote the previous cookie.
+    EXPECT_EQ(CookieSameSite::UNSPECIFIED, cookies[0].SameSite());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].GetEffectiveSameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL with SameSite=None and Secure is set.
+    result = SetCookieReturnStatus(cm.get(), secure_url,
+                                   "A=B; SameSite=None; Secure");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());
+    EXPECT_EQ(CookieSameSite::NO_RESTRICTION, cookies[0].SameSite());
+    EXPECT_TRUE(cookies[0].IsSecure());
+
+    // Cookie set from a secure URL with SameSite=None but not specifying Secure
+    // is NOT rejected.
+    result = SetCookieReturnStatus(cm.get(), secure_url, "A=B; SameSite=None");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), secure_url);
+    ASSERT_EQ(1u, cookies.size());  // We overwrote the previous cookie.
+    EXPECT_EQ(CookieSameSite::NO_RESTRICTION, cookies[0].SameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from an insecure URL with SameSite=None (which can't ever be
+    // secure because it's an insecure URL) is NOT rejected.
+    result =
+        SetCookieReturnStatus(cm.get(), insecure_url, "A=B; SameSite=None");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), insecure_url);
+    ASSERT_EQ(1u, cookies.size());
+    EXPECT_EQ(CookieSameSite::NO_RESTRICTION, cookies[0].SameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+
+    // Cookie set from an insecure URL which defaults into LAX_MODE is not
+    // rejected.
+    result = SetCookieReturnStatus(cm.get(), insecure_url, "A=B");
+    EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::INCLUDE, result);
+    cookies = GetAllCookiesForURL(cm.get(), insecure_url);
+    ASSERT_EQ(1u, cookies.size());  // We overwrote the previous cookie.
+    EXPECT_EQ(CookieSameSite::UNSPECIFIED, cookies[0].SameSite());
+    EXPECT_EQ(CookieSameSite::LAX_MODE, cookies[0].GetEffectiveSameSite());
+    EXPECT_FALSE(cookies[0].IsSecure());
+  }
 }
 
 class CookieMonsterNotificationTest : public CookieMonsterTest {

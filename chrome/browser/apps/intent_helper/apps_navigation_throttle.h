@@ -74,12 +74,15 @@ class AppsNavigationThrottle : public content::NavigationThrottle {
                         IntentPickerCloseReason close_reason,
                         bool should_persist);
 
+  static bool IsGoogleRedirectorUrlForTesting(const GURL& url);
+
   static bool ShouldOverrideUrlLoadingForTesting(const GURL& previous_url,
                                                  const GURL& current_url);
 
   static void ShowIntentPickerBubbleForApps(
       content::WebContents* web_contents,
       std::vector<IntentPickerAppInfo> apps,
+      bool show_remember_selection,
       IntentPickerResponse callback);
 
   explicit AppsNavigationThrottle(content::NavigationHandle* navigation_handle);
@@ -177,19 +180,19 @@ class AppsNavigationThrottle : public content::NavigationThrottle {
       std::vector<IntentPickerAppInfo> apps,
       IntentPickerResponse callback);
 
-  virtual PickerShowState GetPickerShowState();
+  virtual PickerShowState GetPickerShowState(
+      const std::vector<IntentPickerAppInfo>& apps_for_picker,
+      content::WebContents* web_contents,
+      const GURL& url);
 
   virtual IntentPickerResponse GetOnPickerClosedCallback(
       content::WebContents* web_contents,
       IntentPickerAutoDisplayService* ui_auto_display_service,
       const GURL& url);
 
-  // Whether or not the intent picker UI should be displayed without the user
-  // clicking in the omnibox's icon.
-  bool ShouldAutoDisplayUi(
-      const std::vector<IntentPickerAppInfo>& apps_for_picker,
-      content::WebContents* web_contents,
-      const GURL& url);
+  virtual bool ShouldShowRememberSelection();
+
+  bool navigate_from_link();
 
   // Keeps track of whether we already shown the UI or preferred app. Since
   // AppsNavigationThrottle cannot wait for the user (due to the non-blocking
@@ -219,6 +222,11 @@ class AppsNavigationThrottle : public content::NavigationThrottle {
 
   // A reference to the starting GURL.
   GURL starting_url_;
+
+  // Keeps track of whether the navigation is coming from a link or not. If the
+  // navigation is not from a link, we will not show the pop up for the intent
+  // picker bubble.
+  bool navigate_from_link_;
 
   DISALLOW_COPY_AND_ASSIGN(AppsNavigationThrottle);
 };

@@ -8,29 +8,85 @@
 #include <memory>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/performance_manager/graph/node_attached_data.h"
 #include "chrome/browser/performance_manager/graph/node_base.h"
-#include "chrome/browser/performance_manager/observers/graph_observer.h"
+#include "chrome/browser/performance_manager/public/graph/page_node.h"
+#include "chrome/browser/performance_manager/public/web_contents_proxy.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "url/gurl.h"
 
 namespace performance_manager {
 
 class FrameNodeImpl;
+class PageNodeImpl;
 class ProcessNodeImpl;
 
-class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
+// Observer interface for PageNodeImpl objects. This must be declared first as
+// the type is referenced by members of PageNodeImpl.
+class PageNodeImplObserver {
  public:
+  PageNodeImplObserver();
+  virtual ~PageNodeImplObserver();
+
+  // Notifications of property changes.
+
+  // Invoked when the |is_visible| property changes.
+  virtual void OnIsVisibleChanged(PageNodeImpl* page_node) = 0;
+
+  // Invoked when the |is_loading| property changes.
+  virtual void OnIsLoadingChanged(PageNodeImpl* page_node) = 0;
+
+  // Invoked when the |ukm_source_id| property changes.
+  virtual void OnUkmSourceIdChanged(PageNodeImpl* page_node) = 0;
+
+  // Invoked when the |lifecycle_state| property changes.
+  virtual void OnLifecycleStateChanged(PageNodeImpl* page_node) = 0;
+
+  // Invoked when the |page_almost_idle| property changes.
+  virtual void OnPageAlmostIdleChanged(PageNodeImpl* page_node) = 0;
+
+  // This is fired when a main frame navigation commits. It indicates that the
+  // |navigation_id| and |main_frame_url| properties have changed.
+  virtual void OnMainFrameNavigationCommitted(PageNodeImpl* page_node) = 0;
+
+  // Events with no property changes.
+
+  // Fired when the tab title associated with a page changes. This property is
+  // not directly reflected on the node.
+  virtual void OnTitleUpdated(PageNodeImpl* page_node) = 0;
+
+  // Fired when the favicon associated with a page is updated. This property is
+  // not directly reflected on the node.
+  virtual void OnFaviconUpdated(PageNodeImpl* page_node) = 0;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(PageNodeImplObserver);
+};
+
+class PageNodeImpl : public PublicNodeImpl<PageNodeImpl, PageNode>,
+                     public TypedNodeBase<PageNodeImpl, PageNodeImplObserver> {
+ public:
+  // A do-nothing implementation of the observer. Derive from this if you want
+  // to selectively override a few methods and not have to worry about
+  // continuously updating your implementation as new methods are added.
+  class ObserverDefaultImpl;
+
   using LifecycleState = resource_coordinator::mojom::LifecycleState;
 
-  static constexpr resource_coordinator::CoordinationUnitType Type() {
-    return resource_coordinator::CoordinationUnitType::kPage;
-  }
+  static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kPage; }
 
-  explicit PageNodeImpl(Graph* graph);
+  explicit PageNodeImpl(GraphImpl* graph,
+                        const WebContentsProxy& contents_proxy,
+                        bool is_visible);
   ~PageNodeImpl() override;
+
+  // Returns the web contents associated with this page node. It is valid to
+  // call this function on any thread but the weak pointer must only be
+  // dereferenced on the UI thread.
+  const WebContentsProxy& contents_proxy() const;
 
   void SetIsLoading(bool is_loading);
   void SetIsVisible(bool is_visible);
@@ -44,7 +100,7 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
   // There is no direct relationship between processes and pages. However,
   // frames are accessible by both processes and frames, so we find all of the
   // processes that are reachable from the pages's accessible frames.
-  std::set<ProcessNodeImpl*> GetAssociatedProcessCoordinationUnits() const;
+  base::flat_set<ProcessNodeImpl*> GetAssociatedProcessNodes() const;
 
   // Returns the average CPU usage that can be attributed to this page over the
   // last measurement period. CPU usage is expressed as the average percentage
@@ -58,52 +114,39 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
 
   // Returns the time since the last visibility change, it should always have a
   // value since we set the visibility property when we create a
-  // PageCoordinationUnit.
+  // page node.
   base::TimeDelta TimeSinceLastVisibilityChange() const;
 
   std::vector<FrameNodeImpl*> GetFrameNodes() const;
 
-  // Returns the main frame CU or nullptr if this page has no main frame.
+  // Returns the current main frame node (if there is one), otherwise returns
+  // any of the potentially multiple main frames that currently exist. If there
+  // are no main frames at the moment, returns nullptr.
   FrameNodeImpl* GetMainFrameNode() const;
 
   // Accessors.
-  bool is_visible() const { return is_visible_.value(); }
-  bool is_loading() const { return is_loading_.value(); }
-  ukm::SourceId ukm_source_id() const { return ukm_source_id_.value(); }
-  LifecycleState lifecycle_state() const { return lifecycle_state_.value(); }
-  const std::set<FrameNodeImpl*>& main_frame_nodes() const {
-    return main_frame_nodes_;
-  }
-  base::TimeTicks usage_estimate_time() const { return usage_estimate_time_; }
-  void set_usage_estimate_time(base::TimeTicks usage_estimate_time) {
-    usage_estimate_time_ = usage_estimate_time;
-  }
-  base::TimeDelta cumulative_cpu_usage_estimate() const {
-    return cumulative_cpu_usage_estimate_;
-  }
+  bool is_visible() const;
+  bool is_loading() const;
+  ukm::SourceId ukm_source_id() const;
+  LifecycleState lifecycle_state() const;
+  const base::flat_set<FrameNodeImpl*>& main_frame_nodes() const;
+  base::TimeTicks usage_estimate_time() const;
+  base::TimeDelta cumulative_cpu_usage_estimate() const;
+  uint64_t private_footprint_kb_estimate() const;
+  bool page_almost_idle() const;
+  const GURL& main_frame_url() const;
+  int64_t navigation_id() const;
+
+  void set_usage_estimate_time(base::TimeTicks usage_estimate_time);
   void set_cumulative_cpu_usage_estimate(
-      base::TimeDelta cumulative_cpu_usage_estimate) {
-    cumulative_cpu_usage_estimate_ = cumulative_cpu_usage_estimate;
-  }
-  uint64_t private_footprint_kb_estimate() const {
-    return private_footprint_kb_estimate_;
-  }
+      base::TimeDelta cumulative_cpu_usage_estimate);
   void set_private_footprint_kb_estimate(
-      uint64_t private_footprint_kb_estimate) {
-    private_footprint_kb_estimate_ = private_footprint_kb_estimate;
-  }
-  void set_has_nonempty_beforeunload(bool has_nonempty_beforeunload) {
-    has_nonempty_beforeunload_ = has_nonempty_beforeunload;
-  }
-  bool page_almost_idle() const { return page_almost_idle_.value(); }
+      uint64_t private_footprint_kb_estimate);
+  void set_has_nonempty_beforeunload(bool has_nonempty_beforeunload);
 
-  const GURL& main_frame_url() const { return main_frame_url_; }
-  int64_t navigation_id() const { return navigation_id_; }
-
-  // Invoked when the state of a frame in this page changes.
-  void OnFrameLifecycleStateChanged(FrameNodeImpl* frame_node,
-                                    LifecycleState old_state);
-
+  // Invoked when a frame belonging to this page changes intervention policy
+  // values.
+  // TODO(chrisha): Move this out to a decorator.
   void OnFrameInterventionPolicyChanged(
       FrameNodeImpl* frame,
       resource_coordinator::mojom::PolicyControlledIntervention intervention,
@@ -135,6 +178,7 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
 
  private:
   friend class FrameNodeImpl;
+  friend class FrozenFrameAggregatorAccess;
   friend class PageAlmostIdleAccess;
 
   void AddFrame(FrameNodeImpl* frame_node);
@@ -146,16 +190,7 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
   bool HasFrame(FrameNodeImpl* frame_node);
 
   void SetPageAlmostIdle(bool page_almost_idle);
-
-  // CoordinationUnitInterface implementation.
-  void OnEventReceived(resource_coordinator::mojom::Event event) override;
-
-  // This is called whenever |num_frozen_frames_| changes, or whenever
-  // a frame is added to or removed from this page. It is used to synthesize the
-  // value of |has_nonempty_beforeunload| and to update the LifecycleState of
-  // the page. Calling this with |num_frozen_frames_delta == 0| implies that the
-  // number of frames itself has changed.
-  void OnNumFrozenFramesStateChange(int num_frozen_frames_delta);
+  void SetLifecycleState(LifecycleState lifecycle_state);
 
   // Invalidates all currently aggregated intervention policies.
   void InvalidateAllInterventionPolicies();
@@ -177,11 +212,14 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
   template <typename MapFunction>
   void ForAllFrameNodes(MapFunction map_function) const;
 
+  // The WebContentsProxy associated with this page.
+  const WebContentsProxy contents_proxy_;
+
   // The main frame nodes of this page. There can be more than one main frame
   // in a page, among other reasons because during main frame navigation, the
   // pending navigation will coexist with the existing main frame until it's
   // committed.
-  std::set<FrameNodeImpl*> main_frame_nodes_;
+  base::flat_set<FrameNodeImpl*> main_frame_nodes_;
   // The total count of frames that tally up to this page.
   size_t frame_node_count_ = 0;
 
@@ -201,9 +239,6 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
   base::TimeDelta cumulative_cpu_usage_estimate_;
   // The most current memory footprint estimate.
   uint64_t private_footprint_kb_estimate_ = 0;
-
-  // Counts the number of frames in a page that are frozen.
-  size_t num_frozen_frames_ = 0;
 
   // Indicates whether or not this page has a non-empty beforeunload handler.
   // This is an aggregation of the same value on each frame in the page's frame
@@ -235,33 +270,54 @@ class PageNodeImpl : public TypedNodeBase<PageNodeImpl> {
 
   // Page almost idle state. This is the output that is driven by the
   // PageAlmostIdleDecorator.
-  ObservedProperty::
-      NotifiesOnlyOnChanges<bool, &GraphObserver::OnPageAlmostIdleChanged>
-          page_almost_idle_{false};
-  // Whether or not the page is visible. Driven by browser instrumentation.
   ObservedProperty::NotifiesOnlyOnChanges<bool,
-                                          &GraphObserver::OnIsVisibleChanged>
-      is_visible_{false};
+                                          &Observer::OnPageAlmostIdleChanged>
+      page_almost_idle_{false};
+  // Whether or not the page is visible. Driven by browser instrumentation.
+  // Initialized on construction.
+  ObservedProperty::NotifiesOnlyOnChanges<bool, &Observer::OnIsVisibleChanged>
+      is_visible_;
   // The loading state. This is driven by instrumentation in the browser
   // process.
-  ObservedProperty::NotifiesOnlyOnChanges<bool,
-                                          &GraphObserver::OnIsLoadingChanged>
+  ObservedProperty::NotifiesOnlyOnChanges<bool, &Observer::OnIsLoadingChanged>
       is_loading_{false};
   // The UKM source ID associated with the URL of the main frame of this page.
   ObservedProperty::NotifiesOnlyOnChanges<ukm::SourceId,
-                                          &GraphObserver::OnUkmSourceIdChanged>
+                                          &Observer::OnUkmSourceIdChanged>
       ukm_source_id_{ukm::kInvalidSourceId};
   // The lifecycle state of this page. This is aggregated from the lifecycle
   // state of each frame in the frame tree.
-  ObservedProperty::NotifiesOnlyOnChanges<
-      LifecycleState,
-      &GraphObserver::OnLifecycleStateChanged>
+  ObservedProperty::NotifiesOnlyOnChanges<LifecycleState,
+                                          &Observer::OnLifecycleStateChanged>
       lifecycle_state_{LifecycleState::kRunning};
 
   // Storage for PageAlmostIdle user data.
   std::unique_ptr<NodeAttachedData> page_almost_idle_data_;
 
+  // Inline storage for FrozenFrameAggregator user data.
+  InternalNodeAttachedDataStorage<sizeof(uintptr_t) + 8> frozen_frame_data_;
+
   DISALLOW_COPY_AND_ASSIGN(PageNodeImpl);
+};
+
+// A do-nothing default implementation of a PageNodeImpl::Observer.
+class PageNodeImpl::ObserverDefaultImpl : public PageNodeImpl::Observer {
+ public:
+  ObserverDefaultImpl();
+  ~ObserverDefaultImpl() override;
+
+  // PageNodeImpl::Observer implementation:
+  void OnIsVisibleChanged(PageNodeImpl* page_node) override {}
+  void OnIsLoadingChanged(PageNodeImpl* page_node) override {}
+  void OnUkmSourceIdChanged(PageNodeImpl* page_node) override {}
+  void OnLifecycleStateChanged(PageNodeImpl* page_node) override {}
+  void OnPageAlmostIdleChanged(PageNodeImpl* page_node) override {}
+  void OnMainFrameNavigationCommitted(PageNodeImpl* page_node) override {}
+  void OnTitleUpdated(PageNodeImpl* page_node) override {}
+  void OnFaviconUpdated(PageNodeImpl* page_node) override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ObserverDefaultImpl);
 };
 
 }  // namespace performance_manager

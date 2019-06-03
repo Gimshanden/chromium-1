@@ -39,13 +39,13 @@
 #include "content/public/common/drop_data.h"
 #include "content/public/common/screen_info.h"
 #include "content/renderer/compositor/layer_tree_view_delegate.h"
-#include "content/renderer/devtools/render_widget_screen_metrics_emulator_delegate.h"
 #include "content/renderer/input/main_thread_event_queue.h"
 #include "content/renderer/input/render_widget_input_handler.h"
 #include "content/renderer/input/render_widget_input_handler_delegate.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
 #include "content/renderer/render_widget_delegate.h"
 #include "content/renderer/render_widget_mouse_lock_dispatcher.h"
+#include "content/renderer/render_widget_screen_metrics_emulator_delegate.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_sender.h"
@@ -82,7 +82,6 @@ class WebRenderWidgetSchedulingState;
 struct WebDeviceEmulationParams;
 class WebDragData;
 class WebFrameWidget;
-class WebGestureEvent;
 class WebInputMethodController;
 class WebLocalFrame;
 class WebMouseEvent;
@@ -102,6 +101,9 @@ class Range;
 
 namespace ui {
 struct DidOverscrollParams;
+namespace input_types {
+enum class ScrollGranularity;
+}
 }
 
 namespace content {
@@ -405,11 +407,17 @@ class CONTENT_EXPORT RenderWidget
   void SetWindowRect(const blink::WebRect&) override;
   void DidHandleGestureEvent(const blink::WebGestureEvent& event,
                              bool event_cancelled) override;
-  void DidOverscroll(const blink::WebFloatSize& overscrollDelta,
-                     const blink::WebFloatSize& accumulatedOverscroll,
+  void DidOverscroll(const blink::WebFloatSize& overscroll_delta,
+                     const blink::WebFloatSize& accumulated_overscroll,
                      const blink::WebFloatPoint& position,
-                     const blink::WebFloatSize& velocity,
-                     const cc::OverscrollBehavior& behavior) override;
+                     const blink::WebFloatSize& velocity) override;
+  void InjectGestureScrollEvent(
+      blink::WebGestureDevice device,
+      const blink::WebFloatSize& delta,
+      ui::input_types::ScrollGranularity granularity,
+      cc::ElementId scrollable_area_element_id,
+      blink::WebInputEvent::Type injected_type) override;
+  void SetOverscrollBehavior(const cc::OverscrollBehavior&) override;
   void ShowVirtualKeyboardOnElementFocus() override;
   void ConvertViewportToWindow(blink::WebRect* rect) override;
   void ConvertWindowToViewport(blink::WebFloatRect* rect) override;
@@ -423,7 +431,7 @@ class CONTENT_EXPORT RenderWidget
                      const gfx::Point& image_offset) override;
   void SetTouchAction(cc::TouchAction touch_action) override;
   void RequestUnbufferedInputEvents() override;
-  void HasPointerRawMoveEventHandlers(bool has_handlers) override;
+  void HasPointerRawUpdateEventHandlers(bool has_handlers) override;
   void HasTouchEventHandlers(bool has_handlers) override;
   void SetNeedsLowLatencyInput(bool) override;
   void SetNeedsUnbufferedInputForDebugger(bool) override;
@@ -439,13 +447,18 @@ class CONTENT_EXPORT RenderWidget
                                     bool up,
                                     bool down) override;
   void FallbackCursorModeSetCursorVisibility(bool visible) override;
-  void SetPageScaleFactorAndLimits(float page_scale_factor,
-                                   float minimum,
-                                   float maximum) override;
+  void SetAllowGpuRasterization(bool allow_gpu_raster) override;
+  void SetPageScaleStateAndLimits(float page_scale_factor,
+                                  bool is_pinch_gesture_active,
+                                  float minimum,
+                                  float maximum) override;
   void StartPageScaleAnimation(const gfx::Vector2d& destination,
                                bool use_anchor,
                                float new_page_scale,
                                double duration_sec) override;
+  void RequestDecode(const cc::PaintImage& image,
+                     base::OnceCallback<void(bool)> callback) override;
+  void NotifySwapTime(ReportTimeCallback callback) override;
 
   // Override point to obtain that the current input method state and caret
   // position.
@@ -615,9 +628,6 @@ class CONTENT_EXPORT RenderWidget
 
   bool IsSurfaceSynchronizationEnabled() const;
 
-  void PageScaleFactorChanged(float page_scale_factor,
-                              bool is_pinch_gesture_active);
-
   void UseSynchronousResizeModeForTesting(bool enable);
   void SetDeviceScaleFactorForTesting(float factor);
   void SetDeviceColorSpaceForTesting(const gfx::ColorSpace& color_space);
@@ -634,10 +644,17 @@ class CONTENT_EXPORT RenderWidget
   // to the user.
   using PresentationTimeCallback =
       base::OnceCallback<void(const gfx::PresentationFeedback&)>;
-  void RequestPresentation(PresentationTimeCallback callback);
+  virtual void RequestPresentation(PresentationTimeCallback callback);
 
   // RenderWidget IPC message handler that can be overridden by subclasses.
   virtual void OnSynchronizeVisualProperties(const VisualProperties& params);
+
+  bool in_synchronous_composite_for_testing() const {
+    return in_synchronous_composite_for_testing_;
+  }
+  void set_in_synchronous_composite_for_testing(bool in) {
+    in_synchronous_composite_for_testing_ = in;
+  }
 
   // Called by Create() functions and subclasses to finish initialization.
   // |show_callback| will be invoked once WebWidgetClient::Show() occurs, and
@@ -728,7 +745,8 @@ class CONTENT_EXPORT RenderWidget
   void OnWasHidden();
   void OnWasShown(base::TimeTicks show_request_timestamp,
                   bool was_evicted,
-                  base::TimeTicks tab_switch_start_time);
+                  const base::Optional<content::RecordTabSwitchTimeRequest>&
+                      record_tab_switch_time_request);
   void OnCreateVideoAck(int32_t video_id);
   void OnUpdateVideoAck(int32_t video_id);
   void OnRequestSetBoundsAck();
@@ -815,11 +833,6 @@ class CONTENT_EXPORT RenderWidget
   // GetWindowRect() we'll use this pending window rect as the size.
   void SetPendingWindowRect(const blink::WebRect& r);
 
-  // TODO(ekaramad): This method should not be confused with its RenderView
-  // variant, GetWebFrameWidget(). Currently Cast and AndroidWebview's
-  // ContentRendererClients are the only users of the public variant. The public
-  // method will eventually be removed from RenderView and uses of the method
-  // will obtain WebFrameWidget from WebLocalFrame.
   // Returns the WebFrameWidget associated with this RenderWidget if any.
   // Returns nullptr if GetWebWidget() returns nullptr or returns a WebWidget
   // that is not a WebFrameWidget. A WebFrameWidget only makes sense when there
@@ -983,6 +996,9 @@ class CONTENT_EXPORT RenderWidget
   // process, without the use of this mode, however it would be overridden by
   // the browser if they disagree.
   bool synchronous_resize_mode_for_testing_ = false;
+  // In web tests, synchronous composites should not be nested inside another
+  // composite, and this bool is used to guard against that.
+  bool in_synchronous_composite_for_testing_ = false;
 
   // Stores information about the current text input.
   blink::WebTextInputInfo text_input_info_;
@@ -1123,10 +1139,11 @@ class CONTENT_EXPORT RenderWidget
   // The height of the browser bottom controls.
   float bottom_controls_height_ = 0.f;
 
-  // The last seen page scale factor, which comes from the main frame and is
-  // propagated through the RenderWidget tree. This value is passed to any new
+  // The last seen page scale state, which comes from the main frame and is
+  // propagated through the RenderWidget tree. This state is passed to any new
   // child RenderWidget.
   float page_scale_factor_from_mainframe_ = 1.f;
+  bool is_pinch_gesture_active_from_mainframe_ = false;
 
   // This is initialized to zero and is incremented on each non-same-page
   // navigation commit by RenderFrameImpl. At that time it is sent to the
@@ -1155,9 +1172,11 @@ class CONTENT_EXPORT RenderWidget
 
   // Used to generate a callback for the reply when making the warmup frame
   // sink, and to cancel that callback if the warmup is aborted.
-  base::WeakPtrFactory<RenderWidget> warmup_weak_ptr_factory_;
-
-  base::WeakPtrFactory<RenderWidget> weak_ptr_factory_;
+  base::WeakPtrFactory<RenderWidget> warmup_weak_ptr_factory_{this};
+  // This factory is invalidated when the WebWidget is closed.
+  base::WeakPtrFactory<RenderWidget> close_weak_ptr_factory_{this};
+  // This factory is invalidated when the RenderWidget is destroyed.
+  base::WeakPtrFactory<RenderWidget> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidget);
 };

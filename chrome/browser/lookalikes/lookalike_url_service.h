@@ -26,11 +26,20 @@ class Clock;
 
 namespace lookalikes {
 
+// Returns eTLD+1 of |hostname|. This excludes private registries, and returns
+// "blogspot.com" for "test.blogspot.com" (blogspot.com is listed as a private
+// registry). We do this to be consistent with url_formatter's top domain list
+// which doesn't have a notion of private registries.
+std::string GetETLDPlusOne(const std::string& hostname);
+
 struct DomainInfo {
   // eTLD+1, used for skeleton and edit distance comparison. Must be ASCII.
+  // Empty for non-unique domains, localhost or sites whose eTLD+1 is empty.
   const std::string domain_and_registry;
-  // Full hostname, used for suggesting a new URL. Must be ASCII.
-  const std::string full_domain;
+  // eTLD+1 without the registry part. For "www.google.com", this will be
+  // "google". Used for edit distance comparisons.
+  // Empty for non-unique domains, localhost or sites whose eTLD+1 is empty.
+  const std::string domain_without_registry;
 
   // Result of IDN conversion of domain_and_registry field.
   const url_formatter::IDNConversionResult idn_result;
@@ -38,13 +47,16 @@ struct DomainInfo {
   const url_formatter::Skeletons skeletons;
 
   DomainInfo(const std::string& arg_domain_and_registry,
-             const std::string& full_domain,
+             const std::string& arg_domain_without_registry,
              const url_formatter::IDNConversionResult& arg_idn_result,
              const url_formatter::Skeletons& arg_skeletons);
   ~DomainInfo();
   DomainInfo(const DomainInfo& other);
 };
 
+// Returns a DomainInfo instance computed from |url|. Will return empty fields
+// for non-unique hostnames (e.g. site.test), localhost or sites whose eTLD+1 is
+// empty.
 DomainInfo GetDomainInfo(const GURL& url);
 
 // A service that handles operations on lookalike URLs. It can fetch the list of

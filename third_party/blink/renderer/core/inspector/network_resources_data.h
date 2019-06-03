@@ -79,11 +79,14 @@ class XHRReplayData final : public GarbageCollectedFinalized<XHRReplayData> {
     visitor->Trace(execution_context_);
   }
 
+  void DeleteFormData() { form_data_ = nullptr; }
+
  private:
   WeakMember<ExecutionContext> execution_context_;
   AtomicString method_;
   KURL url_;
   bool async_;
+  // TODO(http://crbug.com/958524): Remove form_data_ after OutOfBlinkCORS is launched.
   scoped_refptr<EncodedFormData> form_data_;
   HTTPHeaderMap headers_;
   bool include_credentials_;
@@ -140,8 +143,8 @@ class NetworkResourcesData final
       buffer_ = std::move(buffer);
     }
 
-    Resource* CachedResource() const { return cached_resource_.Get(); }
-    void SetResource(Resource*);
+    const Resource* CachedResource() const { return cached_resource_.Get(); }
+    void SetResource(const Resource*);
 
     XHRReplayData* XhrReplayData() const { return xhr_replay_data_.Get(); }
     void SetXHRReplayData(XHRReplayData* xhr_replay_data) {
@@ -201,7 +204,7 @@ class NetworkResourcesData final
     int64_t pending_encoded_data_length_;
 
     scoped_refptr<SharedBuffer> buffer_;
-    WeakMember<Resource> cached_resource_;
+    WeakMember<const Resource> cached_resource_;
     scoped_refptr<BlobDataHandle> downloaded_file_blob_;
     Vector<AtomicString> certificate_;
     scoped_refptr<EncodedFormData> post_data_;
@@ -234,7 +237,7 @@ class NetworkResourcesData final
                             const char* data,
                             uint64_t data_length);
   void MaybeDecodeDataToContent(const String& request_id);
-  void AddResource(const String& request_id, Resource*);
+  void AddResource(const String& request_id, const Resource*);
   ResourceData const* Data(const String& request_id);
   void Clear(const String& preserved_loader_id = String());
 

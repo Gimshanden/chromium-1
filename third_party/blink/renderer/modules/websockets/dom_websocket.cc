@@ -210,7 +210,7 @@ static String EncodeSubprotocolString(const String& protocol) {
   StringBuilder builder;
   for (wtf_size_t i = 0; i < protocol.length(); i++) {
     if (protocol[i] < 0x20 || protocol[i] > 0x7E)
-      builder.Append(String::Format("\\u%04X", protocol[i]));
+      builder.AppendFormat("\\u%04X", protocol[i]);
     else if (protocol[i] == 0x5c)
       builder.Append("\\\\");
     else
@@ -363,9 +363,9 @@ void DOMWebSocket::Connect(const String& url,
     return;
   }
 
-  if (!ContentSecurityPolicy::ShouldBypassMainWorld(GetExecutionContext()) &&
-      !GetExecutionContext()->GetContentSecurityPolicy()->AllowConnectToSource(
-          url_)) {
+  if (!GetExecutionContext()
+           ->GetContentSecurityPolicyForWorld()
+           ->AllowConnectToSource(url_)) {
     state_ = kClosed;
 
     // Delay the event dispatch until after the current task by suspending and

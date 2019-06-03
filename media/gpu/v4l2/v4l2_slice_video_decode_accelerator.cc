@@ -538,12 +538,12 @@ bool V4L2SliceVideoDecodeAccelerator::CreateOutputBuffers() {
 
   VideoPixelFormat pixel_format =
       V4L2Device::V4L2PixFmtToVideoPixelFormat(output_format_fourcc_);
-
   child_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(&VideoDecodeAccelerator::Client::ProvidePictureBuffers,
-                     client_, num_pictures, pixel_format, 1, coded_size_,
-                     device_->GetTextureTarget()));
+      base::BindOnce(
+          &VideoDecodeAccelerator::Client::ProvidePictureBuffersWithVisibleRect,
+          client_, num_pictures, pixel_format, 1, coded_size_,
+          decoder_->GetVisibleRect(), device_->GetTextureTarget()));
 
   // Go into kAwaitingPictureBuffers to prevent us from doing any more decoding
   // or event handling while we are waiting for AssignPictureBuffers(). Not
@@ -1044,8 +1044,7 @@ bool V4L2SliceVideoDecodeAccelerator::StopDevicePoll(bool keep_input_state) {
   return true;
 }
 
-void V4L2SliceVideoDecodeAccelerator::Decode(
-    const BitstreamBuffer& bitstream_buffer) {
+void V4L2SliceVideoDecodeAccelerator::Decode(BitstreamBuffer bitstream_buffer) {
   Decode(bitstream_buffer.ToDecoderBuffer(), bitstream_buffer.id());
 }
 
@@ -2096,7 +2095,7 @@ bool V4L2SliceVideoDecodeAccelerator::OnMemoryDump(
   // OnMemoryDump() must be performed on |decoder_thread_|.
   DCHECK(decoder_thread_.task_runner()->BelongsToCurrentThread());
 
-  // VIDIOC_OUTPUT queue's memory usage.
+  // VIDEO_OUTPUT queue's memory usage.
   const size_t input_queue_buffers_count = input_buffer_map_.size();
   size_t input_queue_memory_usage = 0;
   std::string input_queue_buffers_memory_type =
@@ -2105,7 +2104,7 @@ bool V4L2SliceVideoDecodeAccelerator::OnMemoryDump(
     input_queue_memory_usage += input_record.length;
   }
 
-  // VIDIOC_CAPTURE queue's memory usage.
+  // VIDEO_CAPTURE queue's memory usage.
   const size_t output_queue_buffers_count = output_buffer_map_.size();
   size_t output_queue_memory_usage = 0;
   std::string output_queue_buffers_memory_type =

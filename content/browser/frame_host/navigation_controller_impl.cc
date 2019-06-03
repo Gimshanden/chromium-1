@@ -423,23 +423,6 @@ void ValidateRequestMatchesEntry(NavigationRequest* request,
 }
 #endif  // DCHECK_IS_ON()
 
-// Resets |should_skip_on_back_forward_ui| flag for |entry| if it has a frame
-// entry for |root_frame| with the same document sequence number as
-// |document_sequence_number|.
-bool ResetSkippableForSameDocumentEntry(FrameTreeNode* root_frame,
-                                        int64_t& document_sequence_number,
-                                        NavigationEntryImpl* entry) {
-  if (entry && entry->should_skip_on_back_forward_ui()) {
-    auto* frame_entry = entry->GetFrameEntry(root_frame);
-    if (frame_entry &&
-        frame_entry->document_sequence_number() == document_sequence_number) {
-      entry->set_should_skip_on_back_forward_ui(false);
-      return true;
-    }
-  }
-  return false;
-}
-
 // Returns whether the session history NavigationRequests in |navigations|
 // would stay within the subtree of the sandboxed iframe in
 // |sandbox_frame_tree_node_id|.
@@ -1001,7 +984,7 @@ bool NavigationControllerImpl::RendererDidNavigate(
     const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
     LoadCommittedDetails* details,
     bool is_same_document_navigation,
-    bool previous_page_was_activated,
+    bool previous_document_was_activated,
     NavigationRequest* navigation_request) {
   DCHECK(navigation_request);
   is_initial_navigation_ = false;
@@ -1105,7 +1088,7 @@ bool NavigationControllerImpl::RendererDidNavigate(
     case NAVIGATION_TYPE_NEW_PAGE:
       RendererDidNavigateToNewPage(
           rfh, params, details->is_same_document, details->did_replace_entry,
-          previous_page_was_activated, navigation_handle);
+          previous_document_was_activated, navigation_handle);
       break;
     case NAVIGATION_TYPE_EXISTING_PAGE:
       RendererDidNavigateToExistingPage(rfh, params, details->is_same_document,
@@ -1117,8 +1100,9 @@ bool NavigationControllerImpl::RendererDidNavigate(
                                     navigation_handle);
       break;
     case NAVIGATION_TYPE_NEW_SUBFRAME:
-      RendererDidNavigateNewSubframe(rfh, params, details->is_same_document,
-                                     details->did_replace_entry);
+      RendererDidNavigateNewSubframe(
+          rfh, params, details->is_same_document, details->did_replace_entry,
+          previous_document_was_activated, navigation_handle);
       break;
     case NAVIGATION_TYPE_AUTO_SUBFRAME:
       if (!RendererDidNavigateAutoSubframe(rfh, params)) {
@@ -1364,7 +1348,7 @@ void NavigationControllerImpl::RendererDidNavigateToNewPage(
     const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
     bool is_same_document,
     bool replace_entry,
-    bool previous_page_was_activated,
+    bool previous_document_was_activated,
     NavigationHandleImpl* handle) {
   std::unique_ptr<NavigationEntryImpl> new_entry;
   bool update_virtual_url = false;
@@ -1521,30 +1505,9 @@ void NavigationControllerImpl::RendererDidNavigateToNewPage(
     last_committed_entry_index_ = pending_entry_index_;
   }
 
-  // The previous page that started this navigation needs to be skipped in
-  // subsequent back/forward UI navigations if it never received any user
-  // gesture. This is to intervene against pages that manipulate the history
-  // such that the user is not able to go back to the last site they interacted
-  // with (crbug.com/907167).
-  if (!replace_entry && !previous_page_was_activated &&
-      last_committed_entry_index_ != -1 && handle->IsRendererInitiated()) {
-    GetLastCommittedEntry()->set_should_skip_on_back_forward_ui(true);
-    UMA_HISTOGRAM_BOOLEAN("Navigation.BackForward.SetShouldSkipOnBackForwardUI",
-                          true);
-
-    // Log UKM with the URL of the page we are navigating away from. Note that
-    // GetUkmSourceIdForLastCommittedSource looks into the WebContents to get
-    // the last committed source. Since WebContents has not yet been updated
-    // with the current URL being committed, this should give the correct source
-    // even though |rfh| here belongs to the current navigation.
-    ukm::SourceId source_id = rfh->delegate()
-        ->GetUkmSourceIdForLastCommittedSource();
-    ukm::builders::HistoryManipulationIntervention(source_id).Record(
-        ukm::UkmRecorder::Get());
-  } else if (last_committed_entry_index_ != -1) {
-    UMA_HISTOGRAM_BOOLEAN("Navigation.BackForward.SetShouldSkipOnBackForwardUI",
-                          false);
-  }
+  SetShouldSkipOnBackForwardUIIfNeeded(rfh, replace_entry,
+                                       previous_document_was_activated,
+                                       handle->IsRendererInitiated());
 
   InsertOrReplaceEntry(std::move(new_entry), replace_entry);
 }
@@ -1785,7 +1748,9 @@ void NavigationControllerImpl::RendererDidNavigateNewSubframe(
     RenderFrameHostImpl* rfh,
     const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
     bool is_same_document,
-    bool replace_entry) {
+    bool replace_entry,
+    bool previous_document_was_activated,
+    NavigationHandleImpl* handle) {
   DCHECK(ui::PageTransitionCoreTypeIs(params.transition,
                                       ui::PAGE_TRANSITION_MANUAL_SUBFRAME));
 
@@ -1814,6 +1779,10 @@ void NavigationControllerImpl::RendererDidNavigateNewSubframe(
       GetLastCommittedEntry()->CloneAndReplace(
           frame_entry.get(), is_same_document, rfh->frame_tree_node(),
           delegate_->GetFrameTree()->root());
+
+  SetShouldSkipOnBackForwardUIIfNeeded(rfh, replace_entry,
+                                       previous_document_was_activated,
+                                       handle->IsRendererInitiated());
 
   // TODO(creis): Update this to add the frame_entry if we can't find the one
   // to replace, which can happen due to a unique name change.  See
@@ -2153,43 +2122,23 @@ void NavigationControllerImpl::NotifyUserActivation() {
   // When a user activation occurs, ensure that all adjacent entries for the
   // same document clear their skippable bit, so that the history manipulation
   // intervention does not apply to them.
+  // TODO(crbug.com/949279) in case it becomes necessary for resetting based on
+  // which frame created an entry and which frame has the user gesture.
   auto* last_committed_entry = GetLastCommittedEntry();
   if (!last_committed_entry)
     return;
-  int last_committed_entry_index = GetLastCommittedEntryIndex();
-
-  auto* root_frame = delegate_->GetFrameTree()->root();
-  auto* frame_entry = last_committed_entry->GetFrameEntry(root_frame);
-  if (!frame_entry)
-    return;
-
-  int64_t document_sequence_number = frame_entry->document_sequence_number();
 
   // |last_committed_entry| should not be skippable because it is the current
   // entry and in case the skippable bit was earlier set then on re-navigation
   // it would have been reset.
   DCHECK(!last_committed_entry->should_skip_on_back_forward_ui());
-
-  for (int index = last_committed_entry_index - 1; index >= 0; index--) {
-    auto* entry = GetEntryAtIndex(index);
-    if (!ResetSkippableForSameDocumentEntry(root_frame,
-                                            document_sequence_number, entry)) {
-      break;
-    }
-  }
-  for (int index = last_committed_entry_index + 1; index < GetEntryCount();
-       index++) {
-    auto* entry = GetEntryAtIndex(index);
-    if (!ResetSkippableForSameDocumentEntry(root_frame,
-                                            document_sequence_number, entry)) {
-      break;
-    }
-  }
+  SetSkippableForSameDocumentEntries(GetLastCommittedEntryIndex(), false);
 }
 
 bool NavigationControllerImpl::StartHistoryNavigationInNewSubframe(
     RenderFrameHostImpl* render_frame_host,
-    const GURL& default_url) {
+    const GURL& default_url,
+    mojom::NavigationClientAssociatedPtrInfo* navigation_client) {
   NavigationEntryImpl* entry =
       GetEntryWithUniqueID(render_frame_host->nav_entry_id());
   if (!entry)
@@ -2228,6 +2177,9 @@ bool NavigationControllerImpl::StartHistoryNavigationInNewSubframe(
   if (!request)
     return false;
 
+  request->SetNavigationClient(std::move(*navigation_client),
+                               render_frame_host->GetSiteInstance()->GetId());
+
   render_frame_host->frame_tree_node()->navigator()->Navigate(
       std::move(request), ReloadType::NONE, RestoreType::NONE);
 
@@ -2245,7 +2197,7 @@ void NavigationControllerImpl::GoToOffsetInSandboxedFrame(
 void NavigationControllerImpl::NavigateFromFrameProxy(
     RenderFrameHostImpl* render_frame_host,
     const GURL& url,
-    const url::Origin& initiator_origin,
+    const base::Optional<url::Origin>& initiator_origin,
     bool is_renderer_initiated,
     SiteInstance* source_site_instance,
     const Referrer& referrer,
@@ -2256,6 +2208,9 @@ void NavigationControllerImpl::NavigateFromFrameProxy(
     scoped_refptr<network::ResourceRequestBody> post_body,
     const std::string& extra_headers,
     scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory) {
+  if (is_renderer_initiated)
+    DCHECK(initiator_origin.has_value());
+
   FrameTreeNode* node = render_frame_host->frame_tree_node();
 
   // Create a NavigationEntry for the transfer, without making it the pending
@@ -2444,8 +2399,12 @@ bool NavigationControllerImpl::NeedsReload() {
 }
 
 void NavigationControllerImpl::SetNeedsReload() {
+  SetNeedsReload(NeedsReloadType::kRequestedByClient);
+}
+
+void NavigationControllerImpl::SetNeedsReload(NeedsReloadType type) {
   needs_reload_ = true;
-  needs_reload_type_ = NeedsReloadType::kRequestedByClient;
+  needs_reload_type_ = type;
 
   if (last_committed_entry_index_ != -1) {
     entries_[last_committed_entry_index_]->SetTransitionType(
@@ -3155,15 +3114,15 @@ NavigationControllerImpl::CreateNavigationRequestFromLoadParams(
       params.load_type == LOAD_TYPE_HTTP_POST ? "POST" : "GET",
       params.post_data, base::Optional<SourceLocation>(),
       params.started_from_context_menu, has_user_gesture, InitiatorCSPInfo(),
-      params.href_translate, params.input_start);
+      std::vector<int>(), params.href_translate,
+      false /* is_history_navigation_in_new_child_frame */, params.input_start);
 
   CommitNavigationParams commit_params(
       frame_entry->committed_origin(), override_user_agent,
       params.redirect_chain, common_params.url, common_params.method,
       params.can_load_local_resources, frame_entry->page_state(),
-      entry->GetUniqueID(), false /* is_history_navigation_in_new_child */,
-      entry->GetSubframeUniqueNames(node), true /* intended_as_new_entry */,
-      -1 /* pending_history_list_offset */,
+      entry->GetUniqueID(), entry->GetSubframeUniqueNames(node),
+      true /* intended_as_new_entry */, -1 /* pending_history_list_offset */,
       params.should_clear_history_list ? -1 : GetLastCommittedEntryIndex(),
       params.should_clear_history_list ? 0 : GetEntryCount(),
       is_view_source_mode, params.should_clear_history_list);
@@ -3195,7 +3154,7 @@ NavigationControllerImpl::CreateNavigationRequestFromEntry(
     FrameNavigationEntry* frame_entry,
     ReloadType reload_type,
     bool is_same_document_history_load,
-    bool is_history_navigation_in_new_child) {
+    bool is_history_navigation_in_new_child_frame) {
   GURL dest_url = frame_entry->url();
   base::Optional<url::Origin> origin_to_commit =
       frame_entry->committed_origin();
@@ -3270,13 +3229,14 @@ NavigationControllerImpl::CreateNavigationRequestFromEntry(
   CommonNavigationParams common_params = entry->ConstructCommonNavigationParams(
       *frame_entry, request_body, dest_url, dest_referrer, navigation_type,
       previews_state, navigation_start, base::TimeTicks() /* input_start */);
+  common_params.is_history_navigation_in_new_child_frame =
+      is_history_navigation_in_new_child_frame;
 
   // TODO(clamy): |intended_as_new_entry| below should always be false once
   // Reload no longer leads to this being called for a pending NavigationEntry
   // of index -1.
   CommitNavigationParams commit_params = entry->ConstructCommitNavigationParams(
       *frame_entry, common_params.url, origin_to_commit, common_params.method,
-      is_history_navigation_in_new_child,
       entry->GetSubframeUniqueNames(frame_tree_node),
       GetPendingEntryIndex() == -1 /* intended_as_new_entry */,
       GetIndexOfEntry(entry), GetLastCommittedEntryIndex(), GetEntryCount());
@@ -3451,6 +3411,62 @@ void NavigationControllerImpl::CommitRestoreFromBackForwardCache() {
   // Notify content/ embedder of the history update.
   delegate_->NotifyNavigationStateChanged(INVALIDATE_TYPE_ALL);
   delegate_->NotifyNavigationEntryCommitted(details);
+}
+
+// History manipulation intervention:
+void NavigationControllerImpl::SetShouldSkipOnBackForwardUIIfNeeded(
+    RenderFrameHostImpl* rfh,
+    bool replace_entry,
+    bool previous_document_was_activated,
+    bool is_renderer_initiated) {
+  // Note that for a subframe, previous_document_was_activated is true if the
+  // gesture happened in any subframe (propagated to main frame) or in the main
+  // frame itself.
+  // TODO(crbug.com/934637): Remove the check for HadInnerWebContents() when
+  // pdf and any inner web contents user gesture is properly propagated. This is
+  // a temporary fix for history intervention to be disabled for pdfs
+  // (crbug.com/965434).
+  if (replace_entry || previous_document_was_activated ||
+      !is_renderer_initiated || delegate_->HadInnerWebContents()) {
+    if (last_committed_entry_index_ != -1) {
+      UMA_HISTOGRAM_BOOLEAN(
+          "Navigation.BackForward.SetShouldSkipOnBackForwardUI", false);
+    }
+    return;
+  }
+  if (last_committed_entry_index_ == -1)
+    return;
+
+  SetSkippableForSameDocumentEntries(last_committed_entry_index_, true);
+  UMA_HISTOGRAM_BOOLEAN("Navigation.BackForward.SetShouldSkipOnBackForwardUI",
+                        true);
+
+  // Log UKM with the URL we are navigating away from. Note that
+  // GetUkmSourceIdForLastCommittedSource looks into the WebContents to get
+  // the last committed source. Since WebContents has not yet been updated
+  // with the current URL being committed, this should give the correct source
+  // even though |rfh| here belongs to the current navigation.
+  ukm::SourceId source_id =
+      rfh->delegate()->GetUkmSourceIdForLastCommittedSource();
+  ukm::builders::HistoryManipulationIntervention(source_id).Record(
+      ukm::UkmRecorder::Get());
+}
+
+void NavigationControllerImpl::SetSkippableForSameDocumentEntries(
+    int reference_index,
+    bool skippable) {
+  auto* reference_entry = GetEntryAtIndex(reference_index);
+  reference_entry->set_should_skip_on_back_forward_ui(skippable);
+
+  int64_t document_sequence_number =
+      reference_entry->root_node()->frame_entry->document_sequence_number();
+  for (int index = 0; index < GetEntryCount(); index++) {
+    auto* entry = GetEntryAtIndex(index);
+    if (entry->root_node()->frame_entry->document_sequence_number() ==
+        document_sequence_number) {
+      entry->set_should_skip_on_back_forward_ui(skippable);
+    }
+  }
 }
 
 }  // namespace content

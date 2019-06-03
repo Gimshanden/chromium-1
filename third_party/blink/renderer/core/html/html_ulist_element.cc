@@ -29,10 +29,8 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLUListElement::HTMLUListElement(Document& document)
+HTMLUListElement::HTMLUListElement(Document& document)
     : HTMLElement(kUlTag, document) {}
-
-DEFINE_NODE_FACTORY(HTMLUListElement)
 
 bool HTMLUListElement::IsPresentationAttribute(
     const QualifiedName& name) const {

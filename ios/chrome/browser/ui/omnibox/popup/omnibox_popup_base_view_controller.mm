@@ -44,6 +44,8 @@ UIColor* BackgroundColorIncognito() {
 #pragma mark Redeclaration of Internal properties
 
 @property(nonatomic, assign) NSTextAlignment alignment;
+@property(nonatomic, assign)
+    UISemanticContentAttribute semanticContentAttribute;
 @property(nonatomic, strong) UITableView* tableView;
 
 #pragma mark Private properties
@@ -121,7 +123,7 @@ UIColor* BackgroundColorIncognito() {
     [self.tableView setLayoutMargins:UIEdgeInsetsZero];
   }
   self.tableView.contentInsetAdjustmentBehavior =
-      UIScrollViewContentInsetAdjustmentNever;
+      UIScrollViewContentInsetAdjustmentAutomatic;
   [self.tableView setContentInset:UIEdgeInsetsMake(kTopAndBottomPadding, 0,
                                                    kTopAndBottomPadding, 0)];
   self.tableView.estimatedRowHeight = 0;

@@ -7,11 +7,14 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "components/autofill_assistant/browser/client_memory.h"
+#include "components/autofill_assistant/browser/client_settings.h"
 #include "components/autofill_assistant/browser/script_executor_delegate.h"
+#include "components/autofill_assistant/browser/trigger_context.h"
 
 namespace autofill_assistant {
 
@@ -22,12 +25,14 @@ class FakeScriptExecutorDelegate : public ScriptExecutorDelegate {
   FakeScriptExecutorDelegate();
   ~FakeScriptExecutorDelegate() override;
 
+  const ClientSettings& GetSettings() override;
   const GURL& GetCurrentURL() override;
+  const GURL& GetDeeplinkURL() override;
   Service* GetService() override;
   UiController* GetUiController() override;
   WebController* GetWebController() override;
   ClientMemory* GetClientMemory() override;
-  const std::map<std::string, std::string>& GetParameters() override;
+  TriggerContext* GetTriggerContext() override;
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   content::WebContents* GetWebContents() override;
   void EnterState(AutofillAssistantState state) override;
@@ -42,7 +47,17 @@ class FakeScriptExecutorDelegate : public ScriptExecutorDelegate {
   void SetChips(std::unique_ptr<std::vector<Chip>> chips) override;
   void SetPaymentRequestOptions(
       std::unique_ptr<PaymentRequestOptions> options) override;
-  void CancelPaymentRequest() override;
+  void SetResizeViewport(bool resize_viewport) override;
+  void SetPeekMode(ConfigureBottomSheetProto::PeekMode peek_mode) override;
+  bool SetForm(std::unique_ptr<FormProto> form,
+               base::RepeatingCallback<void(const FormProto::Result*)> callback)
+      override;
+  bool HasNavigationError() override;
+  bool IsNavigatingToNewDocument() override;
+  void AddListener(Listener* listener) override;
+  void RemoveListener(Listener* listener) override;
+
+  ClientSettings* GetMutableSettings() { return &client_settings_; }
 
   void SetCurrentURL(const GURL& url) { current_url_ = url; }
 
@@ -57,7 +72,7 @@ class FakeScriptExecutorDelegate : public ScriptExecutorDelegate {
   }
 
   std::map<std::string, std::string>* GetMutableParameters() {
-    return &parameters_;
+    return &trigger_context_.script_parameters;
   }
 
   AutofillAssistantState GetState() { return state_; }
@@ -70,19 +85,34 @@ class FakeScriptExecutorDelegate : public ScriptExecutorDelegate {
 
   PaymentRequestOptions* GetOptions() { return payment_request_options_.get(); }
 
+  void UpdateNavigationState(bool navigating, bool error) {
+    navigating_to_new_document_ = navigating;
+    navigation_error_ = error;
+
+    for (auto* listener : listeners_) {
+      listener->OnNavigationStateChanged();
+    }
+  }
+
+  bool HasListeners() { return !listeners_.empty(); }
+
  private:
+  ClientSettings client_settings_;
   GURL current_url_;
   Service* service_ = nullptr;
   UiController* ui_controller_ = nullptr;
   WebController* web_controller_ = nullptr;
   ClientMemory memory_;
-  std::map<std::string, std::string> parameters_;
+  TriggerContext trigger_context_;
   AutofillAssistantState state_ = AutofillAssistantState::INACTIVE;
   std::string status_message_;
   std::unique_ptr<Details> details_;
   std::unique_ptr<InfoBox> info_box_;
   std::unique_ptr<std::vector<Chip>> chips_;
   std::unique_ptr<PaymentRequestOptions> payment_request_options_;
+  bool navigating_to_new_document_ = false;
+  bool navigation_error_ = false;
+  std::set<ScriptExecutorDelegate::Listener*> listeners_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeScriptExecutorDelegate);
 };

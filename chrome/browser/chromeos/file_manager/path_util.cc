@@ -366,9 +366,7 @@ bool ConvertPathToArcUrl(const base::FilePath& path, GURL* arc_url_out) {
       GetDownloadsFolderForProfile(primary_profile);
   base::FilePath result_path(kArcDownloadRoot);
   if (primary_downloads.AppendRelativePath(path, &result_path)) {
-    // TODO(niwa): Switch to using kFileSystemFileproviderUrl once we completely
-    // move FileProvider to arc.file_system (b/111816608).
-    *arc_url_out = GURL(arc::kIntentHelperFileproviderUrl)
+    *arc_url_out = GURL(arc::kFileSystemFileproviderUrl)
                        .Resolve(net::EscapePath(result_path.AsUTF8Unsafe()));
     return true;
   }
@@ -377,8 +375,7 @@ bool ConvertPathToArcUrl(const base::FilePath& path, GURL* arc_url_out) {
   result_path = base::FilePath(kArcExternalFilesRoot);
   if (base::FilePath(kAndroidFilesPath)
           .AppendRelativePath(path, &result_path)) {
-    // TODO(niwa): Switch to using kFileSystemFileproviderUrl.
-    *arc_url_out = GURL(arc::kIntentHelperFileproviderUrl)
+    *arc_url_out = GURL(arc::kFileSystemFileproviderUrl)
                        .Resolve(net::EscapePath(result_path.AsUTF8Unsafe()));
     return true;
   }
@@ -456,6 +453,22 @@ void ConvertToContentUrls(
 
   for (size_t index = 0; index < file_system_urls.size(); ++index) {
     const auto& file_system_url = file_system_urls[index];
+
+    // Run DocumentsProvider check before running ConvertPathToArcUrl.
+    // Otherwise, DocumentsProvider file path would be encoded to a
+    // ChromeContentProvider URL (b/132314050).
+    if (documents_provider_root_map) {
+      base::FilePath file_path;
+      auto* documents_provider_root =
+          documents_provider_root_map->ParseAndLookup(file_system_url,
+                                                      &file_path);
+      if (documents_provider_root) {
+        documents_provider_root->ResolveToContentUrl(
+            file_path, base::BindRepeating(single_content_url_callback, index));
+        continue;
+      }
+    }
+
     GURL arc_url;
     if (file_system_url.mount_type() == storage::kFileSystemTypeExternal &&
         ConvertPathToArcUrl(file_system_url.path(), &arc_url)) {
@@ -463,21 +476,7 @@ void ConvertToContentUrls(
       continue;
     }
 
-    if (!documents_provider_root_map) {
-      single_content_url_callback.Run(index, GURL());
-      continue;
-    }
-
-    base::FilePath filepath;
-    auto* documents_provider_root =
-        documents_provider_root_map->ParseAndLookup(file_system_url, &filepath);
-    if (!documents_provider_root) {
-      single_content_url_callback.Run(index, GURL());
-      continue;
-    }
-
-    documents_provider_root->ResolveToContentUrl(
-        filepath, base::BindRepeating(single_content_url_callback, index));
+    single_content_url_callback.Run(index, GURL());
   }
 }
 

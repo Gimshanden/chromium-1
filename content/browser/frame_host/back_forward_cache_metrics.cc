@@ -106,6 +106,9 @@ void BackForwardCacheMetrics::DidCommitNavigation(
                                ukm::SourceIdType::NAVIGATION_ID));
     builder.SetNavigatedToTheMostRecentEntryForDocument(
         navigation_entry_id == last_committed_navigation_entry_id_);
+    builder.SetMainFrameFeatures(main_frame_features_);
+    builder.SetSameOriginSubframesFeatures(same_origin_frames_features_);
+    builder.SetCrossOriginSubframesFeatures(cross_origin_frames_features_);
     // DidStart notification might be missing for some same-document
     // navigations. It's good that we don't care about the time in the cache
     // in that case.
@@ -131,6 +134,37 @@ void BackForwardCacheMetrics::MainFrameDidNavigateAwayFromDocument() {
   // to another main frame document and the current document loses its "last
   // committed" status.
   navigated_away_from_main_document_timestamp_ = Now();
+}
+
+void BackForwardCacheMetrics::RecordFeatureUsage(
+    RenderFrameHostImpl* main_frame) {
+  DCHECK(!main_frame->GetParent());
+
+  main_frame_features_ = 0;
+  same_origin_frames_features_ = 0;
+  cross_origin_frames_features_ = 0;
+
+  CollectFeatureUsageFromSubtree(main_frame,
+                                 main_frame->GetLastCommittedOrigin());
+}
+
+void BackForwardCacheMetrics::CollectFeatureUsageFromSubtree(
+    RenderFrameHostImpl* rfh,
+    const url::Origin& main_frame_origin) {
+  uint64_t features = rfh->scheduler_tracked_features();
+  if (!rfh->GetParent()) {
+    main_frame_features_ |= features;
+  } else if (rfh->GetLastCommittedOrigin().IsSameOriginWith(
+                 main_frame_origin)) {
+    same_origin_frames_features_ |= features;
+  } else {
+    cross_origin_frames_features_ |= features;
+  }
+
+  for (size_t i = 0; i < rfh->child_count(); ++i) {
+    CollectFeatureUsageFromSubtree(rfh->child_at(i)->current_frame_host(),
+                                   main_frame_origin);
+  }
 }
 
 }  // namespace content

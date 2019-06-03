@@ -30,9 +30,6 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
   void SetOnPrimaryAccountClearedCallback(base::OnceClosure callback);
   const CoreAccountInfo& PrimaryAccountFromClearedCallback();
 
-  void SetOnPrimaryAccountSigninFailedCallback(base::OnceClosure callback);
-  const GoogleServiceAuthError& ErrorFromSigninFailedCallback() const;
-
   void SetOnRefreshTokenUpdatedCallback(base::OnceClosure callback);
   const CoreAccountInfo& AccountFromRefreshTokenUpdatedCallback();
 
@@ -42,7 +39,7 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
   ErrorFromErrorStateOfRefreshTokenUpdatedCallback() const;
 
   void SetOnRefreshTokenRemovedCallback(base::OnceClosure callback);
-  const std::string& AccountIdFromRefreshTokenRemovedCallback();
+  const CoreAccountId& AccountIdFromRefreshTokenRemovedCallback();
 
   void SetOnRefreshTokensLoadedCallback(base::OnceClosure callback);
 
@@ -60,7 +57,7 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
 
   // Each element represents all the changes from an individual batch that has
   // occurred, with the elements ordered from oldest to newest batch occurrence.
-  const std::vector<std::vector<std::string>>& BatchChangeRecords() const;
+  const std::vector<std::vector<CoreAccountId>>& BatchChangeRecords() const;
 
  private:
   // IdentityManager::Observer:
@@ -68,12 +65,10 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
       const CoreAccountInfo& primary_account_info) override;
   void OnPrimaryAccountCleared(
       const CoreAccountInfo& previous_primary_account_info) override;
-  void OnPrimaryAccountSigninFailed(
-      const GoogleServiceAuthError& error) override;
-
   void OnRefreshTokenUpdatedForAccount(
       const CoreAccountInfo& account_info) override;
-  void OnRefreshTokenRemovedForAccount(const std::string& account_id) override;
+  void OnRefreshTokenRemovedForAccount(
+      const CoreAccountId& account_id) override;
   void OnErrorStateOfRefreshTokenUpdatedForAccount(
       const CoreAccountInfo& account_info,
       const GoogleServiceAuthError& error) override;
@@ -98,9 +93,6 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
   base::OnceClosure on_primary_account_cleared_callback_;
   CoreAccountInfo primary_account_from_cleared_callback_;
 
-  base::OnceClosure on_primary_account_signin_failed_callback_;
-  GoogleServiceAuthError google_signin_failed_error_;
-
   base::OnceClosure on_refresh_token_updated_callback_;
   CoreAccountInfo account_from_refresh_token_updated_callback_;
 
@@ -110,7 +102,7 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
       error_from_error_state_of_refresh_token_updated_callback_;
 
   base::OnceClosure on_refresh_token_removed_callback_;
-  std::string account_from_refresh_token_removed_callback_;
+  CoreAccountId account_from_refresh_token_removed_callback_;
 
   base::OnceClosure on_refresh_tokens_loaded_callback_;
 
@@ -125,7 +117,7 @@ class TestIdentityManagerObserver : IdentityManager::Observer {
 
   bool is_inside_batch_ = false;
   bool was_called_account_removed_with_info_callback_ = false;
-  std::vector<std::vector<std::string>> batch_change_records_;
+  std::vector<std::vector<CoreAccountId>> batch_change_records_;
 
   DISALLOW_COPY_AND_ASSIGN(TestIdentityManagerObserver);
 };

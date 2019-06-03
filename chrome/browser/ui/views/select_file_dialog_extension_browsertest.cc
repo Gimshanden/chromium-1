@@ -6,9 +6,8 @@
 
 #include <memory>
 
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/public/interfaces/shell_test_api.test-mojom-test-utils.h"
-#include "ash/public/interfaces/shell_test_api.test-mojom.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
+#include "ash/public/cpp/test/shell_test_api.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -47,7 +46,6 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "ui/keyboard/public/keyboard_switches.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 #include "ui/shell_dialogs/selected_file_info.h"
@@ -160,17 +158,6 @@ class SelectFileDialogExtensionBrowserTest
 
     // Must run after our setup because it actually runs the test.
     extensions::ExtensionBrowserTest::SetUp();
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Ash tablet mode does not automatically enable the virtual keyboard, so
-    // force the virtual keyboard via the command line for tablet mode tests.
-    const char* test_name =
-        ::testing::UnitTest::GetInstance()->current_test_info()->name();
-    if (base::StringPiece(test_name).find("_TabletMode") != std::string::npos)
-      command_line->AppendSwitch(keyboard::switches::kEnableVirtualKeyboard);
-
-    extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
   }
 
   void SetUpOnMainThread() override {
@@ -475,12 +462,7 @@ IN_PROC_BROWSER_TEST_P(SelectFileDialogExtensionBrowserTest,
   test::SetAndWaitForTabletMode(true);
 
   // Enable the virtual keyboard.
-  ash::mojom::ShellTestApiPtr shell_test_api;
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(ash::mojom::kServiceName, &shell_test_api);
-  ash::mojom::ShellTestApiAsyncWaiter waiter(shell_test_api.get());
-  waiter.EnableVirtualKeyboard();
+  ash::ShellTestApi().EnableVirtualKeyboard();
 
   auto* client = ChromeKeyboardControllerClient::Get();
   EXPECT_FALSE(client->is_keyboard_visible());

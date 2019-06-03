@@ -269,7 +269,7 @@ bool SetGaiaCookieForProfile(Profile* profile) {
   GURL google_url = GaiaUrls::GetInstance()->google_url();
   net::CanonicalCookie cookie("APISID", std::string(), "." + google_url.host(),
                               "/", base::Time(), base::Time(), base::Time(),
-                              false, false, net::CookieSameSite::DEFAULT_MODE,
+                              false, false, net::CookieSameSite::NO_RESTRICTION,
                               net::COOKIE_PRIORITY_DEFAULT);
 
   bool success = false;
@@ -1071,11 +1071,22 @@ IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP, FileSystemDeletion) {
   TestSiteData("FileSystem", GetParam());
 }
 
-// TODO(crbug.com/93417): Add FileSystemIncognitoDeletion test.
+IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
+                       FileSystemIncognitoDeletion) {
+  UseIncognitoBrowser();
+  TestSiteData("FileSystem", GetParam());
+}
 
 // Test that empty filesystems are deleted correctly.
 IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
                        EmptyFileSystemDeletion) {
+  TestEmptySiteData("FileSystem", GetParam());
+}
+
+// Test that empty filesystems are deleted correctly in incognito mode.
+IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
+                       EmptyFileSystemIncognitoDeletion) {
+  UseIncognitoBrowser();
   TestEmptySiteData("FileSystem", GetParam());
 }
 

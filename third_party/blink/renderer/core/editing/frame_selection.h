@@ -59,6 +59,7 @@ enum class SelectionModifyDirection;
 enum class SelectionState;
 class TextIteratorBehavior;
 struct PaintInvalidatorContext;
+struct PhysicalOffset;
 
 enum RevealExtentOption { kRevealExtent, kDoNotRevealExtent };
 
@@ -220,7 +221,7 @@ class CORE_EXPORT FrameSelection final
   void UpdateStyleAndLayoutIfNeeded();
   void InvalidatePaint(const LayoutBlock&, const PaintInvalidatorContext&);
 
-  void PaintCaret(GraphicsContext&, const LayoutPoint&);
+  void PaintCaret(GraphicsContext&, const PhysicalOffset&);
 
   // Used to suspend caret blinking while the mouse is down.
   void SetCaretBlinkingSuspended(bool);
@@ -239,7 +240,7 @@ class CORE_EXPORT FrameSelection final
   // Returns true if a word is selected.
   bool SelectWordAroundCaret();
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   void ShowTreeForThis() const;
 #endif
 
@@ -333,8 +334,8 @@ class CORE_EXPORT FrameSelection final
 
 }  // namespace blink
 
-#ifndef NDEBUG
-// Outside the WebCore namespace for ease of invocation from gdb.
+#if DCHECK_IS_ON()
+// Outside the blink namespace for ease of invocation from gdb.
 void showTree(const blink::FrameSelection&);
 void showTree(const blink::FrameSelection*);
 #endif

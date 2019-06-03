@@ -16,6 +16,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/payments/risk_data_loader.h"
+#include "components/autofill/core/browser/ui/popup_types.h"
 #include "components/security_state/core/security_state.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/base/window_open_disposition.h"
@@ -57,7 +58,6 @@ class CardUnmaskDelegate;
 class CreditCard;
 class FormDataImporter;
 class FormStructure;
-class LegacyStrikeDatabase;
 class MigratableCreditCard;
 class PersonalDataManager;
 class StrikeDatabase;
@@ -125,6 +125,11 @@ class AutofillClient : public RiskDataLoader {
 
   // Used for options of upload prompt.
   struct SaveCreditCardOptions {
+    SaveCreditCardOptions& with_from_dynamic_change_form(bool b) {
+      from_dynamic_change_form = b;
+      return *this;
+    }
+
     SaveCreditCardOptions& with_has_non_focusable_field(bool b) {
       has_non_focusable_field = b;
       return *this;
@@ -146,6 +151,7 @@ class AutofillClient : public RiskDataLoader {
       return *this;
     }
 
+    bool from_dynamic_change_form = false;
     bool has_non_focusable_field = false;
     bool should_request_name_from_user = false;
     bool should_request_expiration_date_from_user = false;
@@ -208,10 +214,6 @@ class AutofillClient : public RiskDataLoader {
 
   // Gets the payments::PaymentsClient instance owned by the client.
   virtual payments::PaymentsClient* GetPaymentsClient() = 0;
-
-  // Gets the LegacyStrikeDatabase associated with the client.
-  // TODO(crbug.com/884817): Delete this once v2 of StrikeDatabase is launched.
-  virtual LegacyStrikeDatabase* GetLegacyStrikeDatabase() = 0;
 
   // Gets the StrikeDatabase associated with the client.
   virtual StrikeDatabase* GetStrikeDatabase() = 0;
@@ -337,6 +339,7 @@ class AutofillClient : public RiskDataLoader {
       base::i18n::TextDirection text_direction,
       const std::vector<Suggestion>& suggestions,
       bool autoselect_first_suggestion,
+      PopupType popup_type,
       base::WeakPtr<AutofillPopupDelegate> delegate) = 0;
 
   // Update the data list values shown by the Autofill popup, if visible.

@@ -203,8 +203,9 @@ class BrowserToPageConnector {
 
     std::string encoded;
     base::Base64Encode(message, &encoded);
-    std::string eval_code = "window." + binding_name_ + ".onmessage(atob(\"";
-    std::string eval_suffix = "\"))";
+    std::string eval_code =
+        "try { window." + binding_name_ + ".onmessage(atob(\"";
+    std::string eval_suffix = "\")); } catch(e) { console.error(e); }";
     eval_code.reserve(eval_code.size() + encoded.size() + eval_suffix.size());
     eval_code.append(encoded);
     eval_code.append(eval_suffix);
@@ -333,6 +334,8 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   }
 
   bool UsesBinaryProtocol() override {
+    if (flatten_protocol_)
+      return true;
     auto* client = handler_->root_session_->client();
     return client->UsesBinaryProtocol();
   }
@@ -487,6 +490,10 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
     return nullptr;
   return std::make_unique<Throttle>(weak_factory_.GetWeakPtr(),
                                     navigation_handle);
+}
+
+void TargetHandler::UpdatePortals() {
+  auto_attacher_.UpdatePortals();
 }
 
 void TargetHandler::ClearThrottles() {
@@ -703,6 +710,8 @@ Response TargetHandler::CreateTarget(const std::string& url,
                                      Maybe<int> height,
                                      Maybe<std::string> context_id,
                                      Maybe<bool> enable_begin_frame_control,
+                                     Maybe<bool> new_window,
+                                     Maybe<bool> background,
                                      std::string* out_target_id) {
   if (access_mode_ == AccessMode::kAutoAttachOnly)
     return Response::Error(kNotAllowedError);

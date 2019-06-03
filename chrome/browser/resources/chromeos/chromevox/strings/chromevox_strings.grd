@@ -459,9 +459,6 @@
       <message desc="The title of the extension's options page." name="IDS_CHROMEVOX_OPTIONS_PAGE_TITLE">
         ChromeVox Options
       </message>
-      <message name="IDS_CHROMEVOX_OPTIONS_BRAILLE_SETTINGS">
-        Braille Settings
-      </message>
       <message desc="An options page section header for options about the ChromeVox virtual display. This section lets users change the rows, columns, and display style of the virtual braille display." name="IDS_CHROMEVOX_OPTIONS_VIRTUAL_BRAILLE_DISPLAY">
         Virtual Braille Display
       </message>
@@ -474,12 +471,6 @@
       </message>
       <message desc="The label for a numberic input field where the user can choose the number of cells in each line of a grid." name="IDS_CHROMEVOX_OPTIONS_VIRTUAL_BRAILLE_DISPLAY_COLUMNS">
         Cells in each line:
-      </message>
-      <message desc="A description that tells the user that the current display style of the virtual display interleaves braille and regular text, one on top of the other." name="IDS_CHROMEVOX_OPTIONS_DISPLAY_STYLE_INTERLEAVE">
-        Interleave
-      </message>
-      <message desc="A description that tells the user that the current display style of the virtual display is side by side, where regular text is on the left and braille is on the right." name="IDS_CHROMEVOX_OPTIONS_DISPLAY_STYLE_SIDE_BY_SIDE">
-        Side by side
       </message>
       <message desc="A description that tells the user that the current display style of the virtual display interleaves braille and regular text, one on top of the other." name="IDS_CHROMEVOX_OPTIONS_CURRENT_DISPLAY_STYLE_INTERLEAVE">
         Current display style is interleave.
@@ -591,9 +582,6 @@
       </message>
       <message desc="Enable event stream logging in chromevox for developer options." name="IDS_CHROMEVOX_OPTIONS_EVENT_STREAM_LOGGING">
         Enable event stream logging
-      </message>
-      <message desc="Display" name="IDS_CHROMEVOX_OPTIONS_DISPLAY_STYLE">
-        Display Style
       </message>
       <message desc="Show ChromeVox Event Log." name="IDS_CHROMEVOX_OPTIONS_SHOW_LOG">
         Show Log
@@ -3690,6 +3678,37 @@ If you're done with the tutorial, use ChromeVox to navigate to the Close button 
       </message>
       <message desc="A menulist option in ChromeVox rich text settings to announce rich text" name="IDS_CHROMEVOX_RICH_TEXT_ANNOUNCE">
         Announce
+      </message>
+
+      <message desc="An option to announce download notifications." name="IDS_CHROMEVOX_OPTIONS_ANNOUNCE_DOWNLOAD">
+        Announce download notifications
+      </message>
+      <message desc="Spoken when a download is started" name="IDS_CHROMEVOX_DOWNLOAD_STARTED">
+        Download started <ph name="file_name">$1<ex>test.pdf</ex></ph>
+      </message>
+      <message desc="Spoken when a download is completed" name="IDS_CHROMEVOX_DOWNLOAD_COMPLETED">
+        Download completed <ph name="file_name">$1<ex>test.pdf</ex></ph>
+      </message>
+      <message desc="Spoken when a download is stopped" name="IDS_CHROMEVOX_DOWNLOAD_STOPPED">
+        Download stopped <ph name="file_name">$1<ex>test.pdf</ex></ph>
+      </message>
+      <message desc="Spoken when a download is paused" name="IDS_CHROMEVOX_DOWNLOAD_PAUSED">
+        Download paused <ph name="file_name">$1<ex>test.pdf</ex></ph>
+      </message>
+      <message desc="Spoken when a download is resumed" name="IDS_CHROMEVOX_DOWNLOAD_RESUMED">
+        Download resumed <ph name="file_name">$1<ex>test.pdf</ex></ph>
+      </message>
+      <message desc="Spoken to give progress on a current download, specifying percent complete and time remaining." name="IDS_CHROMEVOX_DOWNLOAD_PROGRESS">
+        Download <ph name="progress">$1<ex>50</ex></ph>% complete <ph name="file_name">$2<ex>test.pdf</ex></ph>. About <ph name="time">$3<ex>30</ex></ph> <ph name="units">$4<ex>minutes</ex></ph> remaining.
+      </message>
+      <message desc="A string to specify time units in seconds." name="IDS_CHROMEVOX_SECONDS">
+        {COUNT, plural, =1 {second}other {seconds}}
+      </message>
+      <message desc="A string to specify time units in minutes." name="IDS_CHROMEVOX_MINUTES">
+        {COUNT, plural, =1 {minute}other {minutes}}
+      </message>
+      <message desc="A string to specify time units in hours." name="IDS_CHROMEVOX_HOURS">
+        {COUNT, plural, =1 {hour}other {hours}}
       </message>
     </messages>
   </release>

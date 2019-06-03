@@ -11,12 +11,9 @@
 #include "base/path_service.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
-#include "chromeos/dbus/cryptohome/tpm_util.h"
 #include "chromeos/dbus/login_manager/policy_descriptor.pb.h"
 #include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/tpm/stub_install_attributes.h"
@@ -78,16 +75,6 @@ class ComponentActiveDirectoryPolicyTest
     builder_.policy_data().set_policy_type(
         dm_protocol::kChromeExtensionPolicyType);
     builder_.policy_data().set_settings_entity_id(kTestExtensionId);
-  }
-
-  void SetUp() override {
-    // CryptohomeClient needs to be initialized before
-    // tpm_util::LockDeviceActiveDirectoryForTesting.
-    chromeos::CryptohomeClient::InitializeFake();
-
-    ASSERT_TRUE(
-        chromeos::tpm_util::LockDeviceActiveDirectoryForTesting(kTestDomain));
-    ExtensionBrowserTest::SetUp();
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -163,8 +150,7 @@ class ComponentActiveDirectoryPolicyTest
 
   void RefreshPolicies() {
     ProfilePolicyConnector* profile_connector =
-        ProfilePolicyConnectorFactory::GetForBrowserContext(
-            browser()->profile());
+        browser()->profile()->GetProfilePolicyConnector();
     PolicyService* policy_service = profile_connector->policy_service();
     base::RunLoop run_loop;
     policy_service->RefreshPolicies(run_loop.QuitClosure());

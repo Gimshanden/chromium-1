@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "components/autofill_assistant/browser/service.pb.h"
 
 namespace autofill {
 class AutofillProfile;
@@ -51,8 +52,10 @@ struct PaymentRequestOptions {
   bool request_payer_email = false;
   bool request_payer_phone = false;
   bool request_shipping = false;
+  bool request_payment_method = false;
   std::vector<std::string> supported_basic_card_networks;
   std::string default_email;
+  std::string confirm_button_text;
 
   base::OnceCallback<void(std::unique_ptr<PaymentInformation>)> callback;
 };

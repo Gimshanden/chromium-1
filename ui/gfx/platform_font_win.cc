@@ -17,6 +17,7 @@
 
 #include "base/containers/flat_map.h"
 #include "base/debug/alias.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
@@ -36,10 +37,16 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_render_params.h"
+#include "ui/gfx/platform_font_skia.h"
 #include "ui/gfx/system_fonts_win.h"
+#include "ui/gfx/win/direct_write.h"
 #include "ui/gfx/win/scoped_set_map_mode.h"
 
 namespace {
+
+// Enable the use of PlatformFontSkia instead of PlatformFontWin.
+const base::Feature kPlatformFontSkiaOnWindows{
+    "PlatformFontSkiaOnWindows", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Sets style properties on |font_info| based on |font_style|.
 void SetLogFontStyle(int font_style, LOGFONT* font_info) {
@@ -75,10 +82,8 @@ HRESULT FindDirectWriteFontForLOGFONT(IDWriteFactory* factory,
 
   Microsoft::WRL::ComPtr<IDWriteFontCollection> font_collection;
   hr = factory->GetSystemFontCollection(font_collection.GetAddressOf());
-  if (FAILED(hr)) {
-    CHECK(false);
+  if (FAILED(hr))
     return hr;
-  }
 
   // We try to find a matching font by triggering DirectWrite to substitute the
   // font passed in with a matching font (FontSubstitutes registry key)
@@ -128,7 +133,7 @@ HRESULT GetMatchingDirectWriteFont(LOGFONT* font_info,
   Microsoft::WRL::ComPtr<IDWriteFontCollection> font_collection;
   hr = factory->GetSystemFontCollection(font_collection.GetAddressOf());
   if (FAILED(hr)) {
-    CHECK(false);
+    // On some old windows, the call to GetSystemFontCollection may fail.
     return hr;
   }
 
@@ -238,8 +243,6 @@ namespace gfx {
 // static
 PlatformFontWin::HFontRef* PlatformFontWin::base_font_ref_;
 
-IDWriteFactory* PlatformFontWin::direct_write_factory_ = nullptr;
-
 // TODO(ananta)
 // Remove the CHECKs in this function once this stabilizes on the field.
 HRESULT GetFamilyNameFromDirectWriteFont(IDWriteFont* dwrite_font,
@@ -275,19 +278,6 @@ PlatformFontWin::PlatformFontWin() : font_ref_(GetBaseFontRef()) {
 PlatformFontWin::PlatformFontWin(const std::string& font_name,
                                  int font_size) {
   InitWithFontNameAndSize(font_name, font_size);
-}
-
-// static
-void PlatformFontWin::SetDirectWriteFactory(IDWriteFactory* factory) {
-  // We grab a reference on the DirectWrite factory. This reference is
-  // leaked, which is ok because skia leaks it as well.
-  factory->AddRef();
-  direct_write_factory_ = factory;
-}
-
-// static
-bool PlatformFontWin::IsDirectWriteEnabled() {
-  return direct_write_factory_ != nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -425,10 +415,7 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRef(HFONT font) {
     GetTextMetricsForFont(screen_dc, font, &font_metrics);
   }
 
-  if (IsDirectWriteEnabled())
-    return CreateHFontRefFromSkia(font, font_metrics);
-
-  return CreateHFontRefFromGDI(font, font_metrics);
+  return CreateHFontRefFromSkia(font, font_metrics);
 }
 
 PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromGDI(
@@ -489,10 +476,11 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromSkia(
   // DirectWrite to calculate the cap height.
   Microsoft::WRL::ComPtr<IDWriteFont> dwrite_font;
   HRESULT hr = GetMatchingDirectWriteFont(
-      &font_info, italic, direct_write_factory_, dwrite_font.GetAddressOf());
+      &font_info, italic, win::GetDirectWriteFactory(), &dwrite_font);
   if (FAILED(hr)) {
-    CHECK(false);
-    return nullptr;
+    // If we are not able to find a font using Direct Write, fallback to
+    // the old GDI font.
+    return CreateHFontRefFromGDI(gdi_font, font_metrics);
   }
 
   DWRITE_FONT_METRICS dwrite_font_metrics = {0};
@@ -643,6 +631,8 @@ PlatformFontWin::HFontRef::~HFontRef() {
 
 // static
 PlatformFont* PlatformFont::CreateDefault() {
+  if (base::FeatureList::IsEnabled(kPlatformFontSkiaOnWindows))
+    return new PlatformFontSkia;
   return new PlatformFontWin;
 }
 
@@ -650,6 +640,8 @@ PlatformFont* PlatformFont::CreateDefault() {
 PlatformFont* PlatformFont::CreateFromNameAndSize(const std::string& font_name,
                                                   int font_size) {
   TRACE_EVENT0("fonts", "PlatformFont::CreateFromNameAndSize");
+  if (base::FeatureList::IsEnabled(kPlatformFontSkiaOnWindows))
+    return new PlatformFontSkia(font_name, font_size);
   return new PlatformFontWin(font_name, font_size);
 }
 

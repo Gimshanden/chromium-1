@@ -34,16 +34,6 @@
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/editing/editing_utilities.h"
-#include "third_party/blink/renderer/core/editing/ephemeral_range.h"
-#include "third_party/blink/renderer/core/editing/frame_selection.h"
-#include "third_party/blink/renderer/core/editing/iterators/character_iterator.h"
-#include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
-#include "third_party/blink/renderer/core/editing/selection_template.h"
-#include "third_party/blink/renderer/core/editing/text_affinity.h"
-#include "third_party/blink/renderer/core/editing/visible_position.h"
-#include "third_party/blink/renderer/core/editing/visible_selection.h"
-#include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/frame/frame_owner.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -68,7 +58,9 @@
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap_options.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_api_shim.h"
+#include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
+#include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_file_upload_control.h"
 #include "third_party/blink/renderer/core/layout/layout_html_canvas.h"
 #include "third_party/blink/renderer/core/layout/layout_image.h"
@@ -76,6 +68,7 @@
 #include "third_party/blink/renderer/core/layout/layout_list_item.h"
 #include "third_party/blink/renderer/core/layout/layout_list_marker.h"
 #include "third_party/blink/renderer/core/layout/layout_menu_list.h"
+#include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/layout_table.h"
 #include "third_party/blink/renderer/core/layout/layout_table_cell.h"
 #include "third_party/blink/renderer/core/layout/layout_table_row.h"
@@ -105,7 +98,6 @@
 #include "third_party/blink/renderer/platform/graphics/image_data_buffer.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
-#include "third_party/blink/renderer/platform/transforms/transform_state.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 using blink::WebLocalizedString;
@@ -184,28 +176,13 @@ static bool IsImageOrAltText(LayoutBoxModelObject* box, Node* node) {
   return false;
 }
 
-// |layout_object| and |node| correspond to an AXLayoutObject. |alt_text| is an
-// output parameter that will be populated if the AXLayoutObject is for a pseudo
-// element and contained the alternative text
-base::Optional<String> GetPseudoElementAltText(Node* node) {
-  if (node && node->IsPseudoElement()) {
-    const ComputedStyle* style = node->GetComputedStyle();
-    for (const ContentData* content_data = style->GetContentData();
-         content_data; content_data = content_data->Next()) {
-      if (content_data->IsAltText())
-        return To<AltTextContentData>(content_data)->GetText();
-    }
-  }
-  return base::nullopt;
-}
-
 ax::mojom::Role AXLayoutObject::NativeRoleIgnoringAria() const {
   Node* node = layout_object_->GetNode();
   LayoutBoxModelObject* css_box = GetLayoutBoxModelObject();
 
   if ((css_box && css_box->IsListItem()) || IsHTMLLIElement(node))
     return ax::mojom::Role::kListItem;
-  if (layout_object_->IsListMarkerIncludingNG())
+  if (layout_object_->IsListMarkerIncludingNGInside())
     return ax::mojom::Role::kListMarker;
   if (layout_object_->IsBR())
     return ax::mojom::Role::kLineBreak;
@@ -245,7 +222,7 @@ ax::mojom::Role AXLayoutObject::NativeRoleIgnoringAria() const {
   // ARIA 1.2 (and Core-AAM 1.1) state that elements which are focusable
   // and not hidden must be included in the accessibility tree.
   if (layout_object_->IsTableSection()) {
-    if (CanSetFocusAttribute())
+    if (node && node->IsElementNode() && ToElement(node)->SupportsFocus())
       return ax::mojom::Role::kGroup;
     return ax::mojom::Role::kIgnored;
   }
@@ -259,7 +236,7 @@ ax::mojom::Role AXLayoutObject::NativeRoleIgnoringAria() const {
 ax::mojom::Role AXLayoutObject::DetermineAccessibilityRole() {
   if (!layout_object_)
     return ax::mojom::Role::kUnknown;
-  if (GetPseudoElementAltText(GetNode())) {
+  if (GetCSSAltText(GetNode())) {
     const ComputedStyle* style = GetNode()->GetComputedStyle();
     ContentData* content_data = style->GetContentData();
 
@@ -292,8 +269,12 @@ Node* AXLayoutObject::GetNodeOrContainingBlockNode() const {
   if (layout_object_->IsListMarker())
     return ToLayoutListMarker(layout_object_)->ListItem()->GetNode();
 
-  if (layout_object_->IsLayoutNGListMarker())
-    return ToLayoutNGListMarker(layout_object_)->ListItem()->GetNode();
+  if (layout_object_->IsLayoutNGListMarkerIncludingInside()) {
+    if (LayoutNGListItem* list_item =
+            LayoutNGListItem::FromMarker(*layout_object_))
+      return list_item->GetNode();
+    return nullptr;
+  }
 
   if (layout_object_->IsAnonymousBlock() && layout_object_->ContainingBlock()) {
     return layout_object_->ContainingBlock()->GetNode();
@@ -495,6 +476,16 @@ bool AXLayoutObject::IsFocused() const {
   return false;
 }
 
+// aria-grabbed is deprecated in WAI-ARIA 1.1.
+AccessibilityGrabbedState AXLayoutObject::IsGrabbed() const {
+  if (!SupportsARIADragging())
+    return kGrabbedStateUndefined;
+
+  const AtomicString& grabbed = GetAttribute(kAriaGrabbedAttr);
+  return EqualIgnoringASCIICase(grabbed, "true") ? kGrabbedStateTrue
+                                                 : kGrabbedStateFalse;
+}
+
 AccessibilitySelectedState AXLayoutObject::IsSelected() const {
   if (!GetLayoutObject() || !GetNode() || !CanSetSelectedAttribute())
     return kSelectedStateUndefined;
@@ -541,9 +532,6 @@ bool AXLayoutObject::IsSelectedFromFocus() const {
 
 AXObjectInclusion AXLayoutObject::DefaultObjectInclusion(
     IgnoredReasons* ignored_reasons) const {
-  // The following cases can apply to any element that's a subclass of
-  // AXLayoutObject.
-
   if (!layout_object_) {
     if (ignored_reasons)
       ignored_reasons->push_back(IgnoredReason(kAXNotRendered));
@@ -564,25 +552,11 @@ AXObjectInclusion AXLayoutObject::DefaultObjectInclusion(
   return AXObject::DefaultObjectInclusion(ignored_reasons);
 }
 
-bool HasAriaAttribute(Element* element) {
-  if (!element)
-    return false;
-
-  AttributeCollection attributes = element->AttributesWithoutUpdate();
-  for (const Attribute& attr : attributes) {
-    // Attributes cache their uppercase names.
-    if (attr.GetName().LocalNameUpper().StartsWith("ARIA-"))
-      return true;
-  }
-
-  return false;
-}
-
 static bool HasLineBox(const LayoutBlockFlow& block_flow) {
   if (!block_flow.IsLayoutNGMixin())
     return block_flow.FirstLineBox();
   if (block_flow.HasNGInlineNodeData())
-    return !block_flow.GetNGInlineNodeData()->items.IsEmpty();
+    return !block_flow.GetNGInlineNodeData()->IsEmptyInline();
   // TODO(layout-dev): We should call this function after layout completion.
   return false;
 }
@@ -617,57 +591,39 @@ bool AXLayoutObject::ComputeAccessibilityIsIgnored(
   DCHECK(initialized_);
 #endif
 
-  if (!layout_object_)
-    return true;
-
-  // Check first if any of the common reasons cause this element to be ignored.
-  // Then process other use cases that need to be applied to all the various
-  // roles that AXLayoutObjects take on.
-  AXObjectInclusion decision = DefaultObjectInclusion(ignored_reasons);
-  if (decision == kIncludeObject)
-    return false;
-  if (decision == kIgnoreObject)
-    return true;
-
-  if (layout_object_->IsAnonymousBlock() && !IsEditable())
-    return true;
-
-  // Ignore continuations, since those are essentially duplicate copies
-  // of inline nodes with blocks inside.
-  if (layout_object_->IsElementContinuation())
-    return true;
-
-  // If this element is within a parent that cannot have children, it should not
-  // be exposed.
-  if (IsDescendantOfLeafNode()) {
-    if (ignored_reasons) {
-      ignored_reasons->push_back(
-          IgnoredReason(kAXAncestorIsLeafNode, LeafNodeAncestor()));
-    }
+  if (!layout_object_) {
+    if (ignored_reasons)
+      ignored_reasons->push_back(IgnoredReason(kAXNotRendered));
     return true;
   }
 
-  if (RoleValue() == ax::mojom::Role::kIgnored) {
+  // Check first if any of the common reasons cause this element to be ignored.
+  AXObjectInclusion default_inclusion = DefaultObjectInclusion(ignored_reasons);
+  if (default_inclusion == kIncludeObject)
+    return false;
+  if (default_inclusion == kIgnoreObject)
+    return true;
+
+  AXObjectInclusion semantic_inclusion =
+      ShouldIncludeBasedOnSemantics(ignored_reasons);
+  if (semantic_inclusion == kIncludeObject)
+    return false;
+  if (semantic_inclusion == kIgnoreObject)
+    return true;
+
+  if (layout_object_->IsAnonymousBlock() && !IsEditable()) {
     if (ignored_reasons)
       ignored_reasons->push_back(IgnoredReason(kAXUninteresting));
     return true;
   }
 
-  if (HasInheritedPresentationalRole()) {
-    if (ignored_reasons) {
-      const AXObject* inherits_from = InheritsPresentationalRoleFrom();
-      if (inherits_from == this) {
-        ignored_reasons->push_back(IgnoredReason(kAXPresentational));
-      } else {
-        ignored_reasons->push_back(
-            IgnoredReason(kAXInheritsPresentation, inherits_from));
-      }
-    }
+  // Ignore continuations, since those are essentially duplicate copies
+  // of inline nodes with blocks inside.
+  if (layout_object_->IsElementContinuation()) {
+    if (ignored_reasons)
+      ignored_reasons->push_back(IgnoredReason(kAXUninteresting));
     return true;
   }
-
-  if (IsTableLikeRole() || IsTableRowLikeRole() || IsTableCellLikeRole())
-    return false;
 
   // A LayoutEmbeddedContent is an iframe element or embedded object element or
   // something like that. We don't want to ignore those.
@@ -689,147 +645,11 @@ bool AXLayoutObject::ComputeAccessibilityIsIgnored(
     return false;
   }
 
-  // Find out if this element is inside of a label element.  If so, it may be
-  // ignored because it's the label for a checkbox or radio button.
-  AXObject* control_object = CorrespondingControlForLabelElement();
-  HTMLLabelElement* label = LabelElementContainer();
-  if (control_object && control_object->IsCheckboxOrRadio() &&
-      control_object->NameFromLabelElement() &&
-      AccessibleNode::GetPropertyOrARIAAttribute(
-          label, AOMStringProperty::kRole) == g_null_atom) {
-    if (ignored_reasons) {
-      if (label && label != GetNode()) {
-        AXObject* label_ax_object = AXObjectCache().GetOrCreate(label);
-        ignored_reasons->push_back(
-            IgnoredReason(kAXLabelContainer, label_ax_object));
-      }
-
-      ignored_reasons->push_back(IgnoredReason(kAXLabelFor, control_object));
-    }
-    return true;
-  }
-
-  if (layout_object_->IsBR())
-    return false;
-
-  if (CanSetFocusAttribute() && GetNode() && !IsHTMLBodyElement(GetNode()))
-    return false;
-
-  if (IsLink())
-    return false;
-
-  if (IsInPageLinkTarget())
-    return false;
-
-  // A click handler might be placed on an otherwise ignored non-empty block
-  // element, e.g. a div. We shouldn't ignore such elements because if an AT
-  // sees the |ax::mojom::DefaultActionVerb::kClickAncestor|, it will look for
-  // the clickable ancestor and it expects to find one.
-  if (IsClickable())
-    return false;
-
-  if (layout_object_->IsText()) {
-    if (CanIgnoreTextAsEmpty()) {
-      if (ignored_reasons)
-        ignored_reasons->push_back(IgnoredReason(kAXEmptyText));
-      return true;
-    }
-    return false;
-  }
-
-  if (IsHeading())
-    return false;
-
-  if (IsLandmarkRelated())
-    return false;
-
-  // Header and footer tags may also be exposed as landmark roles but not
-  // always.
-  if (GetNode() &&
-      (GetNode()->HasTagName(kHeaderTag) || GetNode()->HasTagName(kFooterTag)))
-    return false;
-
-  // all controls are accessible
-  if (IsControl())
-    return false;
-
-  if (AriaRoleAttribute() != ax::mojom::Role::kUnknown)
-    return false;
-
-  // don't ignore labels, because they serve as TitleUIElements
-  Node* node = layout_object_->GetNode();
-  if (IsHTMLLabelElement(node))
-    return false;
-
-  // Anything that is content editable should not be ignored.
-  // However, one cannot just call node->hasEditableStyle() since that will ask
-  // if its parents are also editable. Only the top level content editable
-  // region should be exposed.
-  if (HasContentEditableAttributeSet())
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kAbbr)
-    return false;
-
-  // List items play an important role in defining the structure of lists. They
-  // should not be ignored.
-  if (RoleValue() == ax::mojom::Role::kListItem)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kBlockquote)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kDialog)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kFigcaption)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kFigure)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kContentDeletion)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kContentInsertion)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kDetails)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kMark)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kMath)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kMeter)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kRuby)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kSplitter)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kTime)
-    return false;
-
-  if (RoleValue() == ax::mojom::Role::kProgressIndicator)
-    return false;
-
-  // if this element has aria attributes on it, it should not be ignored.
-  if (HasGlobalARIAAttribute())
-    return false;
-
-  if (IsImage())
-    return false;
-
   if (IsCanvas()) {
     if (CanvasHasFallbackContent())
       return false;
 
-    const auto* canvas = ToLayoutHTMLCanvasOrNull(layout_object_);
+    const auto* canvas = ToLayoutHTMLCanvasOrNull(GetLayoutObject());
     if (canvas &&
         (canvas->Size().Height() <= 1 || canvas->Size().Width() <= 1)) {
       if (ignored_reasons)
@@ -841,33 +661,25 @@ bool AXLayoutObject::ComputeAccessibilityIsIgnored(
     // to decide.
   }
 
-  if (IsWebArea() || layout_object_->IsListMarkerIncludingNG())
+  if (layout_object_->IsBR())
     return false;
 
-  // Using the title or accessibility description (so we
-  // check if there's some kind of accessible name for the element)
-  // to decide an element's visibility is not as definitive as
-  // previous checks, so this should remain as one of the last.
-  //
-  // These checks are simplified in the interest of execution speed;
-  // for example, any element having an alt attribute will make it
-  // not ignored, rather than just images.
-  if (HasAriaAttribute(GetElement()) || !GetAttribute(kAltAttr).IsEmpty() ||
-      !GetAttribute(kTitleAttr).IsEmpty())
+  if (layout_object_->IsText()) {
+    if (CanIgnoreTextAsEmpty()) {
+      if (ignored_reasons)
+        ignored_reasons->push_back(IgnoredReason(kAXEmptyText));
+      return true;
+    }
     return false;
+  }
 
-  base::Optional<String> alt_text = GetPseudoElementAltText(GetNode());
+  // FIXME(aboxhall): may need to move?
+  base::Optional<String> alt_text = GetCSSAltText(GetNode());
   if (alt_text)
     return alt_text->IsEmpty();
 
-  // <span> tags are inline tags and not meant to convey information if they
-  // have no other ARIA information on them. If we don't ignore them, they may
-  // emit signals expected to come from their parent.
-  if (IsHTMLSpanElement(node)) {
-    if (ignored_reasons)
-      ignored_reasons->push_back(IgnoredReason(kAXUninteresting));
-    return true;
-  }
+  if (IsWebArea() || layout_object_->IsListMarkerIncludingNG())
+    return false;
 
   // Positioned elements and scrollable containers are important for
   // determining bounding boxes.
@@ -887,11 +699,11 @@ bool AXLayoutObject::ComputeAccessibilityIsIgnored(
   // Ignore layout objects that are block flows with inline children. These
   // are usually dummy layout objects that pad out the tree, but there are
   // some exceptions below.
-  if (layout_object_->IsLayoutBlockFlow() && layout_object_->ChildrenInline() &&
-      !CanSetFocusAttribute()) {
+  auto* block_flow = DynamicTo<LayoutBlockFlow>(*layout_object_);
+  if (block_flow && block_flow->ChildrenInline() && !CanSetFocusAttribute()) {
     // If the layout object has any plain text in it, that text will be
     // inside a LineBox, so the layout object will have a first LineBox.
-    bool has_any_text = HasLineBox(ToLayoutBlockFlow(*layout_object_));
+    bool has_any_text = HasLineBox(*block_flow);
 
     // Always include interesting-looking objects.
     if (has_any_text || MouseButtonListener())
@@ -1191,6 +1003,36 @@ String AXLayoutObject::ImageDataUrl(const IntSize& max_size) const {
   return buffer->ToDataURL(kMimeTypePng, 1.0);
 }
 
+ax::mojom::ListStyle AXLayoutObject::GetListStyle() const {
+  const LayoutObject* layout_object = GetLayoutObject();
+  if (!layout_object)
+    return AXNodeObject::GetListStyle();
+
+  const ComputedStyle* computed_style = layout_object->Style();
+  if (!computed_style)
+    return AXNodeObject::GetListStyle();
+
+  const StyleImage* style_image = computed_style->ListStyleImage();
+  if (style_image && !style_image->ErrorOccurred())
+    return ax::mojom::ListStyle::kImage;
+
+  switch (computed_style->ListStyleType()) {
+    case EListStyleType::kNone:
+      return ax::mojom::ListStyle::kNone;
+    case EListStyleType::kDisc:
+      return ax::mojom::ListStyle::kDisc;
+    case EListStyleType::kCircle:
+      return ax::mojom::ListStyle::kCircle;
+    case EListStyleType::kSquare:
+      return ax::mojom::ListStyle::kSquare;
+    case EListStyleType::kDecimal:
+    case EListStyleType::kDecimalLeadingZero:
+      return ax::mojom::ListStyle::kNumeric;
+    default:
+      return ax::mojom::ListStyle::kOther;
+  }
+}
+
 String AXLayoutObject::GetText() const {
   if (IsPasswordFieldAndShouldHideValue()) {
     if (!GetLayoutObject())
@@ -1293,25 +1135,72 @@ static unsigned TextStyleFlag(ax::mojom::TextStyle text_style_enum) {
   return static_cast<unsigned>(1 << static_cast<int>(text_style_enum));
 }
 
-int32_t AXLayoutObject::GetTextStyle() const {
-  if (!GetLayoutObject())
-    return AXNodeObject::GetTextStyle();
-
+void AXLayoutObject::GetTextStyleAndTextDecorationStyle(
+    int32_t* text_style,
+    ax::mojom::TextDecorationStyle* text_overline_style,
+    ax::mojom::TextDecorationStyle* text_strikethrough_style,
+    ax::mojom::TextDecorationStyle* text_underline_style) const {
+  if (!GetLayoutObject()) {
+    AXNodeObject::GetTextStyleAndTextDecorationStyle(
+        text_style, text_overline_style, text_strikethrough_style,
+        text_underline_style);
+    return;
+  }
   const ComputedStyle* style = GetLayoutObject()->Style();
-  if (!style)
-    return AXNodeObject::GetTextStyle();
+  if (!style) {
+    AXNodeObject::GetTextStyleAndTextDecorationStyle(
+        text_style, text_overline_style, text_strikethrough_style,
+        text_underline_style);
+    return;
+  }
 
-  int32_t text_style = 0;
+  *text_style = 0;
+  *text_overline_style = ax::mojom::TextDecorationStyle::kNone;
+  *text_strikethrough_style = ax::mojom::TextDecorationStyle::kNone;
+  *text_underline_style = ax::mojom::TextDecorationStyle::kNone;
+
   if (style->GetFontWeight() == BoldWeightValue())
-    text_style |= TextStyleFlag(ax::mojom::TextStyle::kBold);
+    *text_style |= TextStyleFlag(ax::mojom::TextStyle::kBold);
   if (style->GetFontDescription().Style() == ItalicSlopeValue())
-    text_style |= TextStyleFlag(ax::mojom::TextStyle::kItalic);
-  if (style->GetTextDecoration() == TextDecoration::kUnderline)
-    text_style |= TextStyleFlag(ax::mojom::TextStyle::kUnderline);
-  if (style->GetTextDecoration() == TextDecoration::kLineThrough)
-    text_style |= TextStyleFlag(ax::mojom::TextStyle::kLineThrough);
+    *text_style |= TextStyleFlag(ax::mojom::TextStyle::kItalic);
 
-  return text_style;
+  for (const auto& decoration : style->AppliedTextDecorations()) {
+    if (EnumHasFlags(decoration.Lines(), TextDecoration::kOverline)) {
+      *text_style |= TextStyleFlag(ax::mojom::TextStyle::kOverline);
+      *text_overline_style =
+          TextDecorationStyleToAXTextDecorationStyle(decoration.Style());
+    }
+    if (EnumHasFlags(decoration.Lines(), TextDecoration::kLineThrough)) {
+      *text_style |= TextStyleFlag(ax::mojom::TextStyle::kLineThrough);
+      *text_strikethrough_style =
+          TextDecorationStyleToAXTextDecorationStyle(decoration.Style());
+    }
+    if (EnumHasFlags(decoration.Lines(), TextDecoration::kUnderline)) {
+      *text_style |= TextStyleFlag(ax::mojom::TextStyle::kUnderline);
+      *text_underline_style =
+          TextDecorationStyleToAXTextDecorationStyle(decoration.Style());
+    }
+  }
+}
+
+ax::mojom::TextDecorationStyle
+AXLayoutObject::TextDecorationStyleToAXTextDecorationStyle(
+    const blink::ETextDecorationStyle text_decoration_style) {
+  switch (text_decoration_style) {
+    case ETextDecorationStyle::kDashed:
+      return ax::mojom::TextDecorationStyle::kDashed;
+    case ETextDecorationStyle::kSolid:
+      return ax::mojom::TextDecorationStyle::kSolid;
+    case ETextDecorationStyle::kDotted:
+      return ax::mojom::TextDecorationStyle::kDotted;
+    case ETextDecorationStyle::kDouble:
+      return ax::mojom::TextDecorationStyle::kDouble;
+    case ETextDecorationStyle::kWavy:
+      return ax::mojom::TextDecorationStyle::kWavy;
+  }
+
+  NOTREACHED();
+  return ax::mojom::TextDecorationStyle::kNone;
 }
 
 //
@@ -1357,7 +1246,7 @@ static AXObject* NextOnLineInternalNG(const AXObject& ax_object) {
        !runner.IsNull();
        runner = NGPaintFragmentTraversal::NextInlineLeafOf(runner)) {
     LayoutObject* runner_layout_object =
-        runner.GetFragment()->GetLayoutObject();
+        runner.GetFragment()->GetMutableLayoutObject();
     if (AXObject* result =
             ax_object.AXObjectCache().GetOrCreate(runner_layout_object))
       return result;
@@ -1383,7 +1272,9 @@ AXObject* AXLayoutObject::NextOnLine() const {
     result = NextOnLineInternalNG(*this);
   } else {
     InlineBox* inline_box = nullptr;
-    if (GetLayoutObject()->IsLayoutInline()) {
+    if (GetLayoutObject()->IsBox()) {
+      inline_box = ToLayoutBox(GetLayoutObject())->InlineBoxWrapper();
+    } else if (GetLayoutObject()->IsLayoutInline()) {
       inline_box = ToLayoutInline(GetLayoutObject())->LastLineBox();
     } else if (GetLayoutObject()->IsText()) {
       inline_box = ToLayoutText(GetLayoutObject())->LastTextBox();
@@ -1401,8 +1292,11 @@ AXObject* AXLayoutObject::NextOnLine() const {
         break;
     }
 
-    if (!result && ParentObject())
-      result = ParentObject()->NextOnLine();
+    if (!result) {
+      AXObject* computed_parent = ComputeParent();
+      if (computed_parent)
+        result = computed_parent->NextOnLine();
+    }
   }
 
   // For consistency between the forward and backward directions, try to always
@@ -1424,7 +1318,7 @@ static AXObject* PreviousOnLineInlineNG(const AXObject& ax_object) {
   DCHECK(!layout_object.IsListMarkerIncludingNG()) << layout_object;
   DCHECK(ShouldUseLayoutNG(layout_object)) << layout_object;
   const auto fragments = NGPaintFragment::InlineFragmentsFor(&layout_object);
-  if (fragments.IsEmpty() || fragments.IsInLayoutNGInlineFormattingContext())
+  if (fragments.IsEmpty() || !fragments.IsInLayoutNGInlineFormattingContext())
     return nullptr;
   for (NGPaintFragmentTraversalContext runner =
            NGPaintFragmentTraversal::PreviousInlineLeafOf(
@@ -1432,7 +1326,7 @@ static AXObject* PreviousOnLineInlineNG(const AXObject& ax_object) {
        !runner.IsNull();
        runner = NGPaintFragmentTraversal::PreviousInlineLeafOf(runner)) {
     LayoutObject* earlier_layout_object =
-        runner.GetFragment()->GetLayoutObject();
+        runner.GetFragment()->GetMutableLayoutObject();
     if (AXObject* result =
             ax_object.AXObjectCache().GetOrCreate(earlier_layout_object))
       return result;
@@ -1453,7 +1347,9 @@ AXObject* AXLayoutObject::PreviousOnLine() const {
     result = PreviousOnLineInlineNG(*this);
   } else {
     InlineBox* inline_box = nullptr;
-    if (GetLayoutObject()->IsLayoutInline()) {
+    if (GetLayoutObject()->IsBox()) {
+      inline_box = ToLayoutBox(GetLayoutObject())->InlineBoxWrapper();
+    } else if (GetLayoutObject()->IsLayoutInline()) {
       inline_box = ToLayoutInline(GetLayoutObject())->FirstLineBox();
     } else if (GetLayoutObject()->IsText()) {
       inline_box = ToLayoutText(GetLayoutObject())->FirstTextBox();
@@ -1471,8 +1367,11 @@ AXObject* AXLayoutObject::PreviousOnLine() const {
         break;
     }
 
-    if (!result && ParentObject())
-      result = ParentObject()->PreviousOnLine();
+    if (!result) {
+      AXObject* computed_parent = ComputeParent();
+      if (computed_parent)
+        result = computed_parent->PreviousOnLine();
+    }
   }
 
   // For consistency between the forward and backward directions, try to always
@@ -1558,8 +1457,7 @@ String AXLayoutObject::TextAlternative(bool recursive,
                                        AXRelatedObjectVector* related_objects,
                                        NameSources* name_sources) const {
   if (layout_object_) {
-    base::Optional<String> text_alternative =
-        GetPseudoElementAltText(GetNode());
+    base::Optional<String> text_alternative = GetCSSAltText(GetNode());
     bool found_text_alternative = false;
     if (text_alternative) {
       if (name_sources) {
@@ -1596,9 +1494,9 @@ String AXLayoutObject::TextAlternative(bool recursive,
     } else if (layout_object_->IsListMarker() && !recursive) {
       text_alternative = ToLayoutListMarker(layout_object_)->TextAlternative();
       found_text_alternative = true;
-    } else if (layout_object_->IsLayoutNGListMarker() && !recursive) {
-      text_alternative =
-          ToLayoutNGListMarker(layout_object_)->TextAlternative();
+    } else if (layout_object_->IsLayoutNGListMarkerIncludingInside() &&
+               !recursive) {
+      text_alternative = LayoutNGListItem::TextAlternative(*layout_object_);
       found_text_alternative = true;
     }
 
@@ -1678,9 +1576,37 @@ bool AXLayoutObject::SupportsARIADragging() const {
          EqualIgnoringASCIICase(grabbed, "false");
 }
 
-bool AXLayoutObject::SupportsARIADropping() const {
-  const AtomicString& drop_effect = GetAttribute(kAriaDropeffectAttr);
-  return !drop_effect.IsEmpty();
+void AXLayoutObject::Dropeffects(
+    Vector<ax::mojom::Dropeffect>& dropeffects) const {
+  if (!HasAttribute(kAriaDropeffectAttr))
+    return;
+
+  Vector<String> str_dropeffects;
+  TokenVectorFromAttribute(str_dropeffects, kAriaDropeffectAttr);
+
+  if (str_dropeffects.IsEmpty()) {
+    dropeffects.push_back(ax::mojom::Dropeffect::kNone);
+    return;
+  }
+
+  for (auto&& str : str_dropeffects) {
+    dropeffects.push_back(ParseDropeffect(str));
+  }
+}
+
+ax::mojom::Dropeffect AXLayoutObject::ParseDropeffect(
+    String& dropeffect) const {
+  if (EqualIgnoringASCIICase(dropeffect, "copy"))
+    return ax::mojom::Dropeffect::kCopy;
+  if (EqualIgnoringASCIICase(dropeffect, "execute"))
+    return ax::mojom::Dropeffect::kExecute;
+  if (EqualIgnoringASCIICase(dropeffect, "link"))
+    return ax::mojom::Dropeffect::kLink;
+  if (EqualIgnoringASCIICase(dropeffect, "move"))
+    return ax::mojom::Dropeffect::kMove;
+  if (EqualIgnoringASCIICase(dropeffect, "popup"))
+    return ax::mojom::Dropeffect::kPopup;
+  return ax::mojom::Dropeffect::kNone;
 }
 
 bool AXLayoutObject::SupportsARIAFlowTo() const {
@@ -1901,12 +1827,12 @@ static inline LayoutInline* StartOfContinuations(LayoutObject* layout_object) {
   // Blocks with a previous continuation always have a next continuation,
   // so we can get the next continuation and do the same trick to get
   // the primary layout object associated with the node.
-  if (layout_object->IsLayoutBlockFlow() &&
-      ToLayoutBlockFlow(layout_object)->InlineElementContinuation()) {
-    LayoutInline* result = ToLayoutInline(ToLayoutBlockFlow(layout_object)
-                                              ->InlineElementContinuation()
-                                              ->GetNode()
-                                              ->GetLayoutObject());
+  auto* layout_block_flow = DynamicTo<LayoutBlockFlow>(layout_object);
+  if (layout_block_flow && layout_block_flow->InlineElementContinuation()) {
+    LayoutInline* result =
+        ToLayoutInline(layout_block_flow->InlineElementContinuation()
+                           ->GetNode()
+                           ->GetLayoutObject());
     DCHECK_NE(result, layout_object);
     return result;
   }
@@ -1937,11 +1863,9 @@ static bool IsContinuation(LayoutObject* layout_object) {
   if (layout_object->IsElementContinuation())
     return true;
 
-  if (layout_object->IsAnonymousBlock() && layout_object->IsLayoutBlockFlow() &&
-      ToLayoutBlockFlow(layout_object)->Continuation())
-    return true;
-
-  return false;
+  auto* block_flow = DynamicTo<LayoutBlockFlow>(layout_object);
+  return block_flow && block_flow->IsAnonymousBlock() &&
+         block_flow->Continuation();
 }
 
 // See LAYOUT TREE WALKING ALGORITHM, above, for details.
@@ -1951,8 +1875,8 @@ LayoutObject* GetContinuation(LayoutObject* layout_object) {
   if (layout_object->IsLayoutInline())
     return ToLayoutInline(layout_object)->Continuation();
 
-  if (layout_object->IsLayoutBlockFlow())
-    return ToLayoutBlockFlow(layout_object)->Continuation();
+  if (auto* block_flow = DynamicTo<LayoutBlockFlow>(layout_object))
+    return block_flow->Continuation();
 
   return nullptr;
 }
@@ -2057,6 +1981,9 @@ AXObject* AXLayoutObject::ComputeParent() const {
       return parent;
   }
 
+  if (GetNode())
+    return AXNodeObject::ComputeParent();
+
   LayoutObject* parent_layout_obj = ParentLayoutObject(layout_object_);
   if (parent_layout_obj)
     return AXObjectCache().GetOrCreate(parent_layout_obj);
@@ -2085,6 +2012,9 @@ AXObject* AXLayoutObject::ComputeParentIfExists() const {
       return parent;
   }
 
+  if (GetNode())
+    return AXNodeObject::ComputeParentIfExists();
+
   LayoutObject* parent_layout_obj = ParentLayoutObject(layout_object_);
   if (parent_layout_obj)
     return AXObjectCache().Get(parent_layout_obj);
@@ -2102,9 +2032,19 @@ void AXLayoutObject::AddChildren() {
   if (IsDetached())
     return;
 
-  if (IsHTMLCanvasElement(GetNode()))
-    return AXNodeObject::AddChildren();
-
+  if (GetNode() && GetNode()->IsElementNode()) {
+    Element* element = ToElement(GetNode());
+    if (!IsHTMLMapElement(*element) &&   // Handled in AddImageMapChildren (img)
+        !IsHTMLRubyElement(*element) &&  // Special layout handling
+        !IsHTMLTableElement(*element) &&  // thead/tfoot move around
+        !element->IsPseudoElement()) {    // Not visited in layout traversal
+      AXNodeObject::AddChildren();
+      return;
+    }
+  }
+  Element* element = nullptr;
+  if (GetNode() && GetNode()->IsElementNode())
+    element = ToElement(GetNode());
   // If the need to add more children in addition to existing children arises,
   // childrenChanged should have been called, leaving the object with no
   // children.
@@ -2123,7 +2063,6 @@ void AXLayoutObject::AddChildren() {
 
   AddHiddenChildren();
   AddPopupChildren();
-  AddImageMapChildren();
   AddRemoteSVGChildren();
   AddTableChildren();
   AddInlineTextBoxChildren(false);
@@ -2142,7 +2081,7 @@ void AXLayoutObject::AddChildren() {
 bool AXLayoutObject::CanHaveChildren() const {
   if (!layout_object_)
     return false;
-  if (GetPseudoElementAltText(GetNode()))
+  if (GetCSSAltText(GetNode()))
     return false;
   return AXNodeObject::CanHaveChildren();
 }
@@ -2197,15 +2136,13 @@ Element* AXLayoutObject::AnchorElement() const {
   for (curr_layout_object = layout_object_;
        curr_layout_object && !curr_layout_object->GetNode();
        curr_layout_object = curr_layout_object->Parent()) {
-    if (curr_layout_object->IsAnonymousBlock() &&
-        curr_layout_object->IsLayoutBlockFlow()) {
-      LayoutObject* continuation =
-          ToLayoutBlockFlow(curr_layout_object)->Continuation();
-      if (continuation)
-        return cache.GetOrCreate(continuation)->AnchorElement();
-    }
-  }
+    auto* curr_block_flow = DynamicTo<LayoutBlockFlow>(curr_layout_object);
+    if (!curr_block_flow || !curr_block_flow->IsAnonymousBlock())
+      continue;
 
+    if (LayoutObject* continuation = curr_block_flow->Continuation())
+      return cache.GetOrCreate(continuation)->AnchorElement();
+  }
   // bail if none found
   if (!curr_layout_object)
     return nullptr;
@@ -2248,340 +2185,8 @@ AtomicString AXLayoutObject::Language() const {
 }
 
 //
-// Functions that retrieve the current selection.
-//
-
-AXObject::AXSelection AXLayoutObject::Selection() const {
-  AXSelection text_selection = TextControlSelection();
-  if (text_selection.IsValid())
-    return text_selection;
-
-  if (!GetLayoutObject() || !GetLayoutObject()->GetFrame())
-    return {};
-
-  VisibleSelection selection =
-      GetLayoutObject()
-          ->GetFrame()
-          ->Selection()
-          .ComputeVisibleSelectionInDOMTreeDeprecated();
-  if (selection.IsNone())
-    return {};
-
-  VisiblePosition visible_start = selection.VisibleStart();
-  Position start = visible_start.ToParentAnchoredPosition();
-  TextAffinity start_affinity = visible_start.Affinity();
-  Node* anchor_node = start.AnchorNode();
-  DCHECK(anchor_node);
-  AXLayoutObject* anchor_object = nullptr;
-
-  // Find the closest node that has a corresponding AXObject.
-  // This is because some nodes may be aria hidden or might not even have
-  // a layout object if they are part of the shadow DOM.
-  while (anchor_node) {
-    anchor_object = GetUnignoredObjectFromNode(*anchor_node);
-    if (anchor_object)
-      break;
-
-    if (anchor_node->nextSibling())
-      anchor_node = anchor_node->nextSibling();
-    else
-      anchor_node = anchor_node->parentNode();
-  }
-  if (!anchor_object)
-    return {};
-  int anchor_offset = anchor_object->IndexForVisiblePosition(visible_start);
-  DCHECK_GE(anchor_offset, 0);
-  if (selection.IsCaret()) {
-    return {anchor_object, anchor_offset, start_affinity,
-            anchor_object, anchor_offset, start_affinity};
-  }
-
-  VisiblePosition visible_end = selection.VisibleEnd();
-  Position end = visible_end.ToParentAnchoredPosition();
-  TextAffinity end_affinity = visible_end.Affinity();
-  Node* focus_node = end.AnchorNode();
-  DCHECK(focus_node);
-  AXLayoutObject* focus_object = nullptr;
-  while (focus_node) {
-    focus_object = GetUnignoredObjectFromNode(*focus_node);
-    if (focus_object)
-      break;
-
-    if (focus_node->previousSibling())
-      focus_node = focus_node->previousSibling();
-    else
-      focus_node = focus_node->parentNode();
-  }
-  if (!focus_object)
-    return {};
-  int focus_offset = focus_object->IndexForVisiblePosition(visible_end);
-  DCHECK_GE(focus_offset, 0);
-  return {anchor_object, anchor_offset, start_affinity,
-          focus_object,  focus_offset,  end_affinity};
-}
-
-// Gets only the start and end offsets of the selection computed using the
-// current object as the starting point. Returns a null selection if there is
-// no selection in the subtree rooted at this object.
-AXObject::AXSelection AXLayoutObject::SelectionUnderObject() const {
-  AXSelection text_selection = TextControlSelection();
-  if (text_selection.IsValid())
-    return text_selection;
-
-  if (!GetNode() || !GetLayoutObject()->GetFrame())
-    return {};
-
-  VisibleSelection selection =
-      GetLayoutObject()
-          ->GetFrame()
-          ->Selection()
-          .ComputeVisibleSelectionInDOMTreeDeprecated();
-  Range* selection_range = CreateRange(FirstEphemeralRangeOf(selection));
-  ContainerNode* parent_node = GetNode()->parentNode();
-  int node_index = GetNode()->NodeIndex();
-  if (!selection_range
-      // Selection is contained in node.
-      || !(parent_node &&
-           selection_range->comparePoint(parent_node, node_index,
-                                         IGNORE_EXCEPTION_FOR_TESTING) < 0 &&
-           selection_range->comparePoint(parent_node, node_index + 1,
-                                         IGNORE_EXCEPTION_FOR_TESTING) > 0)) {
-    return {};
-  }
-
-  int start = IndexForVisiblePosition(selection.VisibleStart());
-  DCHECK_GE(start, 0);
-  int end = IndexForVisiblePosition(selection.VisibleEnd());
-  DCHECK_GE(end, 0);
-
-  return {start, end};
-}
-
-AXObject::AXSelection AXLayoutObject::TextControlSelection() const {
-  if (!GetLayoutObject())
-    return {};
-
-  LayoutObject* layout = nullptr;
-  if (GetLayoutObject()->IsTextControl()) {
-    layout = GetLayoutObject();
-  } else {
-    Element* focused_element = GetDocument()->FocusedElement();
-    if (focused_element && focused_element->GetLayoutObject() &&
-        focused_element->GetLayoutObject()->IsTextControl())
-      layout = focused_element->GetLayoutObject();
-  }
-
-  if (!layout)
-    return {};
-
-  AXObject* ax_object = AXObjectCache().GetOrCreate(layout);
-  if (!ax_object || !ax_object->IsAXLayoutObject())
-    return {};
-
-  VisibleSelection selection =
-      layout->GetFrame()
-          ->Selection()
-          .ComputeVisibleSelectionInDOMTreeDeprecated();
-  TextControlElement* text_control =
-      ToLayoutTextControl(layout)->GetTextControlElement();
-  DCHECK(text_control);
-  int start = text_control->selectionStart();
-  int end = text_control->selectionEnd();
-
-  return {ax_object, start, selection.VisibleStart().Affinity(),
-          ax_object, end,   selection.VisibleEnd().Affinity()};
-}
-
-int AXLayoutObject::IndexForVisiblePosition(
-    const VisiblePosition& position) const {
-  if (GetLayoutObject() && GetLayoutObject()->IsTextControl()) {
-    TextControlElement* text_control =
-        ToLayoutTextControl(GetLayoutObject())->GetTextControlElement();
-    return text_control->IndexForVisiblePosition(position);
-  }
-
-  if (!GetNode())
-    return 0;
-
-  Position index_position = position.DeepEquivalent();
-  if (index_position.IsNull())
-    return 0;
-
-  Position start_position = Position::FirstPositionInNode(*GetNode());
-  if (start_position > index_position) {
-    // TODO(chromium-accessibility): We reach here only when passing a position
-    // outside of the node range. This shouldn't happen, but is happening as
-    // found in crbug.com/756435.
-    LOG(WARNING) << "AX position out of node range";
-    return 0;
-  }
-
-  return TextIterator::RangeLength(start_position, index_position);
-}
-
-AXLayoutObject* AXLayoutObject::GetUnignoredObjectFromNode(Node& node) const {
-  if (IsDetached())
-    return nullptr;
-
-  AXObject* ax_object = AXObjectCache().GetOrCreate(&node);
-  if (!ax_object)
-    return nullptr;
-
-  if (ax_object->IsAXLayoutObject() && !ax_object->AccessibilityIsIgnored())
-    return ToAXLayoutObject(ax_object);
-
-  return nullptr;
-}
-
-//
 // Modify or take an action on an object.
 //
-
-// Convert from an accessible object and offset to a VisiblePosition.
-static VisiblePosition ToVisiblePosition(AXObject* obj, int offset) {
-  if (!obj || offset < 0)
-    return VisiblePosition();
-
-  // Some objects don't have an associated node, e.g. |LayoutListMarker|.
-  if (obj->GetLayoutObject() && !obj->GetNode() && obj->ParentObject()) {
-    return ToVisiblePosition(obj->ParentObject(), obj->IndexInParent());
-  }
-
-  if (!obj->GetNode())
-    return VisiblePosition();
-
-  Node* node = obj->GetNode();
-  if (!node->IsTextNode()) {
-    int child_count = obj->Children().size();
-
-    // Place position immediately before the container node, if there were no
-    // children.
-    if (child_count == 0) {
-      if (!obj->ParentObject())
-        return VisiblePosition();
-      return ToVisiblePosition(obj->ParentObject(), obj->IndexInParent());
-    }
-
-    // The offsets are child offsets over the AX tree. Note that we allow
-    // for the offset to equal the number of children as |Range| does.
-    if (offset < 0 || offset > child_count)
-      return VisiblePosition();
-
-    // Clamp to between 0 and child count - 1.
-    int clamped_offset =
-        static_cast<unsigned>(offset) > (obj->Children().size() - 1)
-            ? offset - 1
-            : offset;
-
-    AXObject* child_obj = obj->Children()[clamped_offset];
-    Node* child_node = child_obj->GetNode();
-    // If a particular child can't be selected, expand to select the whole
-    // object.
-    if (!child_node || !child_node->parentNode())
-      return ToVisiblePosition(obj->ParentObject(), obj->IndexInParent());
-
-    // The index in parent.
-    int adjusted_offset = child_node->NodeIndex();
-
-    // If we had to clamp the offset above, the client wants to select the
-    // end of the node.
-    if (clamped_offset != offset)
-      adjusted_offset++;
-
-    return CreateVisiblePosition(
-        Position::EditingPositionOf(child_node->parentNode(), adjusted_offset));
-  }
-
-  // If it is a text node, we need to call some utility functions that use a
-  // TextIterator to walk the characters of the node and figure out the position
-  // corresponding to the visible character at position |offset|.
-  ContainerNode* parent = node->parentNode();
-  if (!parent)
-    return VisiblePosition();
-
-  VisiblePosition node_position =
-      CreateVisiblePosition(blink::PositionBeforeNode(*node));
-  int node_index = blink::IndexForVisiblePosition(node_position, parent);
-  return blink::VisiblePositionForIndex(node_index + offset, parent);
-}
-
-bool AXLayoutObject::OnNativeSetSelectionAction(const AXSelection& selection) {
-  if (!GetLayoutObject() || !selection.IsValid())
-    return false;
-
-  AXObject* anchor_object =
-      selection.anchor_object ? selection.anchor_object.Get() : this;
-  AXObject* focus_object =
-      selection.focus_object ? selection.focus_object.Get() : this;
-
-  if (!IsValidSelectionBound(anchor_object) ||
-      !IsValidSelectionBound(focus_object)) {
-    return false;
-  }
-
-  if (anchor_object->GetLayoutObject()->GetNode() &&
-      anchor_object->GetLayoutObject()->GetNode()->DispatchEvent(
-          *Event::CreateCancelableBubble(event_type_names::kSelectstart)) !=
-          DispatchEventResult::kNotCanceled)
-    return false;
-
-  if (!IsValidSelectionBound(anchor_object) ||
-      !IsValidSelectionBound(focus_object)) {
-    return false;
-  }
-
-  // The selection offsets are offsets into the accessible value.
-  if (anchor_object == focus_object &&
-      anchor_object->GetLayoutObject()->IsTextControl()) {
-    TextControlElement* text_control =
-        ToLayoutTextControl(anchor_object->GetLayoutObject())
-            ->GetTextControlElement();
-    if (selection.anchor_offset <= selection.focus_offset) {
-      text_control->SetSelectionRange(selection.anchor_offset,
-                                      selection.focus_offset,
-                                      kSelectionHasForwardDirection);
-    } else {
-      text_control->SetSelectionRange(selection.focus_offset,
-                                      selection.anchor_offset,
-                                      kSelectionHasBackwardDirection);
-    }
-    return true;
-  }
-
-  LocalFrame* frame = GetLayoutObject()->GetFrame();
-  if (!frame || !frame->Selection().IsAvailable())
-    return false;
-
-  // TODO(editing-dev): Use of UpdateStyleAndLayout
-  // needs to be audited.  see http://crbug.com/590369 for more details.
-  // This callsite should probably move up the stack.
-  frame->GetDocument()->UpdateStyleAndLayout();
-
-  // Set the selection based on visible positions, because the offsets in
-  // accessibility nodes are based on visible indexes, which often skips
-  // redundant whitespace, for example.
-  VisiblePosition anchor_visible_position =
-      ToVisiblePosition(anchor_object, selection.anchor_offset);
-  VisiblePosition focus_visible_position =
-      ToVisiblePosition(focus_object, selection.focus_offset);
-  if (anchor_visible_position.IsNull() || focus_visible_position.IsNull())
-    return false;
-
-  frame->Selection().SetSelectionAndEndTyping(
-      SelectionInDOMTree::Builder()
-          .Collapse(anchor_visible_position.ToPositionWithAffinity())
-          .Extend(focus_visible_position.DeepEquivalent())
-          .Build());
-  return true;
-}
-
-bool AXLayoutObject::IsValidSelectionBound(const AXObject* bound_object) const {
-  return GetLayoutObject() && bound_object && !bound_object->IsDetached() &&
-         bound_object->IsAXLayoutObject() && bound_object->GetLayoutObject() &&
-         bound_object->GetLayoutObject()->GetFrame() ==
-             GetLayoutObject()->GetFrame() &&
-         &bound_object->AXObjectCache() == &AXObjectCache();
-}
 
 bool AXLayoutObject::OnNativeSetValueAction(const String& string) {
   if (!GetNode() || !GetNode()->IsElementNode())
@@ -2606,7 +2211,7 @@ bool AXLayoutObject::OnNativeSetValueAction(const String& string) {
     ExceptionState exception_state(v8::Isolate::GetCurrent(),
                                    ExceptionState::kExecutionContext, nullptr,
                                    nullptr);
-    ToHTMLElement(GetNode())->setInnerText(string, exception_state);
+    To<HTMLElement>(GetNode())->setInnerText(string, exception_state);
     if (exception_state.HadException()) {
       exception_state.ClearException();
       return false;
@@ -2711,85 +2316,6 @@ void AXLayoutObject::TextChanged() {
   AXNodeObject::TextChanged();
 }
 
-//
-// Text metrics. Most of these should be deprecated, needs major cleanup.
-//
-
-static LayoutObject* LayoutObjectFromPosition(const Position& position) {
-  DCHECK(position.IsNotNull());
-  Node* layout_object_node = nullptr;
-  switch (position.AnchorType()) {
-    case PositionAnchorType::kOffsetInAnchor:
-      layout_object_node = position.ComputeNodeAfterPosition();
-      if (!layout_object_node || !layout_object_node->GetLayoutObject())
-        layout_object_node = position.AnchorNode()->lastChild();
-      break;
-
-    case PositionAnchorType::kBeforeAnchor:
-    case PositionAnchorType::kAfterAnchor:
-      break;
-
-    case PositionAnchorType::kBeforeChildren:
-      layout_object_node = position.AnchorNode()->firstChild();
-      break;
-    case PositionAnchorType::kAfterChildren:
-      layout_object_node = position.AnchorNode()->lastChild();
-      break;
-  }
-  if (!layout_object_node || !layout_object_node->GetLayoutObject())
-    layout_object_node = position.AnchorNode();
-  return layout_object_node->GetLayoutObject();
-}
-
-static bool LayoutObjectContainsPosition(LayoutObject* target,
-                                         const Position& position) {
-  for (LayoutObject* layout_object = LayoutObjectFromPosition(position);
-       layout_object && layout_object->GetNode();
-       layout_object = layout_object->Parent()) {
-    if (layout_object == target)
-      return true;
-  }
-  return false;
-}
-
-// NOTE: Consider providing this utility method as AX API
-int AXLayoutObject::Index(const VisiblePosition& position) const {
-  if (position.IsNull() || !IsTextControl())
-    return -1;
-
-  if (LayoutObjectContainsPosition(layout_object_, position.DeepEquivalent()))
-    return IndexForVisiblePosition(position);
-
-  return -1;
-}
-
-VisiblePosition AXLayoutObject::VisiblePositionForIndex(int index) const {
-  if (!layout_object_)
-    return VisiblePosition();
-
-  if (layout_object_->IsTextControl())
-    return ToLayoutTextControl(layout_object_)
-        ->GetTextControlElement()
-        ->VisiblePositionForIndex(index);
-
-  Node* node = layout_object_->GetNode();
-  if (!node)
-    return VisiblePosition();
-
-  if (index <= 0)
-    return CreateVisiblePosition(FirstPositionInOrBeforeNode(*node));
-
-  Position start, end;
-  bool selected = Range::selectNodeContents(node, start, end);
-  if (!selected)
-    return VisiblePosition();
-
-  CharacterIterator it(start, end);
-  it.Advance(index - 1);
-  return CreateVisiblePosition(Position(it.CurrentContainer(), it.EndOffset()),
-                               TextAffinity::kUpstream);
-}
-
 void AXLayoutObject::AddInlineTextBoxChildren(bool force) {
   Document* document = GetDocument();
   if (!document)
@@ -2842,29 +2368,6 @@ AXObject* AXLayoutObject::ErrorMessage() const {
     return nullptr;
 
   return AXObjectCache().ValidationMessageObjectIfInvalid();
-}
-
-void AXLayoutObject::LineBreaks(Vector<int>& line_breaks) const {
-  if (!IsTextControl())
-    return;
-
-  VisiblePosition visible_pos = VisiblePositionForIndex(0);
-  VisiblePosition prev_visible_pos = visible_pos;
-  visible_pos = NextLinePosition(visible_pos, LayoutUnit(), kHasEditableAXRole);
-  // nextLinePosition moves to the end of the current line when there are
-  // no more lines.
-  while (visible_pos.IsNotNull() &&
-         !InSameLine(prev_visible_pos, visible_pos)) {
-    line_breaks.push_back(IndexForVisiblePosition(visible_pos));
-    prev_visible_pos = visible_pos;
-    visible_pos =
-        NextLinePosition(visible_pos, LayoutUnit(), kHasEditableAXRole);
-
-    // Make sure we always make forward progress.
-    if (visible_pos.DeepEquivalent().CompareTo(
-            prev_visible_pos.DeepEquivalent()) < 0)
-      break;
-  }
 }
 
 // The following is a heuristic used to determine if a
@@ -3277,7 +2780,7 @@ ax::mojom::Role AXLayoutObject::DetermineTableRowRole() const {
   if (!parent)
     return ax::mojom::Role::kGenericContainer;
 
-  if (parent->GetLayoutObject()->IsTableSection())
+  if (parent->RoleValue() == ax::mojom::Role::kGroup)
     parent = parent->ParentObjectUnignored();
 
   if (parent->RoleValue() == ax::mojom::Role::kLayoutTable)
@@ -3297,7 +2800,7 @@ ax::mojom::Role AXLayoutObject::DetermineTableCellRole() const {
     return ax::mojom::Role::kGenericContainer;
 
   AXObject* grandparent = parent->ParentObjectUnignored();
-  if (grandparent && grandparent->GetLayoutObject()->IsTableSection())
+  if (grandparent && grandparent->RoleValue() == ax::mojom::Role::kGroup)
     grandparent = grandparent->ParentObjectUnignored();
 
   if (!grandparent || !grandparent->IsTableLikeRole())
@@ -3607,6 +3110,26 @@ void AXLayoutObject::AddImageMapChildren() {
         AXObjectCache().Remove(area_object->AXObjectID());
     }
   }
+}
+
+void AXLayoutObject::AddListMarker() {
+  if (!CanHaveChildren() || !GetLayoutObject() || AccessibilityIsIgnored() ||
+      !GetLayoutObject()->IsListItemIncludingNG()) {
+    return;
+  }
+  if (GetLayoutObject()->IsLayoutNGListItem()) {
+    LayoutNGListItem* list_item = ToLayoutNGListItem(GetLayoutObject());
+    LayoutObject* list_marker = list_item->Marker();
+    AXObject* list_marker_obj = AXObjectCache().GetOrCreate(list_marker);
+    if (list_marker_obj)
+      children_.push_back(list_marker_obj);
+    return;
+  }
+  LayoutListItem* list_item = ToLayoutListItem(GetLayoutObject());
+  LayoutObject* list_marker = list_item->Marker();
+  AXObject* list_marker_obj = AXObjectCache().GetOrCreate(list_marker);
+  if (list_marker_obj)
+    children_.push_back(list_marker_obj);
 }
 
 void AXLayoutObject::AddPopupChildren() {

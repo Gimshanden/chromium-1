@@ -11,10 +11,10 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#include "ios/web/public/features.h"
 #include "ios/web/public/navigation_item.h"
 #include "ios/web/public/reload_type.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
@@ -115,10 +115,7 @@ class WKBasedNavigationManagerTest : public PlatformTest {
 
   // Returns the value of the "#session=" URL hash component from |url|.
   static std::string ExtractRestoredSession(const GURL& url) {
-    std::string decoded = net::UnescapeURLComponent(
-        url.ref(), net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-                       net::UnescapeRule::SPACES |
-                       net::UnescapeRule::PATH_SEPARATORS);
+    std::string decoded = net::UnescapeBinaryURLComponent(url.ref());
     return decoded.substr(
         strlen(wk_navigation_util::kRestoreSessionSessionHashPrefix));
   }
@@ -641,15 +638,9 @@ TEST_F(WKBasedNavigationManagerTest, RestoreSessionWithHistory) {
   EXPECT_EQ(url.spec(), pending_item->GetVirtualURL());
   EXPECT_EQ("Test Website 0", base::UTF16ToUTF8(pending_item->GetTitle()));
 
-  std::string testwebui_url = web::features::WebUISchemeHandlingEnabled()
-                                  ? "testwebui://test/"
-                                  : "about:blank?for=testwebui%3A%2F%2Ftest%2F";
-
   EXPECT_EQ("{\"offset\":0,\"titles\":[\"Test Website 0\",\"\"],"
-            "\"urls\":[\"" +
-                testwebui_url +
-                "\","
-                "\"http://www.1.com/\"]}",
+            "\"urls\":[\"testwebui://test/\","
+            "\"http://www.1.com/\"]}",
             ExtractRestoredSession(pending_url));
 
   // Check that cached visible item is returned.
@@ -858,6 +849,11 @@ class WKBasedNavigationManagerDetachedModeTest
     ASSERT_EQ(url2_, manager_->GetItemAtIndex(2)->GetURL());
   }
 
+  NSString* CreateRedirectUrlForWKList(GURL url) {
+    GURL redirect_url = wk_navigation_util::CreateRedirectUrl(url);
+    return base::SysUTF8ToNSString(redirect_url.spec());
+  }
+
   GURL url0_;
   GURL url1_;
   GURL url2_;
@@ -1000,6 +996,18 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, LoadURLWithParams) {
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
   histogram_tester_.ExpectBucketCount(kRestoreNavigationItemCount, 3, 1);
+}
+
+// Tests that detaching placeholder urls are cleaned before being cached.
+TEST_F(WKBasedNavigationManagerDetachedModeTest, CachedPlaceholders) {
+  [mock_wk_list_ setCurrentURL:CreateRedirectUrlForWKList(url1_)
+                  backListURLs:@[ CreateRedirectUrlForWKList(url0_) ]
+               forwardListURLs:@[ CreateRedirectUrlForWKList(url2_) ]];
+  manager_->DetachFromWebView();
+
+  EXPECT_EQ(url0_, manager_->GetNavigationItemImplAtIndex(0)->GetURL());
+  EXPECT_EQ(url1_, manager_->GetNavigationItemImplAtIndex(1)->GetURL());
+  EXPECT_EQ(url2_, manager_->GetNavigationItemImplAtIndex(2)->GetURL());
 }
 
 }  // namespace web

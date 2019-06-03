@@ -37,7 +37,6 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/cors.mojom-blink.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
-#include "services/network/public/mojom/request_context_frame_type.mojom-shared.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/mojom/net/ip_address_space.mojom-blink.h"
 #include "third_party/blink/public/platform/resource_request_blocked_reason.h"
@@ -93,7 +92,7 @@ class PLATFORM_EXPORT ResourceRequest final {
   bool IsNull() const;
 
   const KURL& Url() const;
-  void SetURL(const KURL&);
+  void SetUrl(const KURL&);
 
   // ThreadableLoader sometimes breaks redirect chains into separate Resource
   // and ResourceRequests. The ResourceTiming API needs the initial URL for the
@@ -130,7 +129,7 @@ class PLATFORM_EXPORT ResourceRequest final {
   }
 
   const AtomicString& HttpMethod() const;
-  void SetHTTPMethod(const AtomicString&);
+  void SetHttpMethod(const AtomicString&);
 
   const HTTPHeaderMap& HttpHeaderFields() const;
   const AtomicString& HttpHeaderField(const AtomicString& name) const;
@@ -226,8 +225,12 @@ class PLATFORM_EXPORT ResourceRequest final {
   }
 
   // Allows the request to be matched up with its app cache host.
-  int AppCacheHostID() const { return app_cache_host_id_; }
-  void SetAppCacheHostID(int id) { app_cache_host_id_ = id; }
+  const base::UnguessableToken& AppCacheHostID() const {
+    return app_cache_host_id_;
+  }
+  void SetAppCacheHostID(const base::UnguessableToken& id) {
+    app_cache_host_id_ = id;
+  }
 
   // True if request was user initiated.
   bool HasUserGesture() const { return has_user_gesture_; }
@@ -387,6 +390,11 @@ class PLATFORM_EXPORT ResourceRequest final {
     devtools_token_ = devtools_token;
   }
 
+  const base::Optional<String>& GetDevToolsId() const { return devtools_id_; }
+  void SetDevToolsId(const base::Optional<String>& devtools_id) {
+    devtools_id_ = devtools_id;
+  }
+
   void SetRequestedWithHeader(const String& value) {
     requested_with_header_ = value;
   }
@@ -396,6 +404,9 @@ class PLATFORM_EXPORT ResourceRequest final {
 
   void SetClientDataHeader(const String& value) { client_data_header_ = value; }
   const String& GetClientDataHeader() const { return client_data_header_; }
+
+  void SetPurposeHeader(const String& value) { purpose_header_ = value; }
+  const String& GetPurposeHeader() const { return purpose_header_; }
 
   void SetUkmSourceId(ukm::SourceId ukm_source_id) {
     ukm_source_id_ = ukm_source_id;
@@ -452,7 +463,7 @@ class PLATFORM_EXPORT ResourceRequest final {
   int intra_priority_value_;
   int requestor_id_;
   int plugin_child_id_;
-  int app_cache_host_id_;
+  base::UnguessableToken app_cache_host_id_;
   WebURLRequest::PreviewsState previews_state_;
   scoped_refptr<SharableExtraData> sharable_extra_data_;
   mojom::RequestContextType request_context_;
@@ -484,8 +495,10 @@ class PLATFORM_EXPORT ResourceRequest final {
   bool is_automatic_upgrade_ = false;
 
   base::Optional<base::UnguessableToken> devtools_token_;
+  base::Optional<String> devtools_id_;
   String requested_with_header_;
   String client_data_header_;
+  String purpose_header_;
 
   ukm::SourceId ukm_source_id_ = ukm::kInvalidSourceId;
 

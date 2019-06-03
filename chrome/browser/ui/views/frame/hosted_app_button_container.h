@@ -33,7 +33,6 @@ class HostedAppOriginText;
 class HostedAppMenuButton;
 
 namespace views {
-class MenuButton;
 class Widget;
 }
 
@@ -90,7 +89,7 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
   const char* GetClassName() const override;
 
   // BrowserActionsContainer::Delegate:
-  views::MenuButton* GetOverflowReferenceView() override;
+  views::LabelButton* GetOverflowReferenceView() override;
   base::Optional<int> GetMaxBrowserActionsWidth() const override;
   std::unique_ptr<ToolbarActionsBar> CreateToolbarActionsBar(
       ToolbarActionsBarDelegate* delegate,
@@ -114,7 +113,8 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
 
   // ToolbarButtonProvider:
   BrowserActionsContainer* GetBrowserActionsContainer() override;
-  PageActionIconContainerView* GetPageActionIconContainerView() override;
+  OmniboxPageActionIconContainerView* GetOmniboxPageActionIconContainerView()
+      override;
   AppMenuButton* GetAppMenuButton() override;
   gfx::Rect GetFindBarBoundingBox(int contents_height) const override;
   void FocusToolbar() override;
@@ -177,7 +177,8 @@ class HostedAppButtonContainer : public views::AccessiblePaneView,
   // Owned by the views hierarchy.
   HostedAppOriginText* hosted_app_origin_text_ = nullptr;
   ContentSettingsContainer* content_settings_container_ = nullptr;
-  PageActionIconContainerView* page_action_icon_container_view_ = nullptr;
+  OmniboxPageActionIconContainerView* omnibox_page_action_icon_container_view_ =
+      nullptr;
   BrowserActionsContainer* browser_actions_container_ = nullptr;
   HostedAppMenuButton* app_menu_button_ = nullptr;
 

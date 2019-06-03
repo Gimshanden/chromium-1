@@ -9,6 +9,7 @@
 
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_split.h"
 #include "base/system/sys_info.h"
@@ -62,8 +63,8 @@ base::TimeDelta PasswordConfirmationFrequencyToTimeDelta(
       return base::TimeDelta::FromHours(6);
     case PasswordConfirmationFrequency::TWELVE_HOURS:
       return base::TimeDelta::FromHours(12);
-    case PasswordConfirmationFrequency::DAY:
-      return base::TimeDelta::FromDays(1);
+    case PasswordConfirmationFrequency::TWO_DAYS:
+      return base::TimeDelta::FromDays(2);
     case PasswordConfirmationFrequency::WEEK:
       return base::TimeDelta::FromDays(7);
   }
@@ -79,7 +80,7 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
       base::Value(std::move(quick_unlock_whitelist_default)));
   registry->RegisterIntegerPref(
       prefs::kQuickUnlockTimeout,
-      static_cast<int>(PasswordConfirmationFrequency::DAY));
+      static_cast<int>(PasswordConfirmationFrequency::TWO_DAYS));
 
   // Preferences related the lock screen pin unlock.
   registry->RegisterIntegerPref(prefs::kPinUnlockMinimumLength,
@@ -151,8 +152,8 @@ bool IsFingerprintEnabled(Profile* profile) {
   return base::FeatureList::IsEnabled(features::kQuickUnlockFingerprint);
 }
 
-void EnableForTesting() {
-  enable_for_testing_ = true;
+void EnabledForTesting(bool state) {
+  enable_for_testing_ = state;
 }
 
 bool IsEnabledForTesting() {

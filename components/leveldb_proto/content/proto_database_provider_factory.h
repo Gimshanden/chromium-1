@@ -11,7 +11,6 @@
 #include "components/keyed_service/core/simple_keyed_service_factory.h"
 
 class KeyedService;
-class PrefService;
 class SimpleFactoryKey;
 
 namespace base {
@@ -31,8 +30,12 @@ class ProtoDatabaseProviderFactory : public SimpleKeyedServiceFactory {
 
   // Returns ProtoDatabaseProvider associated with |key|, so we can
   // instantiate ProtoDatabases that use the appropriate profile directory.
-  static ProtoDatabaseProvider* GetForKey(SimpleFactoryKey* key,
-                                          PrefService* prefs);
+  static ProtoDatabaseProvider* GetForKey(SimpleFactoryKey* key);
+
+  // Some tests may get databases with manually created keys, this method
+  // removes a key from the mapping to avoid reusing a database from a past
+  // test.
+  static void RemoveKeyForTesting(SimpleFactoryKey* key);
 
  private:
   friend class base::NoDestructor<ProtoDatabaseProviderFactory>;
@@ -42,8 +45,7 @@ class ProtoDatabaseProviderFactory : public SimpleKeyedServiceFactory {
 
   // SimpleKeyedServiceFactory overrides:
   std::unique_ptr<KeyedService> BuildServiceInstanceFor(
-      SimpleFactoryKey* key,
-      PrefService* prefs) const override;
+      SimpleFactoryKey* key) const override;
 
   DISALLOW_COPY_AND_ASSIGN(ProtoDatabaseProviderFactory);
 };

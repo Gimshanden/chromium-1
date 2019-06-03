@@ -31,6 +31,7 @@ namespace device {
 
 class BleAdapterManager;
 class FidoAuthenticator;
+class FidoDiscoveryFactory;
 
 struct COMPONENT_EXPORT(DEVICE_FIDO) PlatformAuthenticatorInfo {
   PlatformAuthenticatorInfo(std::unique_ptr<FidoAuthenticator> authenticator,
@@ -74,10 +75,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
         const TransportAvailabilityInfo& other);
     ~TransportAvailabilityInfo();
 
-    // TODO(hongjunchoi): Factor |rp_id| and |request_type| from
-    // TransportAvailabilityInfo.
+    // TODO(hongjunchoi): Factor |request_type| from TransportAvailabilityInfo.
     // See: https://crbug.com/875011
-    std::string rp_id;
     RequestType request_type = RequestType::kMakeCredential;
 
     // The intersection of transports supported by the client and allowed by the
@@ -96,17 +95,15 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
     //  - should dispatch immediately if no other transport is available
     bool has_win_native_api_authenticator = false;
 
+    // Indicates whether the Windows native UI will include a privacy notice
+    // when creating a resident credential.
+    bool win_native_ui_shows_resident_credential_notice = false;
+
     // Contains the authenticator ID of the native Windows
     // authenticator if |has_win_native_api_authenticator| is true.
     // This allows the observer to distinguish it from other
     // authenticators.
     std::string win_native_api_authenticator_id;
-
-    // If true, dispatch of the request cannot be controlled by
-    // the embedder. The embedder must not display a UI for this
-    // request and must ignore all subsequent invocations of the
-    // Observer interface methods.
-    bool disable_embedder_ui = false;
   };
 
   class COMPONENT_EXPORT(DEVICE_FIDO) Observer {
@@ -155,6 +152,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
 
     // CollectClientPin is guaranteed to have been called previously.
     virtual void FinishCollectPIN() = 0;
+
+    // SetMightCreateResidentCredential indicates whether the activation of an
+    // authenticator may cause a resident credential to be created. A resident
+    // credential may be discovered by someone with physical access to the
+    // authenticator and thus has privacy implications. Initially, this is
+    // assumed to be false.
+    virtual void SetMightCreateResidentCredential(bool v) = 0;
   };
 
   // TODO(https://crbug.com/769631): Remove the dependency on Connector once
@@ -163,6 +167,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
   // relying party.
   FidoRequestHandlerBase(
       service_manager::Connector* connector,
+      FidoDiscoveryFactory* fido_discovery_factory,
       const base::flat_set<FidoTransportProtocol>& available_transports);
   ~FidoRequestHandlerBase() override;
 
@@ -189,8 +194,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
                                  std::string pin_code,
                                  base::OnceClosure success_callback,
                                  base::OnceClosure error_callback);
-
-  virtual void ProvidePIN(const std::string& old_pin, const std::string& pin);
 
   base::WeakPtr<FidoRequestHandlerBase> GetWeakPtr();
 
@@ -248,6 +251,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
   void AuthenticatorPairingModeChanged(FidoDiscoveryBase* discovery,
                                        const std::string& device_id,
                                        bool is_in_pairing_mode) override;
+
+  FidoDiscoveryFactory* fido_discovery_factory_;
 
  private:
   friend class FidoRequestHandlerTest;

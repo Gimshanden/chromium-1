@@ -55,13 +55,6 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
     navigation_response_override_ = std::move(response_override);
   }
 
-  // The request is for a prefetch-only client (i.e. running NoStatePrefetch)
-  // and should use LOAD_PREFETCH network flags.
-  bool is_for_no_state_prefetch() const { return is_for_no_state_prefetch_; }
-  void set_is_for_no_state_prefetch(bool prefetch) {
-    is_for_no_state_prefetch_ = prefetch;
-  }
-
   // Copy of the settings value determining if mixed plugin content should be
   // blocked.
   bool block_mixed_plugin_content() const {
@@ -84,6 +77,12 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
   scoped_refptr<FrameRequestBlocker> frame_request_blocker() {
     return frame_request_blocker_;
   }
+  bool allow_cross_origin_auth_prompt() const {
+    return allow_cross_origin_auth_prompt_;
+  }
+  void set_allow_cross_origin_auth_prompt(bool allow_cross_origin_auth_prompt) {
+    allow_cross_origin_auth_prompt_ = allow_cross_origin_auth_prompt;
+  }
 
   void CopyToResourceRequest(network::ResourceRequest* request) const;
 
@@ -91,10 +90,10 @@ class CONTENT_EXPORT RequestExtraData : public blink::WebURLRequest::ExtraData {
   blink::WebString custom_user_agent_;
   std::unique_ptr<NavigationResponseOverrideParameters>
       navigation_response_override_;
-  bool is_for_no_state_prefetch_ = false;
   bool block_mixed_plugin_content_ = false;
   std::vector<std::unique_ptr<URLLoaderThrottle>> url_loader_throttles_;
   scoped_refptr<FrameRequestBlocker> frame_request_blocker_;
+  bool allow_cross_origin_auth_prompt_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(RequestExtraData);
 };

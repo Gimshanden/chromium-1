@@ -114,7 +114,8 @@ SSLConnectJob::SSLConnectJob(
           NetLogEventType::SSL_CONNECT_JOB_CONNECT),
       params_(std::move(params)),
       callback_(base::BindRepeating(&SSLConnectJob::OnIOComplete,
-                                    base::Unretained(this))) {}
+                                    base::Unretained(this))),
+      ssl_negotiation_started_(false) {}
 
 SSLConnectJob::~SSLConnectJob() {
   // In the case the job was canceled, need to delete nested job first to
@@ -174,25 +175,16 @@ void SSLConnectJob::OnNeedsProxyAuth(
                             std::move(restart_with_auth_callback));
 }
 
-void SSLConnectJob::GetAdditionalErrorState(ClientSocketHandle* handle) {
-  // Headers in |error_response_info_| indicate a proxy tunnel setup
-  // problem. See DoTunnelConnectComplete.
-  if (error_response_info_.headers.get()) {
-    handle->set_pending_http_proxy_socket(std::move(nested_socket_));
+ConnectionAttempts SSLConnectJob::GetConnectionAttempts() const {
+  return connection_attempts_;
+}
 
-    // Copy connection timing so caller can access it. Used for
-    // ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT.
-    //
-    // TODO(mmenke): Remove this once ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT
-    // responses are no longer treated as redirects.
-    if (nested_connect_job_)
-      handle->set_connect_timing(nested_connect_job_->connect_timing());
-  }
-  handle->set_ssl_error_response_info(error_response_info_);
-  if (!connect_timing_.ssl_start.is_null())
-    handle->set_is_ssl_error(true);
+bool SSLConnectJob::IsSSLError() const {
+  return ssl_negotiation_started_;
+}
 
-  handle->set_connection_attempts(connection_attempts_);
+scoped_refptr<SSLCertRequestInfo> SSLConnectJob::GetCertRequestInfo() {
+  return ssl_cert_request_info_;
 }
 
 base::TimeDelta SSLConnectJob::HandshakeTimeoutForTesting() {
@@ -265,13 +257,11 @@ int SSLConnectJob::DoTransportConnect() {
 }
 
 int SSLConnectJob::DoTransportConnectComplete(int result) {
-  // TODO(https://crbug.com/927101): Implement a better API to get this
-  // information.
-  ClientSocketHandle bogus_handle;
-  nested_connect_job_->GetAdditionalErrorState(&bogus_handle);
+  ConnectionAttempts connection_attempts =
+      nested_connect_job_->GetConnectionAttempts();
   connection_attempts_.insert(connection_attempts_.end(),
-                              bogus_handle.connection_attempts().begin(),
-                              bogus_handle.connection_attempts().end());
+                              connection_attempts.begin(),
+                              connection_attempts.end());
   if (result == OK) {
     next_state_ = STATE_SSL_CONNECT;
     nested_socket_ = nested_connect_job_->PassSocket();
@@ -324,13 +314,7 @@ int SSLConnectJob::DoTunnelConnectComplete(int result) {
     // authentication so that when ClientSocketPoolBaseHelper calls
     // |GetAdditionalErrorState|, we can easily set the state.
     if (result == ERR_SSL_CLIENT_AUTH_CERT_NEEDED) {
-      ClientSocketHandle handle_with_error_state;
-      nested_connect_job_->GetAdditionalErrorState(&handle_with_error_state);
-      error_response_info_ = handle_with_error_state.ssl_error_response_info();
-    } else if (result == ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT) {
-      ProxyClientSocket* tunnel_socket =
-          static_cast<ProxyClientSocket*>(nested_socket_.get());
-      error_response_info_ = *tunnel_socket->GetConnectResponseInfo();
+      ssl_cert_request_info_ = nested_connect_job_->GetCertRequestInfo();
     }
     return result;
   }
@@ -361,6 +345,7 @@ int SSLConnectJob::DoSSLConnect() {
     connect_timing_.dns_end = socket_connect_timing->dns_end;
   }
 
+  ssl_negotiation_started_ = true;
   connect_timing_.ssl_start = base::TimeTicks::Now();
 
   // TODO(mmenke): Consider moving this up to the socket pool layer, after
@@ -400,10 +385,18 @@ int SSLConnectJob::DoSSLConnectComplete(int result) {
     bool has_ssl_info = ssl_socket_->GetSSLInfo(&ssl_info);
     DCHECK(has_ssl_info);
 
-    UMA_HISTOGRAM_ENUMERATION(
-        "Net.SSLVersion",
-        SSLConnectionStatusToVersion(ssl_info.connection_status),
-        SSL_CONNECTION_VERSION_MAX);
+    SSLVersion version =
+        SSLConnectionStatusToVersion(ssl_info.connection_status);
+    UMA_HISTOGRAM_ENUMERATION("Net.SSLVersion", version,
+                              SSL_CONNECTION_VERSION_MAX);
+    if (IsGoogleHost(host)) {
+      // Google hosts all support TLS 1.2, so any occurrences of TLS 1.0 or TLS
+      // 1.1 will be from an outdated insecure TLS MITM proxy, such as some
+      // antivirus configurations. TLS 1.0 and 1.1 are deprecated, so record
+      // these to see how prevalent they are. See https://crbug.com/896013.
+      UMA_HISTOGRAM_ENUMERATION("Net.SSLVersionGoogle", version,
+                                SSL_CONNECTION_VERSION_MAX);
+    }
 
     uint16_t cipher_suite =
         SSLConnectionStatusToCipherSuite(ssl_info.connection_status);
@@ -434,22 +427,17 @@ int SSLConnectJob::DoSSLConnectComplete(int result) {
     }
   }
 
-  // Don't double-count the version interference probes.
-  if (!params_->ssl_config().version_interference_probe) {
-    base::UmaHistogramSparse("Net.SSL_Connection_Error", std::abs(result));
-
-    if (tls13_supported) {
-      base::UmaHistogramSparse("Net.SSL_Connection_Error_TLS13Experiment",
-                               std::abs(result));
-    }
+  base::UmaHistogramSparse("Net.SSL_Connection_Error", std::abs(result));
+  if (tls13_supported) {
+    base::UmaHistogramSparse("Net.SSL_Connection_Error_TLS13Experiment",
+                             std::abs(result));
   }
 
   if (result == OK || IsCertificateError(result)) {
     SetSocket(std::move(ssl_socket_));
   } else if (result == ERR_SSL_CLIENT_AUTH_CERT_NEEDED) {
-    error_response_info_.cert_request_info = new SSLCertRequestInfo;
-    ssl_socket_->GetSSLCertRequestInfo(
-        error_response_info_.cert_request_info.get());
+    ssl_cert_request_info_ = base::MakeRefCounted<SSLCertRequestInfo>();
+    ssl_socket_->GetSSLCertRequestInfo(ssl_cert_request_info_.get());
   }
 
   return result;

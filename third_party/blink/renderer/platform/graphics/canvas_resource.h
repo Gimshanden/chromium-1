@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/logging.h"
+#include "base/memory/shared_memory_mapping.h"
 #include "base/memory/weak_ptr.h"
 #include "components/viz/common/resources/shared_bitmap.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -23,12 +24,6 @@ namespace gfx {
 class GpuMemoryBuffer;
 
 }  // namespace gfx
-
-namespace base {
-
-class SharedMemory;
-
-}  // namespace base
 
 namespace viz {
 
@@ -91,8 +86,7 @@ class PLATFORM_EXPORT CanvasResource
     return 0;
   }
 
-  virtual GLuint GetTextureIdForBackendTexture() {
-    // Only used for CanvasResourceSharedImage.
+  virtual GLenum TextureTarget() const {
     NOTREACHED();
     return 0;
   }
@@ -102,10 +96,6 @@ class PLATFORM_EXPORT CanvasResource
                  SkFilterQuality,
                  const CanvasColorParams&);
 
-  virtual GLenum TextureTarget() const {
-    NOTREACHED();
-    return 0;
-  }
   virtual bool IsOverlayCandidate() const { return false; }
   virtual bool HasGpuMailbox() const = 0;
   virtual void TearDown() = 0;
@@ -126,6 +116,7 @@ class PLATFORM_EXPORT CanvasResource
   const CanvasColorParams& ColorParams() const { return color_params_; }
   void OnDestroy();
   CanvasResourceProvider* Provider() { return provider_.get(); }
+  base::WeakPtr<CanvasResourceProvider> WeakProvider() { return provider_; }
 
  private:
   // Sync token that was provided when resource was released
@@ -304,7 +295,7 @@ class PLATFORM_EXPORT CanvasResourceSharedBitmap final : public CanvasResource {
                              SkFilterQuality);
 
   viz::SharedBitmapId shared_bitmap_id_;
-  std::unique_ptr<base::SharedMemory> shared_memory_;
+  base::WritableSharedMemoryMapping shared_mapping_;
   IntSize size_;
   bool is_origin_clean_ = true;
 };
@@ -321,12 +312,13 @@ class PLATFORM_EXPORT CanvasResourceSharedImage final : public CanvasResource {
       bool is_overlay_candidate);
   ~CanvasResourceSharedImage() override;
 
-  bool IsRecycleable() const final { return false; }
+  bool IsRecycleable() const final { return true; }
   bool IsAccelerated() const final { return true; }
   bool SupportsAcceleratedCompositing() const override { return true; }
   bool IsValid() const final;
   IntSize Size() const final { return size_; }
   scoped_refptr<StaticBitmapImage> Bitmap() final;
+  void Transfer() final;
 
   bool OriginClean() const final { return is_origin_clean_; }
   void SetOriginClean(bool value) final { is_origin_clean_ = value; }
@@ -340,16 +332,27 @@ class PLATFORM_EXPORT CanvasResourceSharedImage final : public CanvasResource {
     return nullptr;
   }
   void TakeSkImage(sk_sp<SkImage> image) final { NOTREACHED(); }
-  GLuint GetTextureIdForBackendTexture() override;
+  GLuint GetTextureIdForBackendTexture() const;
+  void WillDraw();
 
  private:
+  static void OnBitmapImageDestroyed(
+      scoped_refptr<CanvasResourceSharedImage> resource,
+      const gpu::SyncToken& sync_token,
+      bool is_lost);
+
   void TearDown() override;
+  void Abandon() override;
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> ContextProviderWrapper()
       const override;
   const gpu::Mailbox& GetOrCreateGpuMailbox(MailboxSyncMode) override;
+  GLenum TextureTarget() const final;
   bool HasGpuMailbox() const override;
   const gpu::SyncToken GetSyncToken() override;
   bool IsOverlayCandidate() const final { return is_overlay_candidate_; }
+  bool is_cross_thread() const {
+    return Thread::Current()->ThreadId() != owning_thread_id_;
+  }
 
   CanvasResourceSharedImage(const IntSize&,
                             base::WeakPtr<WebGraphicsContext3DProviderWrapper>,
@@ -357,17 +360,22 @@ class PLATFORM_EXPORT CanvasResourceSharedImage final : public CanvasResource {
                             SkFilterQuality,
                             const CanvasColorParams&,
                             bool is_overlay_candidate);
+  void SetGLFilterIfNeeded();
 
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper_;
   gpu::Mailbox shared_image_mailbox_;
-  bool mailbox_needs_new_sync_token_ = false;
+  bool mailbox_needs_new_sync_token_ = true;
   gpu::SyncToken sync_token_;
   MailboxSyncMode mailbox_sync_mode_ = kVerifiedSyncToken;
-  GLuint texture_id_ = 0u;
+  mutable GLuint texture_id_ = 0u;  // mutable for lazy init.
   bool is_overlay_candidate_ = false;
   IntSize size_;
-
+  bool needs_gl_filter_reset_ = true;
   bool is_origin_clean_ = true;
+  GLenum texture_target_ = GL_TEXTURE_2D;
+
+  const PlatformThreadId owning_thread_id_;
+  const scoped_refptr<base::SingleThreadTaskRunner> owning_thread_task_runner_;
 };
 
 // Resource type for a given opaque external resource described on construction

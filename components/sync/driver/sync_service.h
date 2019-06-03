@@ -221,11 +221,21 @@ class SyncService : public KeyedService {
   // false, but Sync-the-transport might still run.
   virtual bool IsAuthenticatedAccountPrimary() const = 0;
 
+  // Returns whether the SyncService has completed at least one Sync cycle since
+  // starting up (i.e. since browser startup or signin). This can be useful
+  // in combination with GetAuthError(), if you need to know if the user's
+  // refresh token is really valid: Before a Sync cycle has been completed,
+  // Sync hasn't tried using the refresh token, so doesn't know if it's valid.
+  // TODO(crbug.com/831579): If Chrome would persist auth errors, this would not
+  // be necessary.
+  bool HasCompletedSyncCycle() const;
+
   // The last authentication error that was encountered by the SyncService. This
   // error can be either from Chrome's identity system (e.g. while trying to get
   // an access token), or from the Sync server. It gets cleared when the error
   // is resolved.
   virtual GoogleServiceAuthError GetAuthError() const = 0;
+  virtual base::Time GetAuthErrorTime() const = 0;
 
   // Returns true if the Chrome client is too old and needs to be updated for
   // Sync to work.
@@ -268,18 +278,6 @@ class SyncService : public KeyedService {
   bool IsSyncFeatureActive() const;
 
   //////////////////////////////////////////////////////////////////////////////
-  // INITIAL SETUP / CONSENT
-  //////////////////////////////////////////////////////////////////////////////
-
-  // Returns true if initial sync setup is in progress (does not return true
-  // if the user is customizing sync after already completing setup once). This
-  // is equivalent to
-  // IsSetupInProgress() && !GetUserSettings()->IsFirstSetupComplete().
-  // Note: This refers to Sync-the-feature. Sync-the-transport may be active
-  // independent of first-setup state.
-  bool IsFirstSetupInProgress() const;
-
-  //////////////////////////////////////////////////////////////////////////////
   // SETUP-IN-PROGRESS HANDLING
   //////////////////////////////////////////////////////////////////////////////
 
@@ -303,10 +301,6 @@ class SyncService : public KeyedService {
   // Returns the set of data types that are supported in principle. These will
   // typically only change via a command-line option.
   virtual syncer::ModelTypeSet GetRegisteredDataTypes() const = 0;
-
-  // Returns the set of types which are enforced programmatically and can not
-  // be disabled by the user.
-  virtual syncer::ModelTypeSet GetForcedDataTypes() const = 0;
 
   // Returns the set of types which are preferred for enabling. This is a
   // superset of the active types (see GetActiveDataTypes()). This also includes
@@ -338,11 +332,6 @@ class SyncService : public KeyedService {
   // Triggers a GetUpdates call for the specified |types|, pulling any new data
   // from the sync server. Used by tests and debug UI (sync-internals).
   virtual void TriggerRefresh(const ModelTypeSet& types) = 0;
-
-  // Attempts to re-enable a data type that is currently disabled due to a
-  // data type error or an unready error. Note, this does not change the
-  // preferred state of a datatype, and is not persisted across restarts.
-  virtual void ReenableDatatype(ModelType type) = 0;
 
   // Informs the data type manager that the ready-for-start status of a
   // controller has changed. If the controller is not ready any more, it will
@@ -386,7 +375,7 @@ class SyncService : public KeyedService {
 
   // Returns the state of the access token and token request, for display in
   // internals UI.
-  virtual SyncTokenStatus GetSyncTokenStatus() const = 0;
+  virtual SyncTokenStatus GetSyncTokenStatusForDebugging() const = 0;
 
   // Initializes a struct of status indicators with data from the engine.
   // Returns false if the engine was not available for querying; in that case
@@ -394,10 +383,10 @@ class SyncService : public KeyedService {
   virtual bool QueryDetailedSyncStatusForDebugging(
       SyncStatus* result) const = 0;
 
-  virtual base::Time GetLastSyncedTime() const = 0;
+  virtual base::Time GetLastSyncedTimeForDebugging() const = 0;
 
   // Returns some statistics on the most-recently completed sync cycle.
-  virtual SyncCycleSnapshot GetLastCycleSnapshot() const = 0;
+  virtual SyncCycleSnapshot GetLastCycleSnapshotForDebugging() const = 0;
 
   // Returns a ListValue indicating the status of all registered types.
   //
@@ -412,10 +401,10 @@ class SyncService : public KeyedService {
   // it easier to iterate over its elements when constructing that page.
   virtual std::unique_ptr<base::Value> GetTypeStatusMapForDebugging() = 0;
 
-  virtual const GURL& sync_service_url() const = 0;
+  virtual const GURL& GetSyncServiceUrlForDebugging() const = 0;
 
-  virtual std::string unrecoverable_error_message() const = 0;
-  virtual base::Location unrecoverable_error_location() const = 0;
+  virtual std::string GetUnrecoverableErrorMessageForDebugging() const = 0;
+  virtual base::Location GetUnrecoverableErrorLocationForDebugging() const = 0;
 
   virtual void AddProtocolEventObserver(ProtocolEventObserver* observer) = 0;
   virtual void RemoveProtocolEventObserver(ProtocolEventObserver* observer) = 0;
@@ -431,7 +420,7 @@ class SyncService : public KeyedService {
   // These requests can live a long time and return when you least expect it.
   // For safety, the callback should be bound to some sort of WeakPtr<> or
   // scoped_refptr<>.
-  virtual void GetAllNodes(
+  virtual void GetAllNodesForDebugging(
       const base::Callback<void(std::unique_ptr<base::ListValue>)>&
           callback) = 0;
 

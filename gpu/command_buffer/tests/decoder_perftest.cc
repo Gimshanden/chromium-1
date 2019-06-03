@@ -231,9 +231,9 @@ class RecordReplayContext : public GpuControl {
     gles2_implementation_.reset();
     transfer_buffer_.reset();
     gles2_helper_.reset();
-    command_buffer_.reset();
     decoder_->Destroy(true);
     decoder_.reset();
+    command_buffer_.reset();
   }
 
   void StartRecord() {
@@ -318,6 +318,8 @@ class RecordReplayContext : public GpuControl {
     NOTREACHED();
     return true;
   }
+
+  void SetDisplayTransform(gfx::OverlayTransform) override { NOTREACHED(); }
 
   GpuPreferences gpu_preferences_;
 

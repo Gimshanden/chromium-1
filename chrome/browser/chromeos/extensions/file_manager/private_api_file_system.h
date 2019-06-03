@@ -260,7 +260,8 @@ class FileManagerPrivateInternalStartCopyFunction
 
   // Part of RunAsync(). Called after the amount of space on the destination
   // is known.
-  void RunAfterCheckDiskSpace(int64_t space_needed, int64_t space_available);
+  void RunAfterCheckDiskSpace(int64_t space_needed,
+                              const std::vector<int64_t>& spaces_available);
 
   // Part of RunAsync(). Called after FreeDiskSpaceIfNeededFor() is completed on
   // IO thread.
@@ -359,6 +360,27 @@ class FileManagerPrivateSearchFilesByHashesFunction
   void OnSearchByHashes(const std::set<std::string>& hashes,
                         drive::FileError error,
                         const std::vector<drive::HashAndFilePath>& results);
+
+  const ChromeExtensionFunctionDetails chrome_details_;
+};
+
+class FileManagerPrivateSearchFilesFunction
+    : public LoggedUIThreadExtensionFunction {
+ public:
+  FileManagerPrivateSearchFilesFunction();
+
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.searchFiles",
+                             FILEMANAGERPRIVATE_SEARCHFILES)
+
+ protected:
+  ~FileManagerPrivateSearchFilesFunction() override = default;
+
+ private:
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+
+  void OnSearchByPattern(
+      const std::vector<std::pair<base::FilePath, bool>>& results);
 
   const ChromeExtensionFunctionDetails chrome_details_;
 };

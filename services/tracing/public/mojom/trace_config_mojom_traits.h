@@ -13,7 +13,7 @@
 
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/trace_config.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_config.h"
 
 namespace mojo {
 
@@ -40,8 +40,51 @@ class StructTraits<tracing::mojom::DataSourceDataView,
     return src.config();
   }
 
+  static const std::vector<std::string>& producer_name_filter(
+      const perfetto::TraceConfig::DataSource& src) {
+    return src.producer_name_filter();
+  }
+
   static bool Read(tracing::mojom::DataSourceDataView data,
                    perfetto::TraceConfig::DataSource* out);
+};
+
+// perfetto::TraceConfig::BuiltinDataSource
+template <>
+class StructTraits<tracing::mojom::PerfettoBuiltinDataSourceDataView,
+                   perfetto::TraceConfig::BuiltinDataSource> {
+ public:
+  static bool disable_clock_snapshotting(
+      const perfetto::TraceConfig::BuiltinDataSource& src) {
+    return src.disable_clock_snapshotting();
+  }
+
+  static bool disable_trace_config(
+      const perfetto::TraceConfig::BuiltinDataSource& src) {
+    return src.disable_trace_config();
+  }
+
+  static bool disable_system_info(
+      const perfetto::TraceConfig::BuiltinDataSource& src) {
+    return src.disable_system_info();
+  }
+
+  static bool Read(tracing::mojom::PerfettoBuiltinDataSourceDataView data,
+                   perfetto::TraceConfig::BuiltinDataSource* out);
+};
+
+// perfetto::TraceConfig::IncrementalStateConfig
+template <>
+class StructTraits<tracing::mojom::IncrementalStateConfigDataView,
+                   perfetto::TraceConfig::IncrementalStateConfig> {
+ public:
+  static uint32_t clear_period_ms(
+      const perfetto::TraceConfig::IncrementalStateConfig& src) {
+    return src.clear_period_ms();
+  }
+
+  static bool Read(tracing::mojom::IncrementalStateConfigDataView data,
+                   perfetto::TraceConfig::IncrementalStateConfig* out);
 };
 
 // perfetto::TraceConfig
@@ -53,9 +96,19 @@ class StructTraits<tracing::mojom::TraceConfigDataView, perfetto::TraceConfig> {
     return src.data_sources();
   }
 
+  static const perfetto::TraceConfig::BuiltinDataSource&
+  perfetto_builtin_data_source(const perfetto::TraceConfig& src) {
+    return src.builtin_data_sources();
+  }
+
   static const std::vector<perfetto::TraceConfig::BufferConfig>& buffers(
       const perfetto::TraceConfig& src) {
     return src.buffers();
+  }
+
+  static const perfetto::TraceConfig::IncrementalStateConfig&
+  incremental_state_config(const perfetto::TraceConfig& src) {
+    return src.incremental_state_config();
   }
 
   static uint32_t duration_ms(const perfetto::TraceConfig& src) {

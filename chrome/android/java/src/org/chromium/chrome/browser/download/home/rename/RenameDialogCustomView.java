@@ -7,14 +7,16 @@ package org.chromium.chrome.browser.download.home.rename;
 import static android.content.Context.INPUT_METHOD_SERVICE;
 
 import android.content.Context;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import org.chromium.base.FileUtils;
+import org.chromium.base.Callback;
 import org.chromium.chrome.browser.widget.AlertDialogEditText;
 import org.chromium.chrome.download.R;
 import org.chromium.components.offline_items_collection.RenameResult;
@@ -25,6 +27,7 @@ import org.chromium.components.offline_items_collection.RenameResult;
 public class RenameDialogCustomView extends ScrollView {
     private TextView mSubtitleView;
     private AlertDialogEditText mFileName;
+    private Callback</*Empty*/ Boolean> mEmptyFileNameObserver;
 
     public RenameDialogCustomView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -36,6 +39,26 @@ public class RenameDialogCustomView extends ScrollView {
         super.onFinishInflate();
         mSubtitleView = findViewById(R.id.subtitle);
         mFileName = findViewById(R.id.file_name);
+        mFileName.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (mEmptyFileNameObserver == null) return;
+                mEmptyFileNameObserver.onResult(getTargetName().isEmpty());
+            }
+        });
+    }
+
+    /**
+     * @param callback Callback to run when edit text is empty.
+     */
+    public void setEmptyInputObserver(Callback<Boolean> callback) {
+        mEmptyFileNameObserver = callback;
     }
 
     /**
@@ -90,9 +113,7 @@ public class RenameDialogCustomView extends ScrollView {
     }
 
     private void highlightEditText(String name) {
-        // TODO(hesen): Use backend getExtension instead.
-        int pos = name.length() - FileUtils.getExtension(name).length() - 1;
-        highlightEditText(0, pos);
+        highlightEditText(0, name.length() - RenameUtils.getFileExtension(name).length());
     }
 
     /**

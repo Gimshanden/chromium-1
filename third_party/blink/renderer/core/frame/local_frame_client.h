@@ -37,18 +37,19 @@
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/frame/navigation_initiator.mojom-blink.h"
 #include "third_party/blink/public/mojom/portal/portal.mojom-blink.h"
+#include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/public/platform/web_content_security_policy_struct.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/public/platform/web_insecure_request_policy.h"
 #include "third_party/blink/public/platform/web_loading_behavior_flag.h"
-#include "third_party/blink/public/platform/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/public/platform/web_sudden_termination_disabler_type.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_history_commit_type.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
+#include "third_party/blink/public/web/web_manifest_manager.h"
 #include "third_party/blink/public/web/web_navigation_params.h"
 #include "third_party/blink/public/web/web_triggering_event_info.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -136,7 +137,6 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual void WillBeDetached() = 0;
   virtual void DispatchWillSendRequest(ResourceRequest&) = 0;
-  virtual void DispatchDidReceiveResponse(const ResourceResponse&) = 0;
   virtual void DispatchDidLoadResourceFromMemoryCache(
       const ResourceRequest&,
       const ResourceResponse&) = 0;
@@ -151,8 +151,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   virtual void DispatchDidCommitLoad(HistoryItem*,
                                      WebHistoryCommitType,
                                      GlobalObjectReusePolicy) = 0;
-  virtual void DispatchDidFailProvisionalLoad(const ResourceError&,
-                                              WebHistoryCommitType) = 0;
+  virtual void DispatchDidFailProvisionalLoad(
+      const ResourceError&,
+      const AtomicString& http_method) = 0;
   virtual void DispatchDidFailLoad(const ResourceError&,
                                    WebHistoryCommitType) = 0;
   virtual void DispatchDidFinishDocumentLoad() = 0;
@@ -226,6 +227,11 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // Will be called when |CpuTiming| events are updated
   virtual void DidChangeCpuTiming(base::TimeDelta time) {}
 
+  // Will be called when the list of active features tracked by the scheduler is
+  // updated.
+  virtual void DidChangeActiveSchedulerTrackedFeatures(uint64_t features_mask) {
+  }
+
   // Will be called when a particular loading code path has been used. This
   // propogates renderer loading behavior to the browser process for histograms.
   virtual void DidObserveLoadingBehavior(WebLoadingBehaviorFlag) {}
@@ -240,7 +246,8 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
                                              bool /*is_animated*/) {}
 
   // Reports that visible elements in the frame shifted (bit.ly/lsm-explainer).
-  virtual void DidObserveLayoutJank(double jank_fraction) {}
+  virtual void DidObserveLayoutJank(double jank_fraction,
+                                    bool after_input_or_scroll) {}
 
   // Reports lazy loaded behavior when the frame or image is fully deferred or
   // if the frame or image is loaded after being deferred. Called every time the
@@ -284,7 +291,8 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // identifies the portal.
   virtual std::pair<RemoteFrame*, base::UnguessableToken> CreatePortal(
       HTMLPortalElement*,
-      mojom::blink::PortalAssociatedRequest) = 0;
+      mojom::blink::PortalAssociatedRequest,
+      mojom::blink::PortalClientAssociatedPtrInfo) = 0;
 
   // Adopts the predecessor |portal|. The HTMLPortalElement must have been
   // created by adopting the predecessor in the PortalActivateEvent, and have a
@@ -342,12 +350,10 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   virtual void DidEnforceInsecureRequestPolicy(WebInsecureRequestPolicy) {}
   virtual void DidEnforceInsecureNavigationsSet(const std::vector<unsigned>&) {}
 
-  virtual void DidChangeFramePolicy(Frame* child_frame,
-                                    SandboxFlags,
-                                    const ParsedFeaturePolicy&) {}
+  virtual void DidChangeFramePolicy(Frame* child_frame, const FramePolicy&) {}
 
   virtual void DidSetFramePolicyHeaders(
-      SandboxFlags,
+      WebSandboxFlags,
       const ParsedFeaturePolicy& parsed_header) {}
 
   // Called when a set of new Content Security Policies is added to the frame's
@@ -482,9 +488,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // Returns true when the contents of plugin are handled externally. This means
   // the plugin element will own a content frame but the frame is than used
   // externally to load the required handelrs.
-  virtual bool MaybeCreateMimeHandlerView(HTMLPlugInElement&,
-                                          const KURL&,
-                                          const String&) {
+  virtual bool IsPluginHandledExternally(HTMLPlugInElement&,
+                                         const KURL&,
+                                         const String&) {
     return false;
   }
 

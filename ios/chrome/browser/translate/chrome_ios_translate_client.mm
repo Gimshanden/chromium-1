@@ -21,8 +21,6 @@
 #include "components/translate/core/browser/translate_prefs.h"
 #include "components/translate/core/browser/translate_step.h"
 #include "components/translate/core/common/language_detection_details.h"
-#include "components/translate/core/common/language_detection_logging_helper.h"
-#include "components/translate/core/common/translation_logging_helper.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/infobars/infobar.h"
 #include "ios/chrome/browser/infobars/infobar_controller.h"
@@ -139,9 +137,6 @@ std::unique_ptr<infobars::InfoBar> ChromeIOSTranslateClient::CreateInfoBar(
   return std::make_unique<InfoBarIOS>(controller, std::move(delegate));
 }
 
-void ChromeIOSTranslateClient::RecordTranslateEvent(
-    const metrics::TranslateEventProto& translate_event) {}
-
 bool ChromeIOSTranslateClient::ShowTranslateUI(
     translate::TranslateStep step,
     const std::string& source_language,
@@ -192,9 +187,6 @@ ChromeIOSTranslateClient::GetTranslateAcceptLanguages() {
 int ChromeIOSTranslateClient::GetInfobarIconID() const {
   return IDR_IOS_INFOBAR_TRANSLATE;
 }
-
-void ChromeIOSTranslateClient::RecordLanguageDetectionEvent(
-    const translate::LanguageDetectionDetails& details) const {}
 
 bool ChromeIOSTranslateClient::IsTranslatableURL(const GURL& url) {
   return TranslateServiceIOS::IsTranslatableURL(url);

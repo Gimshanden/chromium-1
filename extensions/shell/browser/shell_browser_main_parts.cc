@@ -33,7 +33,6 @@
 #include "extensions/shell/browser/shell_browser_context_keyed_service_factories.h"
 #include "extensions/shell/browser/shell_browser_main_delegate.h"
 #include "extensions/shell/browser/shell_desktop_controller_aura.h"
-#include "extensions/shell/browser/shell_device_client.h"
 #include "extensions/shell/browser/shell_extension_system.h"
 #include "extensions/shell/browser/shell_extension_system_factory.h"
 #include "extensions/shell/browser/shell_extensions_browser_client.h"
@@ -64,6 +63,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #elif defined(OS_LINUX)
@@ -126,14 +126,16 @@ void ShellBrowserMainParts::PostMainMessageLoopStart() {
   chromeos::DBusThreadManager::Initialize();
   dbus::Bus* bus = chromeos::DBusThreadManager::Get()->GetSystemBus();
   if (bus) {
+    bluez::BluezDBusManager::Initialize(bus);
+    chromeos::CrasAudioClient::Initialize(bus);
     chromeos::PowerManagerClient::Initialize(bus);
   } else {
+    bluez::BluezDBusManager::InitializeFake();
+    chromeos::CrasAudioClient::InitializeFake();
     chromeos::PowerManagerClient::InitializeFake();
   }
 
   chromeos::disks::DiskMountManager::Initialize();
-
-  bluez::BluezDBusManager::Initialize();
 
   chromeos::NetworkHandler::Initialize();
   network_controller_.reset(new ShellNetworkController(
@@ -150,8 +152,7 @@ void ShellBrowserMainParts::PostMainMessageLoopStart() {
   // TODO(michaelpg): Verify this works for target environments.
   ui::InitializeInputMethodForTesting();
 
-  bluez::BluezDBusThreadManager::Initialize();
-  bluez::BluezDBusManager::Initialize();
+  bluez::BluezDBusManager::Initialize(nullptr /* system_bus */);
 #else
   ui::InitializeInputMethodForTesting();
 #endif
@@ -197,6 +198,7 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
 
 #if defined(OS_CHROMEOS)
   chromeos::CrasAudioHandler::Initialize(
+      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
       new chromeos::AudioDevicesPrefHandlerImpl(local_state_.get()));
   audio_controller_.reset(new ShellAudioController());
 #endif
@@ -221,8 +223,6 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
       browser_main_delegate_->CreateDesktopController(browser_context_.get()));
 
   // TODO(jamescook): Initialize user_manager::UserManager.
-
-  device_client_.reset(new ShellDeviceClient);
 
   update_query_params_delegate_.reset(new ShellUpdateQueryParamsDelegate);
   update_client::UpdateQueryParams::SetDelegate(
@@ -317,6 +317,7 @@ void ShellBrowserMainParts::PostDestroyThreads() {
   device::BluetoothAdapterFactory::Shutdown();
   bluez::BluezDBusManager::Shutdown();
   chromeos::PowerManagerClient::Shutdown();
+  chromeos::CrasAudioClient::Shutdown();
   chromeos::DBusThreadManager::Shutdown();
 #elif defined(OS_LINUX)
   device::BluetoothAdapterFactory::Shutdown();

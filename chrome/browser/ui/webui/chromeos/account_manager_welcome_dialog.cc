@@ -21,8 +21,8 @@ namespace chromeos {
 namespace {
 
 AccountManagerWelcomeDialog* g_dialog = nullptr;
-constexpr int kSigninDialogWidth = 600;
-constexpr int kSigninDialogHeight = 500;
+constexpr int kSigninDialogWidth = 768;
+constexpr int kSigninDialogHeight = 640;
 constexpr int kMaxNumTimesShown = 1;
 
 }  // namespace
@@ -65,9 +65,8 @@ bool AccountManagerWelcomeDialog::ShowIfRequired() {
 
 void AccountManagerWelcomeDialog::OnDialogClosed(
     const std::string& json_retval) {
-  chrome::SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-      ProfileManager::GetActiveUserProfile(),
-      GURL("chrome://settings/accountManager"));
+  chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+      ProfileManager::GetActiveUserProfile(), chrome::kAccountManagerSubPage);
 
   SystemWebDialogDelegate::OnDialogClosed(json_retval);
 }

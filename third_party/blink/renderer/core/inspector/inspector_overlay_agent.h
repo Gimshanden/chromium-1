@@ -156,6 +156,7 @@ class CORE_EXPORT InspectorOverlayAgent final
       protocol::Maybe<protocol::DOM::RGBA> content_outline_color) override;
   protocol::Response getHighlightObjectForTest(
       int node_id,
+      protocol::Maybe<bool> include_distance,
       std::unique_ptr<protocol::DictionaryValue>* highlight) override;
 
   // InspectorBaseAgent overrides.
@@ -191,12 +192,11 @@ class CORE_EXPORT InspectorOverlayAgent final
 
   bool IsEmpty();
 
-  Page* OverlayPage();
+  void EnsureOverlayPageCreated();
   LocalFrame* OverlayMainFrame();
   void Reset(const IntSize& viewport_size);
   void OnResizeTimer(TimerBase*);
-  bool UpdateOverlayPageSize();
-  void UpdateOverlayPage();
+  void PaintOverlayPage();
 
   protocol::Response CompositingEnabled();
 
@@ -205,7 +205,7 @@ class CORE_EXPORT InspectorOverlayAgent final
   void SetNeedsUnbufferedInput(bool unbuffered);
   void PickTheRightTool();
   void SetInspectTool(InspectTool* inspect_tool);
-  void UpdateFrameForTool();
+  void LoadFrameForTool();
   protocol::Response HighlightConfigFromInspectorObject(
       protocol::Maybe<protocol::Overlay::HighlightConfig>
           highlight_inspector_object,

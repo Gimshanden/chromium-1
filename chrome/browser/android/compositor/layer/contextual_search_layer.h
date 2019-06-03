@@ -40,6 +40,8 @@ class ContextualSearchLayer : public OverlayPanelLayer {
                      int search_provider_icon_resource_id,
                      int quick_action_icon_resource_id,
                      int arrow_up_resource_id,
+                     int drag_handlebar_resource_id,
+                     int open_tab_icon_resource_id,
                      int close_icon_resource_id,
                      int progress_bar_background_resource_id,
                      int progress_bar_resource_id,
@@ -51,6 +53,7 @@ class ContextualSearchLayer : public OverlayPanelLayer {
                      bool search_promo_visible,
                      float search_promo_height,
                      float search_promo_opacity,
+                     int search_promo_background_color,
                      bool search_bar_banner_visible,
                      float search_bar_banner_height,
                      float search_bar_banner_padding,
@@ -62,6 +65,7 @@ class ContextualSearchLayer : public OverlayPanelLayer {
                      float search_panel_width,
                      float search_panel_height,
                      float search_bar_margin_side,
+                     float search_bar_margin_top,
                      float search_bar_height,
                      float search_context_opacity,
                      float search_text_layer_min_height,
@@ -78,6 +82,7 @@ class ContextualSearchLayer : public OverlayPanelLayer {
                      float custom_image_visibility_percentage,
                      int bar_image_size,
                      int icon_color,
+                     int drag_handlebar_color,
                      float arrow_icon_opacity,
                      float arrow_icon_rotation,
                      float close_icon_opacity,
@@ -144,8 +149,6 @@ class ContextualSearchLayer : public OverlayPanelLayer {
   scoped_refptr<cc::SolidColorLayer> bar_banner_container_;
   scoped_refptr<cc::NinePatchLayer> bar_banner_ripple_;
   scoped_refptr<cc::UIResourceLayer> bar_banner_text_;
-  scoped_refptr<cc::NinePatchLayer> progress_bar_;
-  scoped_refptr<cc::NinePatchLayer> progress_bar_background_;
   scoped_refptr<cc::UIResourceLayer> search_caption_;
   scoped_refptr<cc::UIResourceLayer> text_layer_;
   scoped_refptr<cc::SolidColorLayer> divider_line_;

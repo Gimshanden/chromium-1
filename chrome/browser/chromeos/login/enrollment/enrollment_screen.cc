@@ -90,12 +90,12 @@ namespace chromeos {
 // static
 EnrollmentScreen* EnrollmentScreen::Get(ScreenManager* manager) {
   return static_cast<EnrollmentScreen*>(
-      manager->GetScreen(OobeScreen::SCREEN_OOBE_ENROLLMENT));
+      manager->GetScreen(EnrollmentScreenView::kScreenId));
 }
 
 EnrollmentScreen::EnrollmentScreen(EnrollmentScreenView* view,
                                    const ScreenExitCallback& exit_callback)
-    : BaseScreen(OobeScreen::SCREEN_OOBE_ENROLLMENT),
+    : BaseScreen(EnrollmentScreenView::kScreenId),
       view_(view),
       exit_callback_(exit_callback),
       weak_ptr_factory_(this) {
@@ -253,8 +253,7 @@ void EnrollmentScreen::OnLoginDone(const std::string& user,
 
   view_->ShowEnrollmentSpinnerScreen();
   CreateEnrollmentHelper();
-  enrollment_helper_->EnrollUsingAuthCode(auth_code,
-                                          false /* fetch_additional_token */);
+  enrollment_helper_->EnrollUsingAuthCode(auth_code);
 }
 
 void EnrollmentScreen::OnLicenseTypeSelected(const std::string& license_type) {

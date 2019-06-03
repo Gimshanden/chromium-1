@@ -6,6 +6,7 @@
 
 #include <inttypes.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/logging.h"
@@ -134,6 +135,9 @@ SharedImageManager::ProduceGLTexture(const Mailbox& mailbox,
 std::unique_ptr<SharedImageRepresentationGLTexture>
 SharedImageManager::ProduceRGBEmulationGLTexture(const Mailbox& mailbox,
                                                  MemoryTypeTracker* tracker) {
+  CALLED_ON_VALID_THREAD();
+
+  AutoLock autolock(this);
   auto found = images_.find(mailbox);
   if (found == images_.end()) {
     LOG(ERROR) << "SharedImageManager::ProduceRGBEmulationGLTexture: Trying to "
@@ -198,6 +202,30 @@ std::unique_ptr<SharedImageRepresentationSkia> SharedImageManager::ProduceSkia(
   return representation;
 }
 
+std::unique_ptr<SharedImageRepresentationDawn> SharedImageManager::ProduceDawn(
+    const Mailbox& mailbox,
+    MemoryTypeTracker* tracker,
+    DawnDevice device) {
+  CALLED_ON_VALID_THREAD();
+
+  AutoLock autolock(this);
+  auto found = images_.find(mailbox);
+  if (found == images_.end()) {
+    LOG(ERROR) << "SharedImageManager::ProduceDawn: Trying to Produce a "
+                  "Dawn representation from a non-existent mailbox.";
+    return nullptr;
+  }
+
+  auto representation = (*found)->ProduceDawn(this, tracker, device);
+  if (!representation) {
+    LOG(ERROR) << "SharedImageManager::ProduceDawn: Trying to produce a "
+                  "Skia representation from an incompatible mailbox.";
+    return nullptr;
+  }
+
+  return representation;
+}
+
 void SharedImageManager::OnRepresentationDestroyed(
     const Mailbox& mailbox,
     SharedImageRepresentation* representation) {
@@ -236,7 +264,7 @@ void SharedImageManager::OnMemoryDump(const Mailbox& mailbox,
   }
 
   auto* backing = found->get();
-  size_t estimated_size = backing->estimated_size();
+  size_t estimated_size = backing->EstimatedSizeForMemTracking();
   if (estimated_size == 0)
     return;
 

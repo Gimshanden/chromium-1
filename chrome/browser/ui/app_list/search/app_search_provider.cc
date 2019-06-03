@@ -28,7 +28,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
-#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/crostini/crostini_manager.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service.h"
@@ -56,6 +56,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/services/app_service/public/cpp/app_service_proxy.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync_sessions/session_sync_service.h"
 #include "extensions/browser/extension_prefs.h"
@@ -162,10 +163,15 @@ class AppSearchProvider::App {
         installed_internally_(installed_internally) {}
   ~App() = default;
 
-  struct CompareByLastActivityTime {
+  struct CompareByLastActivityTimeAndThenAppId {
     bool operator()(const std::unique_ptr<App>& app1,
                     const std::unique_ptr<App>& app2) {
-      return app1->GetLastActivityTime() > app2->GetLastActivityTime();
+      // Sort decreasing by last activity time, then increasing by App ID.
+      base::Time t1 = app1->GetLastActivityTime();
+      base::Time t2 = app2->GetLastActivityTime();
+      if (t1 != t2)
+        return t1 > t2;
+      return app1->id_ < app2->id_;
     }
   };
 
@@ -288,9 +294,10 @@ class AppServiceDataSource : public AppSearchProvider::DataSource,
  public:
   AppServiceDataSource(Profile* profile, AppSearchProvider* owner)
       : AppSearchProvider::DataSource(profile, owner),
-        icon_cache_(apps::AppServiceProxy::Get(profile),
+        icon_cache_(apps::AppServiceProxyFactory::GetForProfile(profile),
                     apps::IconCache::GarbageCollectionPolicy::kExplicit) {
-    apps::AppServiceProxy* proxy = apps::AppServiceProxy::Get(profile);
+    apps::AppServiceProxy* proxy =
+        apps::AppServiceProxyFactory::GetForProfile(profile);
     if (proxy) {
       Observe(&proxy->AppRegistryCache());
     }
@@ -300,13 +307,15 @@ class AppServiceDataSource : public AppSearchProvider::DataSource,
 
   // AppSearchProvider::DataSource overrides:
   void AddApps(AppSearchProvider::Apps* apps_vector) override {
-    apps::AppServiceProxy* proxy = apps::AppServiceProxy::Get(profile());
+    apps::AppServiceProxy* proxy =
+        apps::AppServiceProxyFactory::GetForProfile(profile());
     if (!proxy) {
       return;
     }
     proxy->AppRegistryCache().ForEachApp([this, apps_vector](
                                              const apps::AppUpdate& update) {
-      if (update.ShowInSearch() != apps::mojom::OptionalBool::kTrue) {
+      if ((update.Readiness() == apps::mojom::Readiness::kUninstalledByUser) ||
+          (update.ShowInSearch() != apps::mojom::OptionalBool::kTrue)) {
         return;
       }
 
@@ -317,6 +326,10 @@ class AppServiceDataSource : public AppSearchProvider::DataSource,
           this, update.AppId(), update.ShortName(), update.LastLaunchTime(),
           update.InstallTime(),
           update.InstalledInternally() == apps::mojom::OptionalBool::kTrue));
+      apps_vector->back()->set_recommendable(update.Recommendable() ==
+                                             apps::mojom::OptionalBool::kTrue);
+      apps_vector->back()->set_searchable(update.Searchable() ==
+                                          apps::mojom::OptionalBool::kTrue);
 
       // Until it's been installed, the Crostini Terminal is hidden and
       // requires a few characters before being shown in search results.
@@ -352,6 +365,11 @@ class AppServiceDataSource : public AppSearchProvider::DataSource,
     } else {
       owner()->RefreshAppsAndUpdateResults();
     }
+  }
+
+  void OnAppRegistryCacheWillBeDestroyed(
+      apps::AppRegistryCache* cache) override {
+    Observe(nullptr);
   }
 
   // The AppServiceDataSource seems like one (but not the only) good place to
@@ -707,7 +725,7 @@ void AppSearchProvider::Start(const base::string16& query) {
 }
 
 void AppSearchProvider::ViewClosing() {
-  ClearResults();
+  ClearResultsSilently();
   for (auto& data_source : data_sources_)
     data_source->ViewClosing();
 }
@@ -753,9 +771,14 @@ void AppSearchProvider::UpdateRecommendedResults(
 
     base::string16 title = app->name();
     if (app->id() == kInternalAppIdContinueReading) {
-      if (HasRecommendableForeignTab(profile_, &title, /*url=*/nullptr,
+      base::string16 navigation_title;
+      if (HasRecommendableForeignTab(profile_, &navigation_title,
+                                     /*url=*/nullptr,
                                      open_tabs_ui_delegate_for_testing())) {
-        app->AddSearchableText(title);
+        if (!navigation_title.empty()) {
+          title = navigation_title;
+          app->AddSearchableText(title);
+        }
       } else {
         continue;
       }
@@ -794,11 +817,7 @@ void AppSearchProvider::UpdateRecommendedResults(
 
     MaybeAddResult(&new_results, std::move(result), &seen_or_filtered_apps);
   }
-
-  MaybeRecordQueryLatencyHistogram(false /* empty query */);
-
-  SwapResults(&new_results);
-  update_results_factory_.InvalidateWeakPtrs();
+  PublishQueriedResultsOrRecommendation(false, &new_results);
 }
 
 void AppSearchProvider::UpdateQueriedResults() {
@@ -861,10 +880,14 @@ void AppSearchProvider::UpdateQueriedResults() {
     }
     MaybeAddResult(&new_results, std::move(result), &seen_or_filtered_apps);
   }
+  PublishQueriedResultsOrRecommendation(true, &new_results);
+}
 
-  MaybeRecordQueryLatencyHistogram(true /* queried search */);
-
-  SwapResults(&new_results);
+void AppSearchProvider::PublishQueriedResultsOrRecommendation(
+    bool is_queried_search,
+    Results* new_results) {
+  MaybeRecordQueryLatencyHistogram(is_queried_search);
+  SwapResults(new_results);
   update_results_factory_.InvalidateWeakPtrs();
 }
 
@@ -888,9 +911,11 @@ void AppSearchProvider::MaybeRecordQueryLatencyHistogram(
 void AppSearchProvider::UpdateResults() {
   const bool show_recommendations = query_.empty();
 
-  // Presort app based on last active time in order to be able to remove
-  // duplicates from results.
-  std::sort(apps_.begin(), apps_.end(), App::CompareByLastActivityTime());
+  // Presort app based on last activity time in order to be able to remove
+  // duplicates from results. We break ties by App ID, which is arbitrary, but
+  // deterministic.
+  std::sort(apps_.begin(), apps_.end(),
+            App::CompareByLastActivityTimeAndThenAppId());
 
   if (show_recommendations) {
     // Get the map of app ids to their position in the app list, and then

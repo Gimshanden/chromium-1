@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/no_destructor.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_constants.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_role_properties.h"
@@ -51,27 +52,59 @@ gfx::NativeViewAccessible AXPlatformNodeDelegateBase::ChildAtIndex(int index) {
   return nullptr;
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetClippedScreenBoundsRect() const {
+base::string16 AXPlatformNodeDelegateBase::GetHypertext() const {
+  return base::string16();
+}
+
+bool AXPlatformNodeDelegateBase::SetHypertextSelection(int start_offset,
+                                                       int end_offset) {
+  AXActionData action_data;
+  action_data.action = ax::mojom::Action::kSetSelection;
+  action_data.anchor_node_id = action_data.focus_node_id = GetData().id;
+  action_data.anchor_offset = start_offset;
+  action_data.focus_offset = end_offset;
+  return AccessibilityPerformAction(action_data);
+}
+
+base::string16 AXPlatformNodeDelegateBase::GetInnerText() const {
+  return base::string16();
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetBoundsRect(
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
   return gfx::Rect();
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetUnclippedScreenBoundsRect() const {
+gfx::Rect AXPlatformNodeDelegateBase::GetHypertextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
   return gfx::Rect();
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetScreenBoundsForRange(
-    int start,
-    int len,
-    bool clipped) const {
+gfx::Rect AXPlatformNodeDelegateBase::GetInnerTextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result = nullptr) const {
   return gfx::Rect();
 }
 
-gfx::Rect AXPlatformNodeDelegateBase::GetTextRangeBoundsRect(
-    int start_offset,
-    int end_offset,
-    AXPlatformNodeDelegate::TextRangeBoundsCoordinateSystem coordinate_system)
-    const {
-  return gfx::Rect();
+gfx::Rect AXPlatformNodeDelegateBase::GetClippedScreenBoundsRect(
+    AXOffscreenResult* offscreen_result) const {
+  return GetBoundsRect(AXCoordinateSystem::kScreen,
+                       AXClippingBehavior::kClipped, offscreen_result);
+}
+
+gfx::Rect AXPlatformNodeDelegateBase::GetUnclippedScreenBoundsRect(
+    AXOffscreenResult* offscreen_result) const {
+  return GetBoundsRect(AXCoordinateSystem::kScreen,
+                       AXClippingBehavior::kUnclipped, offscreen_result);
 }
 
 gfx::NativeViewAccessible AXPlatformNodeDelegateBase::HitTestSync(int x,
@@ -236,6 +269,11 @@ base::string16 AXPlatformNodeDelegateBase::GetLocalizedStringForLandmarkType()
   return base::string16();
 }
 
+base::string16
+AXPlatformNodeDelegateBase::GetStyleNameAttributeAsLocalizedString() const {
+  return base::string16();
+}
+
 bool AXPlatformNodeDelegateBase::ShouldIgnoreHoveredStateForTesting() {
   return true;
 }
@@ -291,15 +329,19 @@ std::set<AXPlatformNode*> AXPlatformNodeDelegateBase::GetReverseRelations(
   return std::set<AXPlatformNode*>();
 }
 
+base::string16 AXPlatformNodeDelegateBase::GetAuthorUniqueId() const {
+  return base::string16();
+}
+
 const AXUniqueId& AXPlatformNodeDelegateBase::GetUniqueId() const {
   static base::NoDestructor<AXUniqueId> dummy_unique_id;
   return *dummy_unique_id;
 }
 
-AXPlatformNodeDelegate::EnclosingBoundaryOffsets
-AXPlatformNodeDelegateBase::FindTextBoundariesAtOffset(
-    TextBoundaryType boundary_type,
+base::Optional<int> AXPlatformNodeDelegateBase::FindTextBoundary(
+    AXTextBoundary boundary,
     int offset,
+    TextBoundaryDirection direction,
     ax::mojom::TextAffinity affinity) const {
   return base::nullopt;
 }

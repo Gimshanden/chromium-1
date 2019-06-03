@@ -187,8 +187,6 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThread : public base::Thread,
   base::Time check_time_;
   base::TimeTicks check_timeticks_;
 
-  base::TimeTicks last_reported_progress_timeticks_;
-
 #if defined(USE_X11)
   XDisplay* display_;
   gfx::AcceleratedWidget window_;

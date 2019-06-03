@@ -13,11 +13,9 @@
 #include "ash/public/interfaces/tray_action.mojom.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
-#include "ash/wallpaper/wallpaper_controller.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "base/bind.h"
 #include "base/strings/strcat.h"
-#include "services/ws/public/cpp/property_type_converters.h"
-#include "services/ws/public/mojom/window_manager.mojom.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -111,7 +109,7 @@ void LoginTestBase::SetUserCount(size_t count) {
 
   users_.erase(users_.begin() + count, users_.end());
   // Notify any listeners that the user count has changed.
-  DataDispatcher()->NotifyUsers(users_);
+  DataDispatcher()->SetUserList(users_);
 }
 
 void LoginTestBase::AddUsers(size_t num_users) {
@@ -122,12 +120,12 @@ void LoginTestBase::AddUsers(size_t num_users) {
   }
 
   // Notify any listeners that the user count has changed.
-  DataDispatcher()->NotifyUsers(users_);
+  DataDispatcher()->SetUserList(users_);
 }
 
 void LoginTestBase::AddUserByEmail(const std::string& email) {
   users_.push_back(CreateUser(email));
-  DataDispatcher()->NotifyUsers(users_);
+  DataDispatcher()->SetUserList(users_);
 }
 
 void LoginTestBase::AddPublicAccountUsers(size_t num_public_accounts) {
@@ -138,7 +136,7 @@ void LoginTestBase::AddPublicAccountUsers(size_t num_public_accounts) {
   }
 
   // Notify any listeners that the user count has changed.
-  DataDispatcher()->NotifyUsers(users_);
+  DataDispatcher()->SetUserList(users_);
 }
 
 void LoginTestBase::AddChildUsers(size_t num_users) {
@@ -149,12 +147,13 @@ void LoginTestBase::AddChildUsers(size_t num_users) {
   }
 
   // Notify any listeners that the user count has changed.
-  DataDispatcher()->NotifyUsers(users_);
+  DataDispatcher()->SetUserList(users_);
 }
 
 LoginDataDispatcher* LoginTestBase::DataDispatcher() {
-  return LockScreen::HasInstance() ? LockScreen::Get()->data_dispatcher()
-                                   : &data_dispatcher_;
+  return LockScreen::HasInstance()
+             ? Shell::Get()->login_screen_controller()->data_dispatcher()
+             : &data_dispatcher_;
 }
 
 void LoginTestBase::TearDown() {

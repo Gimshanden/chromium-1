@@ -65,7 +65,7 @@ class WebRequestProxyingWebSocket
   void SendFrame(bool fin,
                  network::mojom::WebSocketMessageType type,
                  const std::vector<uint8_t>& data) override;
-  void SendFlowControl(int64_t quota) override;
+  void AddReceiveFlowControlQuota(int64_t quota) override;
   void StartClosingHandshake(uint16_t code, const std::string& reason) override;
 
   // mojom::WebSocketClient methods:
@@ -86,7 +86,7 @@ class WebRequestProxyingWebSocket
   void OnClosingHandshake() override;
 
   // mojom::AuthenticationHandler method:
-  void OnAuthRequired(const scoped_refptr<net::AuthChallengeInfo>& auth_info,
+  void OnAuthRequired(const net::AuthChallengeInfo& auth_info,
                       const scoped_refptr<net::HttpResponseHeaders>& headers,
                       const net::IPEndPoint& remote_endpoint,
                       OnAuthRequiredCallback callback) override;
@@ -119,9 +119,8 @@ class WebRequestProxyingWebSocket
   void OnHeadersReceivedComplete(int error_code);
   void ContinueToHeadersReceived();
   void OnAuthRequiredComplete(net::NetworkDelegate::AuthRequiredResponse rv);
-  void OnHeadersReceivedCompleteForAuth(
-      scoped_refptr<net::AuthChallengeInfo> auth_info,
-      int rv);
+  void OnHeadersReceivedCompleteForAuth(const net::AuthChallengeInfo& auth_info,
+                                        int rv);
 
   void PauseIncomingMethodCallProcessing();
   void ResumeIncomingMethodCallProcessing();
@@ -147,6 +146,7 @@ class WebRequestProxyingWebSocket
   OnAuthRequiredCallback auth_required_callback_;
   scoped_refptr<net::HttpResponseHeaders> override_headers_;
   std::vector<std::string> websocket_protocols_;
+  std::vector<network::mojom::HttpHeaderPtr> additional_headers_;
 
   OnBeforeSendHeadersCallback on_before_send_headers_callback_;
   OnHeadersReceivedCallback on_headers_received_callback_;

@@ -4,11 +4,14 @@
 
 #include "components/offline_pages/core/model/offline_page_test_utils.h"
 
+#include "base/base64.h"
 #include "base/files/file_enumerator.h"
 #include "base/json/json_writer.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_visuals.h"
 #include "components/offline_pages/core/offline_store_utils.h"
 
 namespace offline_pages {
@@ -78,10 +81,34 @@ std::ostream& operator<<(std::ostream& out, const OfflinePageItem& item) {
   if (!item.digest.empty()) {
     value.SetKey("digest", Value(item.digest));
   }
+  if (!item.snippet.empty()) {
+    value.SetKey("snippet", Value(item.snippet));
+  }
+  if (!item.attribution.empty()) {
+    value.SetKey("attribution", Value(item.attribution));
+  }
 
   std::string value_string;
   base::JSONWriter::Write(value, &value_string);
   return out << value_string;
+}
+
+std::string OfflinePageVisuals::ToString() const {
+  std::string thumb_data_base64, favicon_data_base64;
+  base::Base64Encode(thumbnail, &thumb_data_base64);
+  base::Base64Encode(favicon, &favicon_data_base64);
+
+  std::string s("OfflinePageVisuals(id=");
+  s.append(base::NumberToString(offline_id)).append(", expiration=");
+  s.append(base::NumberToString(store_utils::ToDatabaseTime(expiration)))
+      .append(", thumbnail=");
+  s.append(thumb_data_base64).append(", favicon=");
+  s.append(favicon_data_base64).append(")");
+  return s;
+}
+
+std::ostream& operator<<(std::ostream& out, const OfflinePageVisuals& visuals) {
+  return out << visuals.ToString();
 }
 
 }  // namespace offline_pages

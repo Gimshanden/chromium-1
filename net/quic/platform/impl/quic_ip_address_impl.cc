@@ -38,6 +38,16 @@ QuicIpAddressImpl QuicIpAddressImpl::Any6() {
 QuicIpAddressImpl::QuicIpAddressImpl(const net::IPAddress& addr)
     : ip_address_(addr) {}
 
+static_assert(sizeof(in_addr) == 32 / 8, "in_addr must be 32-bit long");
+QuicIpAddressImpl::QuicIpAddressImpl(const in_addr& ipv4_address)
+    : ip_address_(reinterpret_cast<const uint8_t*>(&ipv4_address),
+                  sizeof(in_addr)) {}
+
+static_assert(sizeof(in6_addr) == 128 / 8, "in6_addr must be 128-bit long");
+QuicIpAddressImpl::QuicIpAddressImpl(const in6_addr& ipv6_address)
+    : ip_address_(reinterpret_cast<const uint8_t*>(&ipv6_address),
+                  sizeof(in6_addr)) {}
+
 bool operator==(QuicIpAddressImpl lhs, QuicIpAddressImpl rhs) {
   return lhs.ip_address_ == rhs.ip_address_;
 }
@@ -128,6 +138,16 @@ bool QuicIpAddressImpl::InSameSubnet(const QuicIpAddressImpl& other,
                                      int subnet_length) {
   return net::IPAddressMatchesPrefix(ip_address_, other.ip_address(),
                                      subnet_length);
+}
+
+in_addr QuicIpAddressImpl::GetIPv4() const {
+  DCHECK_EQ(sizeof(in_addr), ip_address_.bytes().size());
+  return *(reinterpret_cast<const in_addr*>(ip_address_.bytes().data()));
+}
+
+in6_addr QuicIpAddressImpl::GetIPv6() const {
+  DCHECK_EQ(sizeof(in6_addr), ip_address_.bytes().size());
+  return *(reinterpret_cast<const in6_addr*>(ip_address_.bytes().data()));
 }
 
 }  // namespace quic

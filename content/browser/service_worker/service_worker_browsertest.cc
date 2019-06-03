@@ -31,6 +31,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "content/browser/cache_storage/cache_storage.h"
 #include "content/browser/cache_storage/cache_storage_cache.h"
 #include "content/browser/cache_storage/cache_storage_cache_handle.h"
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
@@ -72,6 +73,7 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "content/public/test/url_loader_interceptor.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/test/test_content_browser_client.h"
@@ -818,11 +820,6 @@ class ServiceWorkerVersionBrowserTest : public ServiceWorkerBrowserTest {
         registration_.get(), version_.get(), status);
   }
 
-  void RemoveLiveRegistrationOnIOThread(int64_t id) {
-    ASSERT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::IO));
-    wrapper()->context()->RemoveLiveRegistration(id);
-  }
-
   void StartOnIOThread(base::OnceClosure done,
                        base::Optional<blink::ServiceWorkerStatusCode>* result) {
     ASSERT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::IO));
@@ -947,7 +944,7 @@ class ServiceWorkerVersionBrowserTest : public ServiceWorkerBrowserTest {
     ASSERT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::IO));
     version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
     GURL url = embedded_test_server()->GetURL(path);
-    ResourceType resource_type = RESOURCE_TYPE_MAIN_FRAME;
+    ResourceType resource_type = ResourceType::kMainFrame;
     base::OnceClosure prepare_callback = CreatePrepareReceiver(prepare_result);
     ServiceWorkerFetchDispatcher::FetchCallback fetch_callback =
         CreateResponseReceiver(std::move(done), blob_context_.get(), result);
@@ -1037,6 +1034,21 @@ class ServiceWorkerVersionBrowserTest : public ServiceWorkerBrowserTest {
     version_->StopWorker(std::move(done));
   }
 
+  void SetActiveVersionOnIOThread(ServiceWorkerRegistration* registration,
+                                  ServiceWorkerVersion* version) {
+    version->set_fetch_handler_existence(
+        ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+    version->SetStatus(ServiceWorkerVersion::ACTIVATED);
+    registration->SetActiveVersion(version);
+  }
+
+  void SetResourcesOnIOThread(
+      ServiceWorkerVersion* version,
+      const std::vector<ServiceWorkerDatabase::ResourceRecord>& resources) {
+    version->script_cache_map()->resource_map_.clear();
+    version->script_cache_map()->SetResources(resources);
+  }
+
  protected:
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
@@ -1114,28 +1126,24 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest, StartNotFound) {
   StartWorker(blink::ServiceWorkerStatusCode::kErrorNetwork);
 }
 
-#if defined(ANDROID)
-// Flaky failures on Android; see https://crbug.com/720275.
-#define MAYBE_ReadResourceFailure DISABLED_ReadResourceFailure
-#else
-#define MAYBE_ReadResourceFailure ReadResourceFailure
-#endif
-IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
-                       MAYBE_ReadResourceFailure) {
+IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest, ReadResourceFailure) {
   StartServerAndNavigateToSetup();
-  // Create a registration.
-  RunOnIOThread(base::BindOnce(&self::SetUpRegistrationOnIOThread,
-                               base::Unretained(this),
-                               "/service_worker/worker.js"));
-  version_->set_fetch_handler_existence(
-      ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
+
+  // Create a registration with an active version.
+  RunOnIOThread(base::BindOnce(
+      &ServiceWorkerVersionBrowserTest::SetUpRegistrationOnIOThread,
+      base::Unretained(this), "/service_worker/worker.js"));
+  RunOnIOThread(base::BindOnce(
+      &ServiceWorkerVersionBrowserTest::SetActiveVersionOnIOThread,
+      base::Unretained(this), base::Unretained(registration_.get()),
+      base::Unretained(version_.get())));
 
   // Add a non-existent resource to the version.
-  std::vector<ServiceWorkerDatabase::ResourceRecord> records;
-  records.push_back(
-      ServiceWorkerDatabase::ResourceRecord(30, version_->script_url(), 100));
-  version_->script_cache_map()->SetResources(records);
+  std::vector<ServiceWorkerDatabase::ResourceRecord> records = {
+      ServiceWorkerDatabase::ResourceRecord(30, version_->script_url(), 100)};
+  RunOnIOThread(base::BindOnce(
+      &ServiceWorkerVersionBrowserTest::SetResourcesOnIOThread,
+      base::Unretained(this), base::Unretained(version_.get()), records));
 
   // Store the registration.
   StoreRegistration(version_->version_id(),
@@ -1145,12 +1153,10 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   StartWorker(blink::ServiceWorkerStatusCode::kErrorDiskCache);
   EXPECT_EQ(ServiceWorkerVersion::REDUNDANT, version_->status());
 
-  // The registration should be deleted from storage since the broken worker was
-  // the stored one.
-  RunOnIOThread(base::BindOnce(&self::RemoveLiveRegistrationOnIOThread,
-                               base::Unretained(this), registration_->id()));
+  // The registration should be deleted from storage.
   FindRegistrationForId(registration_->id(), registration_->scope().GetOrigin(),
                         blink::ServiceWorkerStatusCode::kErrorNotFound);
+  EXPECT_TRUE(registration_->is_uninstalled());
 }
 
 IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
@@ -1166,17 +1172,23 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   RunOnIOThread(
       base::BindOnce(&self::AddControlleeOnIOThread, base::Unretained(this)));
 
-  // Add a non-existent resource to the version.
-  version_->script_cache_map()->resource_map_[version_->script_url()] =
-      ServiceWorkerDatabase::ResourceRecord(30, version_->script_url(), 100);
+  // Set a non-existent resource to the version.
+  std::vector<ServiceWorkerDatabase::ResourceRecord> records = {
+      ServiceWorkerDatabase::ResourceRecord(30, version_->script_url(), 100)};
+  RunOnIOThread(base::BindOnce(
+      &ServiceWorkerVersionBrowserTest::SetResourcesOnIOThread,
+      base::Unretained(this), base::Unretained(version_.get()), records));
 
   // Make a waiting version and store it.
   RunOnIOThread(base::BindOnce(&self::AddWaitingWorkerOnIOThread,
                                base::Unretained(this),
                                "/service_worker/worker.js"));
-  std::vector<ServiceWorkerDatabase::ResourceRecord> records = {
+  records = {
       ServiceWorkerDatabase::ResourceRecord(31, version_->script_url(), 100)};
-  registration_->waiting_version()->script_cache_map()->SetResources(records);
+  RunOnIOThread(base::BindOnce(
+      &ServiceWorkerVersionBrowserTest::SetResourcesOnIOThread,
+      base::Unretained(this),
+      base::Unretained(registration_->waiting_version()), records));
   StoreRegistration(registration_->waiting_version()->version_id(),
                     blink::ServiceWorkerStatusCode::kOk);
 
@@ -1186,12 +1198,11 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   StartWorker(blink::ServiceWorkerStatusCode::kErrorDiskCache);
   EXPECT_EQ(ServiceWorkerVersion::REDUNDANT, version_->status());
 
-  // The registration should still be in storage since the waiting worker was
-  // the stored one.
-  RunOnIOThread(base::BindOnce(&self::RemoveLiveRegistrationOnIOThread,
-                               base::Unretained(this), registration_->id()));
+  // The whole registration should be deleted from storage even though the
+  // waiting version was not the broken one.
   FindRegistrationForId(registration_->id(), registration_->scope().GetOrigin(),
-                        blink::ServiceWorkerStatusCode::kOk);
+                        blink::ServiceWorkerStatusCode::kErrorNotFound);
+  EXPECT_TRUE(registration_->is_uninstalled());
 }
 
 IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest, Install) {
@@ -1467,7 +1478,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   FetchOnRegisteredWorker(kPath, &result, &response1, &blob_data_handle);
   ASSERT_EQ(ServiceWorkerFetchDispatcher::FetchEventResult::kGotResponse,
             result);
-  EXPECT_EQ(std::string(), *response1->cache_storage_cache_name);
+  EXPECT_FALSE(response1->cache_storage_cache_name.has_value());
   EXPECT_EQ(network::mojom::FetchResponseSource::kNetwork,
             response1->response_source);
 
@@ -1498,7 +1509,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest,
   FetchOnRegisteredWorker(kPath, &result, &response1, &blob_data_handle);
   ASSERT_EQ(ServiceWorkerFetchDispatcher::FetchEventResult::kGotResponse,
             result);
-  EXPECT_EQ(std::string(), *response1->cache_storage_cache_name);
+  EXPECT_FALSE(response1->cache_storage_cache_name.has_value());
   EXPECT_EQ(network::mojom::FetchResponseSource::kNetwork,
             response1->response_source);
 
@@ -1696,6 +1707,64 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerVersionBrowserTest, FetchWithoutSaveData) {
   InstallTestHelper("/service_worker/fetch_in_install.js",
                     blink::ServiceWorkerStatusCode::kOk);
   SetBrowserClientForTesting(old_client);
+}
+
+// Tests the |top_frame_origin| and |request_initiator| on the main resource and
+// subresource requests from service workers, in order to ensure proper handling
+// by the SplitCache. See https://crbug.com/918868.
+IN_PROC_BROWSER_TEST_F(ServiceWorkerBrowserTest, RequestOrigin) {
+  embedded_test_server()->StartAcceptingConnections();
+
+  // To make things tricky about |top_frame_origin|, this test navigates to a
+  // page on |embedded_test_server()| which has a cross-origin iframe that
+  // registers the service worker.
+  net::EmbeddedTestServer cross_origin_server;
+  cross_origin_server.ServeFilesFromSourceDirectory(GetTestDataFilePath());
+  ASSERT_TRUE(cross_origin_server.Start());
+
+  // There are three requests to test:
+  // 1) The request for the worker itself ("request_origin_worker.js").
+  // 2) importScripts("empty.js") from the service worker.
+  // 3) fetch("empty.html") from the service worker.
+  std::set<GURL> expected_request_urls = {
+      cross_origin_server.GetURL("/service_worker/request_origin_worker.js"),
+      cross_origin_server.GetURL("/service_worker/empty.js"),
+      cross_origin_server.GetURL("/service_worker/empty.html")};
+
+  base::RunLoop request_origin_expectation_waiter;
+  URLLoaderInterceptor request_listener(base::BindLambdaForTesting(
+      [&](URLLoaderInterceptor::RequestParams* params) {
+        auto it = expected_request_urls.find(params->url_request.url);
+        if (it != expected_request_urls.end()) {
+          EXPECT_TRUE(params->url_request.originated_from_service_worker);
+          EXPECT_FALSE(params->url_request.top_frame_origin.has_value());
+          EXPECT_TRUE(params->url_request.request_initiator.has_value());
+          EXPECT_EQ(params->url_request.request_initiator->GetURL(),
+                    cross_origin_server.base_url());
+          expected_request_urls.erase(it);
+        }
+        if (expected_request_urls.empty())
+          request_origin_expectation_waiter.Quit();
+        return false;
+      }));
+
+  NavigateToURLBlockUntilNavigationsComplete(
+      shell(),
+      embedded_test_server()->GetURL(
+          "/service_worker/one_subframe.html?subframe_url=" +
+          cross_origin_server
+              .GetURL("/service_worker/create_service_worker.html")
+              .spec()),
+      1);
+  RenderFrameHost* subframe_rfh = FrameMatchingPredicate(
+      shell()->web_contents(),
+      base::BindRepeating(&FrameMatchesName, "subframe_name"));
+  DCHECK(subframe_rfh);
+
+  EXPECT_EQ("DONE",
+            EvalJs(subframe_rfh, "register('request_origin_worker.js');"));
+
+  request_origin_expectation_waiter.Run();
 }
 
 IN_PROC_BROWSER_TEST_F(ServiceWorkerBrowserTest, FetchPageWithSaveData) {
@@ -3223,7 +3292,7 @@ class CacheStorageSideDataSizeChecker
     blob_handle->get()->ReadSideData(base::BindOnce(
         [](scoped_refptr<storage::BlobHandle> blob_handle, int* result,
            base::OnceClosure continuation,
-           const base::Optional<std::vector<uint8_t>>& data) {
+           const base::Optional<mojo_base::BigBuffer> data) {
           *result = data ? data->size() : 0;
           std::move(continuation).Run();
         },

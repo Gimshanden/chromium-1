@@ -8,13 +8,16 @@
 
 namespace autofill_assistant {
 
-Selector::Selector() : pseudo_type(PseudoType::UNDEFINED) {}
+Selector::Selector() {}
 
-Selector::Selector(const ElementReferenceProto& element) {
-  for (const auto& selector : element.selectors()) {
+Selector::Selector(const ElementReferenceProto& proto) {
+  for (const auto& selector : proto.selectors()) {
     selectors.emplace_back(selector);
   }
-  pseudo_type = element.pseudo_type();
+  must_be_visible = proto.visibility_requirement() == MUST_BE_VISIBLE;
+  inner_text_pattern = proto.inner_text_pattern();
+  value_pattern = proto.value_pattern();
+  pseudo_type = proto.pseudo_type();
 }
 
 Selector::Selector(std::vector<std::string> s)
@@ -29,14 +32,19 @@ Selector& Selector::operator=(const Selector& other) = default;
 Selector& Selector::operator=(Selector&& other) = default;
 
 bool Selector::operator<(const Selector& other) const {
-  return this->selectors < other.selectors ||
-         (this->selectors == other.selectors &&
-          this->pseudo_type < other.pseudo_type);
+  return std::tie(selectors, inner_text_pattern, value_pattern, must_be_visible,
+                  pseudo_type) <
+         std::tie(other.selectors, other.inner_text_pattern,
+                  other.value_pattern, other.must_be_visible,
+                  other.pseudo_type);
 }
 
 bool Selector::operator==(const Selector& other) const {
-  return this->selectors == other.selectors &&
-         this->pseudo_type == other.pseudo_type;
+  return selectors == other.selectors &&
+         inner_text_pattern == other.inner_text_pattern &&
+         value_pattern == other.value_pattern &&
+         must_be_visible == other.must_be_visible &&
+         pseudo_type == other.pseudo_type;
 }
 
 bool Selector::empty() const {
@@ -109,6 +117,19 @@ std::ostream& operator<<(std::ostream& out, const Selector& selector) {
   return out;
 #else
   out << "elements=[" << base::JoinString(selector.selectors, ",") << "]";
+  if (!selector.inner_text_pattern.empty()) {
+    out << " innerText =~ /";
+    out << selector.inner_text_pattern;
+    out << "/";
+  }
+  if (!selector.value_pattern.empty()) {
+    out << " value =~ /";
+    out << selector.value_pattern;
+    out << "/";
+  }
+  if (selector.must_be_visible) {
+    out << " must_be_visible";
+  }
   if (selector.pseudo_type != PseudoType::UNDEFINED) {
     out << "::" << selector.pseudo_type;
   }

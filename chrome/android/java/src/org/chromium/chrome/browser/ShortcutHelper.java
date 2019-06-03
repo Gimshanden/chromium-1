@@ -232,7 +232,7 @@ public class ShortcutHelper {
      */
     @SuppressWarnings("unused")
     @CalledByNative
-    private static void addShortcut(String id, String url, String userTitle, Bitmap icon,
+    public static void addShortcut(String id, String url, String userTitle, Bitmap icon,
             boolean isIconAdaptive, int source) {
         Context context = ContextUtils.getApplicationContext();
         final Intent shortcutIntent = createShortcutIntent(url);
@@ -765,7 +765,7 @@ public class ShortcutHelper {
                 // return value is non-null
                 WebApkInfo webApkInfo = WebApkInfo.create(packageInfo.packageName, "",
                         ShortcutSource.UNKNOWN, false /* forceNavigation */,
-                        false /* useTransparentSplash */, null /* shareData */);
+                        false /* isSplashProvidedByWebApk */, null /* shareData */);
                 if (webApkInfo != null) {
                     names.add(webApkInfo.name());
                     shortNames.add(webApkInfo.shortName());

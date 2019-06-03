@@ -21,6 +21,10 @@
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_task.h"
 
+namespace cbor {
+class Value;
+}
+
 namespace device {
 
 class AuthenticatorGetAssertionResponse;
@@ -44,12 +48,22 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionTask : public FidoTask {
                    GetAssertionTaskCallback callback);
   ~GetAssertionTask() override;
 
+  // FidoTask:
+  void Cancel() override;
+
+  // StringFixupPredicate indicates which fields of a GetAssertion
+  // response may contain truncated UTF-8 strings. See
+  // |Ctap2DeviceOperation::CBORPathPredicate|.
+  static bool StringFixupPredicate(const std::vector<const cbor::Value*>& path);
+
  private:
   // FidoTask:
   void StartTask() override;
 
   void GetAssertion();
   void U2fSign();
+
+  CtapGetAssertionRequest NextSilentRequest();
 
   // HandleResponse is the callback to a CTAP2 assertion request that requested
   // user-presence.
@@ -58,10 +72,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionTask : public FidoTask {
       base::Optional<AuthenticatorGetAssertionResponse> response_data);
 
   // HandleResponseToSilentRequest is a callback to a request without user-
-  // presence requested used when this assertion request may require falling
-  // back to U2F.
+  // presence requested used to silently probe credentials from the allow list.
   void HandleResponseToSilentRequest(
-      UserVerificationRequirement original_uv_configuration,
       CtapDeviceResponseCode response_code,
       base::Optional<AuthenticatorGetAssertionResponse> response_data);
 
@@ -75,6 +87,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionTask : public FidoTask {
   std::unique_ptr<SignOperation> sign_operation_;
   std::unique_ptr<RegisterOperation> dummy_register_operation_;
   GetAssertionTaskCallback callback_;
+  size_t current_credential_ = 0;
+  bool canceled_ = false;
+
   base::WeakPtrFactory<GetAssertionTask> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(GetAssertionTask);

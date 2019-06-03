@@ -8,7 +8,7 @@
  */
 Profiler.IsolateSelector = class extends UI.VBox {
   constructor() {
-    super(true);
+    super(false);
 
     /** @type {!UI.ListModel<!Profiler.IsolateSelector.ListItem>} */
     this._items = new UI.ListModel();
@@ -16,13 +16,18 @@ Profiler.IsolateSelector = class extends UI.VBox {
     this._list = new UI.ListControl(this._items, this, UI.ListMode.NonViewport);
     this.contentElement.appendChild(this._list.element);
 
-    this.registerRequiredCSS('profiler/profileLauncherView.css');
     /** @type {!Map<!SDK.IsolateManager.Isolate, !Profiler.IsolateSelector.ListItem>} */
     this._itemByIsolate = new Map();
-    this._updateTimer = null;
+
+    this._totalElement = createElementWithClass('div', 'profile-memory-usage-item hbox');
+    this._totalValueDiv = this._totalElement.createChild('div', 'profile-memory-usage-item-size');
+    this._totalTrendDiv = this._totalElement.createChild('div', 'profile-memory-usage-item-trend');
+    this._totalElement.createChild('div').textContent = ls`Total JS heap size`;
+    const trendIntervalMinutes = Math.round(SDK.IsolateManager.MemoryTrendWindowMs / 60e3);
+    this._totalTrendDiv.title = ls`Total page JS heap size change trend over the last ${trendIntervalMinutes} minutes.`;
+    this._totalValueDiv.title = ls`Total page JS heap size across all VM instances.`;
 
     SDK.isolateManager.observeIsolates(this);
-
     SDK.targetManager.addEventListener(SDK.TargetManager.Events.NameChanged, this._targetChanged, this);
     SDK.targetManager.addEventListener(SDK.TargetManager.Events.InspectedURLChanged, this._targetChanged, this);
   }
@@ -31,14 +36,14 @@ Profiler.IsolateSelector = class extends UI.VBox {
    * @override
    */
   wasShown() {
-    this._updateStats();
+    SDK.isolateManager.addEventListener(SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
   }
 
   /**
    * @override
    */
   willHide() {
-    clearTimeout(this._updateTimer);
+    SDK.isolateManager.removeEventListener(SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
   }
 
   /**
@@ -91,6 +96,50 @@ Profiler.IsolateSelector = class extends UI.VBox {
   }
 
   /**
+   * @param {!Common.Event} event
+   */
+  _heapStatsChanged(event) {
+    const isolate = /** @type {!SDK.IsolateManager.Isolate} */ (event.data);
+    const listItem = this._itemByIsolate.get(isolate);
+    if (listItem)
+      listItem.updateStats();
+    this._updateTotal();
+  }
+
+  _updateTotal() {
+    let total = 0;
+    let trend = 0;
+    for (const isolate of SDK.isolateManager.isolates()) {
+      total += isolate.usedHeapSize();
+      trend += isolate.usedHeapSizeGrowRate();
+    }
+    this._totalValueDiv.textContent = Number.bytesToString(total);
+    Profiler.IsolateSelector._formatTrendElement(trend, this._totalTrendDiv);
+  }
+
+  /**
+   * @param {number} trendValueMs
+   * @param {!Element} element
+   */
+  static _formatTrendElement(trendValueMs, element) {
+    const changeRateBytesPerSecond = trendValueMs * 1e3;
+    const changeRateThresholdBytesPerSecond = 1024;
+    if (Math.abs(changeRateBytesPerSecond) < changeRateThresholdBytesPerSecond)
+      return;
+    const changeRateText = Number.bytesToString(Math.abs(changeRateBytesPerSecond));
+    const changeText = changeRateBytesPerSecond > 0 ? ls`\u2B06${changeRateText}/s` : ls`\u2B07${changeRateText}/s`;
+    element.classList.toggle('increasing', changeRateBytesPerSecond > 0);
+    element.textContent = changeText;
+  }
+
+  /**
+   * @return {!Element}
+   */
+  totalMemoryElement() {
+    return this._totalElement;
+  }
+
+  /**
    * @override
    * @param {!Profiler.IsolateSelector.ListItem} item
    * @return {!Element}
@@ -134,67 +183,43 @@ Profiler.IsolateSelector = class extends UI.VBox {
   }
 
   _update() {
+    this._updateTotal();
     this._list.invalidateRange(0, this._items.length);
-  }
-
-  _updateStats() {
-    for (const item of this._itemByIsolate.values())
-      item.updateStats();
-    this._updateTimer = setTimeout(() => this._updateStats(), Profiler.IsolateSelector._heapStatsUpdateIntervalMs);
   }
 };
 
-Profiler.IsolateSelector._heapStatsUpdateIntervalMs = 2000;
-
 Profiler.IsolateSelector.ListItem = class {
   /**
-   * @param {!SDK.IsolateManager.Isolate} isolateInfo
+   * @param {!SDK.IsolateManager.Isolate} isolate
    */
-  constructor(isolateInfo) {
-    this._isolateInfo = isolateInfo;
-    this.element = createElementWithClass('div', 'profile-isolate-item hbox');
-    this._heapDiv = this.element.createChild('div', 'profile-isolate-item-heap');
-    this._nameDiv = this.element.createChild('div', 'profile-isolate-item-name');
-    this._updatesDisabled = false;
+  constructor(isolate) {
+    this._isolate = isolate;
+    const trendIntervalMinutes = Math.round(SDK.IsolateManager.MemoryTrendWindowMs / 60e3);
+    this.element = createElementWithClass('div', 'profile-memory-usage-item hbox');
+    this._heapDiv = this.element.createChild('div', 'profile-memory-usage-item-size');
+    this._trendDiv = this.element.createChild('div', 'profile-memory-usage-item-trend');
+    this._nameDiv = this.element.createChild('div', 'profile-memory-usage-item-name');
+    this._heapDiv.title = ls`Heap size in use by live JS objects.`;
+    this._trendDiv.title = ls`Heap size change trend over the last ${trendIntervalMinutes} minutes.`;
     this.updateTitle();
-    this.updateStats();
   }
 
   /**
-   * @return {!Set<!SDK.RuntimeModel>}
-   */
-  models() {
-    return this._isolateInfo.models();
-  }
-
-  /**
-   * @return {!SDK.RuntimeModel}
+   * @return {?SDK.RuntimeModel}
    */
   model() {
-    return this.models().values().next().value;
+    return this._isolate.runtimeModel();
   }
 
-  async updateStats() {
-    if (this._updatesDisabled)
-      return;
-    const heapStats = await this.model().heapUsage();
-    if (!heapStats) {
-      this._updatesDisabled = true;
-      return;
-    }
-    const usedTitle = ls`Heap size in use by live JS objects.`;
-    const totalTitle = ls`Total JS heap size including live objects, garbage, and reserved space.`;
-    this._heapDiv.removeChildren();
-    this._heapDiv.append(UI.html`
-        <span title="${usedTitle}">${Number.bytesToString(heapStats.usedSize)}</span>
-        <span> / </span>
-        <span title="${totalTitle}">${Number.bytesToString(heapStats.totalSize)}</span>`);
+  updateStats() {
+    this._heapDiv.textContent = Number.bytesToString(this._isolate.usedHeapSize());
+    Profiler.IsolateSelector._formatTrendElement(this._isolate.usedHeapSizeGrowRate(), this._trendDiv);
   }
 
   updateTitle() {
     /** @type {!Map<string, number>} */
     const modelCountByName = new Map();
-    for (const model of this.models()) {
+    for (const model of this._isolate.models()) {
       const target = model.target();
       const name = SDK.targetManager.mainTarget() !== target ? target.name() : '';
       const parsedURL = new Common.ParsedURL(target.inspectedURL());

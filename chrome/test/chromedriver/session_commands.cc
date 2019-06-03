@@ -239,6 +239,10 @@ bool GetW3CSetting(const base::DictionaryValue& params) {
     }
   }
 
+  if (!params.HasKey("capabilities")) {
+    return false;
+  }
+
   return kW3CDefault;
 }
 

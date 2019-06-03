@@ -9,7 +9,6 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Build;
-import android.os.Build.VERSION;
 import android.text.TextUtils;
 
 import org.chromium.base.annotations.CalledByNative;
@@ -24,6 +23,9 @@ public class BuildInfo {
 
     private static PackageInfo sBrowserPackageInfo;
     private static boolean sInitialized;
+
+    /** Not a member variable to avoid creating the instance early (it is set early in start up). */
+    private static String sFirebaseAppId = "";
 
     /** The application name (e.g. "Chrome"). For WebView, this is name of the embedding app. */
     public final String hostPackageLabel;
@@ -75,7 +77,7 @@ public class BuildInfo {
                 buildInfo.gmsVersionCode,
                 buildInfo.installerPackageName,
                 buildInfo.abiString,
-                BuildConfig.FIREBASE_APP_ID,
+                sFirebaseAppId,
                 buildInfo.customThemes,
                 buildInfo.resourcesVersion,
                 buildInfo.extractedFileSuffix,
@@ -164,10 +166,9 @@ public class BuildInfo {
                 abiString = String.format("ABI1: %s, ABI2: %s", Build.CPU_ABI, Build.CPU_ABI2);
             }
 
-            // Use lastUpdateTime when developing locally, since versionCode does not normally
-            // change in this case.
-            long version = versionCode > 10 ? versionCode : pi.lastUpdateTime;
-            extractedFileSuffix = String.format("@%x", version);
+            // Append lastUpdateTime to versionCode, since versionCode is unlikely to change when
+            // developing locally but lastUpdateTime is.
+            extractedFileSuffix = String.format("@%x_%x", versionCode, pi.lastUpdateTime);
 
             // The value is truncated, as this is used for crash and UMA reporting.
             androidBuildFingerprint = Build.FINGERPRINT.substring(
@@ -199,17 +200,23 @@ public class BuildInfo {
      * @return {@code true} if Q APIs are available for use, {@code false} otherwise
      */
     public static boolean isAtLeastQ() {
-        return VERSION.CODENAME.length() == 1 && VERSION.CODENAME.charAt(0) >= 'Q'
-                && VERSION.CODENAME.charAt(0) <= 'Z';
+        return Build.VERSION.SDK_INT >= 29;
     }
 
     /**
      * Checks if the application targets pre-release SDK Q
      */
     public static boolean targetsAtLeastQ() {
-        return isAtLeastQ()
-                && ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion
-                == Build.VERSION_CODES.CUR_DEVELOPMENT;
+        return ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion >= 29;
+    }
+
+    public static void setFirebaseAppId(String id) {
+        assert sFirebaseAppId.equals("");
+        sFirebaseAppId = id;
+    }
+
+    public static String getFirebaseAppId() {
+        return sFirebaseAppId;
     }
 
     // End:BuildCompat

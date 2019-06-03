@@ -5,10 +5,12 @@
 #ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_RULESET_MATCHER_H_
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_RULESET_MATCHER_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "components/url_pattern_index/url_pattern_index.h"
 #include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
 #include "url/gurl.h"
@@ -25,17 +27,26 @@ struct ExtensionIndexedRuleset;
 struct UrlRuleMetadata;
 }  // namespace flat
 
+class RulesetMatcher;
+
 // Struct to hold parameters for a network request.
 struct RequestParams {
   // |info| must outlive this instance.
   explicit RequestParams(const WebRequestInfo& info);
   RequestParams();
+  ~RequestParams();
 
   // This is a pointer to a GURL. Hence the GURL must outlive this struct.
   const GURL* url = nullptr;
   url::Origin first_party_origin;
   url_pattern_index::flat::ElementType element_type;
   bool is_third_party;
+
+  // A map of RulesetMatchers to results of |HasMatchingAllowRule| for this
+  // request. Used as a cache to prevent extra calls to |HasMatchingAllowRule|.
+  mutable base::flat_map<const RulesetMatcher*, bool> allow_rule_cache;
+
+  DISALLOW_COPY_AND_ASSIGN(RequestParams);
 };
 
 // RulesetMatcher encapsulates the Declarative Net Request API ruleset
@@ -92,10 +103,19 @@ class RulesetMatcher {
     return GetMatchingRule(params, flat::ActionIndex_allow);
   }
 
+  // Returns the bitmask of headers to remove from the request. The bitmask
+  // corresponds to RemoveHeadersMask type. |current_mask| denotes the current
+  // mask of headers to be removed and is included in the return value.
+  uint8_t GetRemoveHeadersMask(const RequestParams& params,
+                               uint8_t current_mask) const;
+
   // Returns whether the ruleset has a matching redirect rule. Populates
   // |redirect_url| on returning true. |redirect_url| must not be null.
   bool HasMatchingRedirectRule(const RequestParams& params,
                                GURL* redirect_url) const;
+
+  // Returns whether this modifies "extraHeaders".
+  bool IsExtraHeadersMatcher() const { return is_extra_headers_matcher_; }
 
   // ID of the ruleset. Each extension can have multiple rulesets with
   // their own unique ids.
@@ -129,6 +149,8 @@ class RulesetMatcher {
 
   size_t id_;
   size_t priority_;
+
+  const bool is_extra_headers_matcher_;
 
   DISALLOW_COPY_AND_ASSIGN(RulesetMatcher);
 };

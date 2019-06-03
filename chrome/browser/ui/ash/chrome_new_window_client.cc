@@ -4,11 +4,16 @@
 
 #include "chrome/browser/ui/ash/chrome_new_window_client.h"
 
+#include <string>
 #include <utility>
 
+#include "ash/public/cpp/arc_custom_tab.h"
 #include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/keyboard_shortcut_viewer.h"
 #include "ash/public/interfaces/constants.mojom.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/browser/chromeos/arc/arc_web_contents_data.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_content_file_system_url_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -20,7 +25,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/ui/ash/ksv/keyboard_shortcut_viewer_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -32,8 +36,10 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/webui/chrome_web_contents_handler.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
@@ -52,12 +58,9 @@
 #include "ui/aura/window.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/views/mus/remote_view/remote_view_provider.h"
 #include "url/url_constants.h"
 
 namespace {
-
-ChromeNewWindowClient* g_chrome_new_window_client_instance = nullptr;
 
 void RestoreTabUsingProfile(Profile* profile) {
   sessions::TabRestoreService* service =
@@ -67,7 +70,7 @@ void RestoreTabUsingProfile(Profile* profile) {
 
 bool IsIncognitoAllowed() {
   Profile* profile = ProfileManager::GetActiveUserProfile();
-  return profile && profile->GetProfileType() != Profile::GUEST_PROFILE &&
+  return profile && !profile->IsGuestSession() &&
          IncognitoModePrefs::GetAvailability(profile->GetPrefs()) !=
              IncognitoModePrefs::DISABLED;
 }
@@ -83,36 +86,77 @@ GURL ConvertArcUrlToExternalFileUrlIfNeeded(const GURL& url) {
   return url;
 }
 
+// Returns URL path and query without the "/" prefix. For example, for the URL
+// "chrome://settings/networks/?type=WiFi" returns "networks/?type=WiFi".
+std::string GetPathAndQuery(const GURL& url) {
+  std::string result = url.path();
+  if (!result.empty() && result[0] == '/')
+    result.erase(0, 1);
+  if (url.has_query()) {
+    result += '?';
+    result += url.query();
+  }
+  return result;
+}
+
 // Implementation of CustomTabSession interface.
 class CustomTabSessionImpl : public arc::mojom::CustomTabSession {
  public:
   static arc::mojom::CustomTabSessionPtr Create(
       Profile* profile,
       const GURL& url,
-      ash::mojom::ArcCustomTabViewPtr view) {
+      std::unique_ptr<ash::ArcCustomTab> custom_tab) {
+    if (!custom_tab)
+      return nullptr;
+
     // This object will be deleted when the mojo connection is closed.
-    auto* tab = new CustomTabSessionImpl(profile, url, std::move(view));
+    auto* tab = new CustomTabSessionImpl(profile, url, std::move(custom_tab));
     arc::mojom::CustomTabSessionPtr ptr;
     tab->Bind(&ptr);
     return ptr;
   }
 
+  // arc::mojom::CustomTabSession override:
+  void OnOpenInChromeClicked() override { forwarded_to_normal_tab_ = true; }
+
  private:
   CustomTabSessionImpl(Profile* profile,
                        const GURL& url,
-                       ash::mojom::ArcCustomTabViewPtr view)
+                       std::unique_ptr<ash::ArcCustomTab> custom_tab)
       : binding_(this),
-        view_(std::move(view)),
+        custom_tab_(std::move(custom_tab)),
         web_contents_(CreateWebContents(profile, url)),
         weak_ptr_factory_(this) {
     aura::Window* window = web_contents_->GetNativeView();
-    remote_view_provider_ = std::make_unique<views::RemoteViewProvider>(window);
-    remote_view_provider_->GetEmbedToken(base::BindOnce(
-        &CustomTabSessionImpl::OnEmbedToken, weak_ptr_factory_.GetWeakPtr()));
+    custom_tab_->Attach(window);
     window->Show();
   }
 
-  ~CustomTabSessionImpl() override = default;
+  ~CustomTabSessionImpl() override {
+    // Keep in sync with ArcCustomTabsSessionEndReason in
+    // //tools/metrics/histograms/enums.xml.
+    enum class SessionEndReason {
+      CLOSED = 0,
+      FORWARDED_TO_NORMAL_TAB = 1,
+      kMaxValue = FORWARDED_TO_NORMAL_TAB,
+    } session_end_reason = forwarded_to_normal_tab_
+                               ? SessionEndReason::FORWARDED_TO_NORMAL_TAB
+                               : SessionEndReason::CLOSED;
+    UMA_HISTOGRAM_ENUMERATION("Arc.CustomTabs.SessionEndReason",
+                              session_end_reason);
+    auto elapsed = lifetime_timer_.Elapsed();
+    UMA_HISTOGRAM_MEDIUM_TIMES("Arc.CustomTabs.SessionLifetime.All", elapsed);
+    switch (session_end_reason) {
+      case SessionEndReason::CLOSED:
+        UMA_HISTOGRAM_MEDIUM_TIMES("Arc.CustomTabs.SessionLifetime.Closed",
+                                   elapsed);
+        break;
+      case SessionEndReason::FORWARDED_TO_NORMAL_TAB:
+        UMA_HISTOGRAM_MEDIUM_TIMES(
+            "Arc.CustomTabs.SessionLifetime.ForwardedToNormalTab", elapsed);
+        break;
+    }
+  }
 
   void Bind(arc::mojom::CustomTabSessionPtr* ptr) {
     binding_.Bind(mojo::MakeRequest(ptr));
@@ -131,16 +175,8 @@ class CustomTabSessionImpl : public arc::mojom::CustomTabSession {
     std::unique_ptr<content::WebContents> web_contents =
         content::WebContents::Create(create_params);
 
-    // Use the same version number as browser_commands.cc
-    // TODO(hashimoto): Get the actual Android version from the container.
-    constexpr char kOsOverrideForTabletSite[] = "Linux; Android 4.0.3";
     // Override the user agent to request mobile version web sites.
-    const std::string product =
-        version_info::GetProductNameAndVersionForUserAgent();
-    const std::string user_agent = content::BuildUserAgentFromOSAndProduct(
-        kOsOverrideForTabletSite, product);
-    web_contents->SetUserAgentOverride(user_agent,
-                                       false /* override_in_new_tabs */);
+    chrome::SetAndroidOsForTabletSite(web_contents.get());
 
     content::NavigationController::LoadURLParams load_url_params(url);
     load_url_params.source_site_instance = site_instance;
@@ -154,14 +190,11 @@ class CustomTabSessionImpl : public arc::mojom::CustomTabSession {
     return web_contents;
   }
 
-  void OnEmbedToken(const base::UnguessableToken& token) {
-    view_->EmbedUsingToken(token);
-  }
-
   mojo::Binding<arc::mojom::CustomTabSession> binding_;
-  ash::mojom::ArcCustomTabViewPtr view_;
+  std::unique_ptr<ash::ArcCustomTab> custom_tab_;
   std::unique_ptr<content::WebContents> web_contents_;
-  std::unique_ptr<views::RemoteViewProvider> remote_view_provider_;
+  base::ElapsedTimer lifetime_timer_;
+  bool forwarded_to_normal_tab_ = false;
   base::WeakPtrFactory<CustomTabSessionImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomTabSessionImpl);
@@ -169,34 +202,18 @@ class CustomTabSessionImpl : public arc::mojom::CustomTabSession {
 
 }  // namespace
 
-ChromeNewWindowClient::ChromeNewWindowClient() : binding_(this) {
+ChromeNewWindowClient::ChromeNewWindowClient() {
   arc::ArcIntentHelperBridge::SetOpenUrlDelegate(this);
-
-  service_manager::Connector* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  connector->BindInterface(ash::mojom::kServiceName, &new_window_controller_);
-  connector->BindInterface(ash::mojom::kServiceName,
-                           &arc_custom_tab_controller_);
-
-  // Register this object as the client interface implementation.
-  ash::mojom::NewWindowClientAssociatedPtrInfo ptr_info;
-  binding_.Bind(mojo::MakeRequest(&ptr_info));
-  new_window_controller_->SetClient(std::move(ptr_info));
-
-  DCHECK(!g_chrome_new_window_client_instance);
-  g_chrome_new_window_client_instance = this;
 }
 
 ChromeNewWindowClient::~ChromeNewWindowClient() {
-  DCHECK_EQ(g_chrome_new_window_client_instance, this);
-  g_chrome_new_window_client_instance = nullptr;
-
   arc::ArcIntentHelperBridge::SetOpenUrlDelegate(nullptr);
 }
 
 // static
 ChromeNewWindowClient* ChromeNewWindowClient::Get() {
-  return g_chrome_new_window_client_instance;
+  return static_cast<ChromeNewWindowClient*>(
+      ash::NewWindowDelegate::GetInstance());
 }
 
 // TabRestoreHelper is used to restore a tab. In particular when the user
@@ -341,7 +358,7 @@ void ChromeNewWindowClient::RestoreTab() {
 }
 
 void ChromeNewWindowClient::ShowKeyboardShortcutViewer() {
-  keyboard_shortcut_viewer_util::ToggleKeyboardShortcutViewer();
+  ash::ToggleKeyboardShortcutViewer();
 }
 
 void ChromeNewWindowClient::ShowTaskManager() {
@@ -416,37 +433,35 @@ void ChromeNewWindowClient::OpenArcCustomTab(
     arc::mojom::IntentHelperHost::OnOpenCustomTabCallback callback) {
   GURL url_to_open = ConvertArcUrlToExternalFileUrlIfNeeded(url);
   Profile* profile = ProfileManager::GetActiveUserProfile();
-  arc_custom_tab_controller_->CreateView(
-      task_id, surface_id, top_margin,
-      base::BindOnce(
-          [](Profile* profile, const GURL& url,
-             arc::mojom::IntentHelperHost::OnOpenCustomTabCallback callback,
-             ash::mojom::ArcCustomTabViewPtr view) {
-            if (!view) {
-              std::move(callback).Run(nullptr);
-              return;
-            }
-            std::move(callback).Run(
-                CustomTabSessionImpl::Create(profile, url, std::move(view)));
-          },
-          profile, url_to_open, std::move(callback)));
+  auto custom_tab = ash::ArcCustomTab::Create(task_id, surface_id, top_margin);
+  std::move(callback).Run(
+      CustomTabSessionImpl::Create(profile, url, std::move(custom_tab)));
 }
 
 content::WebContents* ChromeNewWindowClient::OpenUrlImpl(
     const GURL& url,
     bool from_user_interaction) {
-  // If the url is for system settings, show the settings in a window instead of
-  // a browser tab.
-  if (url.GetContent() == "settings" &&
-      (url.SchemeIs(url::kAboutScheme) ||
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  if ((url.SchemeIs(url::kAboutScheme) ||
        url.SchemeIs(content::kChromeUIScheme))) {
-    chrome::ShowSettingsSubPageForProfile(
-        ProfileManager::GetActiveUserProfile(), /*sub_page=*/std::string());
-    return nullptr;
+    // Show browser settings (e.g. chrome://settings). This may open in a window
+    // or a tab depending on feature SplitSettings.
+    if (url.host() == chrome::kChromeUISettingsHost) {
+      std::string sub_page = GetPathAndQuery(url);
+      chrome::ShowSettingsSubPageForProfile(profile, sub_page);
+      return nullptr;
+    }
+    // OS settings are shown in a window.
+    if (url.host() == chrome::kChromeUIOSSettingsHost) {
+      std::string sub_page = GetPathAndQuery(url);
+      chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(profile,
+                                                                   sub_page);
+      return nullptr;
+    }
   }
 
   NavigateParams navigate_params(
-      ProfileManager::GetActiveUserProfile(), url,
+      profile, url,
       ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
                                 ui::PAGE_TRANSITION_FROM_API));
 

@@ -14,8 +14,11 @@
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "base/values.h"
+#import "ios/testing/earl_grey/earl_grey_app.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
+#include "ios/web/public/test/element_selector.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "ios/web/web_state/web_state_impl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -197,31 +200,34 @@ id<GREYAction> WebViewVerifiedActionOnElement(WebState* state,
       return NO;
     }
 
-    // Run the action.
-    [[EarlGrey selectElementWithMatcher:WebViewInWebState(state)]
+    // Run the action and wait for the UI to settle.
+    NSError* actionError = nil;
+    [[[GREYElementInteraction alloc]
+        initWithElementMatcher:WebViewInWebState(state)]
         performAction:action
-                error:error];
+                error:&actionError];
 
-    if (*error) {
+    if (actionError) {
+      *error = actionError;
       return NO;
     }
+    [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
     // Wait for the verified to trigger and set |verified|.
     NSString* verification_timeout_message =
         [NSString stringWithFormat:@"The action (%@) on element %@ wasn't "
                                    @"verified before timing out.",
                                    action.name, selector.selectorDescription];
-    GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
-                   kWaitForVerificationTimeout,
-                   ^{
-                     return verified;
-                   }),
-               verification_timeout_message);
+    bool success = base::test::ios::WaitUntilConditionOrTimeout(
+        kWaitForVerificationTimeout, ^{
+          return verified;
+        });
 
-    // If |verified| is not true, the wait condition should have already exited
-    // this control flow, so sanity check that it has in fact been set to
-    // true by this point.
-    DCHECK(verified);
+    if (!success || !verified) {
+      DLOG(WARNING) << base::SysNSStringToUTF8(verification_timeout_message);
+      return NO;
+    }
+
     return YES;
   };
 

@@ -39,31 +39,31 @@ class FakeSyncService : public SyncService {
   void OnDataTypeRequestsSyncStartup(ModelType type) override;
   void StopAndClear() override;
   ModelTypeSet GetRegisteredDataTypes() const override;
-  ModelTypeSet GetForcedDataTypes() const override;
   ModelTypeSet GetPreferredDataTypes() const override;
   std::unique_ptr<SyncSetupInProgressHandle> GetSetupInProgressHandle()
       override;
   bool IsSetupInProgress() const override;
   GoogleServiceAuthError GetAuthError() const override;
+  base::Time GetAuthErrorTime() const override;
   bool RequiresClientUpgrade() const override;
   UserShare* GetUserShare() const override;
-  void ReenableDatatype(ModelType type) override;
   void ReadyForStartChanged(syncer::ModelType type) override;
-  SyncTokenStatus GetSyncTokenStatus() const override;
+  SyncTokenStatus GetSyncTokenStatusForDebugging() const override;
   bool QueryDetailedSyncStatusForDebugging(SyncStatus* result) const override;
-  base::Time GetLastSyncedTime() const override;
-  SyncCycleSnapshot GetLastCycleSnapshot() const override;
+  base::Time GetLastSyncedTimeForDebugging() const override;
+  SyncCycleSnapshot GetLastCycleSnapshotForDebugging() const override;
   std::unique_ptr<base::Value> GetTypeStatusMapForDebugging() override;
-  const GURL& sync_service_url() const override;
-  std::string unrecoverable_error_message() const override;
-  base::Location unrecoverable_error_location() const override;
+  const GURL& GetSyncServiceUrlForDebugging() const override;
+  std::string GetUnrecoverableErrorMessageForDebugging() const override;
+  base::Location GetUnrecoverableErrorLocationForDebugging() const override;
   void AddProtocolEventObserver(ProtocolEventObserver* observer) override;
   void RemoveProtocolEventObserver(ProtocolEventObserver* observer) override;
   void AddTypeDebugInfoObserver(TypeDebugInfoObserver* observer) override;
   void RemoveTypeDebugInfoObserver(TypeDebugInfoObserver* observer) override;
   base::WeakPtr<JsController> GetJsController() override;
-  void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
-                       callback) override;
+  void GetAllNodesForDebugging(
+      const base::Callback<void(std::unique_ptr<base::ListValue>)>& callback)
+      override;
   void SetInvalidationsForSessionsEnabled(bool enabled) override;
 
   // KeyedService implementation.

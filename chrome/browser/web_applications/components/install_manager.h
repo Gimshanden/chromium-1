@@ -11,6 +11,7 @@
 #include "base/observer_list.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/browser/web_applications/components/web_app_install_utils.h"
+#include "chrome/browser/web_applications/components/web_app_url_loader.h"
 
 enum class WebappInstallSource;
 struct WebApplicationInfo;
@@ -18,6 +19,8 @@ struct WebApplicationInfo;
 namespace content {
 class WebContents;
 }
+
+class Profile;
 
 namespace web_app {
 
@@ -46,30 +49,38 @@ class InstallManager {
       ForInstallableSite for_installable_site,
       WebAppInstallationAcceptanceCallback acceptance_callback)>;
 
+  using WebAppInstallabilityCheckCallback =
+      base::OnceCallback<void(std::unique_ptr<content::WebContents>,
+                              bool is_installable)>;
+
   // Returns true if a web app can be installed for a given |web_contents|.
   virtual bool CanInstallWebApp(content::WebContents* web_contents) = 0;
 
-  // Starts a web app installation process for a given |web_contents|.
-  // |force_shortcut_app| forces the creation of a shortcut app instead of a PWA
-  // even if installation is available.
-  virtual void InstallWebApp(content::WebContents* web_contents,
-                             bool force_shortcut_app,
-                             WebappInstallSource install_source,
-                             WebAppInstallDialogCallback dialog_callback,
-                             OnceInstallCallback callback) = 0;
-
-  // Starts a web app installation process for a given |web_contents|, initiated
-  // by WebApp script. Bypasses the GetWebApplicationInfo from renderer step.
-  virtual void InstallWebAppFromBanner(
+  // Checks a WebApp installability, retrieves manifest and icons and
+  // than performs the actual installation.
+  virtual void InstallWebAppFromManifest(
       content::WebContents* web_contents,
       WebappInstallSource install_source,
       WebAppInstallDialogCallback dialog_callback,
       OnceInstallCallback callback) = 0;
 
+  // Infers WebApp info from the blink renderer process and then retrieves a
+  // manifest in a way similar to |InstallWebAppFromManifest|. If the manifest
+  // is incomplete or missing, the inferred info is used. |force_shortcut_app|
+  // forces the creation of a shortcut app instead of a PWA even if installation
+  // is available.
+  virtual void InstallWebAppFromManifestWithFallback(
+      content::WebContents* web_contents,
+      bool force_shortcut_app,
+      WebappInstallSource install_source,
+      WebAppInstallDialogCallback dialog_callback,
+      OnceInstallCallback callback) = 0;
+
   // Starts a web app installation process using prefilled
-  // |web_application_info|. If |no_network_install| is true, then
-  // |web_application_info| holds all the data needed for installation and
-  // InstallManager should not try to fetch a manifest.
+  // |web_application_info| which holds all the data needed for installation.
+  // InstallManager doesn't fetch a manifest. If |no_network_install| is true,
+  // the app will not be synced, since if the data is locally available we
+  // assume there is an external sync mechanism.
   virtual void InstallWebAppFromInfo(
       std::unique_ptr<WebApplicationInfo> web_application_info,
       bool no_network_install,
@@ -96,16 +107,26 @@ class InstallManager {
       std::unique_ptr<WebApplicationInfo> web_application_info,
       OnceInstallCallback callback) = 0;
 
-  InstallManager();
+  explicit InstallManager(Profile* profile);
   virtual ~InstallManager();
 
-  // Called before the web app system gets destroyed.
-  void Reset();
+  virtual void Shutdown();
+
+  // Loads |web_app_url| in a new WebContents and determines if it is
+  // installable. Returns the WebContents and whether the app is installable or
+  // not.
+  void LoadWebAppAndCheckInstallability(const GURL& web_app_url,
+                                        WebAppInstallabilityCheckCallback);
 
   void AddObserver(InstallManagerObserver* observer);
   void RemoveObserver(InstallManagerObserver* observer);
 
+ protected:
+  Profile* profile() { return profile_; }
+
  private:
+  Profile* profile_;
+  WebAppUrlLoader url_loader_;
   base::ObserverList<InstallManagerObserver, true /*check_empty*/> observers_;
 };
 

@@ -29,10 +29,10 @@
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/frame/from_ad_state.h"
+#include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/web/web_view_client.h"
 #include "third_party/blink/public/web/web_window_features.h"
 #include "third_party/blink/renderer/core/core_initializer.h"
@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
@@ -49,6 +50,9 @@
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/wtf/text/number_parsing_options.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_to_number.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
 
@@ -67,15 +71,12 @@ WebWindowFeatures GetWindowFeaturesFromString(const String& feature_string) {
   if (feature_string.IsEmpty())
     return window_features;
 
-  window_features.menu_bar_visible = false;
-  window_features.status_bar_visible = false;
-  window_features.tool_bar_visible = false;
-  window_features.scrollbars_visible = false;
+  bool ui_features_were_disabled = false;
 
   unsigned key_begin, key_end;
   unsigned value_begin, value_end;
 
-  String buffer = feature_string.DeprecatedLower();
+  String buffer = feature_string.LowerASCII();
   unsigned length = buffer.length();
   for (unsigned i = 0; i < length;) {
     // skip to first non-separator (start of key name), but don't skip
@@ -128,20 +129,33 @@ WebWindowFeatures GetWindowFeaturesFromString(const String& feature_string) {
       value_end = i;
     }
 
-    String key_string(
-        buffer.Substring(key_begin, key_end - key_begin).LowerASCII());
-    String value_string(
-        buffer.Substring(value_begin, value_end - value_begin).LowerASCII());
+    if (key_begin == key_end)
+      continue;
+
+    StringView key_string(buffer, key_begin, key_end - key_begin);
+    StringView value_string(buffer, value_begin, value_end - value_begin);
 
     // Listing a key with no value is shorthand for key=yes
     int value;
-    if (value_string.IsEmpty() || value_string == "yes")
+    if (value_string.IsEmpty() || value_string == "yes") {
       value = 1;
-    else
-      value = value_string.ToInt();
+    } else if (value_string.Is8Bit()) {
+      value = CharactersToInt(value_string.Characters8(), value_string.length(),
+                              WTF::NumberParsingOptions::kLoose, nullptr);
+    } else {
+      value =
+          CharactersToInt(value_string.Characters16(), value_string.length(),
+                          WTF::NumberParsingOptions::kLoose, nullptr);
+    }
 
-    if (key_string.IsEmpty())
-      continue;
+    if (!ui_features_were_disabled && key_string != "noopener" &&
+        key_string != "noreferrer") {
+      ui_features_were_disabled = true;
+      window_features.menu_bar_visible = false;
+      window_features.status_bar_visible = false;
+      window_features.tool_bar_visible = false;
+      window_features.scrollbars_visible = false;
+    }
 
     if (key_string == "left" || key_string == "screenx") {
       window_features.x_set = true;
@@ -166,13 +180,18 @@ WebWindowFeatures GetWindowFeaturesFromString(const String& feature_string) {
     } else if (key_string == "resizable") {
       window_features.resizable = value;
     } else if (key_string == "noopener") {
-      window_features.noopener = true;
+      window_features.noopener = value;
+    } else if (key_string == "noreferrer") {
+      window_features.noreferrer = value;
     } else if (key_string == "background") {
       window_features.background = true;
     } else if (key_string == "persistent") {
       window_features.persistent = true;
     }
   }
+
+  if (window_features.noreferrer)
+    window_features.noopener = true;
 
   return window_features;
 }
@@ -203,9 +222,10 @@ static void MaybeLogWindowOpen(LocalFrame& opener_frame) {
 
 Frame* CreateNewWindow(LocalFrame& opener_frame,
                        FrameLoadRequest& request,
-                       bool& created) {
+                       const AtomicString& frame_name) {
   DCHECK(request.GetResourceRequest().RequestorOrigin() ||
          opener_frame.GetDocument()->Url().IsEmpty());
+  DCHECK_EQ(kNavigationPolicyCurrentTab, request.GetNavigationPolicy());
 
   // Exempting window.open() from this check here is necessary to support a
   // special policy that will be removed in Chrome 82.
@@ -235,12 +255,12 @@ Frame* CreateNewWindow(LocalFrame& opener_frame,
   }
 
   const WebWindowFeatures& features = request.GetWindowFeatures();
-  probe::WindowOpen(opener_frame.GetDocument(), url, request.FrameName(),
-                    features,
+  request.SetNavigationPolicy(NavigationPolicyForCreateWindow(features));
+  probe::WindowOpen(opener_frame.GetDocument(), url, frame_name, features,
                     LocalFrame::HasTransientUserActivation(&opener_frame));
 
   // Sandboxed frames cannot open new auxiliary browsing contexts.
-  if (opener_frame.GetDocument()->IsSandboxed(kSandboxPopups)) {
+  if (opener_frame.GetDocument()->IsSandboxed(WebSandboxFlags::kPopups)) {
     // FIXME: This message should be moved off the console once a solution to
     // https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
     opener_frame.GetDocument()->AddConsoleMessage(ConsoleMessage::Create(
@@ -253,12 +273,12 @@ Frame* CreateNewWindow(LocalFrame& opener_frame,
   }
 
   bool propagate_sandbox = opener_frame.GetDocument()->IsSandboxed(
-      kSandboxPropagatesToAuxiliaryBrowsingContexts);
+      WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts);
   const SandboxFlags sandbox_flags =
       propagate_sandbox ? opener_frame.GetDocument()->GetSandboxFlags()
-                        : kSandboxNone;
+                        : WebSandboxFlags::kNone;
   bool not_sandboxed =
-      opener_frame.GetDocument()->GetSandboxFlags() == kSandboxNone;
+      opener_frame.GetDocument()->GetSandboxFlags() == WebSandboxFlags::kNone;
   FeaturePolicy::FeatureState opener_feature_state =
       (not_sandboxed || propagate_sandbox)
           ? opener_frame.GetDocument()->GetFeaturePolicy()->GetFeatureState()
@@ -268,17 +288,15 @@ Frame* CreateNewWindow(LocalFrame& opener_frame,
       AllocateSessionStorageNamespaceId();
 
   Page* old_page = opener_frame.GetPage();
-  if (base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage)) {
-    // TODO(dmurph): Don't copy session storage when features.noopener is true:
-    // https://html.spec.whatwg.org/C/#copy-session-storage
-    // https://crbug.com/771959
-    CoreInitializer::GetInstance().CloneSessionStorage(old_page,
-                                                       new_namespace_id);
-  }
+  // TODO(dmurph): Don't copy session storage when features.noopener is true:
+  // https://html.spec.whatwg.org/C/#copy-session-storage
+  // https://crbug.com/771959
+  CoreInitializer::GetInstance().CloneSessionStorage(old_page,
+                                                     new_namespace_id);
 
   Page* page = old_page->GetChromeClient().CreateWindow(
-      &opener_frame, request, features, sandbox_flags, opener_feature_state,
-      new_namespace_id);
+      &opener_frame, request, frame_name, features, sandbox_flags,
+      opener_feature_state, new_namespace_id);
   if (!page)
     return nullptr;
 
@@ -296,7 +314,7 @@ Frame* CreateNewWindow(LocalFrame& opener_frame,
     Frame* frame = &opener_frame.Tree().Top();
     if (!opener_frame.CanNavigate(*frame))
       return nullptr;
-    if (request.GetShouldSetOpener() == kMaybeSetOpener)
+    if (!features.noopener)
       frame->Client()->SetOpener(&opener_frame);
     return frame;
   }
@@ -322,7 +340,6 @@ Frame* CreateNewWindow(LocalFrame& opener_frame,
   page->GetChromeClient().Show(request.GetNavigationPolicy());
 
   MaybeLogWindowOpen(opener_frame);
-  created = true;
   return &frame;
 }
 

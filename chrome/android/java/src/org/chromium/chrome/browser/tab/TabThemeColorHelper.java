@@ -113,6 +113,8 @@ public class TabThemeColorHelper extends EmptyTabObserver implements UserData {
         if (securityLevel == ConnectionSecurityLevel.DANGEROUS
                 || securityLevel == ConnectionSecurityLevel.SECURE_WITH_POLICY_INSTALLED_CERT
                 || (mTab.getActivity() != null && mTab.getActivity().isTablet())
+                || (mTab.getActivity() != null
+                        && mTab.getActivity().getNightModeStateProvider().isInNightMode())
                 || mTab.isNativePage() || mTab.isShowingInterstitialPage()
                 || themeColor == TabState.UNSPECIFIED_THEME_COLOR || mTab.isIncognito()
                 || mTab.isPreview()) {
@@ -136,13 +138,6 @@ public class TabThemeColorHelper extends EmptyTabObserver implements UserData {
         if (themeColor == mColor) return;
         mColor = themeColor;
         mTab.notifyThemeColorChanged(themeColor);
-    }
-
-    /**
-     * @return Whether the theme color for this tab is the default color.
-     */
-    public boolean isDefaultColor() {
-        return mTab.isNativePage() || mDefaultColor == getColor();
     }
 
     /**

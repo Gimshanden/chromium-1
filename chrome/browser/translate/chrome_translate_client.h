@@ -86,7 +86,6 @@ class ChromeTranslateClient
   PrefService* GetPrefs() override;
   std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
   translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
-  void RecordTranslateEvent(const metrics::TranslateEventProto&) override;
 #if defined(OS_ANDROID)
   std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
@@ -99,8 +98,6 @@ class ChromeTranslateClient
 #endif
   void SetPredefinedTargetLanguage(const std::string& translate_language_code);
 
-  void RecordLanguageDetectionEvent(
-      const translate::LanguageDetectionDetails& details) const override;
   bool ShowTranslateUI(translate::TranslateStep step,
                        const std::string& source_language,
                        const std::string& target_language,
@@ -131,12 +128,14 @@ class ChromeTranslateClient
   // content::WebContentsObserver implementation.
   void WebContentsDestroyed() override;
 
+#if !defined(OS_ANDROID)
   // Shows the translate bubble.
   ShowTranslateBubbleResult ShowBubble(
       translate::TranslateStep step,
       const std::string& source_language,
       const std::string& target_language,
       translate::TranslateErrors::Type error_type);
+#endif
 
   translate::ContentTranslateDriver translate_driver_;
   std::unique_ptr<translate::TranslateManager> translate_manager_;

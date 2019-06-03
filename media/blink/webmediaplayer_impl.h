@@ -52,6 +52,7 @@ namespace blink {
 class WebLocalFrame;
 class WebMediaPlayerClient;
 class WebMediaPlayerEncryptedMediaClient;
+class WebAudioSourceProviderImpl;
 }
 
 namespace base {
@@ -78,7 +79,6 @@ class MediaLog;
 class UrlIndex;
 class VideoFrameCompositor;
 class WatchTimeReporter;
-class WebAudioSourceProviderImpl;
 class WebMediaPlayerDelegate;
 
 // The canonical implementation of blink::WebMediaPlayer that's backed by
@@ -89,8 +89,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
       public WebMediaPlayerDelegate::Observer,
       public Pipeline::Client,
       public MediaObserverClient,
-      public blink::WebSurfaceLayerBridgeObserver,
-      public base::SupportsWeakPtr<WebMediaPlayerImpl> {
+      public blink::WebSurfaceLayerBridgeObserver {
  public:
   // Constructs a WebMediaPlayer implementation using Chromium's media stack.
   // |delegate| and |renderer_factory_selector| must not be null.
@@ -208,7 +207,8 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
       int already_uploaded_id,
       VideoFrameUploadMetadata* out_metadata);
 
-  blink::WebAudioSourceProvider* GetAudioSourceProvider() override;
+  scoped_refptr<blink::WebAudioSourceProviderImpl> GetAudioSourceProvider()
+      override;
 
   void SetContentDecryptionModule(
       blink::WebContentDecryptionModule* cdm,
@@ -235,7 +235,6 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   void OnSeekBackward(double seconds) override;
   void OnVolumeMultiplierUpdate(double multiplier) override;
   void OnBecamePersistentVideo(bool value) override;
-  void OnPictureInPictureModeEnded() override;
 
   // Callback for when bytes are received by |chunk_demuxer_| or the UrlData
   // being loaded.
@@ -270,6 +269,8 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   bool IsOpaque() const override;
   int GetDelegateId() override;
   base::Optional<viz::SurfaceId> GetSurfaceId() override;
+
+  base::WeakPtr<blink::WebMediaPlayer> AsWeakPtr() override;
 
   bool IsBackgroundMediaSuspendEnabled() const {
     return is_background_suspend_enabled_;
@@ -322,7 +323,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   // Pipeline::Client overrides.
   void OnError(PipelineStatus status) override;
   void OnEnded() override;
-  void OnMetadata(PipelineMetadata metadata) override;
+  void OnMetadata(const PipelineMetadata& metadata) override;
   void OnBufferingStateChange(BufferingState state) override;
   void OnDurationChange() override;
   void OnAddTextTrack(const TextTrackConfig& config,
@@ -461,11 +462,11 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   // is intended for android.
   bool DoesOverlaySupportMetadata() const;
 
-  // Whether the video should be paused when hidden. Uses metadata so has
+  // Whether the playback should be paused when hidden. Uses metadata so has
   // meaning only after the pipeline has started, otherwise returns false.
-  // Doesn't check if the video can actually be paused depending on the
+  // Doesn't check if the playback can actually be paused depending on the
   // pipeline's state.
-  bool ShouldPauseVideoWhenHidden() const;
+  bool ShouldPausePlaybackWhenHidden() const;
 
   // Whether the video track should be disabled when hidden. Uses metadata so
   // has meaning only after the pipeline has started, otherwise returns false.
@@ -580,6 +581,11 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
 
   void SendBytesReceivedUpdate();
 
+  // Notifies |mb_data_source_| of playback and rate changes which may increase
+  // the amount of data the DataSource buffers. Does nothing prior to reaching
+  // kReadyStateHaveEnoughData for the first time.
+  void MaybeUpdateBufferSizesForPlayback();
+
   blink::WebLocalFrame* const frame_;
 
   // The playback state last reported to |delegate_|, to avoid setting duplicate
@@ -609,7 +615,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   std::unique_ptr<MediaLog> media_log_;
 
   // |pipeline_controller_| owns an instance of Pipeline.
-  PipelineController pipeline_controller_;
+  std::unique_ptr<PipelineController> pipeline_controller_;
 
   // The LoadType passed in the |load_type| parameter of the load() call.
   LoadType load_type_ = kLoadTypeURL;
@@ -695,7 +701,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   int64_t last_reported_memory_usage_ = 0;
 
   // Routes audio playback to either AudioRendererSink or WebAudio.
-  scoped_refptr<WebAudioSourceProviderImpl> audio_source_provider_;
+  scoped_refptr<blink::WebAudioSourceProviderImpl> audio_source_provider_;
 
   // These two are mutually exclusive:
   //   |data_source_| is used for regular resource loads.
@@ -712,7 +718,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
 
   const base::TickClock* tick_clock_ = nullptr;
 
-  BufferedDataSourceHostImpl buffered_data_source_host_;
+  std::unique_ptr<BufferedDataSourceHostImpl> buffered_data_source_host_;
   UrlIndex* const url_index_;
   scoped_refptr<viz::ContextProvider> context_provider_;
 
@@ -894,7 +900,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   base::Optional<base::TimeDelta> pipeline_media_duration_for_test_;
 
   // Whether the video requires a user gesture to resume after it was paused in
-  // the background. Affects the value of ShouldPauseVideoWhenHidden().
+  // the background. Affects the value of ShouldPausePlaybackWhenHidden().
   bool video_locked_when_paused_when_hidden_ = false;
 
   // Whether embedded media experience is currently enabled.
@@ -964,11 +970,16 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerImpl
   bool is_background_suspend_enabled_ = false;
 
   // If disabled, video will be auto paused when in background. Affects the
-  // value of ShouldPauseVideoWhenHidden().
+  // value of ShouldPausePlaybackWhenHidden().
   bool is_background_video_playback_enabled_ = true;
 
   // Whether background video optimization is supported on current platform.
   bool is_background_video_track_optimization_supported_ = true;
+
+  base::CancelableOnceClosure have_enough_after_lazy_load_cb_;
+
+  base::WeakPtr<WebMediaPlayerImpl> weak_this_;
+  base::WeakPtrFactory<WebMediaPlayerImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMediaPlayerImpl);
 };

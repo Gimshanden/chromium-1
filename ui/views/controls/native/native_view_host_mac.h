@@ -30,7 +30,7 @@ class NativeViewHostMac : public NativeViewHostWrapper,
 
   // ViewsHostableView::Host:
   ui::Layer* GetUiLayer() const override;
-  uint64_t GetViewsFactoryHostId() const override;
+  remote_cocoa::mojom::Application* GetRemoteCocoaApplication() const override;
   uint64_t GetNSViewId() const override;
   void OnHostableViewDestroying() override;
 

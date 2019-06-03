@@ -10,13 +10,12 @@
 #include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
 #include "chrome/browser/chromeos/login/screens/network_error.h"
-#include "chrome/browser/chromeos/login/screens/reset_view.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/reset/metrics.h"
 #include "chrome/browser/chromeos/tpm_firmware_update.h"
+#include "chrome/browser/ui/webui/chromeos/login/reset_screen_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -40,6 +39,11 @@ constexpr const char kUserActionResetResetConfirmationDismissed[] =
     "reset-confirm-dismissed";
 constexpr const char kUserActionTPMFirmwareUpdateLearnMore[] =
     "tpm-firmware-update-learn-more-link";
+
+// If set, callback that will be run to determine TPM firmware update
+// availability. Used for tests.
+ResetScreen::TpmFirmwareUpdateAvailabilityChecker*
+    g_tpm_firmware_update_checker = nullptr;
 
 void StartTPMFirmwareUpdate(
     tpm_firmware_update::Mode requested_mode,
@@ -77,13 +81,24 @@ void StartTPMFirmwareUpdate(
 
 }  // namespace
 
-ResetScreen::ResetScreen(BaseScreenDelegate* base_screen_delegate,
-                         ResetView* view,
+// static
+void ResetScreen::SetTpmFirmwareUpdateCheckerForTesting(
+    TpmFirmwareUpdateAvailabilityChecker* checker) {
+  g_tpm_firmware_update_checker = checker;
+}
+
+ResetScreen::ResetScreen(ResetView* view,
+                         ErrorScreen* error_screen,
                          const base::RepeatingClosure& exit_callback)
-    : BaseScreen(OobeScreen::SCREEN_OOBE_RESET),
-      base_screen_delegate_(base_screen_delegate),
+    : BaseScreen(ResetView::kScreenId),
       view_(view),
+      error_screen_(error_screen),
       exit_callback_(exit_callback),
+      tpm_firmware_update_checker_(
+          g_tpm_firmware_update_checker
+              ? *g_tpm_firmware_update_checker
+              : base::BindRepeating(
+                    &tpm_firmware_update::GetAvailableUpdateModes)),
       weak_ptr_factory_(this) {
   DCHECK(view_);
   if (view_) {
@@ -173,7 +188,7 @@ void ResetScreen::Show() {
     // system to see whether to offer the checkbox to update TPM firmware. Note
     // that due to the asynchronous availability check, the decision might not
     // be available immediately, so set a timeout of a couple seconds.
-    tpm_firmware_update::GetAvailableUpdateModes(
+    tpm_firmware_update_checker_.Run(
         base::BindOnce(&ResetScreen::OnTPMFirmwareUpdateAvailableCheck,
                        weak_ptr_factory_.GetWeakPtr()),
         base::TimeDelta::FromSeconds(10));
@@ -259,7 +274,7 @@ void ResetScreen::OnPowerwash() {
     // Re-check availability with a couple seconds timeout. This addresses the
     // case where the powerwash dialog gets shown immediately after reboot and
     // the decision on whether the update is available is not known immediately.
-    tpm_firmware_update::GetAvailableUpdateModes(
+    tpm_firmware_update_checker_.Run(
         base::BindOnce(&StartTPMFirmwareUpdate,
                        view_->GetTpmFirmwareUpdateMode()),
         base::TimeDelta::FromSeconds(10));
@@ -339,9 +354,8 @@ void ResetScreen::UpdateStatusChanged(
           UpdateEngineClient::UPDATE_STATUS_REPORTING_ERROR_EVENT) {
     view_->SetScreenState(ResetView::State::kError);
     // Show error screen.
-    base_screen_delegate_->GetErrorScreen()->SetUIState(
-        NetworkError::UI_STATE_ROLLBACK_ERROR);
-    base_screen_delegate_->ShowErrorScreen();
+    error_screen_->SetUIState(NetworkError::UI_STATE_ROLLBACK_ERROR);
+    error_screen_->Show();
   } else if (status.status ==
              UpdateEngineClient::UPDATE_STATUS_UPDATED_NEED_REBOOT) {
     PowerManagerClient::Get()->RequestRestart(

@@ -8,7 +8,6 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_split.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -35,13 +34,12 @@ namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogQuicPushStreamCallback(
-    quic::QuicStreamId stream_id,
-    const GURL* url,
-    NetLogCaptureMode capture_mode) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("stream_id", stream_id);
-  dict->SetString("url", url->spec());
+base::Value NetLogQuicPushStreamCallback(quic::QuicStreamId stream_id,
+                                         const GURL* url,
+                                         NetLogCaptureMode capture_mode) {
+  base::DictionaryValue dict;
+  dict.SetInteger("stream_id", stream_id);
+  dict.SetString("url", url->spec());
   return std::move(dict);
 }
 
@@ -94,6 +92,8 @@ HttpResponseInfo::ConnectionInfo QuicHttpStream::ConnectionInfoFromQuicVersion(
       return HttpResponseInfo::CONNECTION_INFO_QUIC_47;
     case quic::QUIC_VERSION_99:
       return HttpResponseInfo::CONNECTION_INFO_QUIC_99;
+    case quic::QUIC_VERSION_RESERVED_FOR_NEGOTIATION:
+      return HttpResponseInfo::CONNECTION_INFO_QUIC_999;
   }
   NOTREACHED();
   return HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION;
@@ -229,12 +229,14 @@ int QuicHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
     //   && (request_body_stream_->size() ||
     //       request_body_stream_->is_chunked()))
     // Set the body buffer size to be the size of the body clamped
-    // into the range [10 * quic::kMaxPacketSize, 256 * quic::kMaxPacketSize].
-    // With larger bodies, larger buffers reduce CPU usage.
+    // into the range [10 * quic::kMaxOutgoingPacketSize, 256 *
+    // quic::kMaxOutgoingPacketSize]. With larger bodies, larger buffers reduce
+    // CPU usage.
     raw_request_body_buf_ =
-        base::MakeRefCounted<IOBufferWithSize>(static_cast<size_t>(std::max(
-            10 * quic::kMaxPacketSize, std::min(request_body_stream_->size(),
-                                                256 * quic::kMaxPacketSize))));
+        base::MakeRefCounted<IOBufferWithSize>(static_cast<size_t>(
+            std::max(10 * quic::kMaxOutgoingPacketSize,
+                     std::min(request_body_stream_->size(),
+                              256 * quic::kMaxOutgoingPacketSize))));
     // The request body buffer is empty at first.
     request_body_buf_ =
         base::MakeRefCounted<DrainableIOBuffer>(raw_request_body_buf_, 0);
@@ -454,7 +456,7 @@ void QuicHttpStream::DoCallback(int rv) {
 
   // The client callback can do anything, including destroying this class,
   // so any pending callback must be issued after everything else is done.
-  base::ResetAndReturn(&callback_).Run(MapStreamError(rv));
+  std::move(callback_).Run(MapStreamError(rv));
 }
 
 int QuicHttpStream::DoLoop(int rv) {

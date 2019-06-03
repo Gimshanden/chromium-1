@@ -311,7 +311,10 @@ STDMETHODIMP TSFTextStore::GetTextExt(TsViewCookie view_cookie,
           tmp_rect.set_width(0);
           result_rect = gfx::Rect(tmp_rect);
         } else {
-          return TS_E_NOLAYOUT;
+          // PPAPI flash does not support GetCompositionCharacterBounds. We need
+          // to call GetCaretBounds instead to get correct text bounds info.
+          // TODO(https://crbug.com/963706): Remove this hack.
+          result_rect = gfx::Rect(text_input_client_->GetCaretBounds());
         }
       } else if (text_input_client_->GetCompositionCharacterBounds(
                      start_pos - 1, &tmp_rect)) {
@@ -341,17 +344,20 @@ STDMETHODIMP TSFTextStore::GetTextExt(TsViewCookie view_cookie,
           // first character bounds instead of returning TS_E_NOLAYOUT.
         }
       } else {
-        return TS_E_NOLAYOUT;
+        // PPAPI flash does not support GetCompositionCharacterBounds. We need
+        // to call GetCaretBounds instead to get correct text bounds info.
+        // TODO(https://crbug.com/963706): Remove this hack.
+        if (start_pos == 0) {
+          result_rect = gfx::Rect(text_input_client_->GetCaretBounds());
+        } else {
+          return TS_E_NOLAYOUT;
+        }
       }
     } else {
-      // Hack for PPAPI flash. PPAPI flash does not support GetCaretBounds, so
-      // it's better to return previous caret rectangle instead.
-      // TODO(nona, kinaba): Remove this hack.
-      if (start_pos == 0) {
-        result_rect = gfx::Rect(text_input_client_->GetCaretBounds());
-      } else {
-        return TS_E_NOLAYOUT;
-      }
+      // Caret Bounds may be incorrect if focus is in flash control and
+      // |start_pos| is not equal to |end_pos|. In this case, it's better to
+      // return previous caret rectangle instead.
+      result_rect = gfx::Rect(text_input_client_->GetCaretBounds());
     }
   }
   *rect = display::win::ScreenWin::DIPToScreenRect(window_handle_, result_rect)
@@ -593,7 +599,8 @@ STDMETHODIMP TSFTextStore::RequestLock(DWORD lock_flags, HRESULT* result) {
   // the replacement text is coming from on-screen keyboard, we should replace
   // current selection with new text.
   if (((new_composition_start > last_composition_start) ||
-       (wparam_keydown_fired_ == 0 && !has_composition_range_)) &&
+       (wparam_keydown_fired_ == 0 && !has_composition_range_ &&
+        !text_input_client_->HasCompositionText())) &&
       text_input_client_) {
     CommitTextAndEndCompositionIfAny(last_composition_start,
                                      new_composition_start);
@@ -606,16 +613,21 @@ STDMETHODIMP TSFTextStore::RequestLock(DWORD lock_flags, HRESULT* result) {
   // Only need to set composition if the current composition string
   // (composition_string) is not the same as previous composition string
   // (prev_composition_string_) during same composition or the composition
-  // string is the same for different composition. If composition_string is
-  // empty and there is an existing composition going on, we still need to call
-  // into blink to complete the composition started by TSF.
-  if ((previous_composition_start_ != composition_range_.start() ||
-       previous_composition_string_ != composition_string) ||
+  // string is the same for different composition or selection is changed during
+  // composition. If composition_string is empty and there is an existing
+  // composition going on, we still need to call into blink to complete the
+  // composition started by TSF.
+  if ((has_composition_range_ &&
+       (previous_composition_start_ != composition_range_.start() ||
+        previous_composition_string_ != composition_string ||
+        !previous_composition_selection_range_.EqualsIgnoringDirection(
+            selection_))) ||
       ((wparam_keydown_fired_ != 0) &&
        text_input_client_->HasCompositionText() &&
        composition_string.empty())) {
     previous_composition_string_ = composition_string;
     previous_composition_start_ = composition_range_.start();
+    previous_composition_selection_range_ = selection_;
 
     StartCompositionOnNewText(new_composition_start, composition_string);
   }
@@ -666,7 +678,8 @@ STDMETHODIMP TSFTextStore::RetrieveRequestedAttrs(
   attribute_buffer[0].varValue.vt = VT_UNKNOWN;
   attribute_buffer[0].varValue.punkVal =
       tsf_inputscope::CreateInputScope(text_input_client_->GetTextInputType(),
-                                       text_input_client_->GetTextInputMode());
+                                       text_input_client_->GetTextInputMode(),
+                                       text_input_client_->ShouldDoLearning());
   attribute_buffer[0].varValue.punkVal->AddRef();
   *attribute_buffer_copied = 1;
   return S_OK;
@@ -866,6 +879,7 @@ STDMETHODIMP TSFTextStore::OnEndEdit(ITfContext* context,
           composition_range_.set_end(0);
           previous_composition_string_.clear();
           previous_composition_start_ = 0;
+          previous_composition_selection_range_ = gfx::Range::InvalidRange();
         }
       }
     }
@@ -979,6 +993,19 @@ bool TSFTextStore::GetCompositionStatus(
   return true;
 }
 
+bool TSFTextStore::TerminateComposition() {
+  if (context_ && has_composition_range_) {
+    Microsoft::WRL::ComPtr<ITfContextOwnerCompositionServices> service;
+
+    if (SUCCEEDED(context_->QueryInterface(IID_PPV_ARGS(&service)))) {
+      service->TerminateComposition(nullptr);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void TSFTextStore::CalculateTextandSelectionDiffAndNotifyIfNeeded() {
   if (!text_input_client_)
     return;
@@ -1087,6 +1114,10 @@ void TSFTextStore::CalculateTextandSelectionDiffAndNotifyIfNeeded() {
   }
 }
 
+void TSFTextStore::OnContextInitialized(ITfContext* context) {
+  context_ = context;
+}
+
 void TSFTextStore::SetFocusedTextInputClient(
     HWND focused_window,
     TextInputClient* text_input_client) {
@@ -1112,38 +1143,17 @@ void TSFTextStore::RemoveInputMethodDelegate() {
 }
 
 bool TSFTextStore::CancelComposition() {
-  // If there is an on-going document lock, we must not edit the text.
-  if (edit_flag_)
-    return false;
+  // This method should correspond to
+  //   ImmNotifyIME(NI_COMPOSITIONSTR, CPS_CANCEL, 0)
+  // in IMM32 hence calling falling back to |ConfirmComposition()| is not
+  // technically correct, because |ConfirmComposition()| corresponds to
+  // |CPS_COMPLETE| rather than |CPS_CANCEL|.
+  // However in Chromium it seems that |InputMethod::CancelComposition()|
+  // might have already committed composing text despite its name.
+  // TODO(IME): Check other platforms to see if |CancelComposition()| is
+  //            actually working or not.
 
-  if (string_pending_insertion_.empty())
-    return true;
-
-  // Unlike ImmNotifyIME(NI_COMPOSITIONSTR, CPS_CANCEL, 0) in IMM32, TSF does
-  // not have a dedicated method to cancel composition. However, CUAS actually
-  // has a protocol conversion from CPS_CANCEL into TSF operations. According
-  // to the observations on Windows 7, TIPs are expected to cancel composition
-  // when an on-going composition text is replaced with an empty string. So
-  // we use the same operation to cancel composition here to minimize the risk
-  // of potential compatibility issues.
-
-  previous_composition_string_.clear();
-  previous_composition_start_ = 0;
-  const size_t previous_buffer_size = string_buffer_document_.size();
-  string_pending_insertion_.clear();
-  composition_start_ = selection_.start();
-  if (text_store_acp_sink_mask_ & TS_AS_SEL_CHANGE)
-    text_store_acp_sink_->OnSelectionChange();
-  if (text_store_acp_sink_mask_ & TS_AS_LAYOUT_CHANGE)
-    text_store_acp_sink_->OnLayoutChange(TS_LC_CHANGE, 0);
-  if (text_store_acp_sink_mask_ & TS_AS_TEXT_CHANGE) {
-    TS_TEXTCHANGE textChange = {};
-    textChange.acpStart = 0;
-    textChange.acpOldEnd = previous_buffer_size;
-    textChange.acpNewEnd = 0;
-    text_store_acp_sink_->OnTextChange(0, &textChange);
-  }
-  return true;
+  return ConfirmComposition();
 }
 
 bool TSFTextStore::ConfirmComposition() {
@@ -1157,27 +1167,13 @@ bool TSFTextStore::ConfirmComposition() {
   if (!text_input_client_)
     return false;
 
-  // See the comment in TSFTextStore::CancelComposition.
-  // This logic is based on the observation about how to emulate
-  // ImmNotifyIME(NI_COMPOSITIONSTR, CPS_COMPLETE, 0) by CUAS.
-
   previous_composition_string_.clear();
   previous_composition_start_ = 0;
-  const size_t previous_buffer_size = string_buffer_document_.size();
+  previous_composition_selection_range_ = gfx::Range::InvalidRange();
   string_pending_insertion_.clear();
-  composition_start_ = selection_.start();
-  if (text_store_acp_sink_mask_ & TS_AS_SEL_CHANGE)
-    text_store_acp_sink_->OnSelectionChange();
-  if (text_store_acp_sink_mask_ & TS_AS_LAYOUT_CHANGE)
-    text_store_acp_sink_->OnLayoutChange(TS_LC_CHANGE, 0);
-  if (text_store_acp_sink_mask_ & TS_AS_TEXT_CHANGE) {
-    TS_TEXTCHANGE textChange = {};
-    textChange.acpStart = 0;
-    textChange.acpOldEnd = previous_buffer_size;
-    textChange.acpNewEnd = 0;
-    text_store_acp_sink_->OnTextChange(0, &textChange);
-  }
-  return true;
+  composition_start_ = selection_.end();
+
+  return TerminateComposition();
 }
 
 void TSFTextStore::SendOnLayoutChange() {
@@ -1247,6 +1243,10 @@ void TSFTextStore::CommitTextAndEndCompositionIfAny(size_t old_size,
     const base::string16& new_committed_string = string_buffer_document_.substr(
         new_committed_string_offset, new_committed_string_size);
     text_input_client_->InsertText(new_committed_string);
+    // Notify accessibility about this committed composition
+    text_input_client_->SetActiveCompositionForAccessibility(
+        replace_text_range_, new_committed_string,
+        /*is_composition_committed*/ true);
   }
 }
 
@@ -1277,6 +1277,21 @@ void TSFTextStore::StartCompositionOnNewText(
   if (text_input_client_) {
     new_text_inserted_ = false;
     text_input_client_->SetCompositionText(composition_text);
+    // Notify accessibility about this ongoing composition if the string is not
+    // empty
+    if (!composition_string.empty()) {
+      text_input_client_->SetActiveCompositionForAccessibility(
+          composition_range_, composition_string,
+          /*is_composition_committed*/ false);
+    } else {
+      // User wants to commit the current composition
+      const base::string16& committed_string = string_buffer_document_.substr(
+          composition_range_.start(),
+          composition_range_.end() - composition_range_.start());
+      text_input_client_->SetActiveCompositionForAccessibility(
+          composition_range_, committed_string,
+          /*is_composition_committed*/ true);
+    }
   }
 }
 

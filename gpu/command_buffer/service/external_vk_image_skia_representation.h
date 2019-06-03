@@ -25,11 +25,14 @@ class ExternalVkImageSkiaRepresentation : public SharedImageRepresentationSkia {
 
   // SharedImageRepresentationSkia implementation.
   sk_sp<SkSurface> BeginWriteAccess(
-      GrContext* gr_context,
       int final_msaa_count,
-      const SkSurfaceProps& surface_props) override;
+      const SkSurfaceProps& surface_props,
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override;
   void EndWriteAccess(sk_sp<SkSurface> surface) override;
-  sk_sp<SkPromiseImageTexture> BeginReadAccess(SkSurface* sk_surface) override;
+  sk_sp<SkPromiseImageTexture> BeginReadAccess(
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override;
   void EndReadAccess() override;
 
  private:
@@ -56,26 +59,33 @@ class ExternalVkImageSkiaRepresentation : public SharedImageRepresentationSkia {
         ->GetVulkanQueue();
   }
 
+  VulkanFenceHelper* fence_helper() {
+    return backing_impl()
+        ->context_state()
+        ->vk_context_provider()
+        ->GetDeviceQueue()
+        ->GetFenceHelper();
+  }
+
   ExternalVkImageBacking* backing_impl() {
     return static_cast<ExternalVkImageBacking*>(backing());
   }
 
-  sk_sp<SkPromiseImageTexture> BeginAccess(bool readonly);
+  sk_sp<SkPromiseImageTexture> BeginAccess(
+      bool readonly,
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores);
+
   void EndAccess(bool readonly);
-  void DestroySemaphores(std::vector<VkSemaphore> semaphores,
-                         VkFence fence = VK_NULL_HANDLE);
-  void DestroySemaphore(VkSemaphore semaphores, VkFence fence = VK_NULL_HANDLE);
-  void WaitAndResetFence(VkFence fence);
 
-  VkFence CreateFence();
-
+  enum AccessMode {
+    kNone = 0,
+    kRead = 1,
+    kWrite = 2,
+  };
+  AccessMode access_mode_ = kNone;
   sk_sp<SkSurface> surface_;
-
-  std::vector<VkSemaphore> begin_access_semaphores_;
-  VkFence begin_access_fence_ = VK_NULL_HANDLE;
-
   VkSemaphore end_access_semaphore_ = VK_NULL_HANDLE;
-  VkFence end_access_fence_ = VK_NULL_HANDLE;
 };
 
 }  // namespace gpu

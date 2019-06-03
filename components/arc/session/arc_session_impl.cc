@@ -21,6 +21,7 @@
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/system/sys_info.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "chromeos/constants/chromeos_switches.h"
@@ -30,6 +31,7 @@
 #include "components/arc/arc_util.h"
 #include "components/arc/session/arc_bridge_host_impl.h"
 #include "components/user_manager/user_manager.h"
+#include "components/version_info/channel.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
@@ -79,17 +81,6 @@ bool WaitForSocketReadable(int raw_socket_fd, int raw_cancel_fd) {
   return true;
 }
 
-// Returns the ArcStopReason corresponding to the ARC instance staring failure.
-ArcStopReason GetArcStopReason(bool low_disk_space, bool stop_requested) {
-  if (stop_requested)
-    return ArcStopReason::SHUTDOWN;
-
-  if (low_disk_space)
-    return ArcStopReason::LOW_DISK_SPACE;
-
-  return ArcStopReason::GENERIC_BOOT_FAILURE;
-}
-
 // Converts ArcSupervisionTransition into
 // login_manager::UpgradeArcContainerRequest_SupervisionTransition.
 login_manager::UpgradeArcContainerRequest_SupervisionTransition
@@ -115,7 +106,8 @@ ToLoginManagerSupervisionTransition(ArcSupervisionTransition transition) {
 class ArcSessionDelegateImpl : public ArcSessionImpl::Delegate {
  public:
   ArcSessionDelegateImpl(ArcBridgeService* arc_bridge_service,
-                         ash::DefaultScaleFactorRetriever* retriever);
+                         ash::DefaultScaleFactorRetriever* retriever,
+                         version_info::Channel channel);
   ~ArcSessionDelegateImpl() override = default;
 
   // ArcSessionImpl::Delegate override.
@@ -124,6 +116,8 @@ class ArcSessionDelegateImpl : public ArcSessionImpl::Delegate {
   base::ScopedFD ConnectMojo(base::ScopedFD socket_fd,
                              ConnectMojoCallback callback) override;
   void GetLcdDensity(GetLcdDensityCallback callback) override;
+  void GetFreeDiskSpace(GetFreeDiskSpaceCallback callback) override;
+  version_info::Channel GetChannel() override;
 
  private:
   // Synchronously create a UNIX domain socket. This is designed to run on a
@@ -148,6 +142,8 @@ class ArcSessionDelegateImpl : public ArcSessionImpl::Delegate {
   // Owned by ArcServiceLauncher.
   ash::DefaultScaleFactorRetriever* const default_scale_factor_retriever_;
 
+  const version_info::Channel channel_;
+
   // WeakPtrFactory to use callbacks.
   base::WeakPtrFactory<ArcSessionDelegateImpl> weak_factory_;
 
@@ -156,9 +152,11 @@ class ArcSessionDelegateImpl : public ArcSessionImpl::Delegate {
 
 ArcSessionDelegateImpl::ArcSessionDelegateImpl(
     ArcBridgeService* arc_bridge_service,
-    ash::DefaultScaleFactorRetriever* retriever)
+    ash::DefaultScaleFactorRetriever* retriever,
+    version_info::Channel channel)
     : arc_bridge_service_(arc_bridge_service),
       default_scale_factor_retriever_(retriever),
+      channel_(channel),
       weak_factory_(this) {}
 
 void ArcSessionDelegateImpl::CreateSocket(CreateSocketCallback callback) {
@@ -199,6 +197,19 @@ void ArcSessionDelegateImpl::GetLcdDensity(GetLcdDensityCallback callback) {
             GetLcdDensityForDeviceScaleFactor(default_scale_factor));
       },
       std::move(callback)));
+}
+
+void ArcSessionDelegateImpl::GetFreeDiskSpace(
+    GetFreeDiskSpaceCallback callback) {
+  PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock()},
+      base::BindOnce(&base::SysInfo::AmountOfFreeDiskSpace,
+                     base::FilePath("/home")),
+      std::move(callback));
+}
+
+version_info::Channel ArcSessionDelegateImpl::GetChannel() {
+  return channel_;
 }
 
 // static
@@ -319,9 +330,10 @@ const char ArcSessionImpl::kPackagesCacheModeSkipCopy[] = "skip-copy";
 // static
 std::unique_ptr<ArcSessionImpl::Delegate> ArcSessionImpl::CreateDelegate(
     ArcBridgeService* arc_bridge_service,
-    ash::DefaultScaleFactorRetriever* retriever) {
-  return std::make_unique<ArcSessionDelegateImpl>(arc_bridge_service,
-                                                  retriever);
+    ash::DefaultScaleFactorRetriever* retriever,
+    version_info::Channel channel) {
+  return std::make_unique<ArcSessionDelegateImpl>(arc_bridge_service, retriever,
+                                                  channel);
 }
 
 ArcSessionImpl::ArcSessionImpl(std::unique_ptr<Delegate> delegate)
@@ -359,6 +371,17 @@ void ArcSessionImpl::OnLcdDensity(int32_t lcd_density) {
       base::FeatureList::IsEnabled(arc::kNativeBridgeExperimentFeature));
   request.set_arc_file_picker_experiment(
       base::FeatureList::IsEnabled(arc::kFilePickerExperimentFeature));
+  // Enable Custom Tabs only on Dev and Cannary, and only when Mash is enabled.
+  const bool is_custom_tab_enabled =
+      base::FeatureList::IsEnabled(arc::kCustomTabsExperimentFeature) &&
+      delegate_->GetChannel() != version_info::Channel::STABLE &&
+      delegate_->GetChannel() != version_info::Channel::BETA;
+  request.set_arc_custom_tabs_experiment(is_custom_tab_enabled);
+  const bool is_arc_print_spooler_enabled =
+      base::FeatureList::IsEnabled(arc::kPrintSpoolerExperimentFeature) &&
+      delegate_->GetChannel() != version_info::Channel::STABLE &&
+      delegate_->GetChannel() != version_info::Channel::BETA;
+  request.set_arc_print_spooler_experiment(is_arc_print_spooler_enabled);
   request.set_lcd_density(lcd_density);
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -420,27 +443,24 @@ void ArcSessionImpl::RequestUpgrade(UpgradeParams params) {
   }
 }
 
-void ArcSessionImpl::OnMiniInstanceStarted(
-    base::Optional<std::string> container_instance_id) {
+void ArcSessionImpl::OnMiniInstanceStarted(bool result) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(state_, State::STARTING_MINI_INSTANCE);
 
-  if (!container_instance_id) {
-    OnStopped(GetArcStopReason(false, stop_requested_));
+  if (!result) {
+    LOG(ERROR) << "Failed to start ARC mini container";
+    OnStopped(ArcStopReason::GENERIC_BOOT_FAILURE);
     return;
   }
 
-  container_instance_id_ = std::move(*container_instance_id);
-  VLOG(2) << "ARC mini instance is successfully started: "
-          << container_instance_id_;
+  VLOG(2) << "ARC mini container has been successfully started.";
+  state_ = State::RUNNING_MINI_INSTANCE;
 
   if (stop_requested_) {
     // The ARC instance has started to run. Request to stop.
     StopArcInstance();
     return;
   }
-
-  state_ = State::RUNNING_MINI_INSTANCE;
 
   if (upgrade_requested_)
     // RequestUpgrade() has been called during the D-Bus call.
@@ -452,6 +472,24 @@ void ArcSessionImpl::DoUpgrade() {
 
   VLOG(2) << "Upgrading an existing ARC mini instance";
   state_ = State::STARTING_FULL_INSTANCE;
+
+  // Getting the free disk space doesn't take long.
+  delegate_->GetFreeDiskSpace(base::BindOnce(&ArcSessionImpl::OnFreeDiskSpace,
+                                             weak_factory_.GetWeakPtr()));
+}
+
+void ArcSessionImpl::OnFreeDiskSpace(int64_t space) {
+  // Ensure there's sufficient space on disk for the container.
+  if (space == -1) {
+    LOG(ERROR) << "Could not determine free disk space";
+    StopArcInstance();
+    return;
+  } else if (space < kMinimumFreeDiskSpaceBytes) {
+    VLOG(1) << "There is not enough disk space to start the ARC container";
+    insufficient_disk_space_ = true;
+    StopArcInstance();
+    return;
+  }
 
   delegate_->CreateSocket(base::BindOnce(&ArcSessionImpl::OnSocketCreated,
                                          weak_factory_.GetWeakPtr()));
@@ -470,7 +508,7 @@ void ArcSessionImpl::OnSocketCreated(base::ScopedFD socket_fd) {
 
   if (!socket_fd.is_valid()) {
     LOG(ERROR) << "ARC: Error creating socket";
-    OnStopped(ArcStopReason::GENERIC_BOOT_FAILURE);
+    StopArcInstance();
     return;
   }
 
@@ -515,17 +553,19 @@ void ArcSessionImpl::OnSocketCreated(base::ScopedFD socket_fd) {
         upgrade_params_.demo_session_apps_path.value());
   }
 
-  client_->UpgradeArc(
-      request,
-      base::BindOnce(&ArcSessionImpl::OnUpgraded, weak_factory_.GetWeakPtr(),
-                     std::move(socket_fd)),
-      base::BindOnce(&ArcSessionImpl::OnUpgradeError,
-                     weak_factory_.GetWeakPtr()));
+  client_->UpgradeArc(request, base::BindOnce(&ArcSessionImpl::OnUpgraded,
+                                              weak_factory_.GetWeakPtr(),
+                                              std::move(socket_fd)));
 }
 
-void ArcSessionImpl::OnUpgraded(base::ScopedFD socket_fd) {
+void ArcSessionImpl::OnUpgraded(base::ScopedFD socket_fd, bool result) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(state_, State::STARTING_FULL_INSTANCE);
+
+  if (!result) {
+    LOG(ERROR) << "Failed to upgrade ARC container";
+    return;
+  }
 
   VLOG(2) << "ARC instance is successfully upgraded.";
 
@@ -545,10 +585,6 @@ void ArcSessionImpl::OnUpgraded(base::ScopedFD socket_fd) {
     StopArcInstance();
     return;
   }
-}
-
-void ArcSessionImpl::OnUpgradeError(bool low_disk_space) {
-  OnStopped(GetArcStopReason(low_disk_space, stop_requested_));
 }
 
 void ArcSessionImpl::OnMojoConnected(
@@ -610,7 +646,7 @@ void ArcSessionImpl::Stop() {
       return;
 
     case State::CONNECTING_MOJO:
-      // Mojo connection is being waited on TaskScheduler's thread.
+      // Mojo connection is being waited on ThreadPool's thread.
       // Request to cancel it. Following stopping procedure will run
       // in its callback.
       accept_cancel_pipe_.reset();
@@ -638,41 +674,28 @@ void ArcSessionImpl::StopArcInstance() {
   client_->StopArcInstance();
 }
 
-void ArcSessionImpl::ArcInstanceStopped(
-    ArcContainerStopReason stop_reason,
-    const std::string& container_instance_id) {
+void ArcSessionImpl::ArcInstanceStopped() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  VLOG(1) << "Notified that ARC instance is stopped "
-          << static_cast<uint32_t>(stop_reason);
-
-  if (container_instance_id != container_instance_id_) {
-    VLOG(1) << "Container instance id mismatch. Do nothing."
-            << container_instance_id << " vs " << container_instance_id_;
-    return;
-  }
-
-  // Release |container_instance_id_| to avoid duplicate invocation situation.
-  container_instance_id_.clear();
+  DCHECK_NE(state_, State::STARTING_MINI_INSTANCE);
+  VLOG(1) << "Notified that ARC instance is stopped";
 
   // In case that crash happens during before the Mojo channel is connected,
-  // unlock the TaskScheduler's thread.
+  // unlock the ThreadPool's thread.
   accept_cancel_pipe_.reset();
 
-  // TODO(hidehiko): In new D-Bus signal, more detailed reason why ARC
-  // container is stopped. Check it in details.
   ArcStopReason reason;
   if (stop_requested_) {
     // If the ARC instance is stopped after its explicit request,
     // return SHUTDOWN.
     reason = ArcStopReason::SHUTDOWN;
-  } else if (stop_reason == ArcContainerStopReason::LOW_DISK_SPACE) {
+  } else if (insufficient_disk_space_) {
     // ARC mini container is stopped because of upgarde failure due to low
     // disk space.
     reason = ArcStopReason::LOW_DISK_SPACE;
-  } else if (stop_reason != ArcContainerStopReason::CRASH) {
-    // If the ARC instance is stopped, but it is not explicitly requested,
-    // then this is triggered by some failure during the starting procedure.
-    // Return GENERIC_BOOT_FAILURE for the case.
+  } else if (state_ == State::STARTING_FULL_INSTANCE ||
+             state_ == State::CONNECTING_MOJO) {
+    // If the ARC instance is stopped during the upgrade, but it is not
+    // explicitly requested, return GENERIC_BOOT_FAILURE for the case.
     reason = ArcStopReason::GENERIC_BOOT_FAILURE;
   } else {
     // Otherwise, this is caused by CRASH occured inside of the ARC instance.

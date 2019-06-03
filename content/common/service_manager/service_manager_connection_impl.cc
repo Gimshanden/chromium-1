@@ -11,6 +11,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop_current.h"
@@ -249,7 +250,8 @@ class ServiceManagerConnectionImpl::IOThreadContext
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override {
     DCHECK(io_thread_checker_.CalledOnValidThread());
-    if (source_info.identity.name() == mojom::kBrowserServiceName &&
+    if ((source_info.identity.name() == mojom::kBrowserServiceName ||
+         source_info.identity.name() == mojom::kSystemServiceName) &&
         interface_name == mojom::Child::Name_) {
       DCHECK(!child_binding_.is_bound());
       child_binding_.Bind(mojom::ChildRequest(std::move(interface_pipe)));
@@ -294,7 +296,13 @@ class ServiceManagerConnectionImpl::IOThreadContext
   }
 
   // mojom::Child:
-  void Crash() override { IMMEDIATE_CRASH(); }
+  // Make sure this isn't inlined so it shows up in stack traces, and also make
+  // the function body unique by adding a log line, so it doesn't get merged
+  // with other functions by link time optimizations (ICF).
+  NOINLINE void CrashHungProcess() override {
+    LOG(ERROR) << "Crashing because hung";
+    IMMEDIATE_CRASH();
+  }
 
   base::ThreadChecker io_thread_checker_;
   bool started_ = false;

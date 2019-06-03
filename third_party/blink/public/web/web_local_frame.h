@@ -112,8 +112,7 @@ class WebLocalFrame : public WebFrame {
       blink::InterfaceRegistry*,
       mojo::ScopedMessagePipeHandle,
       WebFrame* previous_web_frame,
-      WebSandboxFlags,
-      ParsedFeaturePolicy);
+      const FramePolicy&);
 
   // Creates a new local child of this frame. Similar to the other methods that
   // create frames, the returned frame should be freed by calling Close() when
@@ -213,10 +212,6 @@ class WebLocalFrame : public WebFrame {
 
   // Start navigation to the given URL.
   virtual void StartNavigation(const WebURLRequest&) = 0;
-
-  // Returns the document loader that is currently loading.  May be null.
-  // TODO(dgozman): move this to WebNavigationControl.
-  virtual WebDocumentLoader* GetProvisionalDocumentLoader() const = 0;
 
   // View-source rendering mode.  Set this before loading an URL to cause
   // it to be rendered in view-source mode.
@@ -329,6 +324,10 @@ class WebLocalFrame : public WebFrame {
   ExecuteScriptInIsolatedWorldAndReturnValue(int world_id,
                                              const WebScriptSource&) = 0;
 
+  // Clears the isolated world CSP stored for |world_id| by this frame's
+  // Document.
+  virtual void ClearIsolatedWorldCSPForTesting(int world_id) = 0;
+
   // Sets up an isolated world by associating a |world_id| with |info|.
   // worldID must be > 0 (as 0 represents the main world).
   // worldID must be < kEmbedderWorldIdLimit, high number used internally.
@@ -373,22 +372,6 @@ class WebLocalFrame : public WebFrame {
                                         int argc,
                                         v8::Local<v8::Value> argv[],
                                         WebScriptExecutionCallback*) = 0;
-
-  enum class PausableTaskResult {
-    // The context was invalid or destroyed.
-    kContextInvalidOrDestroyed,
-    // Script is not paused.
-    kReady,
-  };
-  using PausableTaskCallback = base::OnceCallback<void(PausableTaskResult)>;
-
-  // Queues a callback to run script when the context is not paused, e.g. for a
-  // modal JS dialog or window.print(). This callback can run immediately if the
-  // context is not paused. If the context is invalidated before becoming
-  // unpaused, the callback will be run with a kContextInvalidOrDestroyed value.
-  // This asserts that the context is valid at the time of this
-  // call.
-  virtual void PostPausableTask(PausableTaskCallback) = 0;
 
   enum ScriptExecutionType {
     // Execute script synchronously, unless the page is suspended.
@@ -564,9 +547,17 @@ class WebLocalFrame : public WebFrame {
 
   // Iframe sandbox ---------------------------------------------------------
 
+  // TODO(ekaramad): This method is only exposed for testing for certain tests
+  // outside of blink/ that are interested in approximate value of the
+  // FrameReplicationState. This method should be replaced with one in content/
+  // where the notion of FrameReplicationState is relevant to.
   // Returns the effective sandbox flags which are inherited from their parent
   // frame.
-  virtual WebSandboxFlags EffectiveSandboxFlags() const = 0;
+  virtual WebSandboxFlags EffectiveSandboxFlagsForTesting() const = 0;
+
+  // Returns false if this frame, or any parent frame is sandboxed and does not
+  // have the flag "allow-downloads-without-user-activation" set.
+  virtual bool IsAllowedToDownloadWithoutUserActivation() const = 0;
 
   // Find-in-page -----------------------------------------------------------
 
@@ -621,16 +612,21 @@ class WebLocalFrame : public WebFrame {
   // Portals -------------------------------------------------------------
 
   // Dispatches an event when a Portal gets activated. |portal_token| is the
-  // portal's unique identifier, and the message pipe |portal_pipe| is the
-  // portal's mojo interface. |data| is an optional message sent together with
-  // the portal's activation.
+  // portal's unique identifier, the message pipe |portal_pipe| is the
+  // portal's mojo interface, and the message pipe |portal_client_pipe| is
+  // a mojo interface to communicate back with the caller of the portal's
+  // mojo interface. |data| is an optional message sent together with the
+  // portal's activation.
+  using OnPortalActivatedCallback = base::OnceCallback<void(bool)>;
   virtual void OnPortalActivated(
       const base::UnguessableToken& portal_token,
       mojo::ScopedInterfaceEndpointHandle portal_pipe,
-      TransferableMessage data) = 0;
+      mojo::ScopedInterfaceEndpointHandle portal_client_pipe,
+      TransferableMessage data,
+      OnPortalActivatedCallback callback) = 0;
 
-  // Forwards message to the PortalHost associated with frame.
-  virtual void ForwardMessageToPortalHost(
+  // Forwards message to the PortalHost object exposed by the frame.
+  virtual void ForwardMessageFromHost(
       TransferableMessage message,
       const WebSecurityOrigin& source_origin,
       const base::Optional<WebSecurityOrigin>& target_origin) = 0;
@@ -712,12 +708,18 @@ class WebLocalFrame : public WebFrame {
   // This function should be called after pairs of PrintBegin() and PrintEnd().
   virtual void DispatchAfterPrintEvent() = 0;
 
+  // Focus --------------------------------------------------------------
+
   // Advance the focus of the WebView to next text input element from current
   // input field wrt sequential navigation with TAB or Shift + TAB
   // WebFocusTypeForward simulates TAB and WebFocusTypeBackward simulates
   // Shift + TAB. (Will be extended to other form controls like select element,
   // checkbox, radio etc.)
   virtual void AdvanceFocusInForm(WebFocusType) = 0;
+
+  // Returns whether the currently focused field could be autofilled by the
+  // active WebAutofillClient.
+  virtual bool CanFocusedFieldBeAutofilled() const = 0;
 
   // Performance --------------------------------------------------------
 
@@ -756,6 +758,9 @@ class WebLocalFrame : public WebFrame {
                                         const WebMediaPlayerAction&) = 0;
 
   virtual void SetLifecycleState(mojom::FrameLifecycleState state) = 0;
+
+  virtual void WasHidden() = 0;
+  virtual void WasShown() = 0;
 
  protected:
   explicit WebLocalFrame(WebTreeScopeType scope) : WebFrame(scope) {}

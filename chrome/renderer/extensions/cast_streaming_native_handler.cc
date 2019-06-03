@@ -31,7 +31,6 @@
 #include "chrome/renderer/media/cast_rtp_stream.h"
 #include "chrome/renderer/media/cast_session.h"
 #include "chrome/renderer/media/cast_udp_transport.h"
-#include "content/public/renderer/media_stream_utils.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
@@ -543,9 +542,11 @@ void CastStreamingNativeHandler::GetSupportedParamsCastRtpStream(
     RtpParams params;
     FromFrameSenderConfig(configs[i], &params.payload);
     std::unique_ptr<base::DictionaryValue> params_value = params.ToValue();
-    result->Set(
-        static_cast<int>(i),
-        converter->ToV8Value(params_value.get(), context()->v8_context()));
+    result
+        ->CreateDataProperty(
+            context()->v8_context(), static_cast<int>(i),
+            converter->ToV8Value(params_value.get(), context()->v8_context()))
+        .Check();
   }
   args.GetReturnValue().Set(result);
 }

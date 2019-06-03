@@ -8,11 +8,9 @@
 #include <stdint.h>
 
 #include <map>
-#include <memory>
 #include <set>
 
 #include "base/time/time.h"
-#include "ui/base/property_data.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/base/ui_base_types.h"
 
@@ -93,10 +91,7 @@ class UI_BASE_EXPORT PropertyHandler {
  protected:
   friend class subtle::PropertyHelper;
 
-  virtual void AfterPropertyChange(const void* key,
-                                   int64_t old_value,
-                                   std::unique_ptr<PropertyData> data) {}
-  virtual std::unique_ptr<PropertyData> BeforePropertyChange(const void* key);
+  virtual void AfterPropertyChange(const void* key, int64_t old_value) {}
   void ClearProperties();
 
   // Called by the public {Set,Get,Clear}Property functions.

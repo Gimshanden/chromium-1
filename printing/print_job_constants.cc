@@ -63,6 +63,9 @@ const char kSettingFitToPageScaling[] = "fitToPageScaling";
 // Print job duplex mode. Value is an int from DuplexMode enum.
 const char kSettingDuplexMode[] = "duplex";
 
+// Job title to be sent to printer.
+const char kSettingJobTitle[] = "jobTitle";
+
 // Option to fit source page contents to printer paper size: true if
 // selected else false.
 const char kSettingFitToPageEnabled[] = "fitToPageEnabled";
@@ -210,7 +213,7 @@ const int COMPLETE_PREVIEW_DOCUMENT_INDEX = -1;
 // Whether to show PDF in view provided by OS. Implemented for MacOS only.
 const char kSettingOpenPDFInPreview[] = "OpenPDFInPreview";
 
-#if defined (USE_CUPS)
+#if defined(USE_CUPS)
 const char kBlack[] = "Black";
 const char kCMYK[] = "CMYK";
 const char kKCMY[] = "KCMY";

@@ -259,11 +259,13 @@ class SharedImageRepresentationSkiaImpl : public SharedImageRepresentationSkia {
   SharedImageRepresentationSkiaImpl(
       SharedImageManager* manager,
       SharedImageBackingWithReadAccess* backing,
+      scoped_refptr<SharedContextState> context_state,
       sk_sp<SkPromiseImageTexture> cached_promise_texture,
       MemoryTypeTracker* tracker,
       GLenum target,
       GLuint service_id)
       : SharedImageRepresentationSkia(manager, backing, tracker),
+        context_state_(std::move(context_state)),
         promise_texture_(cached_promise_texture) {
     if (!promise_texture_) {
       GrBackendTexture backend_texture;
@@ -284,9 +286,10 @@ class SharedImageRepresentationSkiaImpl : public SharedImageRepresentationSkia {
   }
 
   sk_sp<SkSurface> BeginWriteAccess(
-      GrContext* gr_context,
       int final_msaa_count,
-      const SkSurfaceProps& surface_props) override {
+      const SkSurfaceProps& surface_props,
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
     CheckContext();
     if (write_surface_)
       return nullptr;
@@ -297,7 +300,7 @@ class SharedImageRepresentationSkiaImpl : public SharedImageRepresentationSkia {
     SkColorType sk_color_type = viz::ResourceFormatToClosestSkColorType(
         /*gpu_compositing=*/true, format());
     auto surface = SkSurface::MakeFromBackendTextureAsRenderTarget(
-        gr_context, promise_texture_->backendTexture(),
+        context_state_->gr_context(), promise_texture_->backendTexture(),
         kTopLeft_GrSurfaceOrigin, final_msaa_count, sk_color_type,
         backing()->color_space().ToSkColorSpace(), &surface_props);
     write_surface_ = surface.get();
@@ -312,7 +315,9 @@ class SharedImageRepresentationSkiaImpl : public SharedImageRepresentationSkia {
     write_surface_ = nullptr;
   }
 
-  sk_sp<SkPromiseImageTexture> BeginReadAccess(SkSurface* sk_surface) override {
+  sk_sp<SkPromiseImageTexture> BeginReadAccess(
+      std::vector<GrBackendSemaphore>* begin_semaphores,
+      std::vector<GrBackendSemaphore>* end_semaphores) override {
     CheckContext();
     static_cast<SharedImageBackingWithReadAccess*>(backing())
         ->BeginReadAccess();
@@ -332,6 +337,7 @@ class SharedImageRepresentationSkiaImpl : public SharedImageRepresentationSkia {
 #endif
   }
 
+  scoped_refptr<SharedContextState> context_state_;
   sk_sp<SkPromiseImageTexture> promise_texture_;
 
   SkSurface* write_surface_ = nullptr;
@@ -524,8 +530,8 @@ class SharedImageBackingGLTexture : public SharedImageBackingWithReadAccess {
       MemoryTypeTracker* tracker,
       scoped_refptr<SharedContextState> context_state) override {
     auto result = std::make_unique<SharedImageRepresentationSkiaImpl>(
-        manager, this, cached_promise_texture_, tracker, texture_->target(),
-        texture_->service_id());
+        manager, this, std::move(context_state), cached_promise_texture_,
+        tracker, texture_->target(), texture_->service_id());
     cached_promise_texture_ = result->promise_texture();
     return result;
   }
@@ -633,8 +639,9 @@ class SharedImageBackingPassthroughGLTexture
       MemoryTypeTracker* tracker,
       scoped_refptr<SharedContextState> context_state) override {
     auto result = std::make_unique<SharedImageRepresentationSkiaImpl>(
-        manager, this, cached_promise_texture_, tracker,
-        texture_passthrough_->target(), texture_passthrough_->service_id());
+        manager, this, std::move(context_state), cached_promise_texture_,
+        tracker, texture_passthrough_->target(),
+        texture_passthrough_->service_id());
     cached_promise_texture_ = result->promise_texture();
     return result;
   }
@@ -802,8 +809,7 @@ SharedImageBackingFactoryGLTexture::CreateSharedImage(
       const char* error_message = "unspecified";
       if (!gles2::ValidateCompressedTexDimensions(
               target, 0 /* level */, size.width(), size.height(), 1 /* depth */,
-              format_info.image_internal_format, false /* restrict_for_webgl */,
-              &error_message)) {
+              format_info.image_internal_format, &error_message)) {
         LOG(ERROR) << "CreateSharedImage: "
                       "ValidateCompressedTexDimensionsFailed with error: "
                    << error_message;
@@ -1037,6 +1043,14 @@ scoped_refptr<gl::GLImage> SharedImageBackingFactoryGLTexture::MakeGLImage(
 
   return image_factory_->CreateImageForGpuMemoryBuffer(
       std::move(handle), size, format, client_id, surface_handle);
+}
+
+bool SharedImageBackingFactoryGLTexture::CanImportGpuMemoryBuffer(
+    gfx::GpuMemoryBufferType memory_buffer_type) {
+  // SharedImageFactory may call CanImportGpuMemoryBuffer() in all other
+  // SharedImageBackingFactory implementations except this one.
+  NOTREACHED();
+  return true;
 }
 
 std::unique_ptr<SharedImageBacking>

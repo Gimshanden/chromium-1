@@ -19,6 +19,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_factory.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_regular.h"
+#include "chrome/browser/chromeos/login/quick_unlock/auth_token.h"
 #include "chrome/browser/chromeos/login/quick_unlock/pin_backend.h"
 #include "chrome/browser/chromeos/login/quick_unlock/pin_storage_prefs.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_factory.h"
@@ -158,7 +159,7 @@ class QuickUnlockPrivateUnitTest
     fake_user_manager_->CreateLocalState();
 
     // Rebuild quick unlock state.
-    quick_unlock::EnableForTesting();
+    quick_unlock::EnabledForTesting(true);
     quick_unlock::PinBackend::ResetForTesting();
 
     base::RunLoop().RunUntilIdle();
@@ -185,6 +186,7 @@ class QuickUnlockPrivateUnitTest
   }
 
   void TearDown() override {
+    quick_unlock::EnabledForTesting(false);
     quick_unlock::DisablePinByPolicyForTesting(false);
 
     base::RunLoop().RunUntilIdle();
@@ -521,7 +523,8 @@ TEST_P(QuickUnlockPrivateUnitTest, GetAuthTokenValid) {
 
   quick_unlock::QuickUnlockStorage* quick_unlock_storage =
       quick_unlock::QuickUnlockFactory::GetForProfile(profile());
-  EXPECT_EQ(token_info->token, quick_unlock_storage->GetAuthToken());
+  EXPECT_EQ(token_info->token,
+            quick_unlock_storage->GetAuthToken()->Identifier());
   EXPECT_EQ(token_info->lifetime_seconds,
             quick_unlock::AuthToken::kTokenExpirationSeconds);
 }

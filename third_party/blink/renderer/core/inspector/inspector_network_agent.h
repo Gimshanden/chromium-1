@@ -114,7 +114,7 @@ class CORE_EXPORT InspectorNetworkAgent final
   void DidReceiveResourceResponse(uint64_t identifier,
                                   DocumentLoader*,
                                   const ResourceResponse&,
-                                  Resource*);
+                                  const Resource*);
   void DidReceiveData(uint64_t identifier,
                       DocumentLoader*,
                       const char* data,
@@ -277,6 +277,7 @@ class CORE_EXPORT InspectorNetworkAgent final
   base::Optional<InspectorPageAgent::ResourceType> pending_request_type_;
 
   Member<XHRReplayData> pending_xhr_replay_data_;
+  bool is_handling_sync_xhr_ = false;
 
   HashMap<String, std::unique_ptr<protocol::Network::Initiator>>
       frame_navigation_initiator_map_;

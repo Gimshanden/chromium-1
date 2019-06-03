@@ -70,7 +70,15 @@ void MediaDrmBridgeFactory::Create(
   // MediaDrmStorage may be lazy created in MediaDrmStorageBridge.
   storage_ = std::make_unique<MediaDrmStorageBridge>();
 
-  if (!MediaDrmBridge::IsPerOriginProvisioningSupported()) {
+  // IsPersistentLicenseTypeSupported() checks that per-origin provisioning is
+  // supported and that persistent licenses are supported. For WebView we
+  // disable persistent licenses as access to a profile is not connected, and
+  // thus persistent licenses can't be saved. As saving the origin IDs also
+  // requires data to be saved in the profile, using the persistent license
+  // check here to ensure data can be saved.
+  // TODO(crbug.com/493521). Once WebView has access to a profile to save data,
+  // switch this to calling IsPerOriginProvisioningSupported().
+  if (!MediaDrmBridge::IsPersistentLicenseTypeSupported(key_system)) {
     // Per-origin provisioning isn't supported, so proceed without
     // specifying an origin ID.
     CreateMediaDrmBridge("");
@@ -114,7 +122,7 @@ void MediaDrmBridgeFactory::CreateMediaDrmBridge(const std::string& origin_id) {
     return;
   }
 
-  media_drm_bridge_->SetMediaCryptoReadyCB(base::BindRepeating(
+  media_drm_bridge_->SetMediaCryptoReadyCB(base::BindOnce(
       &MediaDrmBridgeFactory::OnMediaCryptoReady, weak_factory_.GetWeakPtr()));
 }
 

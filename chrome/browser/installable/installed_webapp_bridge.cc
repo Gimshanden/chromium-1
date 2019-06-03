@@ -14,18 +14,21 @@
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ScopedJavaLocalRef;
 
+static void JNI_InstalledWebappBridge_NotifyPermissionsChange(JNIEnv* env,
+    jlong j_provider) {
+  InstalledWebappProvider* provider =
+    reinterpret_cast<InstalledWebappProvider*>(j_provider);
+  provider->Notify();
+}
+
 InstalledWebappProvider::RuleList
 InstalledWebappBridge::GetInstalledWebappNotificationPermissions() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobjectArray> j_permissions =
       Java_InstalledWebappBridge_getNotificationPermissions(env);
-  jsize size = env->GetArrayLength(j_permissions.obj());
 
   InstalledWebappProvider::RuleList rules;
-  for (jsize i = 0; i < size; i++) {
-    ScopedJavaLocalRef<jobject> j_permission(
-        env, env->GetObjectArrayElement(j_permissions.obj(), i));
-
+  for (auto j_permission : j_permissions.ReadElements<jobject>()) {
     GURL origin(ConvertJavaStringToUTF8(
         Java_InstalledWebappBridge_getOriginFromPermission(env, j_permission)));
     ContentSetting setting = IntToContentSetting(
@@ -34,4 +37,10 @@ InstalledWebappBridge::GetInstalledWebappNotificationPermissions() {
   }
 
   return rules;
+}
+
+void InstalledWebappBridge::SetProviderInstance(
+    InstalledWebappProvider *provider) {
+  Java_InstalledWebappBridge_setInstalledWebappProvider(
+      base::android::AttachCurrentThread(), (jlong) provider);
 }

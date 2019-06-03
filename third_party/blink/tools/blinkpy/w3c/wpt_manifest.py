@@ -9,10 +9,10 @@ such as what tests exist, and extra information about each test, including
 test type, options, URLs to use, and reference file paths if applicable.
 
 Naming conventions:
-* A (file) path is a relative file system path from the root of WPT. It does not
-  have a leading slash or a query string.
+* A (file) path is a relative file system path from the root of WPT.
 * A (test) URL is the path (with an optional query string) to the test on
-  wptserve. It always has a leading slash.
+  wptserve relative to url_base.
+Neither has a leading slash.
 """
 
 import json
@@ -28,7 +28,7 @@ MANIFEST_NAME = 'MANIFEST.json'
 # The filename used for the base manifest includes the version as a
 # workaround for trouble landing huge changes to the base manifest when
 # the version changes. See https://crbug.com/876717.
-BASE_MANIFEST_NAME = 'WPT_BASE_MANIFEST_5.json'
+BASE_MANIFEST_NAME = 'WPT_BASE_MANIFEST_6.json'
 
 # TODO(robertma): Use the official wpt.manifest module.
 
@@ -69,13 +69,12 @@ class WPTManifest(object):
         """Finds manifest items for the given WPT path.
 
         Args:
-            path_in_wpt: A file path relative to the root of WPT without a
-                leading slash or a query string.
+            path_in_wpt: A file path relative to the root of WPT.
 
         Returns:
             A list of manifest items, or None if not found.
         """
-        items = self.raw_dict['items']
+        items = self.raw_dict.get('items', {})
         for test_type in self.test_types:
             if test_type not in items:
                 continue
@@ -87,7 +86,7 @@ class WPTManifest(object):
         """Finds the manifest item for the given WPT URL.
 
         Args:
-            url: A WPT URL (with the leading slash).
+            url: A WPT URL.
 
         Returns:
             A manifest item, or None if not found.
@@ -135,19 +134,19 @@ class WPTManifest(object):
 
     def is_test_file(self, path_in_wpt):
         """Checks if path_in_wpt is a test file according to the manifest."""
+        assert not path_in_wpt.startswith('/')
         return self._items_for_file_path(path_in_wpt) is not None
 
     def is_test_url(self, url):
         """Checks if url is a valid test in the manifest."""
-        if url[0] != '/':
-            raise Exception('Test url missing leading /: %s' % url)
+        assert not url.startswith('/')
         return url in self.all_urls()
 
     def is_slow_test(self, url):
         """Checks if a WPT is slow (long timeout) according to the manifest.
 
         Args:
-            url: A WPT URL (with the leading slash).
+            url: A WPT URL.
 
         Returns:
             True if the test is found and is slow, False otherwise.
@@ -166,49 +165,57 @@ class WPTManifest(object):
 
         The return value is a list of (match/not-match, reference path in wpt)
         pairs, like:
-           [("==", "foo/bar/baz-match.html"),
-            ("!=", "foo/bar/baz-mismatch.html")]
+           [("==", "/foo/bar/baz-match.html"),
+            ("!=", "/foo/bar/baz-mismatch.html")]
         """
-        items = self.raw_dict['items']
+        items = self.raw_dict.get('items', {})
         if path_in_wpt not in items.get('reftest', {}):
             return []
         reftest_list = []
         for item in items['reftest'][path_in_wpt]:
             for ref_path_in_wpt, expectation in item[1]:
+                # Ref URLs in MANIFEST should be absolute, but we double check
+                # just in case.
+                if not ref_path_in_wpt.startswith('/'):
+                    ref_path_in_wpt = '/' + ref_path_in_wpt
                 reftest_list.append((expectation, ref_path_in_wpt))
         return reftest_list
 
     @staticmethod
-    def ensure_manifest(host, path=None):
+    def ensure_manifest(port, path=None):
         """Updates the MANIFEST.json file, or generates if it does not exist.
 
         Args:
+            port: A blinkpy.web_tests.port.Port object.
             path: The path to a WPT root (relative to web_tests, optional).
         """
+        fs = port.host.filesystem
         if path is None:
-            path = host.filesystem.join('external', 'wpt')
-        finder = PathFinder(host.filesystem)
-        wpt_path = finder.path_from_web_tests(path)
-        manifest_path = host.filesystem.join(wpt_path, MANIFEST_NAME)
+            path = fs.join('external', 'wpt')
+        wpt_path = fs.join(port.web_tests_dir(), path)
+        manifest_path = fs.join(wpt_path, MANIFEST_NAME)
+
+        # Unconditionally delete local MANIFEST.json to avoid regenerating the
+        # manifest from scratch (when version is bumped) or invalid/out-of-date
+        # local manifest breaking the runner.
+        if fs.exists(manifest_path):
+            fs.remove(manifest_path)
 
         # TODO(crbug.com/853815): perhaps also cache the manifest for wpt_internal.
         if 'external' in path:
-            base_manifest_path = finder.path_from_web_tests('external', BASE_MANIFEST_NAME)
-            if not host.filesystem.exists(base_manifest_path):
+            base_manifest_path = fs.join(port.web_tests_dir(), 'external', BASE_MANIFEST_NAME)
+            if fs.exists(base_manifest_path):
+                fs.copyfile(base_manifest_path, manifest_path)
+            else:
                 _log.error('Manifest base not found at "%s".', base_manifest_path)
-                host.filesystem.write_text_file(base_manifest_path, '{}')
 
-            # Unconditionally replace MANIFEST.json with the base manifest even if
-            # the former exists, to avoid regenerating the manifest from scratch
-            # when the manifest version changes. Remove the destination first as
-            # copyfile will fail if the two files are hardlinked or symlinked.
-            if host.filesystem.exists(manifest_path):
-                host.filesystem.remove(manifest_path)
-            host.filesystem.copyfile(base_manifest_path, manifest_path)
+        WPTManifest.generate_manifest(port.host, wpt_path)
 
-        WPTManifest.generate_manifest(host, wpt_path)
-
-        _log.debug('Manifest generation completed.')
+        if fs.isfile(manifest_path):
+            _log.debug('Manifest generation completed.')
+        else:
+            _log.error('Manifest generation failed; creating an empty MANIFEST.json...')
+            fs.write_text_file(manifest_path, '{}')
 
     @staticmethod
     def generate_manifest(host, dest_path):

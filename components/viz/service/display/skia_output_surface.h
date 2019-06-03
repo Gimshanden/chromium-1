@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "components/viz/common/resources/resource_format.h"
+#include "components/viz/service/display/external_use_client.h"
 #include "components/viz/service/display/output_surface.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
@@ -33,10 +34,13 @@ struct RenderPassGeometry;
 // SkiaRenderer will be the only renderer. When other renderers are removed,
 // we will replace OutputSurface with SkiaOutputSurface, and remove all
 // OutputSurface's methods which are not useful for SkiaRenderer.
-class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface {
+class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface,
+                                             public ExternalUseClient {
  public:
   SkiaOutputSurface();
   ~SkiaOutputSurface() override;
+
+  SkiaOutputSurface* AsSkiaOutputSurface() override;
 
   // Begin painting the current frame. This method will create a
   // SkDeferredDisplayListRecorder and return a SkCanvas of it.
@@ -52,7 +56,8 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface {
   // |metadata| is satisfied. The SwapBuffers should take care of this by
   // scheduling a GPU task with all resource sync tokens recorded by
   // MakePromiseSkImage for the current frame.
-  virtual sk_sp<SkImage> MakePromiseSkImage(ResourceMetadata metadata) = 0;
+  virtual sk_sp<SkImage> MakePromiseSkImage(
+      const ResourceMetadata& metadata) = 0;
 
   // Make a promise SkImage from the given |metadata| and the |yuv_color_space|.
   // For YUV format, at least three resource metadatas should be provided.
@@ -62,16 +67,10 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface {
   // pixels from y panel, metadatas[1] contains pixels from u and v panels. If
   // has_alpha is true, the last item in metadatas contains alpha panel.
   virtual sk_sp<SkImage> MakePromiseSkImageFromYUV(
-      std::vector<ResourceMetadata> metadatas,
+      const std::vector<ResourceMetadata>& metadatas,
       SkYUVColorSpace yuv_color_space,
       sk_sp<SkColorSpace> dst_color_space,
       bool has_alpha) = 0;
-
-  // Release SkImages created by MakePromiseSkImage on the thread on which
-  // it was fulfilled. SyncToken represents point after which SkImage is
-  // released.
-  virtual gpu::SyncToken ReleasePromiseSkImages(
-      std::vector<sk_sp<SkImage>> images) = 0;
 
   // Swaps the current backbuffer to the screen.
   virtual void SkiaSwapBuffers(OutputSurfaceFrame frame) = 0;
@@ -93,7 +92,10 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface {
   // a sync token which can be waited on in a command buffer to ensure the paint
   // operation is completed. This token is released when the GPU ops from
   // painting the render pass have been seen and processed by the GPU main.
-  virtual gpu::SyncToken SubmitPaint() = 0;
+  // Optionally the caller may specify |on_finished| callback to be called after
+  // the GPU has finished processing all submitted commands. The callback may be
+  // called on a different thread.
+  virtual gpu::SyncToken SubmitPaint(base::OnceClosure on_finished) = 0;
 
   // Make a promise SkImage from a render pass id. The render pass has been
   // painted with BeginPaintRenderPass and FinishPaintRenderPass. The format

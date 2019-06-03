@@ -9,49 +9,18 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "remoting/base/grpc_support/scoped_grpc_server_stream.h"
+#include "remoting/proto/ftl/v1/ftl_services.grpc.pb.h"
 #include "remoting/signaling/ftl_grpc_context.h"
-#include "remoting/signaling/ftl_services.grpc.pb.h"
-#include "remoting/signaling/grpc_support/scoped_grpc_server_stream.h"
 
 namespace remoting {
 
-namespace {
-
-const net::BackoffEntry::Policy kBackoffPolicy = {
-    // Number of initial errors (in sequence) to ignore before applying
-    // exponential back-off rules.
-    0,
-
-    // Initial delay for exponential back-off in ms.
-    FtlMessageReceptionChannel::kBackoffInitialDelay.InMilliseconds(),
-
-    // Factor by which the waiting time will be multiplied.
-    2,
-
-    // Fuzzing percentage. ex: 10% will spread requests randomly
-    // between 90%-100% of the calculated time.
-    0.5,
-
-    // Maximum amount of time we are willing to delay our request in ms.
-    FtlMessageReceptionChannel::kBackoffMaxDelay.InMilliseconds(),
-
-    // Time to keep an entry from being discarded even when it
-    // has no significant state, -1 to never discard.
-    -1,
-
-    // Starts with initial delay.
-    false,
-};
-
-}  // namespace
-
 constexpr base::TimeDelta FtlMessageReceptionChannel::kPongTimeout;
 constexpr base::TimeDelta FtlMessageReceptionChannel::kStreamLifetime;
-constexpr base::TimeDelta FtlMessageReceptionChannel::kBackoffInitialDelay;
-constexpr base::TimeDelta FtlMessageReceptionChannel::kBackoffMaxDelay;
 
 FtlMessageReceptionChannel::FtlMessageReceptionChannel()
-    : reconnect_retry_backoff_(&kBackoffPolicy), weak_factory_(this) {}
+    : reconnect_retry_backoff_(&FtlGrpcContext::GetBackoffPolicy()),
+      weak_factory_(this) {}
 
 FtlMessageReceptionChannel::~FtlMessageReceptionChannel() = default;
 
@@ -66,16 +35,21 @@ void FtlMessageReceptionChannel::Initialize(
   on_incoming_msg_ = on_incoming_msg;
 }
 
-void FtlMessageReceptionChannel::StartReceivingMessages(DoneCallback on_done) {
+void FtlMessageReceptionChannel::StartReceivingMessages(
+    base::OnceClosure on_ready,
+    DoneCallback on_closed) {
+  stream_closed_callbacks_.push_back(std::move(on_closed));
   if (state_ == State::STARTED) {
-    std::move(on_done).Run(grpc::Status::OK);
+    std::move(on_ready).Run();
     return;
   }
-  start_receiving_messages_callbacks_.push_back(std::move(on_done));
+  stream_ready_callbacks_.push_back(std::move(on_ready));
   if (state_ == State::STARTING) {
     return;
   }
-  StartReceivingMessagesInternal();
+
+  state_ = State::STARTING;
+  RetryStartReceivingMessagesWithBackoff();
 }
 
 void FtlMessageReceptionChannel::StopReceivingMessages() {
@@ -83,7 +57,7 @@ void FtlMessageReceptionChannel::StopReceivingMessages() {
     return;
   }
   StopReceivingMessagesInternal();
-  RunStartReceivingMessagesCallbacks(grpc::Status::CANCELLED);
+  RunStreamClosedCallbacks(grpc::Status::CANCELLED);
 }
 
 const net::BackoffEntry&
@@ -97,6 +71,7 @@ void FtlMessageReceptionChannel::OnReceiveMessagesStreamClosed(
     // Previously closed by the caller.
     return;
   }
+  reconnect_retry_backoff_.InformOfRequest(false);
   if (status.error_code() == grpc::StatusCode::ABORTED ||
       status.error_code() == grpc::StatusCode::UNAVAILABLE) {
     // These are 'soft' connection errors that should be retried.
@@ -106,28 +81,28 @@ void FtlMessageReceptionChannel::OnReceiveMessagesStreamClosed(
     return;
   }
   StopReceivingMessagesInternal();
-  RunStartReceivingMessagesCallbacks(status);
+  RunStreamClosedCallbacks(status);
 }
 
 void FtlMessageReceptionChannel::OnMessageReceived(
     const ftl::ReceiveMessagesResponse& response) {
   switch (response.body_case()) {
     case ftl::ReceiveMessagesResponse::BodyCase::kInboxMessage: {
-      VLOG(0) << "Received message";
+      VLOG(1) << "Received message";
       on_incoming_msg_.Run(response.inbox_message());
       break;
     }
     case ftl::ReceiveMessagesResponse::BodyCase::kPong:
-      VLOG(0) << "Received pong";
+      VLOG(1) << "Received pong";
       stream_pong_timer_->Reset();
       break;
     case ftl::ReceiveMessagesResponse::BodyCase::kStartOfBatch:
       state_ = State::STARTED;
-      RunStartReceivingMessagesCallbacks(grpc::Status::OK);
+      RunStreamReadyCallbacks();
       BeginStreamTimers();
       break;
     case ftl::ReceiveMessagesResponse::BodyCase::kEndOfBatch:
-      VLOG(0) << "Received end of batch";
+      VLOG(1) << "Received end of batch";
       break;
     default:
       LOG(WARNING) << "Received unknown message type: " << response.body_case();
@@ -135,20 +110,35 @@ void FtlMessageReceptionChannel::OnMessageReceived(
   }
 }
 
-void FtlMessageReceptionChannel::RunStartReceivingMessagesCallbacks(
-    const grpc::Status& status) {
-  if (start_receiving_messages_callbacks_.empty()) {
+void FtlMessageReceptionChannel::RunStreamReadyCallbacks() {
+  if (stream_ready_callbacks_.empty()) {
     return;
   }
-  for (DoneCallback& callback : start_receiving_messages_callbacks_) {
+
+  // The swap is to make StartReceivingMessages() reentrant.
+  std::list<base::OnceClosure> callbacks;
+  callbacks.swap(stream_ready_callbacks_);
+  for (base::OnceClosure& callback : callbacks) {
+    std::move(callback).Run();
+  }
+}
+
+void FtlMessageReceptionChannel::RunStreamClosedCallbacks(
+    const grpc::Status& status) {
+  if (stream_closed_callbacks_.empty()) {
+    return;
+  }
+
+  // The swap is to make StartReceivingMessages() reentrant.
+  std::list<DoneCallback> callbacks;
+  callbacks.swap(stream_closed_callbacks_);
+  for (DoneCallback& callback : callbacks) {
     std::move(callback).Run(status);
   }
-  start_receiving_messages_callbacks_.clear();
 }
 
 void FtlMessageReceptionChannel::RetryStartReceivingMessagesWithBackoff() {
-  reconnect_retry_backoff_.InformOfRequest(false);
-  VLOG(0) << "RetryStartReceivingMessages will be called with backoff: "
+  VLOG(1) << "RetryStartReceivingMessages will be called with backoff: "
           << reconnect_retry_backoff_.GetTimeUntilRelease();
   reconnect_retry_timer_.Start(
       FROM_HERE, reconnect_retry_backoff_.GetTimeUntilRelease(),
@@ -157,7 +147,7 @@ void FtlMessageReceptionChannel::RetryStartReceivingMessagesWithBackoff() {
 }
 
 void FtlMessageReceptionChannel::RetryStartReceivingMessages() {
-  VLOG(0) << "RetryStartReceivingMessages called";
+  VLOG(1) << "RetryStartReceivingMessages called";
   StopReceivingMessagesInternal();
   StartReceivingMessagesInternal();
 }
@@ -181,6 +171,10 @@ void FtlMessageReceptionChannel::StopReceivingMessagesInternal() {
   stream_pong_timer_.reset();
 }
 
+bool FtlMessageReceptionChannel::IsReceivingMessages() const {
+  return receive_messages_stream_.get() != nullptr;
+}
+
 void FtlMessageReceptionChannel::BeginStreamTimers() {
   reconnect_retry_backoff_.Reset();
   stream_pong_timer_ = std::make_unique<base::DelayTimer>(
@@ -195,11 +189,12 @@ void FtlMessageReceptionChannel::BeginStreamTimers() {
 
 void FtlMessageReceptionChannel::OnPongTimeout() {
   LOG(WARNING) << "Timed out waiting for PONG message from server.";
+  reconnect_retry_backoff_.InformOfRequest(false);
   RetryStartReceivingMessagesWithBackoff();
 }
 
 void FtlMessageReceptionChannel::OnStreamLifetimeExceeded() {
-  VLOG(0) << "Reached maximum lifetime for current stream.";
+  VLOG(1) << "Reached maximum lifetime for current stream.";
   reconnect_retry_backoff_.Reset();
   RetryStartReceivingMessages();
 }

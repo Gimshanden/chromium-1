@@ -100,7 +100,7 @@ const RecognitionError = {
  * href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API">
  * Web Speech API</a>, error handling and executing search queries.
  */
-let speech = {};
+const speech = {};
 
 
 /**
@@ -363,6 +363,7 @@ speech.init = function(
     waiting: translatedStrings.waiting,
   };
   view.init(speech.onClick_);
+  view.setTitles(translatedStrings);
   speech.initWebkitSpeech_();
   speech.reset_();
 };
@@ -975,7 +976,7 @@ speech.onClick_ = function(shouldSubmit, shouldRetry, navigatingAway) {
  * Provides methods for styling and animating the text areas
  * left of the microphone button.
  */
-let text = {};
+const text = {};
 
 
 /**
@@ -1199,7 +1200,7 @@ text.getErrorMessage_ = function(error) {
  * @private
  */
 text.getErrorLink_ = function(error) {
-  let linkElement = document.createElement('a');
+  const linkElement = document.createElement('a');
   linkElement.className = text.ERROR_LINK_CLASS_;
 
   switch (error) {
@@ -1305,7 +1306,7 @@ text.startListeningMessageAnimation_ = function() {
  * Provides methods for animating the microphone button and icon
  * on the Voice Search full screen overlay.
  */
-let microphone = {};
+const microphone = {};
 
 
 /**
@@ -1438,12 +1439,12 @@ microphone.runLevelAnimation_ = function() {
  * Provides methods for manipulating and animating the Voice Search
  * full screen overlay.
  */
-let view = {};
+const view = {};
 
 
 /**
  * ID for the close button in the speech output container.
- * @const @private
+ * @const
  */
 view.CLOSE_BUTTON_ID = 'voice-close-button';
 
@@ -1630,6 +1631,17 @@ view.init = function(onClick) {
 
   text.init();
   microphone.init();
+};
+
+
+/**
+ * Sets accessibility titles/labels for the page elements.
+ * @param {!Object} translatedStrings Dictionary of localized title strings.
+ */
+view.setTitles = function(translatedStrings) {
+  const closeButton = $(view.CLOSE_BUTTON_ID);
+  closeButton.title = translatedStrings.voiceCloseTooltip;
+  closeButton.setAttribute('aria-label', translatedStrings.voiceCloseTooltip);
 };
 
 

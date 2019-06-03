@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-const example = 'node tests http://localhost:8123/tests.html [options]';
+const example = 'node tests tests.html [options]';
 
 const program = require('commander');
 
-program.usage('server [options]')
+program.usage('test-page [options]')
   .description('piex wasm raw image preview test runner')
   .option('-d, --debug', 'enable debug mode');
 
@@ -27,6 +27,14 @@ if (!program.args.length || program.explain()) {
   program.help();
   process.exit(1);
 }
+
+process.on('unhandledRejection', (error) => {
+  console.log('unhandledRejection', error);
+  process.exit(1);
+});
+
+const server = require('http-server').createServer();
+server.listen(8123);
 
 const puppeteer = require('puppeteer');
 
@@ -59,10 +67,8 @@ const puppeteer = require('puppeteer');
     console.log(message.text());
   });
 
-  const url = process.argv[2];
-  await page.goto(url, {waitUntil: 'networkidle2'}).catch((error) => {
-    console.log(error.message, url);
-    process.exit(1);
+  await page.goto('http://localhost:8123/' + process.argv[2], {
+    waitUntil: 'networkidle2'
   });
 
   await page.mainFrame().waitForFunction('document.title == "READY"');
@@ -72,19 +78,29 @@ const puppeteer = require('puppeteer');
   };
 
   const images = [
-    "images/SONY_A500_01.ARW",
-    "images/EOS_XS_REBEL.CR2",
-    "images/RAW_CANON_1DM2.CR2",
-    "images/L100_4220.DNG",
-    "images/RAW_LEICA_M8.DNG",
-    "images/FUJI_E550_RAW.RAF",
-    "images/NIKON_UB20_O35.NEF",
-    "images/NIKON_GDN0447.NEF",
-    "images/OLYMPUS_SC877.ORF",
-    "images/NIKON_CPIX78.NRW",
-    "images/PANASONIC_DMC.RW2",
-    "images/UNKNOWN_FORMAT.JPG",
+    'images/SONY_A500_01.ARW',
+    'images/EOS_XS_REBEL.CR2',
+    'images/RAW_CANON_1DM2.CR2',
+    'images/L100_4220.DNG',
+    'images/RAW_LEICA_M8.DNG',
+    'images/FUJI_E550_RAW.RAF',
+    'images/NIKON_UB20_O35.NEF',
+    'images/NIKON_GDN0447.NEF',
+    'images/OLYMPUS_SC877.ORF',
+    'images/NIKON_CPIX78.NRW',
+    'images/PANASONIC_DMC.RW2',
+    'images/UNKNOWN_FORMAT.JPG',
   ];
+
+  await page.evaluate((length) => {
+    return window.createFileSystem(length);
+  }, images.length);
+
+  await Promise.all(images.map((image) => {
+    return page.evaluate((image) => {
+      return window.writeToFileSystem(image);
+    }, image);
+  }));
 
   await page.evaluate(() => {
     window.testTime = 0;
@@ -92,7 +108,7 @@ const puppeteer = require('puppeteer');
 
   for (let i = 0; i < images.length; ++i) {
     await page.evaluate((image) => {
-      window.runTest(image);
+      return window.runTest(image);
     }, images[i]);
 
     await page.mainFrame().waitForFunction('document.title == "DONE"');
@@ -102,11 +118,11 @@ const puppeteer = require('puppeteer');
     }
   }
 
-  const testTime = await page.evaluate(() => {
-    return window.testTime;
+  await page.evaluate(() => {
+    console.log('test: done total time', window.testTime.toFixed(3));
   });
 
-  console.log('test: done total time', testTime.toFixed(3));
   browser.close();
+  server.close();
 
 })();

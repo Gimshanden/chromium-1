@@ -44,12 +44,16 @@ network::mojom::CookieSameSite
 EnumTraits<network::mojom::CookieSameSite, net::CookieSameSite>::ToMojom(
     net::CookieSameSite input) {
   switch (input) {
+    case net::CookieSameSite::UNSPECIFIED:
+      return network::mojom::CookieSameSite::UNSPECIFIED;
     case net::CookieSameSite::NO_RESTRICTION:
       return network::mojom::CookieSameSite::NO_RESTRICTION;
     case net::CookieSameSite::LAX_MODE:
       return network::mojom::CookieSameSite::LAX_MODE;
     case net::CookieSameSite::STRICT_MODE:
       return network::mojom::CookieSameSite::STRICT_MODE;
+    case net::CookieSameSite::EXTENDED_MODE:
+      return network::mojom::CookieSameSite::EXTENDED_MODE;
   }
   NOTREACHED();
   return static_cast<network::mojom::CookieSameSite>(input);
@@ -59,6 +63,9 @@ bool EnumTraits<network::mojom::CookieSameSite, net::CookieSameSite>::FromMojom(
     network::mojom::CookieSameSite input,
     net::CookieSameSite* output) {
   switch (input) {
+    case network::mojom::CookieSameSite::UNSPECIFIED:
+      *output = net::CookieSameSite::UNSPECIFIED;
+      return true;
     case network::mojom::CookieSameSite::NO_RESTRICTION:
       *output = net::CookieSameSite::NO_RESTRICTION;
       return true;
@@ -67,6 +74,9 @@ bool EnumTraits<network::mojom::CookieSameSite, net::CookieSameSite>::FromMojom(
       return true;
     case network::mojom::CookieSameSite::STRICT_MODE:
       *output = net::CookieSameSite::STRICT_MODE;
+      return true;
+    case network::mojom::CookieSameSite::EXTENDED_MODE:
+      *output = net::CookieSameSite::EXTENDED_MODE;
       return true;
   }
   return false;
@@ -91,6 +101,16 @@ EnumTraits<network::mojom::CookieInclusionStatus,
       return network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_STRICT;
     case net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX:
       return network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX;
+    case net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_EXTENDED:
+      return network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_EXTENDED;
+    case net::CanonicalCookie::CookieInclusionStatus::
+        EXCLUDE_SAMESITE_UNSPECIFIED_TREATED_AS_LAX:
+      return network::mojom::CookieInclusionStatus::
+          EXCLUDE_SAMESITE_UNSPECIFIED_TREATED_AS_LAX;
+    case net::CanonicalCookie::CookieInclusionStatus::
+        EXCLUDE_SAMESITE_NONE_INSECURE:
+      return network::mojom::CookieInclusionStatus::
+          EXCLUDE_SAMESITE_NONE_INSECURE;
     case net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_USER_PREFERENCES:
       return network::mojom::CookieInclusionStatus::EXCLUDE_USER_PREFERENCES;
 
@@ -147,6 +167,19 @@ bool EnumTraits<network::mojom::CookieInclusionStatus,
     case network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX:
       *output =
           net::CanonicalCookie::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX;
+      return true;
+    case network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_EXTENDED:
+      *output = net::CanonicalCookie::CookieInclusionStatus::
+          EXCLUDE_SAMESITE_EXTENDED;
+      return true;
+    case network::mojom::CookieInclusionStatus::
+        EXCLUDE_SAMESITE_UNSPECIFIED_TREATED_AS_LAX:
+      *output = net::CanonicalCookie::CookieInclusionStatus::
+          EXCLUDE_SAMESITE_UNSPECIFIED_TREATED_AS_LAX;
+      return true;
+    case network::mojom::CookieInclusionStatus::EXCLUDE_SAMESITE_NONE_INSECURE:
+      *output = net::CanonicalCookie::CookieInclusionStatus::
+          EXCLUDE_SAMESITE_NONE_INSECURE;
       return true;
     case network::mojom::CookieInclusionStatus::EXCLUDE_USER_PREFERENCES:
       *output =
@@ -310,6 +343,25 @@ bool StructTraits<
     return false;
 
   *out = {cookie, status};
+
+  return true;
+}
+
+bool StructTraits<network::mojom::CookieAndLineWithStatusDataView,
+                  net::CookieAndLineWithStatus>::
+    Read(network::mojom::CookieAndLineWithStatusDataView c,
+         net::CookieAndLineWithStatus* out) {
+  base::Optional<net::CanonicalCookie> cookie;
+  std::string cookie_string;
+  net::CanonicalCookie::CookieInclusionStatus status;
+  if (!c.ReadCookie(&cookie))
+    return false;
+  if (!c.ReadCookieString(&cookie_string))
+    return false;
+  if (!c.ReadStatus(&status))
+    return false;
+
+  *out = {cookie, cookie_string, status};
 
   return true;
 }

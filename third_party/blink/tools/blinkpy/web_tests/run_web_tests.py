@@ -279,6 +279,14 @@ def parse_args(args):
                 default=None,
                 help='Exit after the first N failures instead of running all tests'),
             optparse.make_option(
+                '--fuzzy-diff',
+                action='store_true',
+                default=False,
+                help=('When running tests on an actual GPU, variance in pixel '
+                      'output can leads image differences causing failed expectations. '
+                      'Instead a fuzzy diff is used to account for this variance. '
+                      'See tools/imagediff/image_diff.cc')),
+            optparse.make_option(
                 '--ignore-builder-category',
                 action='store',
                 help=('The category of builders to use with the --ignore-flaky-tests option '
@@ -474,7 +482,8 @@ def parse_args(args):
                 dest='manifest_update',
                 action='store_false',
                 default=True,
-                help=('Do not update the web-platform-tests MANIFEST.json.')),
+                help=('Do not update the web-platform-tests MANIFEST.json'
+                      ' (unless it does not exist).')),
         ]))
 
     # FIXME: Move these into json_results_generator.py.

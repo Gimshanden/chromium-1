@@ -55,15 +55,20 @@ enum class PrefetchRequestStatus {
   // Request failed with error indicating that the client is forbidden. The
   // caller will prevent network requests for the period of 1 day.
   kShouldSuspendForbidden = 4,
-  // The request was blocked by a URL blacklist configured by the domain
+  // The request failed because the service URL was blocked by the domain
   // administrator.
   kShouldSuspendBlockedByAdministrator = 5,
   // The request was answered with a 403 Forbidden response including a message
   // indicating that the request was forbidden specifically by an OPS request
   // filtering rule.
   kShouldSuspendForbiddenByOPS = 6,
+  // The server responded with 403 forbidden due to a filter rule though the
+  // last request was successful.
+  kShouldSuspendNewlyForbiddenByOPS = 7,
+  // A request for no URLs (i.e. server-enabled check) completed successfully.
+  kEmptyRequestSuccess = 8,
   // kMaxValue should always be the last type.
-  kMaxValue = kShouldSuspendForbiddenByOPS
+  kMaxValue = kEmptyRequestSuccess
 };
 
 // Status indicating the page rendering status in the server.
@@ -290,6 +295,9 @@ struct PrefetchArchiveInfo {
   base::string16 title;
   base::FilePath file_path;
   int64_t file_size = 0;
+  GURL favicon_url;
+  std::string snippet;
+  std::string attribution;
 };
 
 // These operators are implemented for testing only, see test_util.cc.

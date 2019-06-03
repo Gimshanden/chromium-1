@@ -20,9 +20,10 @@
 #include "components/tracing/common/tracing_switches.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/perfetto/include/perfetto/ext/base/utils.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_writer.h"
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_null_delegate.h"
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_writer.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/trace_writer.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pb.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pbzero.h"
 
@@ -37,8 +38,9 @@ constexpr const char kCategoryGroup[] = "foo";
 class MockProducerClient : public ProducerClient {
  public:
   explicit MockProducerClient(
-      scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner)
-      : delegate_(perfetto::base::kPageSize),
+      std::unique_ptr<PerfettoTaskRunner> main_thread_task_runner)
+      : ProducerClient(main_thread_task_runner.get()),
+        delegate_(perfetto::base::kPageSize),
         stream_(&delegate_),
         main_thread_task_runner_(std::move(main_thread_task_runner)) {
     trace_packet_.Reset(&stream_);
@@ -109,7 +111,7 @@ class MockProducerClient : public ProducerClient {
   perfetto::protos::pbzero::TracePacket trace_packet_;
   protozero::ScatteredStreamWriterNullDelegate delegate_;
   protozero::ScatteredStreamWriter stream_;
-  scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner_;
+  std::unique_ptr<PerfettoTaskRunner> main_thread_task_runner_;
 };
 
 // For sequences/threads other than our own, we just want to ignore
@@ -169,7 +171,8 @@ std::unique_ptr<perfetto::TraceWriter> MockProducerClient::CreateTraceWriter(
   // but there's no guarantee that this will succeed if that taskrunner is also
   // shut down.
   ANNOTATE_SCOPED_MEMORY_LEAK;
-  if (main_thread_task_runner_->RunsTasksInCurrentSequence()) {
+  if (main_thread_task_runner_->GetOrCreateTaskRunner()
+          ->RunsTasksInCurrentSequence()) {
     return std::make_unique<MockTraceWriter>(this);
   } else {
     return std::make_unique<DummyTraceWriter>();
@@ -179,9 +182,12 @@ std::unique_ptr<perfetto::TraceWriter> MockProducerClient::CreateTraceWriter(
 class TraceEventDataSourceTest : public testing::Test {
  public:
   void SetUp() override {
-    ProducerClient::ResetTaskRunnerForTesting();
-    producer_client_ = std::make_unique<MockProducerClient>(
+    PerfettoTracedProcess::ResetTaskRunnerForTesting();
+    PerfettoTracedProcess::GetTaskRunner()->GetOrCreateTaskRunner();
+    auto perfetto_wrapper = std::make_unique<PerfettoTaskRunner>(
         scoped_task_environment_.GetMainThreadTaskRunner());
+    producer_client_ =
+        std::make_unique<MockProducerClient>(std::move(perfetto_wrapper));
   }
 
   void TearDown() override {
@@ -749,8 +755,12 @@ TEST_F(TraceEventDataSourceTest, TaskExecutionEvent) {
       TRACE_EVENT_PHASE_INSTANT, "toplevel", "ThreadControllerImpl::RunTask",
       TRACE_EVENT_SCOPE_THREAD | TRACE_EVENT_FLAG_TYPED_PROTO_ARGS, "src_file",
       "my_file", "src_func", "my_func");
+  INTERNAL_TRACE_EVENT_ADD(
+      TRACE_EVENT_PHASE_INSTANT, "toplevel", "ThreadControllerImpl::RunTask",
+      TRACE_EVENT_SCOPE_THREAD | TRACE_EVENT_FLAG_TYPED_PROTO_ARGS, "src_file",
+      "my_file", "src_func", "my_func");
 
-  EXPECT_EQ(producer_client()->GetFinalizedPacketCount(), 2u);
+  EXPECT_EQ(producer_client()->GetFinalizedPacketCount(), 3u);
   auto* e_packet = producer_client()->GetFinalizedPacket(1);
   ExpectTraceEvent(e_packet, /*category_iid=*/1u, /*name_iid=*/1u,
                    TRACE_EVENT_PHASE_INSTANT, TRACE_EVENT_SCOPE_THREAD);
@@ -763,6 +773,14 @@ TEST_F(TraceEventDataSourceTest, TaskExecutionEvent) {
   EXPECT_EQ(locations.size(), 1);
   EXPECT_EQ(locations[0].file_name(), "my_file");
   EXPECT_EQ(locations[0].function_name(), "my_func");
+
+  // Second event should refer to the same interning entries.
+  auto* e_packet2 = producer_client()->GetFinalizedPacket(2);
+  ExpectTraceEvent(e_packet2, /*category_iid=*/1u, /*name_iid=*/1u,
+                   TRACE_EVENT_PHASE_INSTANT, TRACE_EVENT_SCOPE_THREAD);
+
+  EXPECT_EQ(e_packet2->track_event().task_execution().posted_from_iid(), 1u);
+  EXPECT_EQ(e_packet2->interned_data().source_locations().size(), 0);
 }
 
 TEST_F(TraceEventDataSourceTest, TaskExecutionEventWithoutFunction) {
@@ -899,7 +917,7 @@ TEST_F(TraceEventDataSourceTest, InternedStrings) {
 
     // Resetting the interning state causes ThreadDescriptor and interning
     // entries to be emitted again, with the same interning IDs.
-    TraceEventDataSource::GetInstance()->ResetIncrementalStateForTesting();
+    TraceEventDataSource::GetInstance()->ClearIncrementalState();
   }
 }
 

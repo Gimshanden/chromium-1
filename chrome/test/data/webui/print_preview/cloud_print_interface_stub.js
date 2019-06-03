@@ -9,7 +9,7 @@ cr.define('print_preview', function() {
    */
   class CloudPrintInterfaceStub extends TestBrowserProxy {
     constructor() {
-      super(['submit']);
+      super(['printer', 'search', 'submit']);
 
       /** @private {!cr.EventTarget} */
       this.eventTarget_ = new cr.EventTarget();
@@ -48,6 +48,7 @@ cr.define('print_preview', function() {
      * @override
      */
     search(account) {
+      this.methodCalled('search', account);
       this.searchInProgress_ = true;
       const printers = [];
       this.cloudPrintersMap_.forEach((value) => {
@@ -79,6 +80,8 @@ cr.define('print_preview', function() {
      * @override
      */
     printer(printerId, origin, account) {
+      this.methodCalled(
+          'printer', {id: printerId, origin: origin, account: account});
       const printer = this.cloudPrintersMap_.get(
           print_preview.createDestinationKey(printerId, origin, account));
 

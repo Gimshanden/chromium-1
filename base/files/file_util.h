@@ -333,6 +333,15 @@ BASE_EXPORT bool DevicePathToDriveLetterPath(const FilePath& device_path,
 // be resolved with this function.
 BASE_EXPORT bool NormalizeToNativeFilePath(const FilePath& path,
                                            FilePath* nt_path);
+
+// Method that wraps the win32 GetLongPathName API, normalizing the specified
+// path to its long form. An example where this is needed is when comparing
+// temp file paths. If a username isn't a valid 8.3 short file name (even just a
+// lengthy name like "user with long name"), Windows will set the TMP and TEMP
+// environment variables to be 8.3 paths. ::GetTempPath (called in
+// base::GetTempDir) just uses the value specified by TMP or TEMP, and so can
+// return a short path. Returns an empty path on error.
+BASE_EXPORT FilePath MakeLongFilePath(const FilePath& input);
 #endif
 
 // This function will return if the given file is a symlink or not.
@@ -375,6 +384,14 @@ BASE_EXPORT int WriteFile(const FilePath& filename, const char* data,
 // Appends |data| to |fd|. Does not close |fd| when done.  Returns true iff
 // |size| bytes of |data| were written to |fd|.
 BASE_EXPORT bool WriteFileDescriptor(const int fd, const char* data, int size);
+
+// Allocates disk space for the file referred to by |fd| for the byte range
+// starting at |offset| and continuing for |size| bytes. The file size will be
+// changed if |offset|+|len| is greater than the file size. Zeros will fill the
+// new space.
+// After a successful call, subsequent writes into the specified range are
+// guaranteed not to fail because of lack of disk space.
+BASE_EXPORT bool AllocateFileRegion(File* file, int64_t offset, size_t size);
 #endif
 
 // Appends |data| to |filename|.  Returns true iff |size| bytes of |data| were

@@ -70,6 +70,8 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   DISALLOW_COPY_AND_ASSIGN(ScrollableArea);
 
  public:
+  using ScrollCallback = base::OnceClosure;
+
   static int PixelsPerLineStep(ChromeClient*);
   static float MinFractionToStepWhenPaging();
   int MaxOverlapBetweenPages() const;
@@ -86,9 +88,10 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
     return nullptr;
   }
 
-  virtual ScrollResult UserScroll(ScrollGranularity, const ScrollOffset&);
+  virtual ScrollResult UserScroll(ScrollGranularity,
+                                  const ScrollOffset&,
+                                  ScrollCallback on_finish);
 
-  using ScrollCallback = base::OnceClosure;
   virtual void SetScrollOffset(const ScrollOffset&,
                                ScrollType,
                                ScrollBehavior,
@@ -273,7 +276,7 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   virtual bool ScrollbarsCanBeActive() const = 0;
 
   // Returns the bounding box of this scrollable area, in the coordinate system
-  // of the top-level FrameView.
+  // of the top-level FrameView's Document.
   virtual IntRect ScrollableAreaBoundingBox() const = 0;
 
   virtual CompositorElementId GetCompositorElementId() const = 0;
@@ -391,7 +394,9 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   virtual bool RestoreScrollAnchor(const SerializedAnchor&) { return false; }
   virtual ScrollAnchor* GetScrollAnchor() { return nullptr; }
 
-  virtual void DidScrollWithScrollbar(ScrollbarPart, ScrollbarOrientation) {}
+  virtual void DidScrollWithScrollbar(ScrollbarPart,
+                                      ScrollbarOrientation,
+                                      WebInputEvent::Type) {}
 
   // Returns the task runner to be used for scrollable area timers.
   // Ideally a frame-specific throttled one can be used.
@@ -405,7 +410,16 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
 
   virtual ScrollbarTheme& GetPageScrollbarTheme() const = 0;
 
+  virtual void MarkHoverStateDirty();
+
   float ScrollStep(ScrollGranularity, ScrollbarOrientation) const;
+
+  // Injects a gesture scroll event based on the given parameters,
+  // targeted at this scrollable area.
+  void InjectGestureScrollEvent(WebGestureDevice device,
+                                ScrollOffset delta,
+                                ScrollGranularity granularity,
+                                WebInputEvent::Type gesture_type) const;
 
  protected:
   // Deduces the ScrollBehavior based on the element style and the parameter set

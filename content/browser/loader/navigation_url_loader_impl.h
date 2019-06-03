@@ -25,6 +25,7 @@ namespace content {
 
 class NavigationData;
 class NavigationLoaderInterceptor;
+class PrefetchedSignedExchangeCache;
 class ResourceContext;
 class StoragePartition;
 class StoragePartitionImpl;
@@ -41,6 +42,8 @@ class CONTENT_EXPORT NavigationURLLoaderImpl : public NavigationURLLoader {
       std::unique_ptr<NavigationUIData> navigation_ui_data,
       ServiceWorkerNavigationHandle* service_worker_handle,
       AppCacheNavigationHandle* appcache_handle,
+      scoped_refptr<PrefetchedSignedExchangeCache>
+          prefetched_signed_exchange_cache,
       NavigationURLLoaderDelegate* delegate,
       std::vector<std::unique_ptr<NavigationLoaderInterceptor>>
           initial_interceptors);
@@ -58,7 +61,6 @@ class CONTENT_EXPORT NavigationURLLoaderImpl : public NavigationURLLoader {
       std::unique_ptr<NavigationData> navigation_data,
       const GlobalRequestID& global_request_id,
       bool is_download,
-      bool is_stream,
       base::TimeDelta total_ui_to_io_time,
       base::Time io_post_time);
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
@@ -83,9 +85,10 @@ class CONTENT_EXPORT NavigationURLLoaderImpl : public NavigationURLLoader {
   static void SetBeginNavigationInterceptorForTesting(
       const BeginNavigationInterceptor& interceptor);
 
-  // Intercepts loading of frame requests when network service is enabled and a
-  // network::mojom::TrustedURLLoaderHeaderClient is being used. This must be
-  // called on the UI thread or before threads start.
+  // Intercepts loading of frame requests when network service is enabled and
+  // either a network::mojom::TrustedURLLoaderHeaderClient is being used or for
+  // schemes not handled by network service (e.g. files). This must be called on
+  // the UI thread or before threads start.
   using URLLoaderFactoryInterceptor = base::RepeatingCallback<void(
       network::mojom::URLLoaderFactoryRequest* request)>;
   static void SetURLLoaderFactoryInterceptorForTesting(

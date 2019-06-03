@@ -68,16 +68,15 @@ extern const base::Feature kDirectManipulationStylus;
 // TODO(jamescook): Make flag only available in Chrome OS.
 COMPONENT_EXPORT(UI_BASE_FEATURES) extern const base::Feature kMash;
 
-// Used to run Viz in its own process when kMash is enabled. Viz is run in Ash
-// process by default.
-// TODO(mohsen): Remove this when Viz can run fully in a separate process. Then
-// make it the default kMash behavior.
-COMPONENT_EXPORT(UI_BASE_FEATURES) extern const base::Feature kMashOopViz;
-
 // NOTE: Do not access directly outside of tests. Use IsSingleProcessMash()
 // to avoid problems when Mash and SingleProcessMash are both enabled.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 extern const base::Feature kSingleProcessMash;
+
+// Used to enable the new controls UI.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+extern const base::Feature kFormControlsRefresh;
+COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsFormControlsRefreshEnabled();
 
 // Returns true if Chrome's aura usage is backed by the WindowService.
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUsingWindowService();
@@ -85,8 +84,6 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUsingWindowService();
 // Returns true if ash in running in a separate process (and is hosting the UI
 // service and Viz graphics). See //ash/README.md.
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsMultiProcessMash();
-
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsMashOopVizEnabled();
 
 // Returns true if code outside of ash is using the WindowService. In this mode
 // there are two aura::Envs. Ash uses one with Env::Mode::LOCAL. Non-ash code
@@ -116,10 +113,6 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool HostWindowsInAppShimProcess();
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 extern const base::Feature kEnableOzoneDrmMojo;
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsOzoneDrmMojo();
-
-// Whether default UI should use a dark mode color scheme, if enabled on
-// macOS Mojave/Windows 10.
-COMPONENT_EXPORT(UI_BASE_FEATURES) extern const base::Feature kDarkMode;
 
 #if defined(OS_CHROMEOS)
 COMPONENT_EXPORT(UI_BASE_FEATURES)

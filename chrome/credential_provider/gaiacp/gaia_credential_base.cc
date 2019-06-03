@@ -82,7 +82,7 @@ base::string16 GetEmailDomains() {
 // since only local users can be created. |sid| will be empty until the user is
 // created later on. |is_consumer_account| will be set to true if the email used
 // to sign in is gmail or googlemail.
-void MakeUsernameForAccount(const base::Value* result,
+void MakeUsernameForAccount(const base::Value& result,
                             base::string16* gaia_id,
                             wchar_t* username,
                             DWORD username_length,
@@ -210,16 +210,13 @@ HRESULT WaitForLoginUIAndGetResult(
 // This function validates the response from GLS and makes sure it contained
 // all the fields required to proceed with logon.  This does not necessarily
 // guarantee that the logon will succeed, only that GLS response seems correct.
-HRESULT ValidateResult(const base::Value* result, BSTR* status_text) {
-  DCHECK(result);
+HRESULT ValidateResult(const base::Value& result, BSTR* status_text) {
   DCHECK(status_text);
 
   // Check the exit_code to see if any errors were detected by the GLS.
-  const base::Value* exit_code_value =
-      result->FindKeyOfType(kKeyExitCode, base::Value::Type::INTEGER);
-  int exit_code = exit_code_value->GetInt();
-  if (exit_code != kUiecSuccess) {
-    switch (exit_code) {
+  base::Optional<int> exit_code = result.FindIntKey(kKeyExitCode);
+  if (exit_code.value() != kUiecSuccess) {
+    switch (exit_code.value()) {
       case kUiecAbort:
         // This case represents a user abort and no error message is shown.
         return E_ABORT;
@@ -652,6 +649,8 @@ void CGaiaCredentialBase::ResetInternalState() {
     events_->SetFieldSubmitButton(this, FID_SUBMIT, FID_DESCRIPTION);
     UpdateSubmitButtonInteractiveState();
   }
+
+  token_update_locker_.reset();
 }
 
 HRESULT CGaiaCredentialBase::GetBaseGlsCommandline(
@@ -813,23 +812,32 @@ HRESULT CGaiaCredentialBase::HandleAutologon(
     }
   }
 
-  // Restore user's access so that they can sign in.
-  HRESULT hr =
-      AssociatedUserValidator::Get()->RestoreUserAccess(OLE2W(get_sid()));
-  if (FAILED(hr) && hr != HRESULT_FROM_NT(STATUS_OBJECT_NAME_NOT_FOUND)) {
-    LOGFN(ERROR) << "RestoreUserAccess hr=" << putHR(hr);
-    return hr;
-  }
-
   // The OS user has already been created, so return all the information
   // needed to log them in.
   DWORD cpus = 0;
   provider()->GetUsageScenario(&cpus);
-  hr = BuildCredPackAuthenticationBuffer(
+  HRESULT hr = BuildCredPackAuthenticationBuffer(
       domain_, get_username(), get_password(),
       static_cast<CREDENTIAL_PROVIDER_USAGE_SCENARIO>(cpus), cpcs);
   if (FAILED(hr)) {
     LOGFN(ERROR) << "BuildCredPackAuthenticationBuffer hr=" << putHR(hr);
+    return hr;
+  }
+
+  // Prevent update of token handle validity until after sign in has completed
+  // so that a race condition doesn't end up locking out a user while they are
+  // in the process of signing in. The lock must occur before restoring access
+  // to the user below to prevent a race condition where the user would have
+  // their access restored but then the token handle update thread is
+  // immediately executed which causes the user to be locked again afterwards.
+  PreventDenyAccessUpdate();
+
+  // Restore user's access so that they can sign in.
+  hr = AssociatedUserValidator::Get()->RestoreUserAccess(OLE2W(get_sid()));
+  if (FAILED(hr) && hr != HRESULT_FROM_NT(STATUS_OBJECT_NAME_NOT_FOUND)) {
+    LOGFN(ERROR) << "RestoreUserAccess hr=" << putHR(hr);
+    ::CoTaskMemFree(cpcs->rgbSerialization);
+    cpcs->rgbSerialization = nullptr;
     return hr;
   }
 
@@ -858,6 +866,14 @@ void CGaiaCredentialBase::TellOmahaDidRun() {
       LOGFN(INFO) << "Unable to write omaha dr value sts=" << sts;
   }
 #endif  // defined(GOOGLE_CHROME_BUILD)
+}
+
+void CGaiaCredentialBase::PreventDenyAccessUpdate() {
+  if (!token_update_locker_) {
+    token_update_locker_.reset(
+        new AssociatedUserValidator::ScopedBlockDenyAccessUpdate(
+            AssociatedUserValidator::Get()));
+  }
 }
 
 // static
@@ -1066,6 +1082,7 @@ HRESULT CGaiaCredentialBase::GetSerialization(
 
   HRESULT hr = HandleAutologon(cpgsr, cpcs);
 
+  bool submit_button_enabled = false;
   // Don't clear the state of the credential on error. The error can occur
   // because the user is locked out or entered an incorrect old password when
   // trying to update their password. In these situations it may still be
@@ -1107,7 +1124,7 @@ HRESULT CGaiaCredentialBase::GetSerialization(
         *status_icon = CPSI_NONE;
         *cpgsr = CPGSR_NO_CREDENTIAL_FINISHED;
         LOGFN(INFO) << "No internet connection";
-        UpdateSubmitButtonInteractiveState();
+        submit_button_enabled = UpdateSubmitButtonInteractiveState();
 
         hr = S_OK;
       } else {
@@ -1134,9 +1151,15 @@ HRESULT CGaiaCredentialBase::GetSerialization(
           this, FID_CURRENT_PASSWORD_FIELD,
           needs_windows_password_ ? CPFIS_FOCUSED : CPFIS_NONE);
     }
-    UpdateSubmitButtonInteractiveState();
+    submit_button_enabled = UpdateSubmitButtonInteractiveState();
   }
-  // Otherwise, keep the ui disable forever now. ReportResult will eventually
+
+  // If user interaction is enabled that means we are not trying to do final
+  // sign in of the account so we can re-enable token updates.
+  if (submit_button_enabled)
+    token_update_locker_.reset();
+
+  // Otherwise, keep the ui disabled forever now. ReportResult will eventually
   // be called on success or failure and the reset of the state of the
   // credential will be done there.
   return hr;
@@ -1332,9 +1355,8 @@ HRESULT CGaiaCredentialBase::ForkGaiaLogonStub(
   return S_OK;
 }
 
-HRESULT CGaiaCredentialBase::ForkSaveAccountInfoStub(
-    const std::unique_ptr<base::Value>& dict,
-    BSTR* status_text) {
+HRESULT CGaiaCredentialBase::ForkSaveAccountInfoStub(const base::Value& dict,
+                                                     BSTR* status_text) {
   LOGFN(INFO);
   DCHECK(status_text);
 
@@ -1384,13 +1406,15 @@ HRESULT CGaiaCredentialBase::ForkSaveAccountInfoStub(
   // the credentials from the credential provider and will need to sign in
   // manually.  TODO(crbug.com/902911): Figure out how to handle this.
   std::string json;
-  if (base::JSONWriter::Write(*dict, &json)) {
+  if (base::JSONWriter::Write(dict, &json)) {
     DWORD written;
     if (!::WriteFile(parent_handles.hstdin_write.Get(), json.c_str(),
                      json.length() + 1, &written, /*lpOverlapped=*/nullptr)) {
       HRESULT hrWrite = HRESULT_FROM_WIN32(::GetLastError());
       LOGFN(ERROR) << "WriteFile hr=" << putHR(hrWrite);
     }
+
+    ::RtlSecureZeroMemory(const_cast<char*>(json.data()), json.size());
   } else {
     LOGFN(ERROR) << "base::JSONWriter::Write failed";
   }
@@ -1468,25 +1492,25 @@ unsigned __stdcall CGaiaCredentialBase::WaitForLoginUI(void* param) {
 HRESULT CGaiaCredentialBase::SaveAccountInfo(const base::Value& properties) {
   LOGFN(INFO);
 
-  base::string16 sid = GetDictString(&properties, kKeySID);
+  base::string16 sid = GetDictString(properties, kKeySID);
   if (sid.empty()) {
     LOGFN(ERROR) << "SID is empty";
     return E_INVALIDARG;
   }
 
-  base::string16 username = GetDictString(&properties, kKeyUsername);
+  base::string16 username = GetDictString(properties, kKeyUsername);
   if (username.empty()) {
     LOGFN(ERROR) << "Username is empty";
     return E_INVALIDARG;
   }
 
-  base::string16 password = GetDictString(&properties, kKeyPassword);
+  base::string16 password = GetDictString(properties, kKeyPassword);
   if (password.empty()) {
     LOGFN(ERROR) << "Password is empty";
     return E_INVALIDARG;
   }
 
-  base::string16 domain = GetDictString(&properties, kKeyDomain);
+  base::string16 domain = GetDictString(properties, kKeyDomain);
 
   // Load the user's profile so that their registry hive is available.
   auto profile = ScopedUserProfile::Create(sid, domain, username, password);
@@ -1532,7 +1556,8 @@ HRESULT CGaiaCredentialBase::ReportResult(
     // should match what is stored in username_ and password_ so the
     // SaveAccountInfo process can be forked.
     CComBSTR status_text;
-    HRESULT hr = ForkSaveAccountInfoStub(authentication_results_, &status_text);
+    HRESULT hr =
+        ForkSaveAccountInfoStub(*authentication_results_, &status_text);
     if (FAILED(hr))
       LOGFN(ERROR) << "ForkSaveAccountInfoStub hr=" << putHR(hr);
   }
@@ -1573,7 +1598,7 @@ void CGaiaCredentialBase::TerminateLogonProcess() {
   }
 }
 
-HRESULT CGaiaCredentialBase::ValidateOrCreateUser(const base::Value* result,
+HRESULT CGaiaCredentialBase::ValidateOrCreateUser(const base::Value& result,
                                                   BSTR* domain,
                                                   BSTR* username,
                                                   BSTR* sid,
@@ -1667,6 +1692,11 @@ HRESULT CGaiaCredentialBase::ValidateOrCreateUser(const base::Value* result,
                  << "'. Maximum attempts reached.";
     *error_text = AllocErrorString(IDS_INTERNAL_ERROR_BASE);
     return hr;
+  } else if (FAILED(hr)) {
+    LOGFN(ERROR) << "Failed to create user '" << found_domain << "\\"
+                 << found_username << "'. hr=" << putHR(hr);
+    *error_text = AllocErrorString(IDS_INTERNAL_ERROR_BASE);
+    return hr;
   }
 
   *domain = ::SysAllocString(found_domain);
@@ -1690,8 +1720,8 @@ HRESULT CGaiaCredentialBase::OnUserAuthenticated(BSTR authentication_info,
   base::UTF16ToUTF8(OLE2CW(authentication_info),
                     ::SysStringLen(authentication_info), &json_string);
 
-  std::unique_ptr<base::Value> properties = base::JSONReader::ReadDeprecated(
-      json_string, base::JSON_ALLOW_TRAILING_COMMAS);
+  base::Optional<base::Value> properties =
+      base::JSONReader::Read(json_string, base::JSON_ALLOW_TRAILING_COMMAS);
 
   ::RtlSecureZeroMemory(const_cast<char*>(json_string.data()),
                         json_string.size());
@@ -1707,7 +1737,7 @@ HRESULT CGaiaCredentialBase::OnUserAuthenticated(BSTR authentication_info,
     base::ScopedClosureRunner zero_dict_on_exit(base::BindOnce(
         &SecurelyClearDictionaryValue, base::Unretained(&properties)));
 
-    HRESULT hr = ValidateResult(properties.get(), status_text);
+    HRESULT hr = ValidateResult(*properties, status_text);
     if (FAILED(hr)) {
       LOGFN(ERROR) << "ValidateResult hr=" << putHR(hr);
       return hr;
@@ -1716,8 +1746,8 @@ HRESULT CGaiaCredentialBase::OnUserAuthenticated(BSTR authentication_info,
     // The value in |dict| is now known to contain everything that is needed
     // from the GLS. Try to validate the user that wants to sign in and then
     // add additional information into |dict| as needed.
-    hr = ValidateOrCreateUser(properties.get(), &domain_, &username_,
-                              &user_sid_, status_text);
+    hr = ValidateOrCreateUser(*properties, &domain_, &username_, &user_sid_,
+                              status_text);
     if (FAILED(hr)) {
       LOGFN(ERROR) << "ValidateOrCreateUser hr=" << putHR(hr);
       return hr;
@@ -1728,7 +1758,7 @@ HRESULT CGaiaCredentialBase::OnUserAuthenticated(BSTR authentication_info,
   }
 
   base::string16 local_password =
-      GetDictString(authentication_results_, kKeyPassword);
+      GetDictString(*authentication_results_, kKeyPassword);
   password_ = ::SysAllocString(local_password.c_str());
   ::RtlSecureZeroMemory(
       const_cast<wchar_t*>(local_password.data()),
@@ -1749,6 +1779,11 @@ HRESULT CGaiaCredentialBase::OnUserAuthenticated(BSTR authentication_info,
 
   result_status_ = STATUS_SUCCESS;
 
+  // Prevent update of token handle validity until after sign in has completed
+  // so the list of credentials doesn't suddenly change between now and when the
+  // attempt to auto login occurs.
+  PreventDenyAccessUpdate();
+
   // When this function returns, winlogon will be told to logon to the newly
   // created account.  This is important, as the save account info process
   // can't actually save the info until the user's profile is created, which
@@ -1762,6 +1797,12 @@ HRESULT CGaiaCredentialBase::ReportError(LONG status,
                                          BSTR status_text) {
   USES_CONVERSION;
   LOGFN(INFO);
+
+  // Provider may be unset if the GLS process ended as a result of a kill
+  // request coming from Terminate() which would release the |provider_|
+  // reference.
+  if (!provider_)
+    return S_OK;
 
   result_status_ = status;
 
@@ -1778,15 +1819,17 @@ HRESULT CGaiaCredentialBase::ReportError(LONG status,
                                         CComBSTR(), FALSE);
 }
 
-void CGaiaCredentialBase::UpdateSubmitButtonInteractiveState() {
+bool CGaiaCredentialBase::UpdateSubmitButtonInteractiveState() {
+  bool should_enable =
+      logon_ui_process_ == INVALID_HANDLE_VALUE &&
+      ((!needs_windows_password_ || current_windows_password_.Length()) ||
+       (needs_windows_password_ && request_force_password_change_));
   if (events_) {
-    bool should_enable =
-        logon_ui_process_ == INVALID_HANDLE_VALUE &&
-        ((!needs_windows_password_ || current_windows_password_.Length()) ||
-         (needs_windows_password_ && request_force_password_change_));
     events_->SetFieldInteractiveState(
         this, FID_SUBMIT, should_enable ? CPFIS_NONE : CPFIS_DISABLED);
   }
+
+  return should_enable;
 }
 
 void CGaiaCredentialBase::DisplayPasswordField(int password_message) {

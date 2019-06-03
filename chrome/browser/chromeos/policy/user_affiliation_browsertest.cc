@@ -12,7 +12,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/login/active_directory_test_helper.h"
+#include "chrome/browser/chromeos/login/mixin_based_in_process_browser_test.h"
 #include "chrome/browser/chromeos/policy/affiliation_test_helper.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chrome/browser/net/nss_context.h"
@@ -27,6 +27,7 @@
 #include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "chromeos/dbus/upstart/upstart_client.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/user_manager/user.h"
@@ -119,7 +120,7 @@ bool IsSystemSlotAvailable(Profile* profile) {
 }  // namespace
 
 class UserAffiliationBrowserTest
-    : public InProcessBrowserTest,
+    : public chromeos::MixinBasedInProcessBrowserTest,
       public ::testing::WithParamInterface<Params> {
  public:
   UserAffiliationBrowserTest() {
@@ -135,9 +136,9 @@ class UserAffiliationBrowserTest
   }
 
  protected:
-  // InProcessBrowserTest
+  // MixinBasedInProcessBrowserTest:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
+    chromeos::MixinBasedInProcessBrowserTest::SetUpCommandLine(command_line);
     if (content::IsPreTest()) {
       AffiliationTestHelper::AppendCommandLineSwitchesForLoginManager(
           command_line);
@@ -152,15 +153,12 @@ class UserAffiliationBrowserTest
     }
   }
 
-  // InProcessBrowserTest
   void SetUpInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
-    // Some DBus services rely on paths, so override it here.
-    chromeos::active_directory_test_helper::OverridePaths();
+    chromeos::MixinBasedInProcessBrowserTest::
+        SetUpInProcessBrowserTestFixture();
 
     // Initialize clients here so they are available during setup. They will be
     // shutdown in ChromeBrowserMain.
-    chromeos::CryptohomeClient::InitializeFake();
     chromeos::SessionManagerClient::InitializeFakeInMemory();
     chromeos::UpstartClient::InitializeFake();
     chromeos::FakeAuthPolicyClient* fake_auth_policy_client = nullptr;
@@ -195,7 +193,8 @@ class UserAffiliationBrowserTest
 
   void CreatedBrowserMainParts(
       content::BrowserMainParts* browser_main_parts) override {
-    InProcessBrowserTest::CreatedBrowserMainParts(browser_main_parts);
+    chromeos::MixinBasedInProcessBrowserTest::CreatedBrowserMainParts(
+        browser_main_parts);
 
     login_ui_visible_waiter_ =
         std::make_unique<content::WindowedNotificationObserver>(
@@ -203,9 +202,8 @@ class UserAffiliationBrowserTest
             content::NotificationService::AllSources());
   }
 
-  // InProcessBrowserTest:
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
+    chromeos::MixinBasedInProcessBrowserTest::SetUpOnMainThread();
     if (content::IsPreTest()) {
       // Wait for the login manager UI to be available before continuing.
       // This is a workaround for chrome crashing when running with DCHECKS when
@@ -215,9 +213,8 @@ class UserAffiliationBrowserTest
     }
   }
 
-  // InProcessBrowserTest:
   void TearDownOnMainThread() override {
-    InProcessBrowserTest::TearDownOnMainThread();
+    chromeos::MixinBasedInProcessBrowserTest::TearDownOnMainThread();
 
     TearDownTestSystemSlot();
   }
@@ -279,15 +276,18 @@ class UserAffiliationBrowserTest
   std::unique_ptr<content::WindowedNotificationObserver>
       login_ui_visible_waiter_;
 
+  chromeos::DeviceStateMixin device_state_{
+      &mixin_host_,
+      GetParam().active_directory
+          ? chromeos::DeviceStateMixin::State::
+                OOBE_COMPLETED_ACTIVE_DIRECTORY_ENROLLED
+          : chromeos::DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
+
   DISALLOW_COPY_AND_ASSIGN(UserAffiliationBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_P(UserAffiliationBrowserTest, PRE_PRE_TestAffiliation) {
   AffiliationTestHelper::PreLoginUser(account_id_);
-  if (GetParam().active_directory) {
-    chromeos::active_directory_test_helper::PrepareLogin(
-        account_id_.GetUserEmail());
-  }
 }
 
 // This part of the test performs a regular sign-in through the login manager.

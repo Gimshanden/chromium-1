@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/testing/font_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 
 using blink::test::CreateTestFont;
 
@@ -21,6 +22,8 @@ static const int kWarmupRuns = 10000;
 static const int kTimeCheckInterval = 1000000;
 
 class ShapeResultPerfTest {
+  USING_FAST_MALLOC(ShapeResultPerfTest);
+
  public:
   enum FontName {
     ahem,
@@ -38,9 +41,10 @@ class ShapeResultPerfTest {
   TextRun SetupFont(FontName font_name, const String& text, bool ltr) {
     FontDescription::VariantLigatures ligatures(
         FontDescription::kEnabledLigaturesState);
-    font = CreateTestFont("TestFont",
-                          test::PlatformTestDataPath(font_path[font_name]), 100,
-                          &ligatures);
+    font = CreateTestFont(
+        "TestFont",
+        test::PlatformTestDataPath(font_path.find(font_name)->value), 100,
+        &ligatures);
 
     return TextRun(
         text, /* xpos */ 0, /* expansion */ 0,
@@ -50,7 +54,7 @@ class ShapeResultPerfTest {
 
   Font font;
 
-  std::map<FontName, String> font_path = {
+  HashMap<FontName, String, WTF::IntHash<FontName>> font_path = {
       {ahem, "Ahem.woff"},
       {amiri, "third_party/Amiri/amiri_arabic.woff2"},
       {megalopolis, "third_party/MEgalopolis/MEgalopolisExtra.woff"},

@@ -22,6 +22,7 @@
 #include "url/origin.h"
 
 namespace net {
+struct SHA256HashValue;
 class SourceStream;
 }  // namespace net
 
@@ -36,8 +37,9 @@ class SignedExchangeHandler;
 class SignedExchangeHandlerFactory;
 class SignedExchangePrefetchMetricRecorder;
 class SignedExchangeReporter;
-class URLLoaderThrottle;
+class SignedExchangeValidityPinger;
 class SourceStreamToDataPipe;
+class URLLoaderThrottle;
 
 // SignedExchangeLoader handles an origin-signed HTTP exchange response. It is
 // created when a SignedExchangeRequestHandler recieves an origin-signed HTTP
@@ -80,7 +82,7 @@ class CONTENT_EXPORT SignedExchangeLoader final
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback ack_callback) override;
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle body) override;
@@ -104,13 +106,16 @@ class CONTENT_EXPORT SignedExchangeLoader final
     return inner_request_url_;
   }
 
+  // Returns the header integrity value of the loaded signed exchange if
+  // available. This is available after OnReceiveRedirect() of
+  // |forwarding_client| is called. Otherwise returns nullopt.
+  base::Optional<net::SHA256HashValue> ComputeHeaderIntegrity() const;
+
   // Set nullptr to reset the mocking.
   static void SetSignedExchangeHandlerFactoryForTest(
       SignedExchangeHandlerFactory* factory);
 
  private:
-  class ResponseTimingInfo;
-
   // Called from |signed_exchange_handler_| when it finds an origin-signed HTTP
   // exchange.
   void OnHTTPExchangeFound(
@@ -120,14 +125,12 @@ class CONTENT_EXPORT SignedExchangeLoader final
       const network::ResourceResponseHead& resource_response,
       std::unique_ptr<net::SourceStream> payload_stream);
 
+  void StartReadingBody();
   void FinishReadingBody(int result);
   void NotifyClientOnCompleteIfReady();
   void ReportLoadResult(SignedExchangeLoadResult result);
 
   const network::ResourceRequest outer_request_;
-
-  // This timing info is used to create a dummy redirect response.
-  std::unique_ptr<const ResponseTimingInfo> outer_response_timing_info_;
 
   // The outer response of signed HTTP exchange which was received from network.
   const network::ResourceResponseHead outer_response_;
@@ -179,6 +182,8 @@ class CONTENT_EXPORT SignedExchangeLoader final
   // Set when |body_data_pipe_adapter_| finishes loading the decoded body.
   base::Optional<int> decoded_body_read_result_;
   const std::string accept_langs_;
+
+  std::unique_ptr<SignedExchangeValidityPinger> validity_pinger_;
 
   base::WeakPtrFactory<SignedExchangeLoader> weak_factory_;
 

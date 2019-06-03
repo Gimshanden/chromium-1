@@ -18,6 +18,11 @@ bool ObfuscatedFileUtilDiskDelegate::DirectoryExists(
   return base::DirectoryExists(path);
 }
 
+size_t ObfuscatedFileUtilDiskDelegate::ComputeDirectorySize(
+    const base::FilePath& path) {
+  return base::ComputeDirectorySize(path);
+}
+
 bool ObfuscatedFileUtilDiskDelegate::DeleteFileOrDirectory(
     const base::FilePath& path,
     bool recursive) {
@@ -76,6 +81,14 @@ base::File::Error ObfuscatedFileUtilDiskDelegate::Truncate(
 }
 
 base::File::Error ObfuscatedFileUtilDiskDelegate::CopyOrMoveFile(
+    const base::FilePath& src_path,
+    const base::FilePath& dest_path,
+    FileSystemOperation::CopyOrMoveOption option,
+    NativeFileUtil::CopyOrMoveMode mode) {
+  return NativeFileUtil::CopyOrMoveFile(src_path, dest_path, option, mode);
+}
+
+base::File::Error ObfuscatedFileUtilDiskDelegate::CopyInForeignFile(
     const base::FilePath& src_path,
     const base::FilePath& dest_path,
     FileSystemOperation::CopyOrMoveOption option,

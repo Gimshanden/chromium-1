@@ -50,6 +50,7 @@ namespace policy {
 class PolicyService;
 class ProfilePolicyConnector;
 class SchemaRegistryService;
+class UserCloudPolicyManager;
 }  // namespace policy
 
 namespace service_manager {
@@ -132,6 +133,10 @@ class TestingProfile : public Profile {
     // a non-empty string, the profile is supervised.
     void SetSupervisedUserId(const std::string& supervised_user_id);
 
+    void SetUserCloudPolicyManager(
+        std::unique_ptr<policy::UserCloudPolicyManager>
+            user_cloud_policy_manager);
+
     // Sets the PolicyService to be used by this profile.
     void SetPolicyService(
         std::unique_ptr<policy::PolicyService> policy_service);
@@ -162,6 +167,7 @@ class TestingProfile : public Profile {
     bool allows_browser_windows_;
     base::Optional<bool> is_new_profile_;
     std::string supervised_user_id_;
+    std::unique_ptr<policy::UserCloudPolicyManager> user_cloud_policy_manager_;
     std::unique_ptr<policy::PolicyService> policy_service_;
     TestingFactories testing_factories_;
     std::string profile_name_;
@@ -195,6 +201,7 @@ class TestingProfile : public Profile {
                  bool allows_browser_windows,
                  base::Optional<bool> is_new_profile,
                  const std::string& supervised_user_id,
+                 std::unique_ptr<policy::UserCloudPolicyManager> policy_manager,
                  std::unique_ptr<policy::PolicyService> policy_service,
                  TestingFactories testing_factories,
                  const std::string& profile_name);
@@ -332,7 +339,19 @@ class TestingProfile : public Profile {
   }
   bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
-  SimpleFactoryKey* GetSimpleFactoryKey() const override;
+  ProfileKey* GetProfileKey() const override;
+  policy::SchemaRegistryService* GetPolicySchemaRegistryService() override;
+#if defined(OS_CHROMEOS)
+  policy::UserCloudPolicyManagerChromeOS* GetUserCloudPolicyManagerChromeOS()
+      override;
+  policy::ActiveDirectoryPolicyManager* GetActiveDirectoryPolicyManager()
+      override;
+#else
+  policy::UserCloudPolicyManager* GetUserCloudPolicyManager() override;
+#endif  // defined(OS_CHROMEOS)
+  policy::ProfilePolicyConnector* GetProfilePolicyConnector() override;
+  const policy::ProfilePolicyConnector* GetProfilePolicyConnector()
+      const override;
   base::FilePath last_selected_directory() override;
   void set_last_selected_directory(const base::FilePath& path) override;
   bool WasCreatedByVersionOrLater(const std::string& version) override;
@@ -379,7 +398,7 @@ class TestingProfile : public Profile {
 
   // The key to index KeyedService instances created by
   // SimpleKeyedServiceFactory.
-  std::unique_ptr<SimpleFactoryKey> key_;
+  std::unique_ptr<ProfileKey> key_;
 
   std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs_;
   // ref only for right type, lifecycle is managed by prefs_
@@ -406,8 +425,7 @@ class TestingProfile : public Profile {
   // |original_profile_|.
   void CreateIncognitoPrefService();
 
-  // Creates a ProfilePolicyConnector that the ProfilePolicyConnectorFactory
-  // maps to this profile.
+  // Creates a ProfilePolicyConnector.
   void CreateProfilePolicyConnector();
 
   std::unique_ptr<net::CookieStore, content::BrowserThread::DeleteOnIOThread>
@@ -457,6 +475,7 @@ class TestingProfile : public Profile {
   content::MockResourceContext* resource_context_;
 
   std::unique_ptr<policy::SchemaRegistryService> schema_registry_service_;
+  std::unique_ptr<policy::UserCloudPolicyManager> user_cloud_policy_manager_;
   std::unique_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
 
   // Weak pointer to a delegate for indicating that a profile was created.

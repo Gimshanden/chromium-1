@@ -109,7 +109,7 @@ PasswordFormFillData GetTestPasswordFormFillData() {
   form_on_page.origin = GURL("https://foo.com/");
   form_on_page.action = GURL("https://foo.com/login");
   form_on_page.signon_realm = "https://foo.com/";
-  form_on_page.scheme = PasswordForm::SCHEME_HTML;
+  form_on_page.scheme = PasswordForm::Scheme::kHtml;
 
   // Create an exact match in the database.
   PasswordForm preferred_match = form_on_page;
@@ -125,10 +125,7 @@ PasswordFormFillData GetTestPasswordFormFillData() {
   non_preferred_match.password_value = ASCIIToUTF16("test1");
   matches[non_preferred_match.username_value] = &non_preferred_match;
 
-  PasswordFormFillData result;
-  InitPasswordFormFillData(form_on_page, matches, &preferred_match, true,
-                           &result);
-  return result;
+  return PasswordFormFillData(form_on_page, matches, preferred_match, true);
 }
 
 MATCHER(WerePasswordsCleared, "Passwords not cleared") {

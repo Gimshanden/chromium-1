@@ -54,6 +54,7 @@ class FakePageScheduler final : public PageScheduler {
   void SetKeepActive(bool keep_active) override {}
   bool IsMainFrameLocal() const override { return true; }
   void SetIsMainFrameLocal(bool is_local) override {}
+  void OnLocalMainFrameNetworkAlmostIdle() override {}
 
   std::unique_ptr<FrameScheduler> CreateFrameScheduler(
       FrameScheduler::Delegate* delegate,
@@ -76,10 +77,6 @@ class FakePageScheduler final : public PageScheduler {
   }
   bool RequestBeginMainFrameNotExpected(bool new_state) override {
     return false;
-  }
-  WTF::HashSet<SchedulingPolicy::Feature>
-  GetActiveFeaturesOptingOutFromBackForwardCache() const override {
-    return WTF::HashSet<SchedulingPolicy::Feature>();
   }
 
  private:

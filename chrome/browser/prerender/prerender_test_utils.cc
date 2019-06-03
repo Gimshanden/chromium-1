@@ -185,8 +185,7 @@ class NeverRunsExternalProtocolHandlerDelegate
   void BlockRequest() override {}
 
   void RunExternalProtocolDialog(const GURL& url,
-                                 int render_process_host_id,
-                                 int routing_id,
+                                 content::WebContents* web_contents,
                                  ui::PageTransition page_transition,
                                  bool has_user_gesture) override {
     NOTREACHED();
@@ -277,10 +276,16 @@ TestPrerenderContents::TestPrerenderContents(
     Profile* profile,
     const GURL& url,
     const content::Referrer& referrer,
+    const base::Optional<url::Origin>& initiator_origin,
     Origin origin,
     FinalStatus expected_final_status,
     bool ignore_final_status)
-    : PrerenderContents(prerender_manager, profile, url, referrer, origin),
+    : PrerenderContents(prerender_manager,
+                        profile,
+                        url,
+                        referrer,
+                        initiator_origin,
+                        origin),
       expected_final_status_(expected_final_status),
       observer_(this),
       new_render_view_host_(nullptr),
@@ -364,7 +369,7 @@ DestructionWaiter::DestructionWaiter(TestPrerenderContents* prerender_contents,
     saw_correct_status_ = true;
     return;
   }
-  if (prerender_contents->final_status() != FINAL_STATUS_MAX) {
+  if (prerender_contents->final_status() != FINAL_STATUS_UNKNOWN) {
     // The contents was already destroyed by the time this was called.
     MarkDestruction(prerender_contents->final_status());
   } else {
@@ -400,7 +405,7 @@ void DestructionWaiter::DestructionMarker::OnPrerenderStop(
 
 TestPrerender::TestPrerender()
     : contents_(nullptr),
-      final_status_(FINAL_STATUS_MAX),
+      final_status_(FINAL_STATUS_UNKNOWN),
       number_of_loads_(0),
       expected_number_of_loads_(0),
       started_(false),
@@ -530,15 +535,16 @@ PrerenderContents* TestPrerenderContentsFactory::CreatePrerenderContents(
     Profile* profile,
     const GURL& url,
     const content::Referrer& referrer,
+    const base::Optional<url::Origin>& initiator_origin,
     Origin origin) {
   ExpectedContents expected;
   if (!expected_contents_queue_.empty()) {
     expected = expected_contents_queue_.front();
     expected_contents_queue_.pop_front();
   }
-  TestPrerenderContents* contents =
-      new TestPrerenderContents(prerender_manager, profile, url, referrer,
-                                origin, expected.final_status, expected.ignore);
+  TestPrerenderContents* contents = new TestPrerenderContents(
+      prerender_manager, profile, url, referrer, initiator_origin, origin,
+      expected.final_status, expected.ignore);
   if (expected.handle)
     expected.handle->OnPrerenderCreated(contents);
   return contents;

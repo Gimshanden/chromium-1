@@ -38,21 +38,22 @@ cr.define('system_dialog_browsertest', function() {
       nativeLayer.setLocalDestinationCapabilities(
           print_preview_test_utils.getCddTemplate(initialSettings.printerName));
       const pluginProxy = new print_preview.PDFPluginStub();
-      print_preview_new.PluginProxy.setInstance(pluginProxy);
+      print_preview.PluginProxy.setInstance(pluginProxy);
 
       const page = document.createElement('print-preview-app');
       document.body.appendChild(page);
       const previewArea = page.$.previewArea;
       pluginProxy.setLoadCallback(previewArea.onPluginLoad_.bind(previewArea));
       sidebar = page.$$('print-preview-sidebar');
-      linkContainer = sidebar.$$('print-preview-link-container');
       return Promise
           .all([
+            test_util.waitForRender(page),
             print_preview.Model.whenReady(),
             nativeLayer.whenCalled('getInitialSettings'),
             nativeLayer.whenCalled('getPrinterCapabilities'),
           ])
           .then(function() {
+            linkContainer = sidebar.$$('print-preview-link-container');
             return nativeLayer.whenCalled('getPreview');
           })
           .then(function() {
@@ -113,7 +114,7 @@ cr.define('system_dialog_browsertest', function() {
             assertTrue(printButton.disabled);
             assertTrue(linkContainer.disabled);
             assertFalse(link.hidden);
-            assertTrue(link.querySelector('button').disabled);
+            assertTrue(link.querySelector('cr-icon-button').disabled);
 
             // No new preview
             assertEquals(previewCalls, nativeLayer.getCallCount('getPreview'));

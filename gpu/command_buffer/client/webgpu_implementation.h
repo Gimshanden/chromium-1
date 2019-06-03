@@ -84,8 +84,17 @@ class WEBGPU_EXPORT WebGPUImplementation final
   bool CanDecodeWithHardwareAcceleration(
       base::span<const uint8_t> encoded_data) const override;
 
+  // InterfaceBase implementation.
+  void GenSyncTokenCHROMIUM(GLbyte* sync_token) override;
+  void GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) override;
+  void VerifySyncTokensCHROMIUM(GLbyte** sync_tokens, GLsizei count) override;
+  void WaitSyncTokenCHROMIUM(const GLbyte* sync_token) override;
+
   // ImplementationBase implementation.
   void IssueShallowFlush() override;
+  void SetGLError(GLenum error,
+                  const char* function_name,
+                  const char* msg) override;
 
   // GpuControlClient implementation.
   void OnGpuControlLostContext() final;
@@ -105,9 +114,11 @@ class WEBGPU_EXPORT WebGPUImplementation final
   const DawnProcTable& GetProcs() const override;
   void FlushCommands() override;
   DawnDevice GetDefaultDevice() override;
+  ReservedTexture ReserveTexture(DawnDevice device) override;
 
  private:
   const char* GetLogPrefix() const { return "webgpu"; }
+  void CheckGLError() {}
 
   WebGPUCmdHelper* helper_;
 #if BUILDFLAG(USE_DAWN)
@@ -115,7 +126,7 @@ class WEBGPU_EXPORT WebGPUImplementation final
 #endif
   DawnProcTable procs_ = {};
 
-  uint32_t c2s_buffer_size_ = 0;
+  uint32_t c2s_buffer_default_size_ = 0;
   uint32_t c2s_put_offset_ = 0;
   ScopedTransferBufferPtr c2s_buffer_;
 

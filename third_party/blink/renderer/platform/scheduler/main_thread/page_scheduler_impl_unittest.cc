@@ -49,6 +49,22 @@ void IncrementCounter(int* counter) {
 using base::Bucket;
 using testing::UnorderedElementsAreArray;
 
+class MockPageSchedulerDelegate : public PageScheduler::Delegate {
+ public:
+  MockPageSchedulerDelegate() : idle_(false) {}
+
+  void SetLocalMainFrameNetworkIsAlmostIdle(bool idle) { idle_ = idle; }
+  bool LocalMainFrameNetworkIsAlmostIdle() const override { return idle_; }
+
+ private:
+  void ReportIntervention(const WTF::String&) override {}
+  bool RequestBeginMainFrameNotExpected(bool) override { return false; }
+  void SetLifecycleState(PageLifecycleState) override {}
+  bool IsOrdinary() const override { return true; }
+
+  bool idle_;
+};
+
 class PageSchedulerImplTest : public testing::Test {
  public:
   PageSchedulerImplTest() {
@@ -73,7 +89,9 @@ class PageSchedulerImplTest : public testing::Test {
         base::sequence_manager::SequenceManagerForTest::Create(
             nullptr, test_task_runner_, test_task_runner_->GetMockTickClock()),
         base::nullopt));
-    page_scheduler_.reset(new PageSchedulerImpl(nullptr, scheduler_.get()));
+    page_scheduler_delegate_.reset(new MockPageSchedulerDelegate());
+    page_scheduler_.reset(new PageSchedulerImpl(page_scheduler_delegate_.get(),
+                                                scheduler_.get()));
     frame_scheduler_ =
         FrameSchedulerImpl::Create(page_scheduler_.get(), nullptr, nullptr,
                                    FrameScheduler::FrameType::kSubframe);
@@ -103,6 +121,12 @@ class PageSchedulerImplTest : public testing::Test {
   base::TimeDelta delay_for_background_tab_freezing() const {
     return page_scheduler_->delay_for_background_tab_freezing_;
   }
+
+  base::TimeDelta delay_for_background_and_network_idle_tab_freezing() const {
+    return page_scheduler_->delay_for_background_and_network_idle_tab_freezing_;
+  }
+
+  PageScheduler::Delegate* delegate() { return page_scheduler_->delegate_; }
 
   static base::TimeDelta recent_audio_delay() {
     return PageSchedulerImpl::kRecentAudioDelay;
@@ -210,10 +234,21 @@ class PageSchedulerImplTest : public testing::Test {
     EXPECT_EQ(5, counter);
   }
 
+  bool NetworkIsAlmostIdle() const {
+    return page_scheduler_delegate_->LocalMainFrameNetworkIsAlmostIdle();
+  }
+
+  void NotifyLocalMainFrameNetworkIsAlmostIdle() {
+    EXPECT_FALSE(page_scheduler_delegate_->LocalMainFrameNetworkIsAlmostIdle());
+    page_scheduler_delegate_->SetLocalMainFrameNetworkIsAlmostIdle(true);
+    page_scheduler_->OnLocalMainFrameNetworkAlmostIdle();
+  }
+
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
   std::unique_ptr<MainThreadSchedulerImpl> scheduler_;
   std::unique_ptr<PageSchedulerImpl> page_scheduler_;
   std::unique_ptr<FrameSchedulerImpl> frame_scheduler_;
+  std::unique_ptr<MockPageSchedulerDelegate> page_scheduler_delegate_;
 
  private:
   base::test::ScopedFeatureList feature_list_;
@@ -833,9 +868,9 @@ TEST_F(PageSchedulerImplTest, NestedMessageLoop_DETERMINISTIC_LOADING) {
 
   scheduler_->OnExitNestedRunLoop();
   EXPECT_TRUE(scheduler_->VirtualTimeAllowedToAdvance());
-  scheduler_->OnTaskCompleted(
-      nullptr, FakeTask(),
-      FakeTaskTiming(base::TimeTicks(), scheduler_->real_time_domain()->Now()));
+  FakeTaskTiming task_timing(base::TimeTicks(),
+                             scheduler_->real_time_domain()->Now());
+  scheduler_->OnTaskCompleted(nullptr, FakeTask(), &task_timing, nullptr);
 }
 
 TEST_F(PageSchedulerImplTest, PauseTimersWhileVirtualTimeIsPaused) {
@@ -1040,16 +1075,16 @@ void ExpensiveTestTask(scoped_refptr<base::TestMockTimeTaskRunner> task_runner,
 }
 
 void InitializeTrialParams() {
-  std::map<std::string, std::string> params = {{"cpu_budget", "0.01"},
-                                               {"max_budget", "0.0"},
-                                               {"initial_budget", "0.0"},
-                                               {"max_delay", "0.0"}};
+  base::FieldTrialParams params = {{"cpu_budget", "0.01"},
+                                   {"max_budget", "0.0"},
+                                   {"initial_budget", "0.0"},
+                                   {"max_delay", "0.0"}};
   const char kParamName[] = "ExpensiveBackgroundTimerThrottling";
   const char kGroupName[] = "Enabled";
   EXPECT_TRUE(base::AssociateFieldTrialParams(kParamName, kGroupName, params));
   EXPECT_TRUE(base::FieldTrialList::CreateFieldTrial(kParamName, kGroupName));
 
-  std::map<std::string, std::string> actual_params;
+  base::FieldTrialParams actual_params;
   base::GetFieldTrialParams(kParamName, &actual_params);
   EXPECT_EQ(actual_params, params);
 }
@@ -1426,6 +1461,91 @@ TEST_F(PageSchedulerImplTest, PageFrozenOnlyWhileNotVisible) {
   EXPECT_FALSE(page_scheduler_->IsFrozen());
 }
 
+class PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest
+    : public PageSchedulerImplTest {
+ public:
+  PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest()
+      : PageSchedulerImplTest(
+            {blink::features::kStopInBackground,
+             blink::features::kFreezeBackgroundTabOnNetworkIdle},
+            {}) {}
+};
+
+TEST_F(PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest,
+       PageFrozenOnlyOnLocalMainFrameNetworkIdle) {
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(ShouldFreezePage());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+  EXPECT_FALSE(NetworkIsAlmostIdle());
+
+  // After network is idle, page should freeze after delay for quick
+  // background tab freezing.
+  NotifyLocalMainFrameNetworkIsAlmostIdle();
+  EXPECT_TRUE(NetworkIsAlmostIdle());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+  page_scheduler_->SetPageVisible(false);
+  test_task_runner_->FastForwardBy(
+      delay_for_background_and_network_idle_tab_freezing() +
+      base::TimeDelta::FromMilliseconds(100));
+  EXPECT_TRUE(page_scheduler_->IsFrozen());
+}
+
+TEST_F(PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest,
+       PageFrozenOnlyOnLocalMainFrameNetworkAlmostIdleNoRegress) {
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(ShouldFreezePage());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+  EXPECT_FALSE(NetworkIsAlmostIdle());
+
+  // Page should freeze after delay for background tab freezing.
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_TRUE(ShouldFreezePage());
+  test_task_runner_->FastForwardBy(delay_for_background_tab_freezing() +
+                                   base::TimeDelta::FromMilliseconds(100));
+  EXPECT_TRUE(page_scheduler_->IsFrozen());
+}
+
+TEST_F(PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest,
+       PageFrozenWhenNetworkIdleAfterQuickFreezingDelay) {
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(ShouldFreezePage());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+  EXPECT_FALSE(NetworkIsAlmostIdle());
+
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_TRUE(ShouldFreezePage());
+  test_task_runner_->FastForwardBy(
+      delay_for_background_and_network_idle_tab_freezing() +
+      base::TimeDelta::FromMilliseconds(100));
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+
+  NotifyLocalMainFrameNetworkIsAlmostIdle();
+  test_task_runner_->FastForwardBy(base::TimeDelta::FromMilliseconds(100));
+  EXPECT_TRUE(page_scheduler_->IsFrozen());
+}
+
+TEST_F(PageSchedulerImplFreezeBackgroundTabOnNetworkIdleEnabledTest,
+       PageNotFrozenWhenVisibleBeforeNetworkIdle) {
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(ShouldFreezePage());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+  EXPECT_FALSE(NetworkIsAlmostIdle());
+
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_TRUE(ShouldFreezePage());
+  test_task_runner_->FastForwardBy(
+      delay_for_background_and_network_idle_tab_freezing() +
+      base::TimeDelta::FromMilliseconds(100));
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+
+  // Page should not freeze after delay for background tab freezing, because
+  // the page is visible.
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(ShouldFreezePage());
+  test_task_runner_->FastForwardBy(delay_for_background_tab_freezing());
+  EXPECT_FALSE(page_scheduler_->IsFrozen());
+}
+
 class PageSchedulerImplPageTransitionTest : public PageSchedulerImplTest {
  public:
   typedef PageSchedulerImpl::PageLifecycleStateTransition Transition;
@@ -1596,101 +1716,6 @@ TEST_F(PageSchedulerImplPageTransitionTest,
   EXPECT_THAT(histogram_tester_.GetAllSamples(
                   PageSchedulerImpl::kHistogramPageLifecycleStateTransition),
               UnorderedElementsAreArray(GetExpectedBuckets()));
-}
-
-TEST_F(PageSchedulerImplTest, BackForwardCacheOptOut) {
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
-
-  auto feature_handle1 = frame_scheduler_->RegisterFeature(
-      SchedulingPolicy::Feature::kWebSocket,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
-
-  auto feature_handle2 = frame_scheduler_->RegisterFeature(
-      SchedulingPolicy::Feature::kWebRTC,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket,
-                                    SchedulingPolicy::Feature::kWebRTC));
-
-  feature_handle1.reset();
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebRTC));
-
-  feature_handle2.reset();
-
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
-}
-
-TEST_F(PageSchedulerImplTest, BackForwardCacheOptOut_FrameDeleted) {
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
-
-  auto feature_handle = frame_scheduler_->RegisterFeature(
-      SchedulingPolicy::Feature::kWebSocket,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
-
-  frame_scheduler_.reset();
-
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
-}
-
-TEST_F(PageSchedulerImplTest, BackForwardCacheOptOut_FrameNavigated) {
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
-
-  auto feature_handle = frame_scheduler_->RegisterFeature(
-      SchedulingPolicy::Feature::kWebSocket,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
-
-  frame_scheduler_->RegisterStickyFeature(
-      SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(
-          SchedulingPolicy::Feature::kWebSocket,
-          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
-
-  // Same document navigations don't affect anything.
-  frame_scheduler_->DidCommitProvisionalLoad(
-      false, FrameScheduler::NavigationType::kSameDocument);
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(
-          SchedulingPolicy::Feature::kWebSocket,
-          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
-
-  // Regular navigations reset sticky features.
-  frame_scheduler_->DidCommitProvisionalLoad(
-      false, FrameScheduler::NavigationType::kOther);
-  EXPECT_THAT(
-      page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
-
-  feature_handle.reset();
-
-  EXPECT_THAT(page_scheduler_->GetActiveFeaturesOptingOutFromBackForwardCache(),
-              testing::UnorderedElementsAre());
 }
 
 }  // namespace page_scheduler_impl_unittest

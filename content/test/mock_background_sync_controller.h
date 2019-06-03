@@ -24,15 +24,20 @@ class MockBackgroundSyncController : public BackgroundSyncController {
   ~MockBackgroundSyncController() override = default;
 
   // BackgroundSyncController:
-  void NotifyBackgroundSyncRegistered(const url::Origin& origin) override;
+  void NotifyBackgroundSyncRegistered(const url::Origin& origin,
+                                      bool can_fire,
+                                      bool is_reregistered) override;
   void RunInBackground() override;
   void GetParameterOverrides(
       BackgroundSyncParameters* parameters) const override;
   base::TimeDelta GetNextEventDelay(
+      const url::Origin& origin,
       int64_t min_interval,
       int num_attempts,
       blink::mojom::BackgroundSyncType sync_type,
       BackgroundSyncParameters* parameters) const override;
+  std::unique_ptr<BackgroundSyncController::BackgroundSyncEventKeepAlive>
+  CreateBackgroundSyncEventKeepAlive() override;
 
   int registration_count() const { return registration_count_; }
   const url::Origin& registration_origin() const {

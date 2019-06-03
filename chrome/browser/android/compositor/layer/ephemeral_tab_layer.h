@@ -5,25 +5,40 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_EPHEMERAL_TAB_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_EPHEMERAL_TAB_LAYER_H_
 
-#include <memory>
-
 #include "chrome/browser/android/compositor/layer/overlay_panel_layer.h"
+
+#include "components/favicon/core/favicon_driver_observer.h"
+
+class Profile;
+
+namespace base {
+class CancelableTaskTracker;
+}
 
 namespace cc {
 class Layer;
-class NinePatchLayer;
-}  // namespace cc
+}
+
+namespace content {
+class WebContents;
+}
+
+namespace favicon {
+class FaviconDriver;
+}
 
 namespace ui {
 class ResourceManager;
 }
 
 namespace android {
-class EphemeralTabLayer : public OverlayPanelLayer {
+class EphemeralTabLayer : public OverlayPanelLayer,
+                          public favicon::FaviconDriverObserver {
  public:
   static scoped_refptr<EphemeralTabLayer> Create(
       ui::ResourceManager* resource_manager);
-  void SetProperties(int title_view_resource_id,
+  void SetProperties(content::WebContents* web_contents,
+                     int title_view_resource_id,
                      int caption_view_resource_id,
                      jfloat caption_animation_percentage,
                      jfloat text_layer_min_height,
@@ -39,12 +54,14 @@ class EphemeralTabLayer : public OverlayPanelLayer {
                      float panel_height,
                      int bar_background_color,
                      float bar_margin_side,
+                     float bar_margin_top,
                      float bar_height,
                      bool bar_border_visible,
                      float bar_border_height,
                      bool bar_shadow_visible,
                      float bar_shadow_opacity,
                      int icon_color,
+                     int drag_handlebar_color,
                      bool progress_bar_visible,
                      float progress_bar_height,
                      float progress_bar_opacity,
@@ -58,16 +75,32 @@ class EphemeralTabLayer : public OverlayPanelLayer {
                       int context_resource_id,
                       float title_caption_spacing);
 
+  void GetLocalFaviconImageForURL(Profile* profile,
+                                  const std::string& url,
+                                  int size);
+
+  // favicon::FaviconDriverObserver
+  void OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
+                        NotificationIconType notification_icon_type,
+                        const GURL& icon_url,
+                        bool icon_url_changed,
+                        const gfx::Image& image) override;
+
  protected:
   explicit EphemeralTabLayer(ui::ResourceManager* resource_manager);
   ~EphemeralTabLayer() override;
 
  private:
+  content::WebContents* web_contents_ = nullptr;
+  float dp_to_px_;
+  float panel_width_;
+  float bar_height_;
+  float bar_margin_side_;
   scoped_refptr<cc::UIResourceLayer> title_;
   scoped_refptr<cc::UIResourceLayer> caption_;
+  scoped_refptr<cc::UIResourceLayer> favicon_layer_;
   scoped_refptr<cc::UIResourceLayer> text_layer_;
-  scoped_refptr<cc::NinePatchLayer> progress_bar_;
-  scoped_refptr<cc::NinePatchLayer> progress_bar_background_;
+  std::unique_ptr<base::CancelableTaskTracker> cancelable_task_tracker_;
 };
 
 }  //  namespace android

@@ -28,8 +28,8 @@
 
 #include <utility>
 
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/loader/subresource_integrity_helper.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/web_memory_allocator_dump.h"
@@ -267,7 +267,15 @@ void ScriptResource::ResponseBodyReceived(
                   WTF::BindRepeating(&ScriptResource::OnDataPipeReadable,
                                      WrapWeakPersistent(this)));
   CHECK(data_pipe_);
-  watcher_->ArmOrNotify();
+
+  MojoResult ready_result;
+  mojo::HandleSignalsState ready_state;
+  MojoResult rv = watcher_->Arm(&ready_result, &ready_state);
+  if (rv == MOJO_RESULT_OK)
+    return;
+
+  DCHECK_EQ(MOJO_RESULT_FAILED_PRECONDITION, rv);
+  OnDataPipeReadable(ready_result, ready_state);
 }
 
 void ScriptResource::OnDataPipeReadable(MojoResult result,
@@ -290,6 +298,7 @@ void ScriptResource::OnDataPipeReadable(MojoResult result,
       // This means the producer finished and streamed to completion.
       watcher_.reset();
       response_body_loader_client_->DidFinishLoadingBody();
+      response_body_loader_client_ = nullptr;
       return;
 
     case MOJO_RESULT_SHOULD_WAIT:
@@ -300,6 +309,7 @@ void ScriptResource::OnDataPipeReadable(MojoResult result,
       // Some other error occurred.
       watcher_.reset();
       response_body_loader_client_->DidFailLoadingBody();
+      response_body_loader_client_ = nullptr;
       return;
   }
   CHECK(state.readable());
@@ -358,6 +368,7 @@ void ScriptResource::NotifyFinished() {
     case StreamingState::kStreamingNotAllowed:
       watcher_.reset();
       data_pipe_.reset();
+      response_body_loader_client_ = nullptr;
       AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
       TextResource::NotifyFinished();
       break;
@@ -382,6 +393,7 @@ void ScriptResource::StreamingFinished() {
   // small) and b) an external error triggered the finished notification.
   watcher_.reset();
   data_pipe_.reset();
+  response_body_loader_client_ = nullptr;
   AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
   TextResource::NotifyFinished();
 }
@@ -463,6 +475,7 @@ void ScriptResource::SetClientIsWaitingForFinished() {
   if (IsLoaded()) {
     watcher_.reset();
     data_pipe_.reset();
+    response_body_loader_client_ = nullptr;
     AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
     TextResource::NotifyFinished();
   }
@@ -536,6 +549,7 @@ void ScriptResource::CheckStreamingState() const {
       CHECK(!streamer_ || streamer_->IsFinished());
       CHECK(!watcher_ || !watcher_->IsWatching());
       CHECK(!data_pipe_);
+      CHECK(!response_body_loader_client_);
       CHECK(IsLoaded());
       break;
   }

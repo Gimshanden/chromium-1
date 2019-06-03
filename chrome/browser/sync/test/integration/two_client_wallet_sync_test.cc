@@ -3,11 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "chrome/browser/sync/test/integration/autofill_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/wallet_helper.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -59,18 +60,11 @@ class TwoClientWalletSyncTest : public UssWalletSwitchToggler, public SyncTest {
   }
   ~TwoClientWalletSyncTest() override {}
 
-  bool TestUsesSelfNotifications() override { return false; }
+  // Needed for AwaitQuiescence().
+  bool TestUsesSelfNotifications() override { return true; }
 
   bool SetupSync() override {
     test_clock_.SetNow(kArbitraryDefaultTime);
-    // Plug in SyncService into PDM so that it can check we use full sync. We
-    // need to do it before starting the sync in SetupSync(). We need to setup
-    // the clients before that so we can access their sync service.
-    if (!SetupClients()) {
-      return false;
-    }
-    GetPersonalDataManager(0)->OnSyncServiceInitialized(GetSyncService(0));
-    GetPersonalDataManager(1)->OnSyncServiceInitialized(GetSyncService(1));
 
     if (!SyncTest::SetupSync()) {
       return false;
@@ -241,16 +235,8 @@ IN_PROC_BROWSER_TEST_P(TwoClientWalletSyncTest, UpdateServerAddressMetadata) {
   EXPECT_EQ(kLaterTime, server_addresses[0]->use_date());
 }
 
-// Disabled due to flakiness: https://crbug.com/947692.
-#if defined(THREAD_SANITIZER)
-#define MAYBE_UpdateServerAddressMetadataWhileNotSyncing \
-  DISABLED_UpdateServerAddressMetadataWhileNotSyncing
-#else
-#define MAYBE_UpdateServerAddressMetadataWhileNotSyncing \
-  UpdateServerAddressMetadataWhileNotSyncing
-#endif
 IN_PROC_BROWSER_TEST_P(TwoClientWalletSyncTest,
-                       MAYBE_UpdateServerAddressMetadataWhileNotSyncing) {
+                       UpdateServerAddressMetadataWhileNotSyncing) {
   GetFakeServer()->SetWalletData(
       {CreateSyncWalletAddress(/*name=*/"address-1", /*company=*/"Company-1"),
        CreateDefaultSyncPaymentsCustomerData()});
@@ -479,12 +465,18 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_EQ(kEvenLaterTime, credit_cards[0]->use_date());
 }
 
+// Flaky. http://crbug.com/917498
 IN_PROC_BROWSER_TEST_P(TwoClientWalletSyncTest,
-                       ServerAddressConvertsToSameLocalAddress) {
+                       DISABLED_ServerAddressConvertsToSameLocalAddress) {
   GetFakeServer()->SetWalletData(
       {CreateSyncWalletAddress(/*name=*/"address-1", /*company=*/"Company-1"),
        CreateDefaultSyncPaymentsCustomerData()});
   ASSERT_TRUE(SetupSync());
+
+  // On top of expecting convergence on AutofillWalletChecker, expect
+  // convergence on wallet metadata and on autofill profiles.
+  EXPECT_TRUE(AutofillWalletMetadataSizeChecker(0, 1).Wait());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
 
   // Make sure both have has_converted true.
   std::vector<AutofillProfile*> server_addresses = GetServerProfiles(0);
@@ -514,6 +506,9 @@ IN_PROC_BROWSER_TEST_P(TwoClientWalletSyncTest,
        CreateSyncWalletAddress(/*name=*/"address-1", /*company=*/"Company-1"),
        CreateDefaultSyncPaymentsCustomerData()});
   ASSERT_TRUE(SetupSync());
+  // Wait until sync settles (for the wallet metadata) before we change the
+  // data again.
+  ASSERT_TRUE(AwaitQuiescence());
 
   // Grab the current address on the first client.
   std::vector<AutofillProfile*> server_addresses = GetServerProfiles(0);
@@ -562,6 +557,9 @@ IN_PROC_BROWSER_TEST_P(TwoClientWalletSyncTest,
        CreateSyncWalletAddress(/*name=*/"address-1", /*company=*/"Company-1"),
        CreateDefaultSyncPaymentsCustomerData()});
   ASSERT_TRUE(SetupSync());
+  // Wait until sync settles (for the wallet metadata) before we change the
+  // data again.
+  ASSERT_TRUE(AwaitQuiescence());
 
   // Grab the current card on the first client.
   std::vector<CreditCard*> credit_cards = GetServerCreditCards(0);

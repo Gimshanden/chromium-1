@@ -14,24 +14,35 @@ class NavigationHandle;
 
 namespace previews {
 
+// This bit mask is all the preview types that are fully decided
+// before commit.
+static const content::PreviewsState kPreCommitPreviews =
+    content::SERVER_LOFI_ON | content::SERVER_LITE_PAGE_ON |
+    content::OFFLINE_PAGE_ON | content::LITE_PAGE_REDIRECT_ON;
+
 // Returns whether |previews_state| has any enabled previews.
 bool HasEnabledPreviews(content::PreviewsState previews_state);
 
-// Returns the bitmask of enabled client-side previews for |url| and the
+// Returns the bitmask of enabled client-side previews and the
 // current effective network connection given |previews_decider|.
 // This handles the mapping of previews::PreviewsType enum values to bitmask
 // definitions for content::PreviewsState.
-// |is_reload| is used to eliminate certain preview types, and |previews_data|
-// is populated with relevant information.
-// TODO(ryansturm): |navigation_handle| has all of the other information, so
-// remove extra arguments. https://crbug.com/934400
+// |previews_triggering_logic_already_ran| is used to prevent offline previews
+// from being updated if previews triggering logic has already run.
+// |previews_data| is populated with relevant information.
 content::PreviewsState DetermineAllowedClientPreviewsState(
     previews::PreviewsUserData* previews_data,
-    const GURL& url,
-    bool is_reload,
-    bool is_redirect,
+    bool previews_triggering_logic_already_ran,
     bool is_data_saver_user,
     previews::PreviewsDecider* previews_decider,
+    content::NavigationHandle* navigation_handle);
+
+// If this Chrome session is in a coin flip holdback, possibly modify the
+// previews state of the navigation according to a random coin flip. This method
+// should only be called before commit (at navigation start or redirect) and
+// will only impact previews that are decided before commit.
+content::PreviewsState MaybeCoinFlipHoldbackBeforeCommit(
+    content::PreviewsState initial_state,
     content::NavigationHandle* navigation_handle);
 
 // Returns an updated PreviewsState given |previews_state| that has already
@@ -43,6 +54,15 @@ content::PreviewsState DetermineCommittedClientPreviewsState(
     const GURL& url,
     content::PreviewsState previews_state,
     const previews::PreviewsDecider* previews_decider,
+    content::NavigationHandle* navigation_handle);
+
+// If this Chrome session is in a coin flip holdback, possibly modify the
+// previews state of the navigation according to a random coin flip. This method
+// should only be called after commit and may impact all preview types. This
+// method assume |MaybeCoinFlipHoldbackBeforeCommit| has already been called
+// with the same |navigation_handle|.
+content::PreviewsState MaybeCoinFlipHoldbackAfterCommit(
+    content::PreviewsState initial_state,
     content::NavigationHandle* navigation_handle);
 
 // Returns the effective PreviewsType known on a main frame basis given the

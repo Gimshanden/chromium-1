@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_MAIN_THREAD_FRAME_SCHEDULER_IMPL_H_
 
 #include <array>
+#include <bitset>
 #include <memory>
 #include <utility>
 
@@ -45,6 +46,9 @@ class UkmRecorder;
 }
 
 namespace blink {
+
+class MainThreadSchedulerTest;
+
 namespace scheduler {
 
 class MainThreadSchedulerImpl;
@@ -90,6 +94,7 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   bool IsAdFrame() const override;
 
   void TraceUrlChange(const String& url) override;
+  void AddTaskTime(base::TimeDelta time) override;
   FrameScheduler::FrameType GetFrameType() const override;
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(TaskType) override;
 
@@ -148,10 +153,6 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
       MainThreadTaskQueue*,
       base::sequence_manager::TaskQueue::QueueEnabledVoter*) override;
 
-  // Adds the time for the task to a running tally, then forwards it on when
-  // the total time exceeds the threshold (100ms).
-  void AddTaskTime(base::TimeDelta time);
-
   using FrameTaskTypeToQueueTraitsArray =
       std::array<base::Optional<MainThreadTaskQueue::QueueTraits>,
                  static_cast<size_t>(TaskType::kCount)>;
@@ -162,8 +163,19 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   static void InitializeTaskTypeQueueTraitsMap(
       FrameTaskTypeToQueueTraitsArray&);
 
+  // Returns the list of active features which currently tracked by the
+  // scheduler for back-forward cache metrics.
   WTF::HashSet<SchedulingPolicy::Feature>
-  GetActiveFeaturesOptingOutFromBackForwardCache();
+  GetActiveFeaturesTrackedForBackForwardCacheMetrics() override;
+
+  // Notifies the delegate about the change in the set of active features.
+  // The scheduler calls this function when needed after each task finishes,
+  // grouping multiple OnStartedUsingFeature/OnStoppedUsingFeature into
+  // one call to the delegate (which is generally expected to upload them to
+  // the browser process).
+  // No calls will be issued to the delegate if the set of features didn't
+  // change since the previous call.
+  void ReportFeaturesToDelegate();
 
  protected:
   FrameSchedulerImpl(MainThreadSchedulerImpl* main_thread_scheduler,
@@ -191,6 +203,7 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   friend class frame_scheduler_impl_unittest::FrameSchedulerImplTest;
   friend class page_scheduler_impl_unittest::PageSchedulerImplTest;
   friend class ResourceLoadingTaskRunnerHandleImpl;
+  friend class ::blink::MainThreadSchedulerTest;
 
   // A class that adds and removes itself from the passed in weak pointer. While
   // one exists, resource loading is paused.
@@ -249,6 +262,14 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   // Reset the state which should not persist across navigations.
   void ResetForNavigation();
 
+  // Same as GetActiveFeaturesTrackedForBackForwardCacheMetrics, but returns
+  // a mask instead of a set.
+  uint64_t GetActiveFeaturesTrackedForBackForwardCacheMetricsMask() const;
+
+  base::WeakPtr<FrameOrWorkerScheduler> GetDocumentBoundWeakPtr() override;
+
+  void NotifyDelegateAboutFeaturesAfterCurrentTask();
+
   // Create QueueTraits for the default (non-finch) task queues.
   static MainThreadTaskQueue::QueueTraits ThrottleableTaskQueueTraits();
   static MainThreadTaskQueue::QueueTraits DeferrableTaskQueueTraits();
@@ -297,8 +318,14 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   size_t subresource_loading_pause_count_;
   base::flat_map<SchedulingPolicy::Feature, int>
       back_forward_cache_opt_out_counts_;
+  std::bitset<static_cast<size_t>(SchedulingPolicy::Feature::kMaxValue) + 1>
+      back_forward_cache_opt_outs_;
   TraceableState<bool, TracingCategoryName::kInfo>
       opted_out_from_back_forward_cache_;
+  // The last set of features passed to
+  // Delegate::UpdateActiveSchedulerTrackedFeatures.
+  uint64_t last_uploaded_active_features_ = 0;
+  bool feature_report_scheduled_ = false;
 
   // These are the states of the Page.
   // They should be accessed via GetPageScheduler()->SetPageState().
@@ -308,6 +335,10 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
       page_visibility_for_tracing_;
   TraceableState<bool, TracingCategoryName::kInfo>
       page_keep_active_for_tracing_;
+
+  // TODO(altimin): Remove after we have have 1:1 relationship between frames
+  // and documents.
+  base::WeakPtrFactory<FrameSchedulerImpl> document_bound_weak_factory_;
 
   base::WeakPtrFactory<FrameSchedulerImpl> weak_factory_;
 

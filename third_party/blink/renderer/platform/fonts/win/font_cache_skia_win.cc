@@ -37,7 +37,7 @@
 #include "base/debug/alias.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
-#include "third_party/blink/renderer/platform/fonts/bitmap_glyphs_blacklist.h"
+#include "third_party/blink/renderer/platform/fonts/bitmap_glyphs_block_list.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_face_creation_params.h"
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
@@ -197,22 +197,12 @@ scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
   }
 
   if (use_skia_font_fallback_) {
-    const char* bcp47_locale = nullptr;
-    int locale_count = 0;
-    // If the font description has a locale, use that. Otherwise, Skia will
-    // fall back on the user's default locale.
-    // TODO(kulshin): extract locale fallback logic from
-    //   FontCacheAndroid.cpp and share that code
-    if (font_description.Locale()) {
-      bcp47_locale = font_description.Locale()->LocaleForSkFontMgr();
-      locale_count = 1;
-    }
-
     CString family_name = font_description.Family().Family().Utf8();
-
+    Bcp47Vector locales =
+        GetBcp47LocaleForRequest(font_description, fallback_priority);
     SkTypeface* typeface = font_manager_->matchFamilyStyleCharacter(
-        family_name.data(), font_description.SkiaFontStyle(), &bcp47_locale,
-        locale_count, character);
+        family_name.data(), font_description.SkiaFontStyle(), locales.data(),
+        locales.size(), character);
     if (typeface) {
       SkString skia_family;
       typeface->getFamilyName(&skia_family);
@@ -488,7 +478,7 @@ std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
       font_description.Orientation());
 
   result->SetAvoidEmbeddedBitmaps(
-      BitmapGlyphsBlacklist::AvoidEmbeddedBitmapsForTypeface(typeface.get()));
+      BitmapGlyphsBlockList::ShouldAvoidEmbeddedBitmapsForTypeface(*typeface));
 
   return result;
 }

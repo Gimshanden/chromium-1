@@ -117,6 +117,7 @@ jumbo_component("ozone_base") {
     "//ui/gfx/ipc/geometry",
     "//ui/gfx/ipc/skia",
     "//ui/gl",
+    "//ui/ozone/public/interfaces:gesture_properties_service",
   ]
 
   if (enable_vulkan) {
@@ -292,6 +293,10 @@ test("ozone_unittests") {
   # Platform tests link ozone statically. Make sure we're not getting a
   # 2nd copy of any code via the component.
   assert_no_deps = [ "//ui/ozone" ]
+
+  data_deps = [
+    "//testing/buildbot/filters:ozone_unittests_filters",
+  ]
 }
 
 # X11 backend has its own test suite only built when we are using the x11

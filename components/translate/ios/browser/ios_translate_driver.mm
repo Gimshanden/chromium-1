@@ -20,10 +20,10 @@
 #import "components/translate/ios/browser/translate_controller.h"
 #include "ios/chrome/browser/metrics/ukm_url_recorder.h"
 #include "ios/web/public/browser_state.h"
+#include "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #include "ios/web/public/navigation_item.h"
 #include "ios/web/public/navigation_manager.h"
 #include "ios/web/public/referrer.h"
-#include "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #include "ios/web/public/web_state/navigation_context.h"
 #include "ios/web/public/web_state/web_state.h"
 #include "ui/base/page_transition_types.h"
@@ -93,8 +93,6 @@ void IOSTranslateDriver::OnLanguageDetermined(
     return;
   translate_manager_->GetLanguageState().LanguageDetermined(
       details.adopted_language, true);
-
-  translate_manager_->translate_client()->RecordLanguageDetectionEvent(details);
 
   if (web_state_)
     translate_manager_->InitiateTranslation(details.adopted_language);

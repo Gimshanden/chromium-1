@@ -17,7 +17,7 @@
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/gpu_messages.h"
-#include "media/filters/jpeg_parser.h"
+#include "media/parsers/jpeg_parser.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -69,7 +69,7 @@ bool GetJpegSubsampling(const media::JpegParseResult& parse_result,
   const uint8_t comp2_v =
       parse_result.frame_header.components[2].vertical_sampling_factor;
 
-  if (comp1_h != 1u || comp1_v != 1u || comp2_h == 1u || comp2_v == 1u)
+  if (comp1_h != 1u || comp1_v != 1u || comp2_h != 1u || comp2_v != 1u)
     return false;
 
   if (comp0_h == 2u && comp0_v == 2u) {

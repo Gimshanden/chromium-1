@@ -10,8 +10,9 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill_assistant/browser/actions/action_delegate.h"
+#include "components/autofill_assistant/browser/client_settings.h"
 #include "components/autofill_assistant/browser/service.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -22,43 +23,42 @@ class MockActionDelegate : public ActionDelegate {
   MockActionDelegate();
   ~MockActionDelegate() override;
 
-  MOCK_METHOD2(RunElementChecks,
-               void(BatchElementChecker*, base::OnceCallback<void()>));
+  MOCK_METHOD1(RunElementChecks, void(BatchElementChecker*));
 
-  void ShortWaitForElement(ElementCheckType check_type,
-                           const Selector& selector,
+  void ShortWaitForElement(const Selector& selector,
                            base::OnceCallback<void(bool)> callback) override {
-    OnShortWaitForElement(check_type, selector, callback);
+    OnShortWaitForElement(selector, callback);
   }
 
-  MOCK_METHOD3(OnShortWaitForElement,
-               void(ElementCheckType check_type,
-                    const Selector& selector,
-                    base::OnceCallback<void(bool)>&));
+  MOCK_METHOD2(OnShortWaitForElement,
+               void(const Selector& selector, base::OnceCallback<void(bool)>&));
 
-  void WaitForElementVisible(
+  void WaitForDom(
       base::TimeDelta max_wait_time,
       bool allow_interrupt,
-      const Selector& selector,
+      base::RepeatingCallback<void(BatchElementChecker*,
+                                   base::OnceCallback<void(bool)>)>
+          check_elements,
       base::OnceCallback<void(ProcessedActionStatusProto)> callback) override {
-    OnWaitForElementVisible(max_wait_time, allow_interrupt, selector, callback);
+    OnWaitForDom(max_wait_time, allow_interrupt, check_elements, callback);
   }
 
-  MOCK_METHOD4(OnWaitForElementVisible,
-               void(base::TimeDelta,
-                    bool,
-                    const Selector&,
-                    base::OnceCallback<void(ProcessedActionStatusProto)>&));
+  MOCK_METHOD4(
+      OnWaitForDom,
+      void(base::TimeDelta,
+           bool,
+           base::RepeatingCallback<void(BatchElementChecker*,
+                                        base::OnceCallback<void(bool)>)>&,
+           base::OnceCallback<void(ProcessedActionStatusProto)>&));
 
   MOCK_METHOD1(SetStatusMessage, void(const std::string& message));
   MOCK_METHOD0(GetStatusMessage, std::string());
-  MOCK_METHOD2(ClickOrTapElement,
+  MOCK_METHOD3(ClickOrTapElement,
                void(const Selector& selector,
+                    ClickAction::ClickType click_type,
                     base::OnceCallback<void(const ClientStatus&)> callback));
 
-  MOCK_METHOD2(Prompt,
-               void(std::unique_ptr<std::vector<Chip>> chips,
-                    base::OnceCallback<void()> on_terminate));
+  MOCK_METHOD1(Prompt, void(std::unique_ptr<std::vector<Chip>> chips));
   MOCK_METHOD0(CancelPrompt, void());
 
   void FillAddressForm(
@@ -118,6 +118,7 @@ class MockActionDelegate : public ActionDelegate {
   void SetFieldValue(const Selector& selector,
                      const std::string& value,
                      bool ignored_simulate_key_presses,
+                     int ignored_delay_in_millisecond,
                      base::OnceCallback<void(const ClientStatus&)> callback) {
     OnSetFieldValue(selector, value, callback);
   }
@@ -133,14 +134,19 @@ class MockActionDelegate : public ActionDelegate {
                     const std::string& value,
                     base::OnceCallback<void(const ClientStatus&)> callback));
 
-  MOCK_METHOD3(SendKeyboardInput,
+  MOCK_METHOD4(SendKeyboardInput,
                void(const Selector& selector,
                     const std::vector<UChar32>& codepoints,
+                    int delay_in_millisecond,
                     base::OnceCallback<void(const ClientStatus&)> callback));
   MOCK_METHOD2(GetOuterHtml,
                void(const Selector& selector,
                     base::OnceCallback<void(const ClientStatus&,
                                             const std::string&)> callback));
+  MOCK_METHOD0(ExpectNavigation, void());
+  MOCK_METHOD0(ExpectedNavigationHasStarted, bool());
+  MOCK_METHOD1(WaitForNavigation,
+               bool(base::OnceCallback<void(bool)> callback));
   MOCK_METHOD1(LoadURL, void(const GURL& url));
   MOCK_METHOD0(Shutdown, void());
   MOCK_METHOD0(Close, void());
@@ -154,6 +160,17 @@ class MockActionDelegate : public ActionDelegate {
   MOCK_METHOD1(SetProgress, void(int progress));
   MOCK_METHOD1(SetProgressVisible, void(bool visible));
   MOCK_METHOD1(SetChips, void(std::unique_ptr<std::vector<Chip>> chips));
+  MOCK_METHOD1(SetResizeViewport, void(bool resize_viewport));
+  MOCK_METHOD1(SetPeekMode,
+               void(ConfigureBottomSheetProto::PeekMode peek_mode));
+  MOCK_METHOD2(
+      SetForm,
+      bool(std::unique_ptr<FormProto> form,
+           base::RepeatingCallback<void(const FormProto::Result*)> callback));
+
+  const ClientSettings& GetSettings() override { return client_settings_; }
+
+  ClientSettings client_settings_;
 };
 
 }  // namespace autofill_assistant

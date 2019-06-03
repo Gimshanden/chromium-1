@@ -41,6 +41,7 @@ class AvatarToolbarButton;
 class BrowserAppMenuButton;
 class Browser;
 class ExtensionsToolbarButton;
+class ExtensionsToolbarContainer;
 class HomeButton;
 class ReloadButton;
 class ToolbarButton;
@@ -114,7 +115,8 @@ class ToolbarView : public views::AccessiblePaneView,
 
   void ShowIntentPickerBubble(
       std::vector<IntentPickerBubbleView::AppInfo> app_info,
-      bool disable_stay_in_chrome,
+      bool show_stay_in_chrome,
+      bool show_remember_selection,
       IntentPickerResponse callback);
 
   // Shows a bookmark bubble and anchors it appropriately.
@@ -122,12 +124,16 @@ class ToolbarView : public views::AccessiblePaneView,
                           bool already_bookmarked,
                           bookmarks::BookmarkBubbleObserver* observer);
 
+  // Access to the avatar button.
+  AvatarToolbarButton* GetAvatarToolbarButton();
+
   // Accessors.
   Browser* browser() const { return browser_; }
   BrowserActionsContainer* browser_actions() const { return browser_actions_; }
-  ExtensionsToolbarButton* extensions_button() const {
-    return extensions_button_;
+  ExtensionsToolbarContainer* extensions_container() const {
+    return extensions_container_;
   }
+  ExtensionsToolbarButton* GetExtensionsButton() const;
   ToolbarButton* back_button() const { return back_; }
   ReloadButton* reload_button() const { return reload_; }
   LocationBarView* location_bar() const { return location_bar_; }
@@ -136,7 +142,6 @@ class ToolbarView : public views::AccessiblePaneView,
   ToolbarPageActionIconContainerView* toolbar_page_action_container() const {
     return toolbar_page_action_container_;
   }
-  AvatarToolbarButton* avatar_button() const { return avatar_; }
   BrowserAppMenuButton* app_menu_button() const { return app_menu_button_; }
   HomeButton* home_button() const { return home_; }
   AppMenuIconController* app_menu_icon_controller() {
@@ -156,7 +161,7 @@ class ToolbarView : public views::AccessiblePaneView,
       override;
 
   // BrowserActionsContainer::Delegate:
-  views::MenuButton* GetOverflowReferenceView() override;
+  views::LabelButton* GetOverflowReferenceView() override;
   base::Optional<int> GetMaxBrowserActionsWidth() const override;
   std::unique_ptr<ToolbarActionsBar> CreateToolbarActionsBar(
       ToolbarActionsBarDelegate* delegate,
@@ -219,7 +224,8 @@ class ToolbarView : public views::AccessiblePaneView,
 
   // ToolbarButtonProvider:
   BrowserActionsContainer* GetBrowserActionsContainer() override;
-  PageActionIconContainerView* GetPageActionIconContainerView() override;
+  OmniboxPageActionIconContainerView* GetOmniboxPageActionIconContainerView()
+      override;
   AppMenuButton* GetAppMenuButton() override;
   gfx::Rect GetFindBarBoundingBox(int contents_height) const override;
   void FocusToolbar() override;
@@ -256,7 +262,7 @@ class ToolbarView : public views::AccessiblePaneView,
   CustomTabBarView* custom_tab_bar_ = nullptr;
   LocationBarView* location_bar_ = nullptr;
   BrowserActionsContainer* browser_actions_ = nullptr;
-  ExtensionsToolbarButton* extensions_button_ = nullptr;
+  ExtensionsToolbarContainer* extensions_container_ = nullptr;
   media_router::CastToolbarButton* cast_ = nullptr;
   ToolbarPageActionIconContainerView* toolbar_page_action_container_ = nullptr;
   AvatarToolbarButton* avatar_ = nullptr;

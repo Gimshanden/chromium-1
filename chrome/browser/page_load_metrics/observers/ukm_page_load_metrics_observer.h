@@ -71,6 +71,11 @@ class UkmPageLoadMetricsObserver
   void OnComplete(const page_load_metrics::mojom::PageLoadTiming& timing,
                   const page_load_metrics::PageLoadExtraInfo& info) override;
 
+  void OnResourceDataUseObserved(
+      content::RenderFrameHost* content,
+      const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+          resources) override;
+
   void OnLoadedResource(const page_load_metrics::ExtraRequestCompleteInfo&
                             extra_request_complete_info) override;
 
@@ -78,6 +83,10 @@ class UkmPageLoadMetricsObserver
       content::RenderFrameHost* subframe_rfh,
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+
+  void OnCpuTimingUpdate(
+      content::RenderFrameHost* subframe_rfh,
+      const page_load_metrics::mojom::CpuTiming& timing) override;
 
   // Whether the current page load is an Offline Preview. Must be called from
   // OnCommit. Virtual for testing.
@@ -130,6 +139,9 @@ class UkmPageLoadMetricsObserver
   base::Optional<base::TimeDelta> http_rtt_estimate_;
   base::Optional<base::TimeDelta> transport_rtt_estimate_;
   base::Optional<int32_t> downstream_kbps_estimate_;
+
+  // Total CPU wall time used by the page while in the foreground.
+  base::TimeDelta total_foreground_cpu_time_;
 
   // Load timing metrics of the main frame resource request.
   base::Optional<net::LoadTimingInfo> main_frame_timing_;

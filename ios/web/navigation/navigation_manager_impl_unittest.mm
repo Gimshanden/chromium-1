@@ -13,12 +13,12 @@
 #import "base/test/ios/wait_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
 #import "ios/web/navigation/legacy_navigation_manager_impl.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/wk_based_navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#include "ios/web/public/features.h"
 #include "ios/web/public/navigation_item.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
@@ -2657,6 +2657,7 @@ TEST_P(NavigationManagerTest, CommitNonNilPendingItem) {
 
   // Call CommitPendingItem() with a valid pending item.
   auto item = std::make_unique<web::NavigationItemImpl>();
+  item->SetURL(GURL("http://www.url.com/new"));
   item->SetNavigationInitiationType(
       web::NavigationInitiationType::BROWSER_INITIATED);
   navigation_manager()->CommitPendingItem(std::move(item));

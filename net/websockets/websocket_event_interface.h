@@ -123,6 +123,7 @@ class NET_EXPORT WebSocketEventInterface {
   virtual void OnSSLCertificateError(
       std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
       const GURL& url,
+      int net_error,
       const SSLInfo& ssl_info,
       bool fatal) = 0;
 
@@ -136,7 +137,7 @@ class NET_EXPORT WebSocketEventInterface {
   // async case) cancels authentication. Otherwise the new credentials are set
   // and the opening handshake will be retried with the credentials.
   virtual int OnAuthRequired(
-      scoped_refptr<AuthChallengeInfo> auth_info,
+      const AuthChallengeInfo& auth_info,
       scoped_refptr<HttpResponseHeaders> response_headers,
       const IPEndPoint& socket_address,
       base::OnceCallback<void(const AuthCredentials*)> callback,

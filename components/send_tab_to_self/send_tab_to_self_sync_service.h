@@ -18,8 +18,8 @@ class HistoryService;
 }  // namespace history
 
 namespace syncer {
+class DeviceInfoTracker;
 class ModelTypeControllerDelegate;
-class LocalDeviceInfoProvider;
 }  // namespace syncer
 
 namespace send_tab_to_self {
@@ -31,15 +31,16 @@ class SendTabToSelfSyncService : public KeyedService {
  public:
   SendTabToSelfSyncService(
       version_info::Channel channel,
-      syncer::LocalDeviceInfoProvider* local_device_info_provider,
       syncer::OnceModelTypeStoreFactory create_store_callback,
-      history::HistoryService* history_service);
+      history::HistoryService* history_service,
+      syncer::DeviceInfoTracker* device_info_tracker);
   ~SendTabToSelfSyncService() override;
 
   virtual SendTabToSelfModel* GetSendTabToSelfModel();
 
   // For ProfileSyncService to initialize the controller.
-  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate();
+  virtual base::WeakPtr<syncer::ModelTypeControllerDelegate>
+  GetControllerDelegate();
 
  protected:
   // Default constructor for unit tests

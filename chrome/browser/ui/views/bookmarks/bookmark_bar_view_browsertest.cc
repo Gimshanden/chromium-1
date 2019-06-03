@@ -50,7 +50,10 @@ class BookmarkBarNavigationTest : public InProcessBrowserTest {
       : https_test_server_(net::EmbeddedTestServer::TYPE_HTTPS) {}
 
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(network::features::kSecMetadata);
+    scoped_feature_list_.InitWithFeatures(
+        {network::features::kFetchMetadata,
+         network::features::kFetchMetadataDestination},
+        {});
     InProcessBrowserTest::SetUp();
   }
 
@@ -153,10 +156,10 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarNavigationTest, SecFetchFromEmptyTab) {
   }
 
   {
-    // Sec-Fetch-User: ?T
+    // Sec-Fetch-User: ?1
     CreateBookmarkForHeader("Sec-Fetch-User");
     NavigateToBookmark();
-    EXPECT_EQ("?T", GetContent());
+    EXPECT_EQ("?1", GetContent());
   }
 }
 
@@ -187,9 +190,9 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarNavigationTest,
   }
 
   {
-    // Sec-Fetch-User: ?T
+    // Sec-Fetch-User: ?1
     CreateBookmarkForHeader("Sec-Fetch-User");
     NavigateToBookmark();
-    EXPECT_EQ("?T", GetContent());
+    EXPECT_EQ("?1", GetContent());
   }
 }

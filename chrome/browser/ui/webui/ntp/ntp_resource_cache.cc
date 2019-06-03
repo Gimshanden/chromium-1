@@ -14,10 +14,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/themes/theme_properties.h"
@@ -25,6 +23,7 @@
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/apps/app_info_dialog.h"
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
 #include "chrome/common/buildflags.h"
@@ -151,8 +150,6 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
   profile_pref_change_registrar_.Add(bookmarks::prefs::kShowBookmarkBar,
                                      callback);
   profile_pref_change_registrar_.Add(prefs::kNtpShownPage, callback);
-  profile_pref_change_registrar_.Add(prefs::kSignInPromoShowNTPBubble,
-                                     callback);
   profile_pref_change_registrar_.Add(prefs::kHideWebStoreIcon, callback);
 
   theme_observer_.Add(ui::NativeTheme::GetInstanceForNativeUi());
@@ -455,17 +452,10 @@ void NTPResourceCache::CreateNewTabHTML() {
   load_time_data.SetBoolean("showWebStoreIcon",
                             !prefs->GetBoolean(prefs::kHideWebStoreIcon));
 
-  load_time_data.SetBoolean("enableNewBookmarkApps",
-                            extensions::util::IsNewBookmarkAppsEnabled());
-
-  load_time_data.SetBoolean("canHostedAppsOpenInWindows",
-                            extensions::util::CanHostedAppsOpenInWindows());
-
   load_time_data.SetBoolean("canShowAppInfoDialog",
                             CanShowAppInfoDialog());
 
   AppLauncherHandler::GetLocalizedValues(profile_, &load_time_data);
-  AppLauncherLoginHandler::GetLocalizedValues(profile_, &load_time_data);
 
   webui::SetLoadTimeDataDefaults(app_locale, &load_time_data);
 

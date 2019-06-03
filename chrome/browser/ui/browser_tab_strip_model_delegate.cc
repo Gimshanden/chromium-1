@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tab_helpers.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/unload_controller.h"
 #include "chrome/common/chrome_switches.h"
@@ -34,12 +35,9 @@ namespace chrome {
 // BrowserTabStripModelDelegate, public:
 
 BrowserTabStripModelDelegate::BrowserTabStripModelDelegate(Browser* browser)
-    : browser_(browser),
-      weak_factory_(this) {
-}
+    : browser_(browser), weak_factory_(this) {}
 
-BrowserTabStripModelDelegate::~BrowserTabStripModelDelegate() {
-}
+BrowserTabStripModelDelegate::~BrowserTabStripModelDelegate() {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserTabStripModelDelegate, TabStripModelDelegate implementation:
@@ -47,7 +45,7 @@ BrowserTabStripModelDelegate::~BrowserTabStripModelDelegate() {
 void BrowserTabStripModelDelegate::AddTabAt(const GURL& url,
                                             int index,
                                             bool foreground,
-                                            const TabGroupData* group) {
+                                            base::Optional<TabGroupId> group) {
   chrome::AddTabAt(browser_, url, index, foreground, group);
 }
 
@@ -96,8 +94,9 @@ void BrowserTabStripModelDelegate::WillAddWebContents(
 
 int BrowserTabStripModelDelegate::GetDragActions() const {
   return TabStripModelDelegate::TAB_TEAROFF_ACTION |
-      (browser_->tab_strip_model()->count() > 1
-          ? TabStripModelDelegate::TAB_MOVE_ACTION : 0);
+         (browser_->tab_strip_model()->count() > 1
+              ? TabStripModelDelegate::TAB_MOVE_ACTION
+              : 0);
 }
 
 bool BrowserTabStripModelDelegate::CanDuplicateContentsAt(int index) {

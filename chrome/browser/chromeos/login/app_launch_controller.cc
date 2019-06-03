@@ -153,8 +153,8 @@ AppLaunchController::AppLaunchController(const std::string& app_id,
       diagnostic_mode_(diagnostic_mode),
       host_(host),
       oobe_ui_(oobe_ui),
-      app_launch_splash_screen_view_(oobe_ui_->GetAppLaunchSplashScreenView()) {
-}
+      app_launch_splash_screen_view_(
+          oobe_ui_->GetView<AppLaunchSplashScreenHandler>()) {}
 
 AppLaunchController::~AppLaunchController() {
   if (app_launch_splash_screen_view_)
@@ -343,6 +343,9 @@ void AppLaunchController::ClearNetworkWaitTimer() {
 }
 
 void AppLaunchController::CleanUp() {
+  DCHECK(!cleaned_up_);
+  cleaned_up_ = true;
+
   ClearNetworkWaitTimer();
   kiosk_profile_loader_.reset();
   startup_app_launcher_.reset();
@@ -371,6 +374,9 @@ void AppLaunchController::OnNetworkWaitTimedout() {
 }
 
 void AppLaunchController::OnAppWindowCreated() {
+  if (cleaned_up_)
+    return;
+
   SYSLOG(INFO) << "App window created, closing splash screen.";
   CleanUp();
 }
@@ -528,6 +534,9 @@ void AppLaunchController::OnLaunchSucceeded() {
 }
 
 void AppLaunchController::OnLaunchFailed(KioskAppLaunchError::Error error) {
+  if (cleaned_up_)
+    return;
+
   DCHECK_NE(KioskAppLaunchError::NONE, error);
   SYSLOG(ERROR) << "Kiosk launch failed, error=" << error;
 

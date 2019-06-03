@@ -23,6 +23,7 @@ import static org.mockito.Mockito.when;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.support.v7.widget.RecyclerView;
 import android.view.View;
 
 import org.junit.After;
@@ -43,12 +44,14 @@ import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.favicon.FaviconHelper;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.EmptyTabModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelFilterProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorImpl;
+import org.chromium.chrome.browser.tasks.tabgroup.TabGroupModelFilter;
 import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.ArrayList;
@@ -68,6 +71,8 @@ public class TabListMediatorUnitTest {
     private static final int TAB1_ID = 456;
     private static final int TAB2_ID = 789;
     private static final int TAB3_ID = 123;
+    private static final int POSITION1 = 0;
+    private static final int POSITION2 = 1;
 
     @Mock
     TabContentManager mTabContentManager;
@@ -81,6 +86,12 @@ public class TabListMediatorUnitTest {
     TabModel mTabModel;
     @Mock
     TabListFaviconProvider mTabListFaviconProvider;
+    @Mock
+    RecyclerView mRecyclerView;
+    @Mock
+    TabGroupModelFilter mTabGroupModelFilter;
+    @Mock
+    EmptyTabModelFilter mEmptyTabModelFilter;
     @Captor
     ArgumentCaptor<TabModelObserver> mTabModelObserverCaptor;
     @Captor
@@ -89,11 +100,15 @@ public class TabListMediatorUnitTest {
     ArgumentCaptor<TabObserver> mTabObserverCaptor;
     @Captor
     ArgumentCaptor<Callback<Drawable>> mCallbackCaptor;
+    @Captor
+    ArgumentCaptor<TabGroupModelFilter.Observer> mTabGroupModelFilterObserverCaptor;
 
     private Tab mTab1;
     private Tab mTab2;
     private TabListMediator mMediator;
     private TabListModel mModel;
+    private TabGridViewHolder mViewHolder1;
+    private TabGridViewHolder mViewHolder2;
 
     @Before
     public void setUp() {
@@ -104,6 +119,10 @@ public class TabListMediatorUnitTest {
 
         mTab1 = prepareTab(TAB1_ID, TAB1_TITLE);
         mTab2 = prepareTab(TAB2_ID, TAB2_TITLE);
+        mViewHolder1 = prepareViewHolder(TAB1_ID, POSITION1);
+        mViewHolder2 = prepareViewHolder(TAB2_ID, POSITION2);
+        List<Tab> tabs1 = new ArrayList<>(Arrays.asList(mTab1));
+        List<Tab> tabs2 = new ArrayList<>(Arrays.asList(mTab2));
 
         List<TabModel> tabModelList = new ArrayList<>();
         tabModelList.add(mTabModel);
@@ -119,19 +138,29 @@ public class TabListMediatorUnitTest {
         doNothing()
                 .when(mTabModelFilterProvider)
                 .addTabModelFilterObserver(mTabModelObserverCaptor.capture());
-        doReturn(mTab1).when(mTabModel).getTabAt(0);
-        doReturn(mTab2).when(mTabModel).getTabAt(1);
+        doReturn(mTab1).when(mTabModel).getTabAt(POSITION1);
+        doReturn(mTab2).when(mTabModel).getTabAt(POSITION2);
+        doReturn(POSITION1).when(mTabModel).indexOf(mTab1);
+        doReturn(POSITION2).when(mTabModel).indexOf(mTab2);
         doNothing().when(mTab1).addObserver(mTabObserverCaptor.capture());
         doReturn(0).when(mTabModel).index();
         doReturn(2).when(mTabModel).getCount();
         doNothing()
                 .when(mTabListFaviconProvider)
                 .getFaviconForUrlAsync(anyString(), anyBoolean(), mCallbackCaptor.capture());
+        doReturn(mTab1).when(mTabModelSelector).getTabById(TAB1_ID);
+        doReturn(mTab2).when(mTabModelSelector).getTabById(TAB2_ID);
+        doReturn(tabs1).when(mTabGroupModelFilter).getRelatedTabList(TAB1_ID);
+        doReturn(tabs2).when(mTabGroupModelFilter).getRelatedTabList(TAB2_ID);
+        doReturn(POSITION1).when(mTabGroupModelFilter).indexOf(mTab1);
+        doReturn(POSITION2).when(mTabGroupModelFilter).indexOf(mTab2);
+        doReturn(mTab1).when(mTabGroupModelFilter).getTabAt(POSITION1);
+        doReturn(mTab2).when(mTabGroupModelFilter).getTabAt(POSITION2);
 
         mModel = new TabListModel();
         mMediator = new TabListMediator(mModel, mTabModelSelector,
                 mTabContentManager::getTabThumbnailWithCallback, null, mTabListFaviconProvider,
-                false, null, getClass().getSimpleName());
+                false, null, null, getClass().getSimpleName());
     }
 
     @After
@@ -187,7 +216,41 @@ public class TabListMediatorUnitTest {
                 .get(TabProperties.TAB_CLOSED_LISTENER)
                 .run(mModel.get(1).get(TabProperties.TAB_ID));
 
-        verify(mTabModel).closeTab(eq(mTab2), eq(false), eq(false), eq(true));
+        verify(mTabModel).closeTab(eq(mTab2), eq(null), eq(false), eq(false), eq(true));
+    }
+
+    @Test
+    public void sendsMoveTabSignalCorrectlyWithoutGroup() {
+        initAndAssertAllProperties();
+
+        doReturn(mEmptyTabModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        mMediator.getItemTouchHelperCallback(0f).onMove(mRecyclerView, mViewHolder1, mViewHolder2);
+
+        verify(mTabModel).moveTab(eq(TAB1_ID), eq(2));
+    }
+
+    @Test
+    public void sendsMoveTabSignalCorrectlyWithGroup() {
+        initAndAssertAllProperties();
+
+        mMediator.setCloseAllRelatedTabs(true);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        mMediator.getItemTouchHelperCallback(0f).onMove(mRecyclerView, mViewHolder1, mViewHolder2);
+
+        verify(mTabGroupModelFilter).moveRelatedTabs(eq(TAB1_ID), eq(2));
+    }
+
+    @Test
+    public void sendsMoveTabSignalCorrectlyWithinGroup() {
+        initAndAssertAllProperties();
+
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        mMediator.getItemTouchHelperCallback(0f).onMove(mRecyclerView, mViewHolder1, mViewHolder2);
+
+        verify(mTabModel).moveTab(eq(TAB1_ID), eq(2));
     }
 
     @Test
@@ -335,6 +398,126 @@ public class TabListMediatorUnitTest {
         assertThat(mModel.get(2).get(TabProperties.TITLE), equalTo(TAB3_TITLE));
     }
 
+    @Test
+    public void tabMovementWithoutGroup_Forward() {
+        initAndAssertAllProperties();
+
+        doReturn(mEmptyTabModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabModelObserverCaptor.getValue().didMoveTab(mTab2, POSITION1, POSITION2);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
+    @Test
+    public void tabMovementWithoutGroup_Backward() {
+        initAndAssertAllProperties();
+
+        doReturn(mEmptyTabModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabModelObserverCaptor.getValue().didMoveTab(mTab1, POSITION2, POSITION1);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
+    @Test
+    public void tabMovementWithGroup_Forward() {
+        setUpForTabGroupOperation();
+
+        // Assume that moveTab in TabModel is finished.
+        doReturn(mTab1).when(mTabModel).getTabAt(POSITION2);
+        doReturn(mTab2).when(mTabModel).getTabAt(POSITION1);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabGroupModelFilterObserverCaptor.getValue().didMoveTabGroup(mTab2, POSITION2, POSITION1);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
+    @Test
+    public void tabMovementWithGroup_Backward() {
+        setUpForTabGroupOperation();
+
+        // Assume that moveTab in TabModel is finished.
+        doReturn(mTab1).when(mTabModel).getTabAt(POSITION2);
+        doReturn(mTab2).when(mTabModel).getTabAt(POSITION1);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabGroupModelFilterObserverCaptor.getValue().didMoveTabGroup(mTab1, POSITION1, POSITION2);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
+    @Test
+    public void tabMovementWithinGroup_Forward() {
+        setUpForTabGroupOperation();
+
+        // Assume that moveTab in TabModel is finished.
+        doReturn(mTab1).when(mTabModel).getTabAt(POSITION2);
+        doReturn(mTab2).when(mTabModel).getTabAt(POSITION1);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+        doReturn(TAB1_ID).when(mTab1).getRootId();
+        doReturn(TAB1_ID).when(mTab2).getRootId();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabGroupModelFilterObserverCaptor.getValue().didMoveWithinGroup(
+                mTab2, POSITION2, POSITION1);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
+    @Test
+    public void tabMovementWithinGroup_Backward() {
+        setUpForTabGroupOperation();
+
+        // Assume that moveTab in TabModel is finished.
+        doReturn(mTab1).when(mTabModel).getTabAt(POSITION2);
+        doReturn(mTab2).when(mTabModel).getTabAt(POSITION1);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+        doReturn(TAB1_ID).when(mTab1).getRootId();
+        doReturn(TAB1_ID).when(mTab2).getRootId();
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(1).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(1).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+
+        mTabGroupModelFilterObserverCaptor.getValue().didMoveWithinGroup(
+                mTab1, POSITION1, POSITION2);
+
+        assertThat(mModel.size(), equalTo(2));
+        assertThat(mModel.get(0).get(TabProperties.TAB_ID), equalTo(TAB2_ID));
+        assertThat(mModel.get(0).get(TabProperties.TITLE), equalTo(TAB2_TITLE));
+    }
+
     private void initAndAssertAllProperties() {
         List<Tab> tabs = new ArrayList<>();
         for (int i = 0; i < mTabModel.getCount(); i++) {
@@ -383,5 +566,27 @@ public class TabListMediatorUnitTest {
         doReturn("").when(tab).getUrl();
         doReturn(title).when(tab).getTitle();
         return tab;
+    }
+
+    private TabGridViewHolder prepareViewHolder(int id, int position) {
+        TabGridViewHolder viewHolder = mock(TabGridViewHolder.class);
+        doReturn(id).when(viewHolder).getTabId();
+        doReturn(position).when(viewHolder).getAdapterPosition();
+        return viewHolder;
+    }
+
+    private void setUpForTabGroupOperation() {
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getCurrentTabModelFilter();
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getTabModelFilter(true);
+        doReturn(mTabGroupModelFilter).when(mTabModelFilterProvider).getTabModelFilter(false);
+        doNothing()
+                .when(mTabGroupModelFilter)
+                .addTabGroupObserver(mTabGroupModelFilterObserverCaptor.capture());
+
+        mMediator = new TabListMediator(mModel, mTabModelSelector,
+                mTabContentManager::getTabThumbnailWithCallback, null, mTabListFaviconProvider,
+                false, null, null, getClass().getSimpleName());
+
+        initAndAssertAllProperties();
     }
 }

@@ -52,12 +52,6 @@ class IDBCursor : public ScriptWrappable {
 
   static mojom::IDBCursorDirection StringToDirection(const String& mode_string);
 
-  static IDBCursor* Create(std::unique_ptr<WebIDBCursor>,
-                           mojom::IDBCursorDirection,
-                           IDBRequest*,
-                           const Source&,
-                           IDBTransaction*);
-
   IDBCursor(std::unique_ptr<WebIDBCursor>,
             mojom::IDBCursorDirection,
             IDBRequest*,
@@ -78,6 +72,7 @@ class IDBCursor : public ScriptWrappable {
   ScriptValue key(ScriptState*);
   ScriptValue primaryKey(ScriptState*);
   ScriptValue value(ScriptState*);
+  IDBRequest* request() { return request_.Get(); }
   void source(Source&) const;
 
   IDBRequest* update(ScriptState*, const ScriptValue&, ExceptionState&);

@@ -152,14 +152,31 @@ void AccessibilityEventRecorderUia::Thread::ThreadMain() {
       root_.Get(), TreeScope::TreeScope_Subtree, cache_request_.Get(),
       uia_event_handler_.Get(), &property_list[0], property_list.size());
 
-  // Subscribe to all automation events
+  // Subscribe to all structure-change events
+  uia_->AddStructureChangedEventHandler(root_.Get(), TreeScope_Subtree,
+                                        cache_request_.Get(),
+                                        uia_event_handler_.Get());
+
+  // Subscribe to all automation events (except structure-change events and
+  // live-region events, which are handled elsewhere).
   static const EVENTID kMinEvent = UIA_ToolTipOpenedEventId;
   static const EVENTID kMaxEvent = UIA_NotificationEventId;
   for (EVENTID event_id = kMinEvent; event_id <= kMaxEvent; ++event_id) {
-    uia_->AddAutomationEventHandler(
-        event_id, root_.Get(), TreeScope::TreeScope_Subtree,
-        cache_request_.Get(), uia_event_handler_.Get());
+    if (event_id != UIA_StructureChangedEventId &&
+        event_id != UIA_LiveRegionChangedEventId) {
+      uia_->AddAutomationEventHandler(
+          event_id, root_.Get(), TreeScope::TreeScope_Subtree,
+          cache_request_.Get(), uia_event_handler_.Get());
+    }
   }
+
+  // Subscribe to live-region change events.  This must be the last event we
+  // subscribe to, because |AXFragmentRootWin| will fire events when advised of
+  // the subscription, and this can hang the test-process (on Windows 19H1+) if
+  // we're simultaneously trying to subscribe to other events.
+  uia_->AddAutomationEventHandler(
+      UIA_LiveRegionChangedEventId, root_.Get(), TreeScope::TreeScope_Subtree,
+      cache_request_.Get(), uia_event_handler_.Get());
 
   // Signal that initialization is complete; this will wake the main thread to
   // start executing the test.
@@ -322,6 +339,42 @@ AccessibilityEventRecorderUia::Thread::EventHandler::HandlePropertyChangedEvent(
 
     std::string log = base::StringPrintf("%s changed %s", prop_str.c_str(),
                                          GetSenderInfo(sender).c_str());
+    owner_->OnEvent(log);
+  }
+  return S_OK;
+}
+
+STDMETHODIMP
+AccessibilityEventRecorderUia::Thread::EventHandler::
+    HandleStructureChangedEvent(IUIAutomationElement* sender,
+                                StructureChangeType change_type,
+                                SAFEARRAY* runtime_id) {
+  if (owner_) {
+    std::string type_str;
+    switch (change_type) {
+      case StructureChangeType_ChildAdded:
+        type_str = "ChildAdded";
+        break;
+      case StructureChangeType_ChildRemoved:
+        type_str = "ChildRemoved";
+        break;
+      case StructureChangeType_ChildrenInvalidated:
+        type_str = "ChildrenInvalidated";
+        break;
+      case StructureChangeType_ChildrenBulkAdded:
+        type_str = "ChildrenBulkAdded";
+        break;
+      case StructureChangeType_ChildrenBulkRemoved:
+        type_str = "ChildrenBulkRemoved";
+        break;
+      case StructureChangeType_ChildrenReordered:
+        type_str = "ChildrenReordered";
+        break;
+    }
+
+    std::string log =
+        base::StringPrintf("StructureChanged/%s %s", type_str.c_str(),
+                           GetSenderInfo(sender).c_str());
     owner_->OnEvent(log);
   }
   return S_OK;

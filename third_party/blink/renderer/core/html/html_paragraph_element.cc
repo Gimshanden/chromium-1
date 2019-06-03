@@ -30,10 +30,8 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLParagraphElement::HTMLParagraphElement(Document& document)
+HTMLParagraphElement::HTMLParagraphElement(Document& document)
     : HTMLElement(kPTag, document) {}
-
-DEFINE_NODE_FACTORY(HTMLParagraphElement)
 
 void HTMLParagraphElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,

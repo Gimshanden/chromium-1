@@ -13,7 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop_current.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
-#include "ui/display/manager/fake_display_delegate.h"
+#include "ui/display/fake/fake_display_delegate.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/events/ozone/layout/stub/stub_keyboard_layout_engine.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -24,6 +24,7 @@
 #include "ui/ozone/platform/scenic/scenic_surface_factory.h"
 #include "ui/ozone/platform/scenic/scenic_window.h"
 #include "ui/ozone/platform/scenic/scenic_window_manager.h"
+#include "ui/ozone/platform/scenic/sysmem_buffer_collection.h"
 #include "ui/ozone/platform_selection.h"
 #include "ui/ozone/public/cursor_factory_ozone.h"
 #include "ui/ozone/public/gpu_platform_support_host.h"
@@ -158,6 +159,11 @@ class OzonePlatformScenic
     registry->AddInterface<mojom::ScenicGpuService>(
         scenic_gpu_service_->GetBinderCallback(),
         base::ThreadTaskRunnerHandle::Get());
+  }
+
+  bool IsNativePixmapConfigSupported(gfx::BufferFormat format,
+                                     gfx::BufferUsage usage) const override {
+    return SysmemBufferCollection::IsNativePixmapConfigSupported(format, usage);
   }
 
  private:

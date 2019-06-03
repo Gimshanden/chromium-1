@@ -129,9 +129,11 @@ class CONTENT_EXPORT RTCRtpReceiver : public blink::WebRTCRtpReceiver {
   blink::WebVector<blink::WebString> StreamIds() const override;
   blink::WebVector<std::unique_ptr<blink::WebRTCRtpSource>> GetSources()
       override;
-  void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>,
+  void GetStats(blink::WebRTCStatsReportCallback,
                 const std::vector<webrtc::NonStandardGroupId>&) override;
   std::unique_ptr<webrtc::RtpParameters> GetParameters() const override;
+  void SetJitterBufferMinimumDelay(
+      base::Optional<double> delay_seconds) override;
 
  private:
   class RTCRtpReceiverInternal;
@@ -160,6 +162,8 @@ class CONTENT_EXPORT RTCRtpReceiverOnlyTransceiver
       const override;
   base::Optional<webrtc::RtpTransceiverDirection> FiredDirection()
       const override;
+  webrtc::RTCError SetCodecPreferences(
+      blink::WebVector<webrtc::RtpCodecCapability>) override;
 
  private:
   std::unique_ptr<blink::WebRTCRtpReceiver> receiver_;

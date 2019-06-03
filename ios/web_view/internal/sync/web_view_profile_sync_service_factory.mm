@@ -10,11 +10,11 @@
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
 #include "base/time/time.h"
+#include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/device_info/local_device_info_provider_impl.h"
 #include "components/sync/driver/profile_sync_service.h"
 #include "components/sync/driver/startup_controller.h"
 #include "components/sync/driver/sync_service.h"
@@ -93,6 +93,7 @@ WebViewProfileSyncServiceFactory::BuildServiceInstanceFor(
   init_params.network_time_update_callback = base::DoNothing();
   init_params.network_connection_tracker =
       ApplicationContext::GetInstance()->GetNetworkConnectionTracker();
+  init_params.channel = version_info::Channel::STABLE;
   init_params.invalidations_identity_providers.push_back(
       WebViewProfileInvalidationProviderFactory::GetForBrowserState(
           browser_state)
@@ -104,6 +105,12 @@ WebViewProfileSyncServiceFactory::BuildServiceInstanceFor(
   auto profile_sync_service =
       std::make_unique<syncer::ProfileSyncService>(std::move(init_params));
   profile_sync_service->Initialize();
+
+  // Hook PSS into PersonalDataManager (a circular dependency).
+  autofill::PersonalDataManager* pdm =
+      WebViewPersonalDataManagerFactory::GetForBrowserState(browser_state);
+  pdm->OnSyncServiceInitialized(profile_sync_service.get());
+
   return profile_sync_service;
 }
 

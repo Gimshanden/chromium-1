@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "media/base/bind_to_current_loop.h"
@@ -173,6 +174,9 @@ void FrameRendererThumbnail::RenderFrame(
     scoped_refptr<VideoFrame> video_frame) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(renderer_sequence_checker_);
 
+  if (video_frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM))
+    return;
+
   // Find the texture associated with the video frame's mailbox.
   base::AutoLock auto_lock(renderer_lock_);
   const gpu::MailboxHolder& mailbox_holder = video_frame->mailbox_holder(0);
@@ -182,6 +186,8 @@ void FrameRendererThumbnail::RenderFrame(
 
   RenderThumbnail(mailbox_holder.texture_target, it->second);
 }
+
+void FrameRendererThumbnail::WaitUntilRenderingDone() {}
 
 scoped_refptr<VideoFrame> FrameRendererThumbnail::CreateVideoFrame(
     VideoPixelFormat pixel_format,
@@ -427,6 +433,7 @@ void FrameRendererThumbnail::DeleteTexture(const gpu::Mailbox& mailbox,
                                            const gpu::SyncToken&) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(renderer_sequence_checker_);
 
+  AutoGLContext auto_gl_context(this);
   base::AutoLock auto_lock(renderer_lock_);
   auto it = mailbox_texture_map_.find(mailbox);
   ASSERT_NE(it, mailbox_texture_map_.end());

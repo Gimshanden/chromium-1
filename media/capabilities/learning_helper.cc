@@ -21,23 +21,25 @@ using learning::ObservationCompletion;
 using learning::SequenceBoundFeatureProvider;
 using learning::TargetValue;
 
-// Dropped frame ratio, default features, regression tree.
-const char* const kDroppedFrameRatioBaseTreeTaskName =
-    "DroppedFrameRatioBaseTreeTask";
-// Dropped frame ratio, default+FeatureLibrary features, regression tree.
-const char* const kDroppedFrameRatioEnhancedTreeTaskName =
-    "DroppedFrameRatioEnhancedTreeTask";
-// Dropped frame ratio, default+FeatureLibrary features, regression tree,
-// examples are unweighted.
-const char* const kDroppedFrameRatioEnhancedUnweightedTreeTaskName =
-    "DroppedFrameRatioEnhancedUnweightedTreeTask";
-// Binary smoothness, default+FeatureLibrary features, regression tree,
-// examples are unweighted.
-const char* const kBinarySmoothnessEnhancedUnweightedTreeTaskName =
-    "BinarySmoothnessTreeTask";
-// Dropped frame ratio, default features, lookup table.
-const char* const kDroppedFrameRatioBaseTableTaskName =
-    "DroppedFrameRatioBaseTableTask";
+// Remember that these are used to construct UMA histogram names!  Be sure to
+// update histograms.xml if you change them!
+
+// Dropped frame ratio, default features, unweighted regression tree.
+const char* const kDroppedFrameRatioBaseUnweightedTreeTaskName =
+    "BaseUnweightedTree";
+
+// Dropped frame ratio, default features, unweighted examples, lookup table.
+const char* const kDroppedFrameRatioBaseUnweightedTableTaskName =
+    "BaseUnweightedTable";
+
+// Same as BaseUnweightedTree, but with 200 training examples max.
+const char* const kDroppedFrameRatioBaseUnweightedTree200TaskName =
+    "BaseUnweightedTree200";
+
+// Dropped frame ratio, default+FeatureLibrary features, regression tree with
+// unweighted examples and 200 training examples max.
+const char* const kDroppedFrameRatioEnhancedUnweightedTree200TaskName =
+    "EnhancedUnweightedTree200";
 
 // Threshold for the dropped frame to total frame ratio, at which we'll decide
 // that the playback was not smooth.
@@ -58,7 +60,7 @@ LearningHelper::LearningHelper(FeatureProviderFactoryCB feature_factory) {
   // We only do this here since we own the session.  Normally, whatever creates
   // the session would register all the learning tasks.
   LearningTask dropped_frame_task(
-      kDroppedFrameRatioBaseTableTaskName, LearningTask::Model::kLookupTable,
+      "no name", LearningTask::Model::kLookupTable,
       {
           {"codec_profile",
            ::media::learning::LearningTask::Ordering::kUnordered},
@@ -69,74 +71,54 @@ LearningHelper::LearningHelper(FeatureProviderFactoryCB feature_factory) {
       LearningTask::ValueDescription(
           {"dropped_ratio", LearningTask::Ordering::kNumeric}));
 
+  // Report results hackily both in aggregate and by training data weight.
   dropped_frame_task.smoothness_threshold = kSmoothnessThreshold;
+  dropped_frame_task.uma_hacky_aggregate_confusion_matrix = true;
+  dropped_frame_task.uma_hacky_by_training_weight_confusion_matrix = true;
 
-  // Enable hacky reporting of accuracy.
-  dropped_frame_task.uma_hacky_confusion_matrix =
-      "Media.Learning.MediaCapabilities.DroppedFrameRatioTask.BaseTable";
+  // Buckets will have 10 examples each, or 20 for the 200-set tasks.
+  const double data_set_size = 100;
+  const double big_data_set_size = 200;
+
+  // Unweighted table
+  dropped_frame_task.name = kDroppedFrameRatioBaseUnweightedTableTaskName;
+  dropped_frame_task.max_data_set_size = data_set_size;
   learning_session_->RegisterTask(dropped_frame_task,
                                   SequenceBoundFeatureProvider());
-  base_table_controller_ =
+  base_unweighted_table_controller_ =
       learning_session_->GetController(dropped_frame_task.name);
 
-  // Modify the task to use ExtraTrees.
-  dropped_frame_task.name = kDroppedFrameRatioBaseTreeTaskName;
+  // Unweighted base tree.
+  dropped_frame_task.name = kDroppedFrameRatioBaseUnweightedTreeTaskName;
   dropped_frame_task.model = LearningTask::Model::kExtraTrees;
-  dropped_frame_task.uma_hacky_confusion_matrix =
-      "Media.Learning.MediaCapabilities.DroppedFrameRatioTask.BaseTree";
+  dropped_frame_task.max_data_set_size = data_set_size;
   learning_session_->RegisterTask(dropped_frame_task,
                                   SequenceBoundFeatureProvider());
-  base_tree_controller_ =
+  base_unweighted_tree_controller_ =
+      learning_session_->GetController(dropped_frame_task.name);
+
+  // Unweighted tree with a larger training set.
+  dropped_frame_task.name = kDroppedFrameRatioBaseUnweightedTree200TaskName;
+  dropped_frame_task.max_data_set_size = big_data_set_size;
+  learning_session_->RegisterTask(dropped_frame_task,
+                                  SequenceBoundFeatureProvider());
+  base_unweighted_tree_200_controller_ =
       learning_session_->GetController(dropped_frame_task.name);
 
   // Add common features, if we have a factory.
   if (feature_factory) {
-    dropped_frame_task.name = kDroppedFrameRatioEnhancedTreeTaskName;
+    dropped_frame_task.name =
+        kDroppedFrameRatioEnhancedUnweightedTree200TaskName;
+    dropped_frame_task.max_data_set_size = big_data_set_size;
     dropped_frame_task.feature_descriptions.push_back(
         {"origin", ::media::learning::LearningTask::Ordering::kUnordered});
     dropped_frame_task.feature_descriptions.push_back(
         FeatureLibrary::NetworkType());
     dropped_frame_task.feature_descriptions.push_back(
         FeatureLibrary::BatteryPower());
-    dropped_frame_task.uma_hacky_confusion_matrix =
-        "Media.Learning.MediaCapabilities.DroppedFrameRatioTask.EnhancedTree";
     learning_session_->RegisterTask(dropped_frame_task,
                                     feature_factory.Run(dropped_frame_task));
-    enhanced_tree_controller_ =
-        learning_session_->GetController(dropped_frame_task.name);
-
-    // Duplicate the task with a new name and UMA histogram.  We'll add
-    // unweighted examples to it to see which one does better.
-    dropped_frame_task.name = kDroppedFrameRatioEnhancedUnweightedTreeTaskName;
-    dropped_frame_task.uma_hacky_confusion_matrix =
-        "Media.Learning.MediaCapabilities.DroppedFrameRatioTask."
-        "EnhancedUnweightedTree";
-    learning_session_->RegisterTask(dropped_frame_task,
-                                    feature_factory.Run(dropped_frame_task));
-    unweighted_tree_controller_ =
-        learning_session_->GetController(dropped_frame_task.name);
-
-    // Set up the binary smoothness task.  This has a nominal target, with
-    // "smooth" as 0, and "not smooth" as 1.  This is so that the low numbers
-    // are still smooth, and the hight numbers are still not smooth.  It makes
-    // reporting the same for both.
-    dropped_frame_task.name = kBinarySmoothnessEnhancedUnweightedTreeTaskName;
-    /* TODO(liberato): DistributionReporter only supports regression, so we
-       leave it as kNumeric.  Since we only add 0,1 as targets, it's probably
-       fairly close to the same thing.
-    dropped_frame_task.target_description = {
-        "is_smooth", ::media::learning::LearningTask::Ordering::kUnordered};
-    */
-    dropped_frame_task.uma_hacky_confusion_matrix =
-        "Media.Learning.MediaCapabilities.DroppedFrameRatioTask."
-        "BinarySmoothnessTree";
-    // We'll threshold the ratio when figuring out the binary label, so we just
-    // want to pick the majority.  Note that I have no idea if this is actually
-    // the best threshold, but it seems like a good place to start.
-    dropped_frame_task.smoothness_threshold = 0.5;
-    learning_session_->RegisterTask(dropped_frame_task,
-                                    feature_factory.Run(dropped_frame_task));
-    binary_tree_controller_ =
+    enhanced_unweighted_tree_200_controller_ =
         learning_session_->GetController(dropped_frame_task.name);
   }
 }
@@ -175,23 +157,16 @@ void LearningHelper::AppendStats(
   // the examples is the right thing to do.
   example.target_value = TargetValue(
       static_cast<double>(new_stats.frames_dropped) / new_stats.frames_decoded);
-  example.weight = new_stats.frames_decoded;
+  example.weight = 1u;
 
   // Add this example to all tasks.
-  AddExample(base_table_controller_.get(), example);
-  AddExample(base_tree_controller_.get(), example);
-  if (enhanced_tree_controller_) {
+  AddExample(base_unweighted_table_controller_.get(), example);
+  AddExample(base_unweighted_tree_controller_.get(), example);
+  AddExample(base_unweighted_tree_200_controller_.get(), example);
+
+  if (enhanced_unweighted_tree_200_controller_) {
     example.features.push_back(origin);
-    AddExample(enhanced_tree_controller_.get(), example);
-
-    // Also add to the unweighted model.
-    example.weight = 1u;
-    AddExample(unweighted_tree_controller_.get(), example);
-
-    // Threshold the target to 0 for "smooth", and 1 for "not smooth".
-    example.target_value =
-        TargetValue(example.target_value.value() > kSmoothnessThreshold);
-    AddExample(binary_tree_controller_.get(), example);
+    AddExample(enhanced_unweighted_tree_200_controller_.get(), example);
   }
 }
 

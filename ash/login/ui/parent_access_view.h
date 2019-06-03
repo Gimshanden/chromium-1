@@ -76,15 +76,16 @@ class ASH_EXPORT ParentAccessView : public NonAccessibleView,
     OnFinished on_finished;
   };
 
-  // Creates parent access view for the user identified by |account_id|.
-  // |callbacks| will be called when user performs certain actions.
+  // Creates parent access view that will validate the parent access code for a
+  // specific child, when |account_id| is set, or to any child signed in the
+  // device, when it is empty. |callbacks| will be called when user performs
+  // certain actions.
   ParentAccessView(const AccountId& account_id, const Callbacks& callbacks);
   ~ParentAccessView() override;
 
   // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
   void RequestFocus() override;
-  void Layout() override;
   gfx::Size CalculatePreferredSize() const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
@@ -105,6 +106,9 @@ class ASH_EXPORT ParentAccessView : public NonAccessibleView,
   // Updates state of the view.
   void UpdateState(State state);
 
+  // Updates view's preferred size.
+  void UpdatePreferredSize();
+
   // Called when access code input changes. |complete| brings information
   // whether current input code is complete.
   void OnInputChange(bool complete);
@@ -116,7 +120,8 @@ class ASH_EXPORT ParentAccessView : public NonAccessibleView,
   // Callbacks to be called when user performs certain actions.
   const Callbacks callbacks_;
 
-  // Account id of the user that parent access code is processed for.
+  // Account id of the user that parent access code is processed for. When
+  // empty, the code is processed for all the children signed in the device.
   const AccountId account_id_;
 
   State state_ = State::kNormal;
@@ -128,6 +133,7 @@ class ASH_EXPORT ParentAccessView : public NonAccessibleView,
   LoginButton* back_button_ = nullptr;
   views::LabelButton* help_button_ = nullptr;
   ArrowButtonView* submit_button_ = nullptr;
+  NonAccessibleView* pin_keyboard_to_footer_spacer_ = nullptr;
 
   ScopedObserver<TabletModeController, TabletModeObserver>
       tablet_mode_observer_{this};

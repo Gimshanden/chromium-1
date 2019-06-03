@@ -27,8 +27,8 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/country_names.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
 #include "components/autofill/core/browser/webdata/autofill_profile_data_type_controller.h"
@@ -187,7 +187,6 @@ class FakeAutofillBackend : public autofill::AutofillWebDataBackend {
       autofill::AutofillWebDataServiceObserverOnDBSequence* observer) override {
   }
   void CommitChanges() override {}
-  void RemoveExpiredFormElements() override {}
 
   void NotifyOfAutofillProfileChanged(
       const autofill::AutofillProfileChange& change) override {}
@@ -197,6 +196,7 @@ class FakeAutofillBackend : public autofill::AutofillWebDataBackend {
     DCHECK(!ui_task_runner_->RunsTasksInCurrentSequence());
     ui_task_runner_->PostTask(FROM_HERE, on_changed_);
   }
+  void NotifyOfAddressConversionCompleted() override {}
   void NotifyThatSyncHasStarted(syncer::ModelType model_type) override {
     DCHECK(!ui_task_runner_->RunsTasksInCurrentSequence());
     ui_task_runner_->PostTask(FROM_HERE,
@@ -998,7 +998,7 @@ TEST_F(ProfileSyncServiceAutofillTest, ProcessUserChangeRemoveProfile) {
   ASSERT_TRUE(add_autofill.success());
 
   AutofillProfileChange change(AutofillProfileChange::REMOVE,
-                               sync_profile.guid(), nullptr);
+                               sync_profile.guid(), &sync_profile);
   web_data_service()->OnAutofillProfileChanged(change);
 
   std::vector<AutofillProfile> new_sync_profiles;

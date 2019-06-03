@@ -24,53 +24,54 @@ let providedFileSystem;
  */
 let driveSyncHandler;
 
+
 /**
- * MockFolderShortcutsModel
- * @extends {FolderShortcutsDataModel}
- * @constructor
+ * @returns {!FolderShortcutsDataModel}
  */
-function MockFolderShortcutsModel() {
-  this.has = false;
+function createFakeFolderShortcutsDataModel() {
+  class FakeFolderShortcutsModel extends cr.EventTarget {
+    constructor() {
+      super();
+      this.has = false;
+    }
+
+    exists() {
+      return this.has;
+    }
+
+    add(entry) {
+      this.has = true;
+      return 0;
+    }
+
+    remove(entry) {
+      this.has = false;
+      return 0;
+    }
+  }
+
+  const model = /** @type {!Object} */ (new FakeFolderShortcutsModel());
+  return /** @type {!FolderShortcutsDataModel} */ (model);
 }
 
-MockFolderShortcutsModel.prototype.exists = function() {
-  return this.has;
-};
-
-MockFolderShortcutsModel.prototype.add = function(entry) {
-  this.has = true;
-  return 0;
-};
-
-MockFolderShortcutsModel.prototype.remove = function(entry) {
-  this.has = false;
-  return 0;
-};
-
 /**
- * @type {!MockFolderShortcutsModel}
+ * @type {!FolderShortcutsDataModel}
  */
 let shortcutsModel;
 
-/**
- * MockUI
- * @extends {ActionModelUI}
- * @constructor
- */
-function MockUI() {
-  this.listContainer = /** @type {!ListContainer} */ ({
-    currentView: {
-      updateListItemsMetadata: function() {},
-    }
-  });
+/** @implements ActionModelUI */
+class MockUI {
+  constructor() {
+    this.listContainer = /** @type {!ListContainer} */ ({
+      currentView: {
+        updateListItemsMetadata: function() {},
+      }
+    });
 
-  this.alertDialog = /** @type {!FilesAlertDialog} */ ({
-    showHtml: function() {},
-  });
-
-  this.errorDialog = /** @type {!ErrorDialog} */ ({
-    showHtml: function() {},
-  });
+    this.alertDialog = /** @type {!FilesAlertDialog} */ ({
+      showHtml: function() {},
+    });
+  }
 }
 
 /**
@@ -111,7 +112,7 @@ function setUp() {
       assert(volumeManager.getCurrentProfileVolumeInfo(type).fileSystem);
 
   // Create mock action model components.
-  shortcutsModel = new MockFolderShortcutsModel();
+  shortcutsModel = createFakeFolderShortcutsDataModel();
   driveSyncHandler = new MockDriveSyncHandler();
   ui = new MockUI();
 }

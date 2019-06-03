@@ -55,6 +55,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mime_handler_view_mode.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
@@ -494,7 +495,7 @@ IN_PROC_BROWSER_TEST_F(SavePageBrowserTest, MAYBE_SaveHTMLOnlyTabDestroy) {
                                         content::SAVE_PAGE_TYPE_AS_ONLY_HTML));
   std::vector<DownloadItem*> items;
   creation_observer.WaitForDownloadItem(&items);
-  ASSERT_TRUE(items.size() == 1);
+  ASSERT_EQ(1u, items.size());
 
   // Close the tab; does this cancel the download?
   GetCurrentTab(browser())->Close();
@@ -1095,14 +1096,19 @@ class SavePageOriginalVsSavedComparisonTest
   void RunObjectElementsTest(GURL url) {
     content::SavePageType save_page_type = GetParam();
 
-    // 7 comes from:
+    // The |expected_number_of_frames| comes from:
     // - main frame (frames-objects.htm)
     // - object with frame-nested.htm + 2 subframes (frames-nested2.htm + b.htm)
     // - iframe with a.htm
     // - object with svg.svg
     // - object with text.txt
-    // (pdf and png objects do not get a separate frame)
+    // - (in presence of MimeHandlerViewMode::UsesCrossProcessFrame) object with
+    //   pdf.pdf is responsible for presence of 2 extra frames (about:blank +
+    //   one frame for the actual pdf.pdf).  These frames are an implementation
+    //   detail and are not web-exposed (e.g. via window.frames).
     int expected_number_of_frames = 7;
+    if (content::MimeHandlerViewMode::UsesCrossProcessFrame())
+      expected_number_of_frames = 9;
 
     std::vector<std::string> expected_substrings = {
         "frames-objects.htm: 8da13db4-a512-4d9b-b1c5-dc1c134234b9",
@@ -1112,6 +1118,10 @@ class SavePageOriginalVsSavedComparisonTest
         "frames-nested2.htm: 6d23dc47-f283-4977-96ec-66bcf72301a4",
         "text-object.txt: ae52dd09-9746-4b7e-86a6-6ada5e2680c2",
         "svg: 0875fd06-131d-4708-95e1-861853c6b8dc",
+
+        // TODO(lukasza): Consider also verifying presence of "PDF test file"
+        // from <object data="pdf.pdf">.  This requires ensuring that the PDF is
+        // loaded before continuing with the test.
     };
 
     // TODO(lukasza): crbug.com/553478: Enable <object> testing of MHTML.
@@ -1134,8 +1144,8 @@ class SavePageOriginalVsSavedComparisonTest
     for (const auto& expected_substring : expected_substrings) {
       int actual_number_of_matches = ui_test_utils::FindInPage(
           GetCurrentTab(browser()), base::UTF8ToUTF16(expected_substring),
-          true,  // |forward|
-          true,  // |case_sensitive|
+          true,   // |forward|
+          false,  // |case_sensitive|
           nullptr, nullptr);
 
       EXPECT_EQ(1, actual_number_of_matches)
@@ -1144,16 +1154,16 @@ class SavePageOriginalVsSavedComparisonTest
     }
 
     std::string forbidden_substrings[] = {
-        "head", // Html markup should not be visible.
-        "err",  // "err" is a prefix of error messages + is strategically
-                // included in some tests in contents that should not render
-                // (i.e. inside of an object element and/or inside of a frame
-                // that should be hidden).
+        "head",  // Html markup should not be visible.
+        "err",   // "err" is a prefix of error messages + is strategically
+                 // included in some tests in contents that should not render
+                 // (i.e. inside of an object element and/or inside of a frame
+                 // that should be hidden).
     };
     for (const auto& forbidden_substring : forbidden_substrings) {
       int actual_number_of_matches = ui_test_utils::FindInPage(
           GetCurrentTab(browser()), base::UTF8ToUTF16(forbidden_substring),
-          true,  // |forward|
+          true,   // |forward|
           false,  // |case_sensitive|
           nullptr, nullptr);
       EXPECT_EQ(0, actual_number_of_matches)

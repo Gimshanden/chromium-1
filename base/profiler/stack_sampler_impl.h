@@ -30,9 +30,17 @@ class BASE_EXPORT StackSamplerImpl : public StackSampler {
   StackSamplerImpl(const StackSamplerImpl&) = delete;
   StackSamplerImpl& operator=(const StackSamplerImpl&) = delete;
 
-  // Records a set of frames and returns them.
+  // StackSampler:
+  void AddAuxUnwinder(std::unique_ptr<Unwinder> unwinder) override;
   void RecordStackFrames(StackBuffer* stack_buffer,
                          ProfileBuilder* profile_builder) override;
+
+  // Exposes the internal function for unit testing.
+  static std::vector<Frame> WalkStackForTesting(ModuleCache* module_cache,
+                                                RegisterContext* thread_context,
+                                                uintptr_t stack_top,
+                                                Unwinder* native_unwinder,
+                                                Unwinder* aux_unwinder);
 
  private:
   bool CopyStack(StackBuffer* stack_buffer,
@@ -40,14 +48,31 @@ class BASE_EXPORT StackSamplerImpl : public StackSampler {
                  ProfileBuilder* profile_builder,
                  RegisterContext* thread_context);
 
-  std::vector<Frame> WalkStack(RegisterContext* thread_context,
-                               uintptr_t stack_top);
+  static std::vector<Frame> WalkStack(ModuleCache* module_cache,
+                                      RegisterContext* thread_context,
+                                      uintptr_t stack_top,
+                                      Unwinder* native_unwinder,
+                                      Unwinder* aux_unwinder);
 
   const std::unique_ptr<ThreadDelegate> thread_delegate_;
   const std::unique_ptr<Unwinder> native_unwinder_;
+  std::unique_ptr<Unwinder> aux_unwinder_;
   ModuleCache* const module_cache_;
   StackSamplerTestDelegate* const test_delegate_;
 };
+
+// These two functions are exposed for testing.
+
+BASE_EXPORT uintptr_t
+RewritePointerIfInOriginalStack(const uint8_t* original_stack_bottom,
+                                const uintptr_t* original_stack_top,
+                                const uint8_t* stack_copy_bottom,
+                                uintptr_t pointer);
+
+BASE_EXPORT const uint8_t* CopyStackContentsAndRewritePointers(
+    const uint8_t* original_stack_bottom,
+    const uintptr_t* original_stack_top,
+    uintptr_t* stack_buffer_bottom);
 
 }  // namespace base
 

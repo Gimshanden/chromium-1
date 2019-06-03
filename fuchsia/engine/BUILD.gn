@@ -14,24 +14,6 @@ config("web_engine_implementation") {
   defines = [ "WEB_ENGINE_IMPLEMENTATION" ]
 }
 
-source_set("test_support") {
-  testonly = true
-  sources = [
-    "test/fake_context.cc",
-    "test/fake_context.h",
-  ]
-  deps = [
-    "//base",
-    "//base/test:test_config",
-    "//content/test:test_support",
-    "//fuchsia/base",
-  ]
-  public_deps = [
-    "//fuchsia:web_fidl",
-    "//skia/public/interfaces",
-  ]
-}
-
 mojom("mojom") {
   sources = [
     "on_load_script_injector.mojom",
@@ -74,7 +56,7 @@ repack("web_engine_pak") {
     "//ui/strings",
   ]
 
-  output = "$root_out_dir/webrunner.pak"
+  output = "$root_out_dir/web_engine.pak"
   visibility = [ ":*" ]
 }
 
@@ -90,12 +72,14 @@ component("web_engine_core") {
     "//content/public/common",
     "//content/public/renderer",
     "//fuchsia/base",
+    "//fuchsia/base:message_port",
     "//fuchsia/base:modular",
     "//mojo/public/cpp/bindings",
     "//services/network/public/cpp",
     "//services/service_manager/sandbox",
     "//skia/public/interfaces",
     "//third_party/blink/public/common",
+    "//third_party/fuchsia-sdk/sdk:web",
     "//ui/aura",
     "//ui/base/ime",
     "//ui/display",
@@ -107,12 +91,11 @@ component("web_engine_core") {
   data_deps = [
     ":web_engine_pak",
   ]
-  data = [
-    "$root_out_dir/webrunner.pak",
-  ]
   public_deps = [
-    "//fuchsia:web_fidl",
-    "//third_party/fuchsia-sdk/sdk:web",
+    "//content/public/browser",
+  ]
+  data = [
+    "$root_out_dir/web_engine.pak",
   ]
   configs += [ ":web_engine_implementation" ]
   sources = [
@@ -122,10 +105,6 @@ component("web_engine_core") {
     "browser/discarding_event_filter.h",
     "browser/frame_impl.cc",
     "browser/frame_impl.h",
-    "browser/legacy_message_port_bridge.cc",
-    "browser/legacy_message_port_bridge.h",
-    "browser/message_port_impl.cc",
-    "browser/message_port_impl.h",
     "browser/web_engine_browser_context.cc",
     "browser/web_engine_browser_context.h",
     "browser/web_engine_browser_main.cc",
@@ -204,9 +183,9 @@ source_set("browsertest_core") {
     ":web_engine_core",
     "//content/public/browser",
     "//content/test:test_support",
-    "//fuchsia:web_fidl",
     "//net:test_support",
     "//testing/gtest",
+    "//third_party/fuchsia-sdk/sdk:web",
     "//ui/ozone",
   ]
 }
@@ -222,7 +201,6 @@ test("web_engine_browsertests") {
   ]
   deps = [
     ":browsertest_core",
-    ":test_support",
     ":web_engine_core",
     "//base/test:test_support",
     "//content/public/browser",
@@ -238,15 +216,18 @@ test("web_engine_browsertests") {
 
 test("web_engine_unittests") {
   sources = [
+    "browser/frame_impl_unittest.cc",
     "context_provider_impl_unittest.cc",
+    "fake_context.cc",
+    "fake_context.h",
   ]
   deps = [
-    ":test_support",
     ":web_engine_core",
     "//base/test:run_all_unittests",
     "//base/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/fuchsia-sdk/sdk:web",
   ]
 }
 

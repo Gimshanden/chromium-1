@@ -52,9 +52,11 @@ void SettingsWindowManager::ShowChromePageForProfile(Profile* profile,
   // TODO(calamity): Auto-launch the settings app on install if not found, and
   // figure out how to invoke OnNewSettingsWindow() in that case.
   if (web_app::SystemWebAppManager::IsEnabled()) {
+    bool did_create;
     Browser* browser = web_app::LaunchSystemWebApp(
-        profile, web_app::SystemAppType::SETTINGS, gurl);
-    if (!browser)
+        profile, web_app::SystemAppType::SETTINGS, gurl, &did_create);
+    // Only notify if we created a new browser.
+    if (!did_create || !browser)
       return;
 
     for (SettingsWindowManagerObserver& observer : observers_)
@@ -110,11 +112,18 @@ void SettingsWindowManager::ShowChromePageForProfile(Profile* profile,
 }
 
 void SettingsWindowManager::ShowOSSettings(Profile* profile) {
-  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings)) {
-    ShowChromePageForProfile(profile, GURL(kChromeUIOSSettingsURL));
-    return;
-  }
-  ShowChromePageForProfile(profile, GURL(kChromeUISettingsURL));
+  ShowOSSettings(profile, std::string());
+}
+
+void SettingsWindowManager::ShowOSSettings(Profile* profile,
+                                           const std::string& sub_page) {
+  DCHECK(sub_page.empty() || chrome::IsOSSettingsSubPage(sub_page)) << sub_page;
+  std::string url =
+      base::FeatureList::IsEnabled(chromeos::features::kSplitSettings)
+          ? kChromeUIOSSettingsURL
+          : kChromeUISettingsURL;
+  url += sub_page;
+  ShowChromePageForProfile(profile, GURL(url));
 }
 
 Browser* SettingsWindowManager::FindBrowserForProfile(Profile* profile) {
@@ -138,9 +147,10 @@ bool SettingsWindowManager::IsSettingsBrowser(Browser* browser) const {
     base::Optional<std::string> settings_app_id =
         web_app::GetAppIdForSystemWebApp(profile,
                                          web_app::SystemAppType::SETTINGS);
-    return settings_app_id && browser->hosted_app_controller() &&
-           browser->hosted_app_controller()->app_id() ==
-               settings_app_id.value();
+    return settings_app_id && browser->app_controller() &&
+           static_cast<extensions::HostedAppBrowserController*>(
+               browser->app_controller())
+                   ->GetAppId() == settings_app_id.value();
   } else {
     auto iter = settings_session_map_.find(profile);
     return iter != settings_session_map_.end() &&

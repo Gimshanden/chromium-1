@@ -63,7 +63,6 @@
 #include "third_party/blink/renderer/core/html/html_table_rows_collection.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/core/typed_arrays/flexible_array_buffer_view.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
@@ -2468,6 +2467,34 @@ static void OriginTrialEnabledLongAttributeAttributeSetter(
     return;
 
   impl->setOriginTrialEnabledLongAttribute(cpp_value);
+}
+
+static void OriginTrialEnabledLongAttribute2AttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Local<v8::Object> holder = info.Holder();
+
+  TestObject* impl = V8TestObject::ToImpl(holder);
+
+  V8SetReturnValueInt(info, impl->originTrialEnabledLongAttribute2());
+}
+
+static void OriginTrialEnabledLongAttribute2AttributeSetter(
+    v8::Local<v8::Value> v8_value, const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Isolate* isolate = info.GetIsolate();
+  ALLOW_UNUSED_LOCAL(isolate);
+
+  v8::Local<v8::Object> holder = info.Holder();
+  ALLOW_UNUSED_LOCAL(holder);
+
+  TestObject* impl = V8TestObject::ToImpl(holder);
+
+  ExceptionState exception_state(isolate, ExceptionState::kSetterContext, "TestObject", "originTrialEnabledLongAttribute2");
+
+  // Prepare the value to be set.
+  int32_t cpp_value = NativeValueTraits<IDLLong>::NativeValue(info.GetIsolate(), v8_value, exception_state);
+  if (exception_state.HadException())
+    return;
+
+  impl->setOriginTrialEnabledLongAttribute2(cpp_value);
 }
 
 static void PerWorldBindingsReadonlyTestInterfaceEmptyAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -8728,17 +8755,17 @@ static void PartiallyRuntimeEnabledOverloadedVoidMethod4Method(const v8::Functio
 }
 
 static int PartiallyRuntimeEnabledOverloadedVoidMethodMethodLength() {
-  if (RuntimeEnabledFeatures::FeatureName1Enabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeature1Enabled()) {
     return 1;
   }
-  if (RuntimeEnabledFeatures::FeatureName2Enabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeature2Enabled()) {
     return 1;
   }
   return 2;
 }
 
 static int PartiallyRuntimeEnabledOverloadedVoidMethodMethodMaxArg() {
-  if (RuntimeEnabledFeatures::FeatureName3Enabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeature3Enabled()) {
     return 3;
   }
   return 2;
@@ -8751,13 +8778,13 @@ static void PartiallyRuntimeEnabledOverloadedVoidMethodMethod(const v8::Function
 
   switch (std::min(test_object_v8_internal::PartiallyRuntimeEnabledOverloadedVoidMethodMethodMaxArg(), info.Length())) {
     case 1:
-      if (RuntimeEnabledFeatures::FeatureName2Enabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeature2Enabled()) {
         if (V8TestInterface::HasInstance(info[0], info.GetIsolate())) {
           PartiallyRuntimeEnabledOverloadedVoidMethod2Method(info);
           return;
         }
       }
-      if (RuntimeEnabledFeatures::FeatureName1Enabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeature1Enabled()) {
         if (true) {
           PartiallyRuntimeEnabledOverloadedVoidMethod1Method(info);
           return;
@@ -8771,7 +8798,7 @@ static void PartiallyRuntimeEnabledOverloadedVoidMethodMethod(const v8::Function
       }
       break;
     case 3:
-      if (RuntimeEnabledFeatures::FeatureName3Enabled()) {
+      if (RuntimeEnabledFeatures::RuntimeFeature3Enabled()) {
         if (true) {
           PartiallyRuntimeEnabledOverloadedVoidMethod4Method(info);
           return;
@@ -10565,6 +10592,21 @@ void V8TestObject::OriginTrialEnabledLongAttributeAttributeSetterCallback(
   v8::Local<v8::Value> v8_value = info[0];
 
   test_object_v8_internal::OriginTrialEnabledLongAttributeAttributeSetter(v8_value, info);
+}
+
+void V8TestObject::OriginTrialEnabledLongAttribute2AttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestObject_originTrialEnabledLongAttribute2_Getter");
+
+  test_object_v8_internal::OriginTrialEnabledLongAttribute2AttributeGetter(info);
+}
+
+void V8TestObject::OriginTrialEnabledLongAttribute2AttributeSetterCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(info.GetIsolate(), "Blink_TestObject_originTrialEnabledLongAttribute2_Setter");
+
+  v8::Local<v8::Value> v8_value = info[0];
+
+  test_object_v8_internal::OriginTrialEnabledLongAttribute2AttributeSetter(v8_value, info);
 }
 
 void V8TestObject::PerWorldBindingsReadonlyTestInterfaceEmptyAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -13499,7 +13541,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
 
   // Register IDL constants, attributes and operations.
 
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     static constexpr V8DOMConfiguration::AccessorConfiguration kConfigurations[] = {
         { "runtimeEnabledLongAttribute", V8TestObject::RuntimeEnabledLongAttributeAttributeGetterCallback, V8TestObject::RuntimeEnabledLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
         { "unscopableRuntimeEnabledLongAttribute", V8TestObject::UnscopableRuntimeEnabledLongAttributeAttributeGetterCallback, V8TestObject::UnscopableRuntimeEnabledLongAttributeAttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds },
@@ -13510,7 +13552,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
   }
 
   // Custom signature
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     {
       // Install unscopableRuntimeEnabledVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -13523,7 +13565,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     {
       // Install runtimeEnabledVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -13536,7 +13578,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     {
       // Install perWorldBindingsRuntimeEnabledVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -13550,7 +13592,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     {
       // Install runtimeEnabledOverloadedVoidMethod configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -13563,7 +13605,7 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
-  if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     {
       // Install clear configuration
       constexpr V8DOMConfiguration::MethodConfiguration kConfigurations[] = {
@@ -13576,6 +13618,41 @@ void V8TestObject::InstallRuntimeEnabledFeaturesOnTemplate(
       }
     }
   }
+}
+
+void V8TestObject::InstallOriginTrialFeature(
+    v8::Isolate* isolate,
+    const DOMWrapperWorld& world,
+    v8::Local<v8::Object> instance,
+    v8::Local<v8::Object> prototype,
+    v8::Local<v8::Function> interface) {
+  v8::Local<v8::FunctionTemplate> interface_template =
+      V8TestObject::GetWrapperTypeInfo()->DomTemplate(isolate, world);
+  v8::Local<v8::Signature> signature = v8::Signature::New(isolate, interface_template);
+  ALLOW_UNUSED_LOCAL(signature);
+  static constexpr V8DOMConfiguration::AccessorConfiguration
+  koriginTrialEnabledLongAttribute2Configurations[] = {
+      { "originTrialEnabledLongAttribute2", V8TestObject::OriginTrialEnabledLongAttribute2AttributeGetterCallback, V8TestObject::OriginTrialEnabledLongAttribute2AttributeSetterCallback, V8PrivateProperty::kNoCachedAccessor, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::kOnPrototype, V8DOMConfiguration::kCheckHolder, V8DOMConfiguration::kHasSideEffect, V8DOMConfiguration::kAlwaysCallGetter, V8DOMConfiguration::kAllWorlds }
+  };
+  for (const auto& config : koriginTrialEnabledLongAttribute2Configurations) {
+    V8DOMConfiguration::InstallAccessor(isolate, world, instance, prototype,
+                                        interface, signature, config);
+  }
+}
+
+void V8TestObject::InstallOriginTrialFeature(
+    ScriptState* script_state, v8::Local<v8::Object> instance) {
+  V8PerContextData* per_context_data = script_state->PerContextData();
+  v8::Local<v8::Object> prototype = per_context_data->PrototypeForType(
+      V8TestObject::GetWrapperTypeInfo());
+  v8::Local<v8::Function> interface = per_context_data->ConstructorForType(
+      V8TestObject::GetWrapperTypeInfo());
+  ALLOW_UNUSED_LOCAL(interface);
+  InstallOriginTrialFeature(script_state->GetIsolate(), script_state->World(), instance, prototype, interface);
+}
+
+void V8TestObject::InstallOriginTrialFeature(ScriptState* script_state) {
+  InstallOriginTrialFeature(script_state, v8::Local<v8::Object>());
 }
 
 void V8TestObject::InstallFeatureName(
@@ -13707,12 +13784,12 @@ void V8TestObject::InstallConditionalFeatures(
     unscopables->CreateDataProperty(
         context, V8AtomicString(isolate, "unscopableOriginTrialEnabledLongAttribute"), v8::True(isolate))
         .FromJust();
-    if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+    if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
       unscopables->CreateDataProperty(
           context, V8AtomicString(isolate, "unscopableRuntimeEnabledLongAttribute"), v8::True(isolate))
           .FromJust();
     }
-    if (RuntimeEnabledFeatures::FeatureNameEnabled()) {
+    if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
       unscopables->CreateDataProperty(
           context, V8AtomicString(isolate, "unscopableRuntimeEnabledVoidMethod"), v8::True(isolate))
           .FromJust();

@@ -23,7 +23,7 @@ class NGPaintFragmentTraversalTest : public RenderingTest,
   void SetUpHtml(const char* container_id, const char* html) {
     SetBodyInnerHTML(html);
     layout_block_flow_ =
-        ToLayoutBlockFlow(GetLayoutObjectByElementId(container_id));
+        To<LayoutBlockFlow>(GetLayoutObjectByElementId(container_id));
     root_fragment_ = layout_block_flow_->PaintFragment();
   }
 
@@ -59,7 +59,7 @@ class NGPaintFragmentTraversalTest : public RenderingTest,
   }
 
   LayoutBlockFlow* layout_block_flow_;
-  NGPaintFragment* root_fragment_;
+  const NGPaintFragment* root_fragment_;
 };
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToNext) {

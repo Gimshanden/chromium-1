@@ -104,6 +104,7 @@ TEST_P(FrameOverlayTest, AcceleratedCompositing) {
     builder.EndRecording()->Playback(&canvas);
   } else {
     auto* graphics_layer = frame_overlay->GetGraphicsLayer();
+    EXPECT_FALSE(graphics_layer->GetHitTestable());
     EXPECT_EQ(PropertyTreeState::Root(),
               graphics_layer->GetPropertyTreeState());
     graphics_layer->Paint();
@@ -151,6 +152,7 @@ TEST_P(FrameOverlayTest, DeviceEmulationScale) {
     check_paint_results(*paint_controller);
   } else {
     auto* graphics_layer = frame_overlay->GetGraphicsLayer();
+    EXPECT_FALSE(graphics_layer->GetHitTestable());
     EXPECT_EQ(state, graphics_layer->GetPropertyTreeState());
     graphics_layer->Paint();
     check_paint_results(graphics_layer->GetPaintController());
@@ -162,7 +164,7 @@ TEST_P(FrameOverlayTest, VisualRect) {
   frame_overlay->UpdatePrePaint();
   GetWebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
       WebWidget::LifecycleUpdateReason::kTest);
-  EXPECT_EQ(LayoutRect(0, 0, kViewportWidth, kViewportHeight),
+  EXPECT_EQ(IntRect(0, 0, kViewportWidth, kViewportHeight),
             frame_overlay->VisualRect());
 }
 

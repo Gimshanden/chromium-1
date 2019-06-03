@@ -213,6 +213,7 @@ std::unique_ptr<Layer> Layer::Clone() const {
   clone->SetMasksToBounds(GetMasksToBounds());
   clone->SetOpacity(GetTargetOpacity());
   clone->SetVisible(GetTargetVisibility());
+  clone->SetAcceptEvents(accept_events());
   clone->SetFillsBoundsOpaquely(fills_bounds_opaquely_);
   clone->SetFillsBoundsCompletely(fills_bounds_completely_);
   clone->SetRoundedCornerRadius(rounded_corner_radii());
@@ -555,6 +556,13 @@ void Layer::SetVisible(bool visible) {
   GetAnimator()->SetVisibility(visible);
 }
 
+void Layer::SetAcceptEvents(bool accept_events) {
+  if (accept_events_ == accept_events)
+    return;
+  accept_events_ = accept_events;
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
+}
+
 bool Layer::GetTargetVisibility() const {
   if (animator_ && animator_->IsAnimatingProperty(
       LayerAnimationElement::VISIBILITY))
@@ -573,8 +581,7 @@ bool Layer::ShouldDraw() const {
   return type_ != LAYER_NOT_DRAWN && GetCombinedOpacity() > 0.0f;
 }
 
-void Layer::SetRoundedCornerRadius(
-    const std::array<uint32_t, 4>& corner_radii) {
+void Layer::SetRoundedCornerRadius(const gfx::RoundedCornersF& corner_radii) {
   cc_layer_->SetRoundedCorner(corner_radii);
   ScheduleDraw();
 
@@ -629,6 +636,9 @@ void Layer::SetFillsBoundsOpaquely(bool fills_bounds_opaquely) {
   fills_bounds_opaquely_ = fills_bounds_opaquely;
 
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely);
+
+  if (delegate_)
+    delegate_->OnLayerFillsBoundsOpaquelyChanged();
 }
 
 void Layer::SetFillsBoundsCompletely(bool fills_bounds_completely) {
@@ -679,6 +689,7 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely_);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
   cc_layer_->SetHideLayerAndSubtree(!visible_);
   cc_layer_->SetBackdropFilterQuality(backdrop_filter_quality_);
   cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
@@ -770,6 +781,15 @@ void Layer::SetSurfaceSize(gfx::Size surface_size_in_dip) {
     return;
   frame_size_in_dip_ = surface_size_in_dip;
   RecomputeDrawsContentAndUVRect();
+}
+
+bool Layer::ContainsMirrorForTest(Layer* mirror) const {
+  const auto it =
+      std::find_if(mirrors_.begin(), mirrors_.end(),
+                   [mirror](const std::unique_ptr<LayerMirror>& mirror_ptr) {
+                     return mirror_ptr.get()->dest() == mirror;
+                   });
+  return it != mirrors_.end();
 }
 
 void Layer::SetTransferableResource(
@@ -875,10 +895,10 @@ void Layer::SetShowReflectedSurface(const viz::SurfaceId& surface_id,
                                cc::DeadlinePolicy::UseInfiniteDeadline());
   surface_layer_->SetBackgroundColor(SK_ColorBLACK);
   surface_layer_->SetSafeOpaqueBackgroundColor(SK_ColorBLACK);
-  // TODO(kylechar): Include UV transform and don't stretch to fill bounds.
   surface_layer_->SetStretchContentToFillBounds(true);
+  surface_layer_->SetIsReflection(true);
 
-  // The reflecting surface uses the native size of the display.
+  // The reflecting surface uses the native size of the reflected display.
   frame_size_in_dip_ = frame_size_in_pixels;
   RecomputeDrawsContentAndUVRect();
 }
@@ -1162,7 +1182,7 @@ bool Layer::PrepareTransferableResource(
 }
 
 std::unique_ptr<base::trace_event::TracedValue> Layer::TakeDebugInfo(
-    cc::Layer* layer) {
+    const cc::Layer* layer) {
   auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetString("layer_name", name_);
   return value;
@@ -1246,9 +1266,10 @@ void Layer::SetBoundsFromAnimation(const gfx::Rect& bounds,
     SchedulePaint(gfx::Rect(bounds.size()));
   }
 
-  if (sync_bounds_) {
-    for (const auto& mirror : mirrors_)
-      mirror->dest()->SetBounds(bounds);
+  for (const auto& mirror : mirrors_) {
+    Layer* mirror_dest = mirror->dest();
+    if (mirror_dest->sync_bounds_with_source_)
+      mirror_dest->SetBounds(bounds);
   }
 }
 
@@ -1279,6 +1300,7 @@ void Layer::SetVisibilityFromAnimation(bool visible,
 
   visible_ = visible;
   cc_layer_->SetHideLayerAndSubtree(!visible_);
+  cc_layer_->SetHitTestable(visible_ && accept_events_);
 }
 
 void Layer::SetBrightnessFromAnimation(float brightness,
@@ -1382,6 +1404,9 @@ void Layer::CreateCcLayer() {
   cc_layer_->SetContentsOpaque(true);
   cc_layer_->SetSafeOpaqueBackgroundColor(SK_ColorWHITE);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
+  // TODO(sunxd): Allow ui::Layers to set if they accept events or not. See
+  // https://crbug.com/924294.
+  cc_layer_->SetHitTestable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetLayerClient(weak_ptr_factory_.GetWeakPtr());
   cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
   RecomputePosition();

@@ -6,8 +6,10 @@
 
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/html/html_head_element.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 namespace {
@@ -28,26 +30,9 @@ TEST_F(ApplyDarkModeCheckTest, LightSolidBackgroundAlwaysFiltered) {
 TEST_F(ApplyDarkModeCheckTest, DarkSolidBackgroundFilteredIfPolicyIsFilterAll) {
   GetDocument().body()->SetInlineStyleProperty(CSSPropertyID::kBackgroundColor,
                                                CSSValueID::kBlack);
-  // TODO(https://crbug.com/925949): Set opacity the same way as the other CSS
-  // properties.
-  GetLayoutView().MutableStyle()->SetOpacity(0.9);
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(ShouldApplyDarkModeFilterToPage(
-      DarkModePagePolicy::kFilterByBackground, GetLayoutView()));
-  EXPECT_TRUE(ShouldApplyDarkModeFilterToPage(DarkModePagePolicy::kFilterAll,
-                                              GetLayoutView()));
-}
-
-TEST_F(ApplyDarkModeCheckTest, DarkLowOpacityBackgroundAlwaysFiltered) {
-  GetDocument().body()->SetInlineStyleProperty(CSSPropertyID::kBackgroundColor,
-                                               CSSValueID::kBlack);
-  // TODO(https://crbug.com/925949): Set opacity the same way as the other CSS
-  // properties.
-  GetLayoutView().MutableStyle()->SetOpacity(0.1);
-  UpdateAllLifecyclePhasesForTest();
-
-  EXPECT_TRUE(ShouldApplyDarkModeFilterToPage(
       DarkModePagePolicy::kFilterByBackground, GetLayoutView()));
   EXPECT_TRUE(ShouldApplyDarkModeFilterToPage(DarkModePagePolicy::kFilterAll,
                                               GetLayoutView()));
@@ -75,14 +60,15 @@ TEST_F(ApplyDarkModeCheckTest, BackgroundColorNotDefinedAlwaysFiltered) {
                                               GetLayoutView()));
 }
 
-TEST_F(ApplyDarkModeCheckTest, SupportedColorSchemesDark) {
-  RuntimeEnabledFeatures::SetMetaSupportedColorSchemesEnabled(true);
+TEST_F(ApplyDarkModeCheckTest, MetaColorSchemeDark) {
+  ScopedCSSColorSchemeForTest css_feature_scope(true);
+  ScopedMetaColorSchemeForTest meta_feature_scope(true);
   GetDocument().GetSettings()->SetForceDarkModeEnabled(true);
   GetDocument().GetSettings()->SetPreferredColorScheme(
       PreferredColorScheme::kDark);
-  ColorSchemeSet schemes;
-  schemes.Set(ColorScheme::kDark);
-  GetDocument().GetStyleEngine().SetSupportedColorSchemes(schemes);
+  GetDocument().head()->SetInnerHTMLFromString(R"HTML(
+    <meta name="color-scheme" content="dark">
+  )HTML");
   UpdateAllLifecyclePhasesForTest();
 
   // Opting out of forced darkening when dark is among the supported color

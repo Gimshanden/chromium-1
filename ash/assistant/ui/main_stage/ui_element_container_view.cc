@@ -73,12 +73,7 @@ float GetTextElementAnimationFadeOutOpacity() {
 // UiElementContainerView ------------------------------------------------------
 
 UiElementContainerView::UiElementContainerView(AssistantViewDelegate* delegate)
-    : delegate_(delegate),
-      ui_elements_exit_animation_observer_(
-          std::make_unique<ui::CallbackLayerAnimationObserver>(
-              /*animation_ended_callback=*/base::BindRepeating(
-                  &UiElementContainerView::OnAllUiElementsExitAnimationEnded,
-                  base::Unretained(this)))) {
+    : delegate_(delegate), weak_factory_(this) {
   InitLayout();
 
   // The AssistantViewDelegate should outlive UiElementContainerView.
@@ -177,6 +172,36 @@ void UiElementContainerView::OnResponseChanged(
   // There is a previous response on stage, so we'll animate it off before
   // adding the new response. The new response will be added upon invocation of
   // the exit animation ended callback.
+  auto* exit_animation_observer = new ui::CallbackLayerAnimationObserver(
+      /*animation_ended_callback=*/base::BindRepeating(
+          [](const base::WeakPtr<UiElementContainerView>& weak_ptr,
+             const ui::CallbackLayerAnimationObserver& observer) {
+            // If the UiElementContainerView is destroyed we just return true
+            // to delete our observer. No futher action is needed.
+            if (!weak_ptr)
+              return true;
+
+            // If the exit animation was aborted, we just return true to delete
+            // our observer. No further action is needed.
+            if (observer.aborted_count())
+              return true;
+
+            // All UI elements have finished their exit animations so it's safe
+            // to perform clearing of their views and managed resources.
+            weak_ptr->OnResponseCleared();
+
+            // It is safe to add our pending response, if one exists, to the
+            // view hierarchy now that we've cleared the previous response
+            // from the stage.
+            if (weak_ptr->pending_response_)
+              weak_ptr->OnResponseAdded(std::move(weak_ptr->pending_response_));
+
+            // We return true to delete our observer.
+            return true;
+          },
+          weak_factory_.GetWeakPtr()));
+
+  // Animate the layer belonging to each view in the previous response.
   for (const std::pair<ui::LayerOwner*, float>& pair : ui_element_views_) {
     StartLayerAnimationSequence(
         pair.first->layer()->GetAnimator(),
@@ -188,14 +213,21 @@ void UiElementContainerView::OnResponseChanged(
         CreateLayerAnimationSequence(
             CreateOpacityElement(0.0001f, kUiElementAnimationFadeOutDuration)),
         // Observe the animation.
-        ui_elements_exit_animation_observer_.get());
+        exit_animation_observer);
   }
 
   // Set the observer to active so that we receive callback events.
-  ui_elements_exit_animation_observer_->SetActive();
+  exit_animation_observer->SetActive();
 }
 
 void UiElementContainerView::OnResponseCleared() {
+  // We explicitly abort all in progress animations here because we will remove
+  // their views immediately and we want to ensure that any animation observers
+  // will be notified of an abort, not an animation completion. Otherwise there
+  // is potential to enter into a bad state (see crbug/952996).
+  for (auto& ui_element_view : ui_element_views_)
+    ui_element_view.first->layer()->GetAnimator()->AbortAllAnimations();
+
   // We can prevent over-propagation of the PreferredSizeChanged event by
   // stopping propagation during batched view hierarchy add/remove operations.
   SetPropagatePreferredSizeChanged(false);
@@ -257,9 +289,8 @@ void UiElementContainerView::OnCardElementAdded(
     // The first card requires a top margin of |GetFirstCardMarginTopDip()|, but
     // we need to account for child spacing because the first card is not
     // necessarily the first UI element.
-    const int top_margin_dip = child_count() == 0
-                                   ? GetFirstCardMarginTopDip()
-                                   : GetFirstCardMarginTopDip() - kSpacingDip;
+    const int top_margin_dip =
+        GetFirstCardMarginTopDip() - (children().empty() ? 0 : kSpacingDip);
 
     // We effectively create a top margin by applying an empty border.
     card_element_view->SetBorder(
@@ -331,20 +362,6 @@ void UiElementContainerView::OnAllUiElementsAdded() {
       delegate_->GetInteractionModel()->response();
   if (!response->has_tts())
     NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
-}
-
-bool UiElementContainerView::OnAllUiElementsExitAnimationEnded(
-    const ui::CallbackLayerAnimationObserver& observer) {
-  // All UI elements have finished their exit animations so its safe to perform
-  // clearing of their views and managed resources.
-  OnResponseCleared();
-
-  // It is safe to add our pending response to the view hierarchy now that we've
-  // cleared the previous response from the stage.
-  OnResponseAdded(std::move(pending_response_));
-
-  // Return false to prevent the observer from destroying itself.
-  return false;
 }
 
 void UiElementContainerView::SetPropagatePreferredSizeChanged(bool propagate) {

@@ -4,9 +4,10 @@
 
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 
-#include "build/build_config.h"
-
+#include <memory>
 #include <utility>
+
+#include "build/build_config.h"
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -154,6 +155,9 @@ CloudPolicyClient::CloudPolicyClient(
     const std::string& machine_id,
     const std::string& machine_model,
     const std::string& brand_code,
+    const std::string& ethernet_mac_address,
+    const std::string& dock_mac_address,
+    const std::string& manufacture_date,
     DeviceManagementService* service,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     SigningService* signing_service,
@@ -161,6 +165,9 @@ CloudPolicyClient::CloudPolicyClient(
     : machine_id_(machine_id),
       machine_model_(machine_model),
       brand_code_(brand_code),
+      ethernet_mac_address_(ethernet_mac_address),
+      dock_mac_address_(dock_mac_address),
+      manufacture_date_(manufacture_date),
       service_(service),  // Can be null for unit tests.
       signing_service_(signing_service),
       device_dm_token_callback_(device_dm_token_callback),
@@ -220,25 +227,10 @@ void CloudPolicyClient::Register(em::DeviceRegisterRequest::Type type,
 
   em::DeviceRegisterRequest* request =
       policy_fetch_request_job_->GetRequest()->mutable_register_request();
-  if (!client_id.empty())
-    request->set_reregister(true);
+  CreateDeviceRegisterRequest(type, flavor, lifetime, license_type, client_id,
+                              requisition, current_state_key, request);
   if (requires_reregistration())
     request->set_reregistration_dm_token(reregistration_dm_token_);
-  request->set_type(type);
-  if (!machine_id_.empty())
-    request->set_machine_id(machine_id_);
-  if (!machine_model_.empty())
-    request->set_machine_model(machine_model_);
-  if (!brand_code_.empty())
-    request->set_brand_code(brand_code_);
-  if (!requisition.empty())
-    request->set_requisition(requisition);
-  if (!current_state_key.empty())
-    request->set_server_backed_state_key(current_state_key);
-  request->set_flavor(flavor);
-  if (license_type != em::LicenseType::UNDEFINED)
-    request->mutable_license_type()->set_license_type(license_type);
-  request->set_lifetime(lifetime);
 
   policy_fetch_request_job_->SetRetryCallback(
       base::Bind(&CloudPolicyClient::OnRetryRegister,
@@ -272,24 +264,8 @@ void CloudPolicyClient::RegisterWithCertificate(
   data.set_device_certificate(pem_certificate_chain);
 
   em::DeviceRegisterRequest* request = data.mutable_device_register_request();
-  if (!client_id.empty())
-    request->set_reregister(true);
-  request->set_type(type);
-  if (!machine_id_.empty())
-    request->set_machine_id(machine_id_);
-  if (!machine_model_.empty())
-    request->set_machine_model(machine_model_);
-  if (!brand_code_.empty())
-    request->set_brand_code(brand_code_);
-  if (!requisition.empty())
-    request->set_requisition(requisition);
-  if (!current_state_key.empty())
-    request->set_server_backed_state_key(current_state_key);
-  request->set_flavor(flavor);
-  if (license_type != em::LicenseType::UNDEFINED)
-    request->mutable_license_type()->set_license_type(license_type);
-  request->set_lifetime(lifetime);
-
+  CreateDeviceRegisterRequest(type, flavor, lifetime, license_type, client_id,
+                              requisition, current_state_key, request);
   if (!sub_organization.empty()) {
     em::DeviceRegisterConfiguration* configuration =
         data.mutable_device_register_configuration();
@@ -534,32 +510,25 @@ void CloudPolicyClient::UploadEnterpriseEnrollmentId(
     const std::string& enrollment_id,
     const CloudPolicyClient::StatusCallback& callback) {
   CHECK(is_registered());
-  std::unique_ptr<DeviceManagementRequestJob> request_job(
-      service_->CreateJob(DeviceManagementRequestJob::TYPE_UPLOAD_CERTIFICATE,
-                          GetURLLoaderFactory()));
-  request_job->SetAuthData(DMAuth::FromDMToken(dm_token_));
-  request_job->SetClientID(client_id_);
+  std::unique_ptr<DeviceManagementRequestJob> request_job =
+      CreateCertUploadJob();
 
   em::DeviceManagementRequest* request = request_job->GetRequest();
   em::DeviceCertUploadRequest* upload_request =
       request->mutable_cert_upload_request();
   upload_request->set_enrollment_id(enrollment_id);
 
-  const DeviceManagementRequestJob::Callback job_callback = base::BindRepeating(
-      &CloudPolicyClient::OnCertificateUploadCompleted,
-      weak_ptr_factory_.GetWeakPtr(), request_job.get(), callback);
-
-  request_jobs_.push_back(std::move(request_job));
-  request_jobs_.back()->Start(job_callback);
+  ExecuteCertUploadJob(std::move(request_job), callback);
 }
 
 void CloudPolicyClient::UploadDeviceStatus(
     const em::DeviceStatusReportRequest* device_status,
     const em::SessionStatusReportRequest* session_status,
+    const em::ChildStatusReportRequest* child_status,
     const CloudPolicyClient::StatusCallback& callback) {
   CHECK(is_registered());
   // Should pass in at least one type of status.
-  DCHECK(device_status || session_status);
+  DCHECK(device_status || session_status || child_status);
   std::unique_ptr<DeviceManagementRequestJob> request_job(service_->CreateJob(
       DeviceManagementRequestJob::TYPE_UPLOAD_STATUS, GetURLLoaderFactory()));
   request_job->SetAuthData(DMAuth::FromDMToken(dm_token_));
@@ -572,6 +541,8 @@ void CloudPolicyClient::UploadDeviceStatus(
     *request->mutable_device_status_report_request() = *device_status;
   if (session_status)
     *request->mutable_session_status_report_request() = *session_status;
+  if (child_status)
+    *request->mutable_child_status_report_request() = *child_status;
 
   const DeviceManagementRequestJob::Callback job_callback =
       base::AdaptCallbackForRepeating(base::BindOnce(
@@ -825,6 +796,27 @@ void CloudPolicyClient::UploadCertificate(
     const std::string& certificate_data,
     em::DeviceCertUploadRequest::CertificateType certificate_type,
     const CloudPolicyClient::StatusCallback& callback) {
+  std::unique_ptr<DeviceManagementRequestJob> request_job =
+      CreateCertUploadJob();
+  PrepareCertUploadRequest(request_job.get(), certificate_data,
+                           certificate_type);
+  ExecuteCertUploadJob(std::move(request_job), callback);
+}
+
+void CloudPolicyClient::PrepareCertUploadRequest(
+    DeviceManagementRequestJob* request_job,
+    const std::string& certificate_data,
+    enterprise_management::DeviceCertUploadRequest::CertificateType
+        certificate_type) {
+  em::DeviceManagementRequest* request = request_job->GetRequest();
+  em::DeviceCertUploadRequest* upload_request =
+      request->mutable_cert_upload_request();
+  upload_request->set_device_certificate(certificate_data);
+  upload_request->set_certificate_type(certificate_type);
+}
+
+std::unique_ptr<DeviceManagementRequestJob>
+CloudPolicyClient::CreateCertUploadJob() {
   CHECK(is_registered());
   std::unique_ptr<DeviceManagementRequestJob> request_job(
       service_->CreateJob(DeviceManagementRequestJob::TYPE_UPLOAD_CERTIFICATE,
@@ -832,12 +824,12 @@ void CloudPolicyClient::UploadCertificate(
   request_job->SetAuthData(DMAuth::FromDMToken(dm_token_));
   request_job->SetClientID(client_id_);
 
-  em::DeviceManagementRequest* request = request_job->GetRequest();
-  em::DeviceCertUploadRequest* upload_request =
-      request->mutable_cert_upload_request();
-  upload_request->set_device_certificate(certificate_data);
-  upload_request->set_certificate_type(certificate_type);
+  return request_job;
+}
 
+void CloudPolicyClient::ExecuteCertUploadJob(
+    std::unique_ptr<DeviceManagementRequestJob> request_job,
+    const CloudPolicyClient::StatusCallback& callback) {
   const DeviceManagementRequestJob::Callback job_callback = base::BindRepeating(
       &CloudPolicyClient::OnCertificateUploadCompleted,
       weak_ptr_factory_.GetWeakPtr(), request_job.get(), callback);
@@ -1189,6 +1181,40 @@ void CloudPolicyClient::NotifyRegistrationStateChanged() {
 void CloudPolicyClient::NotifyClientError() {
   for (auto& observer : observers_)
     observer.OnClientError(this);
+}
+
+void CloudPolicyClient::CreateDeviceRegisterRequest(
+    em::DeviceRegisterRequest::Type type,
+    em::DeviceRegisterRequest::Flavor flavor,
+    em::DeviceRegisterRequest::Lifetime lifetime,
+    em::LicenseType::LicenseTypeEnum license_type,
+    const std::string& client_id,
+    const std::string& requisition,
+    const std::string& current_state_key,
+    em::DeviceRegisterRequest* request) {
+  if (!client_id.empty())
+    request->set_reregister(true);
+  request->set_type(type);
+  if (!machine_id_.empty())
+    request->set_machine_id(machine_id_);
+  if (!machine_model_.empty())
+    request->set_machine_model(machine_model_);
+  if (!brand_code_.empty())
+    request->set_brand_code(brand_code_);
+  if (!ethernet_mac_address_.empty())
+    request->set_ethernet_mac_address(ethernet_mac_address_);
+  if (!dock_mac_address_.empty())
+    request->set_dock_mac_address(dock_mac_address_);
+  if (!manufacture_date_.empty())
+    request->set_manufacture_date(manufacture_date_);
+  if (!requisition.empty())
+    request->set_requisition(requisition);
+  if (!current_state_key.empty())
+    request->set_server_backed_state_key(current_state_key);
+  request->set_flavor(flavor);
+  if (license_type != em::LicenseType::UNDEFINED)
+    request->mutable_license_type()->set_license_type(license_type);
+  request->set_lifetime(lifetime);
 }
 
 }  // namespace policy

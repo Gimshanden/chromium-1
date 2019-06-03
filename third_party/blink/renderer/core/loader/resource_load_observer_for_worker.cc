@@ -36,11 +36,16 @@ void ResourceLoadObserverForWorker::WillSendRequest(
       request, redirect_response, initiator_info, resource_type);
 }
 
+void ResourceLoadObserverForWorker::DidChangePriority(
+    uint64_t identifier,
+    ResourceLoadPriority priority,
+    int intra_priority_value) {}
+
 void ResourceLoadObserverForWorker::DidReceiveResponse(
     uint64_t identifier,
     const ResourceRequest& request,
     const ResourceResponse& response,
-    Resource* resource,
+    const Resource* resource,
     ResponseSource) {
   if (response.HasMajorCertificateErrors()) {
     WebMixedContentContextType context_type =

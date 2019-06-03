@@ -37,6 +37,7 @@ class ContentClient;
 class CONTENT_EXPORT AXImageAnnotator : public base::CheckedObserver {
  public:
   AXImageAnnotator(RenderAccessibilityImpl* const render_accessibility,
+                   const std::string& preferred_language,
                    image_annotation::mojom::AnnotatorPtr annotator_ptr);
   ~AXImageAnnotator() override;
 
@@ -51,6 +52,10 @@ class CONTENT_EXPORT AXImageAnnotator : public base::CheckedObserver {
   void OnImageAdded(blink::WebAXObject& image);
   void OnImageUpdated(blink::WebAXObject& image);
   void OnImageRemoved(blink::WebAXObject& image);
+
+  void set_preferred_language(const std::string& language) {
+    preferred_language_ = language;
+  }
 
  private:
   // Keeps track of the image data and the automatic annotation for each image.
@@ -88,7 +93,7 @@ class CONTENT_EXPORT AXImageAnnotator : public base::CheckedObserver {
   virtual ContentClient* GetContentClient() const;
 
   // Given a WebImage, it uses the URL of the main document and the src
-  // attribute of the image, generates a unique identifier for the image that
+  // attribute of the image, to generate a unique identifier for the image that
   // could be provided to the image annotation service.
   //
   // This method is virtual to allow overriding it from tests.
@@ -112,6 +117,9 @@ class CONTENT_EXPORT AXImageAnnotator : public base::CheckedObserver {
 
   // Weak, owns us.
   RenderAccessibilityImpl* const render_accessibility_;
+
+  // The language in which to request image descriptions.
+  std::string preferred_language_;
 
   // A pointer to the automatic image annotation service.
   image_annotation::mojom::AnnotatorPtr annotator_ptr_;

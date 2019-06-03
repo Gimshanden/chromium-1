@@ -54,6 +54,7 @@
 #include "third_party/blink/renderer/core/inspector/console_message_storage.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/text_autosizer.h"
+#include "third_party/blink/renderer/core/loader/idleness_detector.h"
 #include "third_party/blink/renderer/core/page/autoscroll_controller.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/context_menu_controller.h"
@@ -147,6 +148,11 @@ Page* Page::CreateOrdinary(PageClients& page_clients, Page* opener) {
     page->prev_related_page_ = opener;
     page->next_related_page_ = next;
     next->prev_related_page_ = page;
+
+    // No need to update |prev| here as if |next| != |prev|, |prev| was already
+    // marked as having related pages.
+    next->UpdateHasRelatedPages();
+    page->UpdateHasRelatedPages();
   }
 
   OrdinaryPages().insert(page);
@@ -281,14 +287,14 @@ LinkHighlights& Page::GetLinkHighlights() {
 }
 
 void Page::SetMainFrame(Frame* main_frame) {
-  // Should only be called during initialization or swaps between local and
-  // remote frames.
-  // FIXME: Unfortunately we can't assert on this at the moment, because this
-  // is called in the base constructor for both LocalFrame and RemoteFrame,
-  // when the vtables for the derived classes have not yet been setup. Once this
-  // is fixed, also call page_scheduler_->SetIsMainFrameLocal(true) from here
-  // instead of from the callers of this method.
+  // TODO(https://crbug.com/952836): Assert that this is only called during
+  // initialization or swaps between local and remote frames.
   main_frame_ = main_frame;
+
+  page_scheduler_->SetIsMainFrameLocal(main_frame->IsLocalFrame());
+  // |has_related_pages_| is only reported when the main frame is local, so make
+  // sure it's updated after the main frame changes.
+  UpdateHasRelatedPages();
 }
 
 LocalFrame* Page::DeprecatedLocalMainFrame() const {
@@ -301,6 +307,8 @@ void Page::DocumentDetached(Document* document) {
   if (validation_message_client_)
     validation_message_client_->DocumentDetached(*document);
   hosts_using_features_.DocumentDetached(*document);
+  if (spatial_navigation_controller_ && document->GetFrame()->IsMainFrame())
+    spatial_navigation_controller_->ResetMojoBindings();
 }
 
 bool Page::OpenedByDOM() const {
@@ -312,7 +320,6 @@ void Page::SetOpenedByDOM() {
 }
 
 SpatialNavigationController& Page::GetSpatialNavigationController() {
-  DCHECK(GetSettings().GetSpatialNavigationEnabled());
   if (!spatial_navigation_controller_) {
     spatial_navigation_controller_ =
         MakeGarbageCollected<SpatialNavigationController>(*this);
@@ -496,7 +503,36 @@ void Page::SetLifecycleState(PageLifecycleState state) {
     return;
   DCHECK_NE(state, PageLifecycleState::kUnknown);
 
-  if (RuntimeEnabledFeatures::PageLifecycleEnabled()) {
+  // When background tab freezing was first shipped it didn't pause
+  // the execution context but froze the frame scheduler. This feature
+  // flag attempts to bring the two mechanisms to use the same path for
+  // all pausing and freezing.
+  // This allows for mojo channels, workers to also be frozen because
+  // they listen for the page execution context being paused/frozen.
+  if (RuntimeEnabledFeatures::
+          PauseExecutionContextOnBackgroundFreezeEnabled()) {
+    base::Optional<mojom::FrameLifecycleState> next_state;
+    if (state == PageLifecycleState::kFrozen) {
+      next_state = mojom::FrameLifecycleState::kFrozen;
+    } else if (page_lifecycle_state_ == PageLifecycleState::kFrozen) {
+      // TODO(fmeawad): Only resume the page that just became visible, blocked
+      // on task queues per frame.
+      DCHECK(state == PageLifecycleState::kActive ||
+             state == PageLifecycleState::kHiddenBackgrounded ||
+             state == PageLifecycleState::kHiddenForegrounded);
+      next_state = mojom::FrameLifecycleState::kRunning;
+    }
+
+    if (next_state) {
+      for (Frame* frame = main_frame_.Get(); frame;
+           frame = frame->Tree().TraverseNext()) {
+        if (auto* local_frame = DynamicTo<LocalFrame>(frame))
+          local_frame->SetLifecycleState(next_state.value());
+      }
+    }
+  } else {
+    // The following code will dispatch the freeze/resume events,
+    // freeze the frame scheduler but but not pause the execution context.
     if (state == PageLifecycleState::kFrozen) {
       for (Frame* frame = main_frame_.Get(); frame;
            frame = frame->Tree().TraverseNext()) {
@@ -711,7 +747,13 @@ void Page::SettingsChanged(SettingsDelegate::ChangeType change_type) {
       for (Frame* frame = MainFrame(); frame;
            frame = frame->Tree().TraverseNext()) {
         if (auto* local_frame = DynamicTo<LocalFrame>(frame))
-          local_frame->GetDocument()->GetStyleEngine().ColorSchemeChanged();
+          local_frame->GetDocument()->ColorSchemeChanged();
+      }
+      break;
+    case SettingsDelegate::kSpatialNavigationChange:
+      if (spatial_navigation_controller_ ||
+          GetSettings().GetSpatialNavigationEnabled()) {
+        GetSpatialNavigationController().OnSpatialNavigationSettingChanged();
       }
       break;
   }
@@ -750,6 +792,8 @@ void Page::DidCommitLoad(LocalFrame* frame) {
                                         kScrollBehaviorInstant,
                                         ScrollableArea::ScrollCallback());
     hosts_using_features_.UpdateMeasurementsAndClear();
+    // Update |has_related_pages_| as features are reset after navigation.
+    UpdateHasRelatedPages();
   }
   GetLinkHighlights().ResetForPageNavigation();
 }
@@ -833,6 +877,10 @@ void Page::WillBeDestroyed() {
     prev->next_related_page_ = next;
     this->prev_related_page_ = nullptr;
     this->next_related_page_ = nullptr;
+    if (prev != this)
+      prev->UpdateHasRelatedPages();
+    if (next != this)
+      next->UpdateHasRelatedPages();
   }
 
   if (scrolling_coordinator_)
@@ -903,6 +951,13 @@ bool Page::RequestBeginMainFrameNotExpected(bool new_state) {
   return false;
 }
 
+bool Page::LocalMainFrameNetworkIsAlmostIdle() const {
+  LocalFrame* frame = DynamicTo<LocalFrame>(MainFrame());
+  if (!frame)
+    return true;
+  return frame->GetIdlenessDetector()->NetworkIsAlmostIdle();
+}
+
 void Page::AddAutoplayFlags(int32_t value) {
   autoplay_flags_ |= value;
 }
@@ -921,6 +976,22 @@ void Page::SetInsidePortal(bool inside_portal) {
 
 bool Page::InsidePortal() const {
   return inside_portal_;
+}
+
+void Page::UpdateHasRelatedPages() {
+  bool has_related_pages = next_related_page_ != this;
+  if (!has_related_pages) {
+    has_related_pages_.reset();
+  } else {
+    LocalFrame* local_main_frame = DynamicTo<LocalFrame>(main_frame_.Get());
+    // We want to record this only for the pages which have local main frame,
+    // which is fine as we are aggregating results across all processes.
+    if (!local_main_frame)
+      return;
+    has_related_pages_ = local_main_frame->GetFrameScheduler()->RegisterFeature(
+        SchedulingPolicy::Feature::kHasScriptableFramesInMultipleTabs,
+        {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+  }
 }
 
 Page::PageClients::PageClients() : chrome_client(nullptr) {}

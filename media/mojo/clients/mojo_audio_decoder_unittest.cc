@@ -7,9 +7,9 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/audio_timestamp_helper.h"
@@ -63,8 +63,9 @@ class MojoAudioDecoderTest : public ::testing::Test {
         base::BindOnce(&MojoAudioDecoderTest::ConnectToService,
                        base::Unretained(this),
                        base::Passed(mojo::MakeRequest(&remote_audio_decoder))));
-    mojo_audio_decoder_.reset(new MojoAudioDecoder(
-        message_loop_.task_runner(), std::move(remote_audio_decoder)));
+    mojo_audio_decoder_.reset(
+        new MojoAudioDecoder(scoped_task_environment_.GetMainThreadTaskRunner(),
+                             std::move(remote_audio_decoder)));
   }
 
   ~MojoAudioDecoderTest() override {
@@ -78,7 +79,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
 
   // Completion callbacks.
   MOCK_METHOD1(OnInitialized, void(bool));
-  MOCK_METHOD1(OnOutput, void(const scoped_refptr<AudioBuffer>&));
+  MOCK_METHOD1(OnOutput, void(scoped_refptr<AudioBuffer>));
   MOCK_METHOD1(OnWaiting, void(WaitingReason));
   MOCK_METHOD1(OnDecoded, void(DecodeStatus));
   MOCK_METHOD0(OnReset, void());
@@ -110,15 +111,15 @@ class MojoAudioDecoderTest : public ::testing::Test {
         new StrictMock<MockAudioDecoder>());
     mock_audio_decoder_ = mock_audio_decoder.get();
 
-    EXPECT_CALL(*mock_audio_decoder_, Initialize(_, _, _, _, _))
+    EXPECT_CALL(*mock_audio_decoder_, Initialize_(_, _, _, _, _))
         .WillRepeatedly(DoAll(SaveArg<3>(&output_cb_), SaveArg<4>(&waiting_cb_),
-                              RunCallback<2>(true)));
+                              RunOnceCallback<2>(true)));
     EXPECT_CALL(*mock_audio_decoder_, Decode(_, _))
         .WillRepeatedly(
             DoAll(InvokeWithoutArgs(this, &MojoAudioDecoderTest::ReturnOutput),
                   RunCallback<1>(DecodeStatus::OK)));
-    EXPECT_CALL(*mock_audio_decoder_, Reset(_))
-        .WillRepeatedly(RunCallback<0>());
+    EXPECT_CALL(*mock_audio_decoder_, Reset_(_))
+        .WillRepeatedly(RunOnceCallback<0>());
 
     mojo::MakeStrongBinding(
         std::make_unique<MojoAudioDecoderService>(
@@ -216,7 +217,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
     RunLoop();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
 
   // The MojoAudioDecoder that we are testing.

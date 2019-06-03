@@ -147,14 +147,14 @@ class RootScrollerTest : public testing::Test,
   WebCoalescedInputEvent GenerateTouchGestureEvent(WebInputEvent::Type type,
                                                    int delta_x = 0,
                                                    int delta_y = 0) {
-    return GenerateGestureEvent(type, kWebGestureDeviceTouchscreen, delta_x,
+    return GenerateGestureEvent(type, WebGestureDevice::kTouchscreen, delta_x,
                                 delta_y);
   }
 
   WebCoalescedInputEvent GenerateWheelGestureEvent(WebInputEvent::Type type,
                                                    int delta_x = 0,
                                                    int delta_y = 0) {
-    return GenerateGestureEvent(type, kWebGestureDeviceTouchpad, delta_x,
+    return GenerateGestureEvent(type, WebGestureDevice::kTouchpad, delta_x,
                                 delta_y);
   }
 
@@ -239,12 +239,11 @@ TEST_F(RootScrollerTest, defaultEffectiveRootScrollerIsDocumentNode) {
 class OverscrollTestWebWidgetClient
     : public frame_test_helpers::TestWebWidgetClient {
  public:
-  MOCK_METHOD5(DidOverscroll,
+  MOCK_METHOD4(DidOverscroll,
                void(const WebFloatSize&,
                     const WebFloatSize&,
                     const WebFloatPoint&,
-                    const WebFloatSize&,
-                    const cc::OverscrollBehavior&));
+                    const WebFloatSize&));
 };
 
 // Tests that setting an element as the root scroller causes it to control url
@@ -287,8 +286,7 @@ TEST_F(RootScrollerTest, TestSetRootScroller) {
     // Scroll 50 pixels past the end. Ensure we report the 50 pixels as
     // overscroll.
     EXPECT_CALL(client, DidOverscroll(WebFloatSize(0, 50), WebFloatSize(0, 50),
-                                      WebFloatPoint(100, 100), WebFloatSize(),
-                                      cc::OverscrollBehavior()));
+                                      WebFloatPoint(100, 100), WebFloatSize()));
     GetWebView()->MainFrameWidget()->HandleInputEvent(GenerateTouchGestureEvent(
         WebInputEvent::kGestureScrollUpdate, 0, -500));
     EXPECT_FLOAT_EQ(maximum_scroll, container->scrollTop());
@@ -300,8 +298,7 @@ TEST_F(RootScrollerTest, TestSetRootScroller) {
   {
     // Continue the gesture overscroll.
     EXPECT_CALL(client, DidOverscroll(WebFloatSize(0, 20), WebFloatSize(0, 70),
-                                      WebFloatPoint(100, 100), WebFloatSize(),
-                                      cc::OverscrollBehavior()));
+                                      WebFloatPoint(100, 100), WebFloatSize()));
     GetWebView()->MainFrameWidget()->HandleInputEvent(
         GenerateTouchGestureEvent(WebInputEvent::kGestureScrollUpdate, 0, -20));
     EXPECT_FLOAT_EQ(maximum_scroll, container->scrollTop());
@@ -320,8 +317,7 @@ TEST_F(RootScrollerTest, TestSetRootScroller) {
         GenerateTouchGestureEvent(WebInputEvent::kGestureScrollBegin));
 
     EXPECT_CALL(client, DidOverscroll(WebFloatSize(0, 30), WebFloatSize(0, 30),
-                                      WebFloatPoint(100, 100), WebFloatSize(),
-                                      cc::OverscrollBehavior()));
+                                      WebFloatPoint(100, 100), WebFloatSize()));
     GetWebView()->MainFrameWidget()->HandleInputEvent(
         GenerateTouchGestureEvent(WebInputEvent::kGestureScrollUpdate, 0, -30));
     EXPECT_FLOAT_EQ(maximum_scroll, container->scrollTop());
@@ -1994,15 +1990,15 @@ TEST_F(ImplicitRootScrollerSimTest, UseCounterNegative) {
   ASSERT_NE(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
 
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 
   container->style()->setProperty(&GetDocument(), "height", "150%", String(),
                                   ASSERT_NO_EXCEPTION);
   Compositor().BeginFrame();
 
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 }
 
 // Tests use counter for implicit root scroller. Ensure it's counted on a
@@ -2042,8 +2038,8 @@ TEST_F(ImplicitRootScrollerSimTest, UseCounterPositive) {
   ASSERT_EQ(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
 
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 
   container->style()->setProperty(&GetDocument(), "height", "150%", String(),
                                   ASSERT_NO_EXCEPTION);
@@ -2052,8 +2048,8 @@ TEST_F(ImplicitRootScrollerSimTest, UseCounterPositive) {
   ASSERT_NE(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
 
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 }
 
 // Tests use counter for implicit root scroller. Ensure it's counted on a
@@ -2093,8 +2089,8 @@ TEST_F(ImplicitRootScrollerSimTest, UseCounterPositiveAfterLoad) {
   ASSERT_NE(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
 
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 
   container->style()->setProperty(&GetDocument(), "height", "100%", String(),
                                   ASSERT_NO_EXCEPTION);
@@ -2103,8 +2099,8 @@ TEST_F(ImplicitRootScrollerSimTest, UseCounterPositiveAfterLoad) {
   ASSERT_EQ(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
 
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kActivatedImplicitRootScroller));
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kActivatedImplicitRootScroller));
 }
 
 // Tests that if we have multiple valid candidates for implicit promotion, we

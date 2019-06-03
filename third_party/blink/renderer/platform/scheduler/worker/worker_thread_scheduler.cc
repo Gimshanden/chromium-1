@@ -21,6 +21,7 @@
 #include "third_party/blink/renderer/platform/scheduler/common/features.h"
 #include "third_party/blink/renderer/platform/scheduler/common/process_state.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/task_queue_throttler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/non_main_thread_scheduler_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_scheduler_proxy.h"
@@ -97,9 +98,9 @@ base::Optional<base::TimeDelta> GetMaxThrottlingDelay() {
 
 WorkerThreadScheduler::WorkerThreadScheduler(
     WebThreadType thread_type,
-    std::unique_ptr<base::sequence_manager::SequenceManager> sequence_manager,
+    base::sequence_manager::SequenceManager* sequence_manager,
     WorkerSchedulerProxy* proxy)
-    : NonMainThreadSchedulerImpl(std::move(sequence_manager),
+    : NonMainThreadSchedulerImpl(sequence_manager,
                                  TaskType::kWorkerThreadTaskQueueDefault),
       thread_type_(thread_type),
       idle_helper_(helper(),
@@ -205,6 +206,7 @@ void WorkerThreadScheduler::Shutdown() {
       base::TimeDelta::FromDays(1), 50 /* bucket count */);
   task_queue_throttler_.reset();
   idle_helper_.Shutdown();
+  helper()->RemoveTaskTimeObserver(this);
   helper()->Shutdown();
 }
 
@@ -227,15 +229,19 @@ void WorkerThreadScheduler::InitImpl() {
 void WorkerThreadScheduler::OnTaskCompleted(
     NonMainThreadTaskQueue* task_queue,
     const base::sequence_manager::Task& task,
-    const TaskQueue::TaskTiming& task_timing) {
-  worker_metrics_helper_.RecordTaskMetrics(task_queue, task, task_timing);
+    TaskQueue::TaskTiming* task_timing,
+    base::sequence_manager::LazyNow* lazy_now) {
+  PerformMicrotaskCheckpoint();
+
+  task_timing->RecordTaskEnd(lazy_now);
+  worker_metrics_helper_.RecordTaskMetrics(task_queue, task, *task_timing);
 
   if (task_queue_throttler_) {
     task_queue_throttler_->OnTaskRunTimeReported(
-        task_queue, task_timing.start_time(), task_timing.end_time());
+        task_queue, task_timing->start_time(), task_timing->end_time());
   }
 
-  RecordTaskUkm(task_queue, task, task_timing);
+  RecordTaskUkm(task_queue, task, *task_timing);
 }
 
 SchedulerHelper* WorkerThreadScheduler::GetSchedulerHelperForTesting() {
@@ -343,6 +349,11 @@ void WorkerThreadScheduler::SetCPUTimeBudgetPoolForTesting(
 std::unordered_set<WorkerScheduler*>&
 WorkerThreadScheduler::GetWorkerSchedulersForTesting() {
   return worker_schedulers_;
+}
+
+void WorkerThreadScheduler::PerformMicrotaskCheckpoint() {
+  if (isolate())
+    EventLoop::PerformIsolateGlobalMicrotasksCheckpoint(isolate());
 }
 
 }  // namespace scheduler

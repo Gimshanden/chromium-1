@@ -11,6 +11,7 @@
 #include "base/no_destructor.h"
 #include "base/task/post_task.h"
 #include "base/time/time.h"
+#include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
@@ -40,10 +41,12 @@
 #include "ios/chrome/browser/sync/consent_auditor_factory.h"
 #include "ios/chrome/browser/sync/device_info_sync_service_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_sync_client.h"
+#include "ios/chrome/browser/sync/ios_user_event_service_factory.h"
 #include "ios/chrome/browser/sync/model_type_store_service_factory.h"
 #include "ios/chrome/browser/sync/session_sync_service_factory.h"
 #include "ios/chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "ios/chrome/browser/web_data_service_factory.h"
+#include "ios/chrome/common/channel_info.h"
 #include "ios/web/public/web_task_traits.h"
 #include "ios/web/public/web_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -136,6 +139,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(IOSChromeProfileInvalidationProviderFactory::GetInstance());
   DependsOn(
       IOSChromeDeprecatedProfileInvalidationProviderFactory::GetInstance());
+  DependsOn(IOSUserEventServiceFactory::GetInstance());
   DependsOn(ModelTypeStoreServiceFactory::GetInstance());
   DependsOn(ReadingListModelFactory::GetInstance());
   DependsOn(SessionSyncServiceFactory::GetInstance());
@@ -168,6 +172,7 @@ ProfileSyncServiceFactory::BuildServiceInstanceFor(
   init_params.url_loader_factory = browser_state->GetSharedURLLoaderFactory();
   init_params.network_connection_tracker =
       GetApplicationContext()->GetNetworkConnectionTracker();
+  init_params.channel = ::GetChannel();
   init_params.debug_identifier = browser_state->GetDebugName();
   init_params.autofill_enable_account_wallet_storage =
       base::FeatureList::IsEnabled(
@@ -199,5 +204,11 @@ ProfileSyncServiceFactory::BuildServiceInstanceFor(
   auto pss =
       std::make_unique<syncer::ProfileSyncService>(std::move(init_params));
   pss->Initialize();
+
+  // Hook PSS into PersonalDataManager (a circular dependency).
+  autofill::PersonalDataManager* pdm =
+      autofill::PersonalDataManagerFactory::GetForBrowserState(browser_state);
+  pdm->OnSyncServiceInitialized(pss.get());
+
   return pss;
 }

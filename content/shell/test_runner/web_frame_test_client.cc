@@ -61,22 +61,8 @@ std::string DescriptionSuitableForTestResult(const std::string& url) {
   return url.substr(pos + 1);
 }
 
-void PrintResponseDescription(WebTestDelegate* delegate,
-                              const blink::WebURLResponse& response) {
-  if (response.IsNull()) {
-    delegate->PrintMessage("(null)");
-    return;
-  }
-  delegate->PrintMessage(
-      base::StringPrintf("<NSURLResponse %s, http status code %d>",
-                         DescriptionSuitableForTestResult(
-                             response.CurrentRequestUrl().GetString().Utf8())
-                             .c_str(),
-                         response.HttpStatusCode()));
-}
-
 void BlockRequest(blink::WebURLRequest& request) {
-  request.SetURL(GURL("255.255.255.255"));
+  request.SetUrl(GURL("255.255.255.255"));
 }
 
 bool IsLocalHost(const std::string& host) {
@@ -206,8 +192,10 @@ bool WebFrameTestClient::RunModalBeforeUnloadDialog(bool is_reload) {
   return !test_runner()->shouldStayOnPageAfterHandlingBeforeUnload();
 }
 
-void WebFrameTestClient::PostAccessibilityEvent(const blink::WebAXObject& obj,
-                                                ax::mojom::Event event) {
+void WebFrameTestClient::PostAccessibilityEvent(
+    const blink::WebAXObject& obj,
+    ax::mojom::Event event,
+    ax::mojom::EventFrom event_from) {
   const char* event_name = nullptr;
   switch (event) {
     case ax::mojom::Event::kActiveDescendantChanged:
@@ -459,31 +447,9 @@ void WebFrameTestClient::WillSendRequest(blink::WebURLRequest& request) {
   }
 
   // Set the new substituted URL.
-  request.SetURL(delegate_->RewriteWebTestsURL(
+  request.SetUrl(delegate_->RewriteWebTestsURL(
       request.Url().GetString().Utf8(),
       test_runner()->is_web_platform_tests_mode()));
-}
-
-void WebFrameTestClient::DidReceiveResponse(
-    const blink::WebURLResponse& response) {
-  if (test_runner()->shouldDumpResourceLoadCallbacks()) {
-    delegate_->PrintMessage(DescriptionSuitableForTestResult(
-        GURL(response.CurrentRequestUrl()).possibly_invalid_spec()));
-    delegate_->PrintMessage(" - didReceiveResponse ");
-    PrintResponseDescription(delegate_, response);
-    delegate_->PrintMessage("\n");
-  }
-  if (test_runner()->shouldDumpResourceResponseMIMETypes()) {
-    GURL url = response.CurrentRequestUrl();
-    blink::WebString mime_type = response.MimeType();
-    delegate_->PrintMessage(url.ExtractFileName());
-    delegate_->PrintMessage(" has MIME type ");
-    // Simulate NSURLResponse's mapping of empty/unknown MIME types to
-    // application/octet-stream
-    delegate_->PrintMessage(mime_type.IsEmpty() ? "application/octet-stream"
-                                                : mime_type.Utf8().data());
-    delegate_->PrintMessage("\n");
-  }
 }
 
 void WebFrameTestClient::DidAddMessageToConsole(
@@ -581,7 +547,7 @@ bool WebFrameTestClient::ShouldContinueNavigation(
           blink::WebString::FromUTF8(header));
     }
   }
-  info->url_request.SetURL(delegate_->RewriteWebTestsURL(
+  info->url_request.SetUrl(delegate_->RewriteWebTestsURL(
       info->url_request.Url().GetString().Utf8(),
       test_runner()->is_web_platform_tests_mode()));
   return should_continue;

@@ -97,60 +97,20 @@ unsigned FindBuffer::Results::CountForTesting() {
   return result;
 }
 
-void FindBuffer::InvisibleLayoutScope::EnsureRecalc(Node& block_root) {
-  if (!RuntimeEnabledFeatures::InvisibleDOMEnabled())
-    return;
-  if (did_recalc_)
-    return;
-  did_recalc_ = true;
-  DCHECK(block_root.GetDocument().Lifecycle().GetState() >=
-         DocumentLifecycle::kStyleClean);
-  // If we're in an invisible subtree, we should recalc style from the invisible
-  // root/the highest ancestor of |block_root| with the invisible attribute,
-  // otherwise we should recalc from |block_root|.
-  // InvisibleRoot is always non-null when IsInsideInvisibleSubtree is true.
-  if (InvisibleDOM::IsInsideInvisibleSubtree(block_root))
-    invisible_root_ = InvisibleDOM::InvisibleRoot(block_root);
-  else
-    invisible_root_ = &ToElement(block_root);
-
-  DCHECK(invisible_root_);
-  invisible_root_->GetDocument().SetFindInPageRoot(invisible_root_);
-  invisible_root_->SetNeedsStyleRecalc(
-      kSubtreeStyleChange,
-      StyleChangeReasonForTracing::Create(style_change_reason::kFindInvisible));
-  // TODO(rakina): This currently does layout too and might be expensive. In the
-  // future, we might to figure out a way to make NGOffsetMapping work with only
-  // style & layout tree so that we don't have to do layout here.
-  invisible_root_->GetDocument().UpdateStyleAndLayout();
-}
-
-FindBuffer::InvisibleLayoutScope::~InvisibleLayoutScope() {
-  if (!RuntimeEnabledFeatures::InvisibleDOMEnabled())
-    return;
-  if (!did_recalc_)
-    return;
-  invisible_root_->GetDocument().SetFindInPageRoot(nullptr);
-  invisible_root_->SetNeedsStyleRecalc(
-      kSubtreeStyleChange,
-      StyleChangeReasonForTracing::Create(style_change_reason::kFindInvisible));
-  invisible_root_->GetDocument().UpdateStyleAndLayout();
-}
-
 bool ShouldIgnoreContents(const Node& node) {
-  if (!node.IsHTMLElement())
+  const auto* element = DynamicTo<HTMLElement>(node);
+  if (!element)
     return false;
-  const HTMLElement& element = ToHTMLElement(node);
-  return (!element.ShouldSerializeEndTag() && !IsHTMLInputElement(element)) ||
-         IsHTMLIFrameElement(element) || IsHTMLImageElement(element) ||
-         IsHTMLLegendElement(element) || IsHTMLMeterElement(element) ||
-         IsHTMLObjectElement(element) || IsHTMLProgressElement(element) ||
-         (IsHTMLSelectElement(element) &&
-          ToHTMLSelectElement(element).UsesMenuList()) ||
-         IsHTMLStyleElement(element) || IsHTMLScriptElement(element) ||
-         IsHTMLVideoElement(element) || IsHTMLAudioElement(element) ||
-         (element.GetDisplayLockContext() &&
-          !element.GetDisplayLockContext()->IsActivatable());
+  return (!element->ShouldSerializeEndTag() && !IsHTMLInputElement(*element)) ||
+         IsHTMLIFrameElement(*element) || IsHTMLImageElement(*element) ||
+         IsHTMLLegendElement(*element) || IsHTMLMeterElement(*element) ||
+         IsHTMLObjectElement(*element) || IsHTMLProgressElement(*element) ||
+         (IsHTMLSelectElement(*element) &&
+          ToHTMLSelectElement(*element).UsesMenuList()) ||
+         IsHTMLStyleElement(*element) || IsHTMLScriptElement(*element) ||
+         IsHTMLVideoElement(*element) || IsHTMLAudioElement(*element) ||
+         (element->GetDisplayLockContext() &&
+          !element->GetDisplayLockContext()->IsActivatable());
 }
 
 Node* GetNonSearchableAncestor(const Node& node) {
@@ -294,9 +254,10 @@ void FindBuffer::CollectScopedForcedUpdates(Node& start_node,
   // We assume |start_node| is always visible/activatable if locked, so we don't
   // need to check activatability of ancestors here.
   for (Node& ancestor : FlatTreeTraversal::InclusiveAncestorsOf(*node)) {
-    if (!ancestor.IsElementNode())
+    auto* ancestor_element = DynamicTo<Element>(ancestor);
+    if (!ancestor_element)
       continue;
-    PushScopedForcedUpdateIfNeeded(ToElement(ancestor));
+    PushScopedForcedUpdateIfNeeded(*ancestor_element);
   }
 
   while (node && node != node_after_block && node != search_range_end_node) {
@@ -305,8 +266,8 @@ void FindBuffer::CollectScopedForcedUpdates(Node& start_node,
       node = FlatTreeTraversal::NextSkippingChildren(*node);
       continue;
     }
-    if (node->IsElementNode())
-      PushScopedForcedUpdateIfNeeded(ToElement(*node));
+    if (auto* element = DynamicTo<Element>(node))
+      PushScopedForcedUpdateIfNeeded(*element);
     node = FlatTreeTraversal::Next(*node);
   }
 }
@@ -317,23 +278,21 @@ void FindBuffer::CollectScopedForcedUpdates(Node& start_node,
 void FindBuffer::CollectTextUntilBlockBoundary(
     const EphemeralRangeInFlatTree& range) {
   DCHECK(range.IsNotNull() && !range.IsCollapsed()) << range;
+
+  node_after_block_ = nullptr;
+  const Node* const first_node = range.StartPosition().NodeAsRangeFirstNode();
+  if (!first_node)
+    return;
   // Get first visible text node from |start_position|.
   Node* node =
       GetVisibleTextNode(*range.StartPosition().NodeAsRangeFirstNode());
-  if (!node || !node->isConnected()) {
-    node_after_block_ = nullptr;
+  if (!node || !node->isConnected())
     return;
-  }
+
   Node& block_ancestor = GetLowestDisplayBlockInclusiveAncestor(*node);
   const Node* just_after_block = FlatTreeTraversal::Next(
       FlatTreeTraversal::LastWithinOrSelf(block_ancestor));
   const LayoutBlockFlow* last_block_flow = nullptr;
-
-  // Calculate layout tree and style for invisible nodes inside the whole
-  // subtree of |block_ancestor|.
-  if (RuntimeEnabledFeatures::InvisibleDOMEnabled() && node &&
-      InvisibleDOM::IsInsideInvisibleSubtree(*node))
-    invisible_layout_scope_.EnsureRecalc(block_ancestor);
 
   // Collect all text under |block_ancestor| to |buffer_|,
   // unless we meet another block on the way. If so, we should split.
@@ -360,22 +319,9 @@ void FindBuffer::CollectTextUntilBlockBoundary(
       }
       // Move the node so we wouldn't encounter this node or its descendants
       // later.
-      if (!IsHTMLWBRElement(ToHTMLElement(*node)))
+      if (!IsHTMLWBRElement(To<HTMLElement>(*node)))
         buffer_.push_back(kObjectReplacementCharacter);
       node = FlatTreeTraversal::NextSkippingChildren(*node);
-      continue;
-    }
-    if (RuntimeEnabledFeatures::InvisibleDOMEnabled() &&
-        node->IsElementNode() && ToElement(node)->HasInvisibleAttribute() &&
-        !invisible_layout_scope_.DidRecalc()) {
-      // We found and invisible node. Calculate the layout & style for the whole
-      // block at once, and we need to recalculate the NGOffsetMapping and start
-      // from the beginning again because the layout tree had changed.
-      mapping_needs_recalc_ = true;
-      node = first_traversed_node;
-      last_block_flow = nullptr;
-      buffer_.clear();
-      invisible_layout_scope_.EnsureRecalc(block_ancestor);
       continue;
     }
     const ComputedStyle* style = node->EnsureComputedStyle();
@@ -395,17 +341,17 @@ void FindBuffer::CollectTextUntilBlockBoundary(
       continue;
     }
     // This node is in its own sub-block separate from our starting position.
-    if (first_traversed_node != node && !node->IsTextNode() &&
+    const auto* text_node = DynamicTo<Text>(node);
+    if (first_traversed_node != node && !text_node &&
         IsBlock(style->Display())) {
       break;
     }
 
-    if (style->Visibility() == EVisibility::kVisible && node->IsTextNode() &&
+    if (style->Visibility() == EVisibility::kVisible && text_node &&
         node->GetLayoutObject()) {
-      const Text& text_node = ToText(*node);
       LayoutBlockFlow& block_flow =
           *NGOffsetMapping::GetInlineFormattingContextOf(
-              *text_node.GetLayoutObject());
+              *text_node->GetLayoutObject());
       if (last_block_flow && last_block_flow != block_flow) {
         // We enter another block flow.
         break;
@@ -413,7 +359,7 @@ void FindBuffer::CollectTextUntilBlockBoundary(
       if (!last_block_flow) {
         last_block_flow = &block_flow;
       }
-      AddTextToBuffer(text_node, block_flow, range);
+      AddTextToBuffer(*text_node, block_flow, range);
     }
     if (node == end_node) {
       node = FlatTreeTraversal::Next(*node);
@@ -453,6 +399,7 @@ FindBuffer::BufferNodeMapping FindBuffer::MappingForIndex(
 PositionInFlatTree FindBuffer::PositionAtStartOfCharacterAtIndex(
     unsigned index) const {
   DCHECK_LT(index, buffer_.size());
+  DCHECK(offset_mapping_);
   BufferNodeMapping entry = MappingForIndex(index);
   return ToPositionInFlatTree(offset_mapping_->GetLastPosition(
       index - entry.offset_in_buffer + entry.offset_in_mapping));
@@ -461,6 +408,7 @@ PositionInFlatTree FindBuffer::PositionAtStartOfCharacterAtIndex(
 PositionInFlatTree FindBuffer::PositionAtEndOfCharacterAtIndex(
     unsigned index) const {
   DCHECK_LT(index, buffer_.size());
+  DCHECK(offset_mapping_);
   BufferNodeMapping entry = MappingForIndex(index);
   return ToPositionInFlatTree(offset_mapping_->GetFirstPosition(
       index - entry.offset_in_buffer + entry.offset_in_mapping + 1));
@@ -469,9 +417,17 @@ PositionInFlatTree FindBuffer::PositionAtEndOfCharacterAtIndex(
 void FindBuffer::AddTextToBuffer(const Text& text_node,
                                  LayoutBlockFlow& block_flow,
                                  const EphemeralRangeInFlatTree& range) {
-  if (!offset_mapping_ || mapping_needs_recalc_) {
+  if (!offset_mapping_) {
     offset_mapping_ = NGInlineNode::GetOffsetMapping(&block_flow);
-    mapping_needs_recalc_ = false;
+
+    if (UNLIKELY(!offset_mapping_)) {
+      // TODO(crbug.com/955678): There are certain cases where we fail to
+      // compute // |NGOffsetMapping| due to failures in layout. As the root
+      // cause is hard to fix at the moment, we work around it here so that the
+      // production build doesn't crash.
+      NOTREACHED();
+      return;
+    }
   }
 
   Position node_start =

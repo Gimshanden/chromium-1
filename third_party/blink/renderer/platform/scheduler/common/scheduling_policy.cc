@@ -12,15 +12,34 @@ bool SchedulingPolicy::IsFeatureSticky(SchedulingPolicy::Feature feature) {
   switch (feature) {
     case Feature::kWebSocket:
     case Feature::kWebRTC:
+    case Feature::kDedicatedWorkerOrWorklet:
+    case Feature::kOutstandingNetworkRequest:
+    case Feature::kOutstandingIndexedDBTransaction:
+    case Feature::kHasScriptableFramesInMultipleTabs:
+    case Feature::kBroadcastChannel:
+    case Feature::kIndexedDBConnection:
       return false;
     case Feature::kMainResourceHasCacheControlNoStore:
     case Feature::kMainResourceHasCacheControlNoCache:
     case Feature::kSubresourceHasCacheControlNoStore:
     case Feature::kSubresourceHasCacheControlNoCache:
+    case Feature::kPageShowEventListener:
+    case Feature::kPageHideEventListener:
+    case Feature::kBeforeUnloadEventListener:
+    case Feature::kUnloadEventListener:
+    case Feature::kFreezeEventListener:
+    case Feature::kResumeEventListener:
+    case Feature::kContainsPlugins:
+    case Feature::kDocumentLoaded:
+    case Feature::kServiceWorkerControlledPage:
+    case Feature::kRequestedGeolocationPermission:
+    case Feature::kRequestedNotificationsPermission:
+    case Feature::kRequestedMIDIPermission:
+    case Feature::kRequestedAudioCapturePermission:
+    case Feature::kRequestedVideoCapturePermission:
+    case Feature::kRequestedSensorsPermission:
+    case Feature::kRequestedBackgroundWorkPermission:
       return true;
-    case Feature::kCount:
-      NOTREACHED();
-      return false;
   }
 }
 

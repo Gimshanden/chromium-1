@@ -3,10 +3,12 @@
 <translationbundle lang="fa">
 <translation id="1276998909102132017">تصاویر گالری</translation>
 <translation id="1430915738399379752">چاپ</translation>
+<translation id="1462966117743110941">دوربین شما اکنون از حالت‌های جدید و عکس‌هایتان پشتیبانی می‌کند و ویدیوها در بخش پوشه‌های «بارگیری‌ها» دردسترس خواهند بود.</translation>
 <translation id="1620510694547887537">دوربین</translation>
 <translation id="1627744224761163218">۴ × ۴</translation>
 <translation id="1664224225747386870">چیزی ضبط نشد</translation>
 <translation id="1862930711583847113"><ph name="FILE" /> صادر نشد</translation>
+<translation id="2008689030244369546">ظاهری کاملاً جدید</translation>
 <translation id="2036868001356139588">مدت تایمر</translation>
 <translation id="2050339315714019657">عمودی</translation>
 <translation id="2064538373111010176"><ph name="CAMERA" /> فعال شد</translation>
@@ -21,9 +23,11 @@
 <translation id="3081586908890909590">رفتن به حالت فیلم‌برداری</translation>
 <translation id="3183731565330012717">نوع جدول</translation>
 <translation id="3227137524299004712">میکروفن</translation>
+<translation id="3517926952904427380">عدم‌امکان گرفتن عکس چهره</translation>
 <translation id="3569311554794739032">واقعاً می‌خواهید <ph name="FILE" /> را بردارید؟</translation>
 <translation id="3810838688059735925">فیلم</translation>
 <translation id="4279490309300973883">بازتاب می‌شود</translation>
+<translation id="4329152592498422850">تغییر وضعیت به گرفتن عکس مربع</translation>
 <translation id="4445542136948522167">توقف عکس‌برداری</translation>
 <translation id="4628948037717959914">عکس</translation>
 <translation id="4649291346448517080">فایل ذخیره نشد</translation>
@@ -50,6 +54,8 @@
 <translation id="8145038249676204903">رفتن به حالت عکس‌برداری</translation>
 <translation id="8261506727792406068">حذف</translation>
 <translation id="8428213095426709021">تنظیمات</translation>
+<translation id="8712637175834984815">متوجه شدم</translation>
+<translation id="8815966864175525708">تغییر وضعیت به گرفتن عکس چهره</translation>
 <translation id="8870695351537079478">شروع ضبط انجام نشد</translation>
 <translation id="9045155556724273246">۱۰ ثانیه</translation>
 <translation id="945522503751344254">ارسال بازخورد</translation>

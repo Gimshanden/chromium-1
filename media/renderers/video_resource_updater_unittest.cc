@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/viz/client/client_resource_provider.h"
 #include "components/viz/client/shared_bitmap_reporter.h"
 #include "components/viz/test/fake_output_surface.h"
@@ -244,7 +244,7 @@ class VideoResourceUpdaterTest : public testing::Test {
 
   // VideoResourceUpdater registers as a MemoryDumpProvider, which requires
   // a TaskRunner.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   UploadCounterGLES2Interface* gl_;
   scoped_refptr<viz::TestContextProvider> context_provider_;
   FakeSharedBitmapReporter shared_bitmap_reporter_;
@@ -717,7 +717,8 @@ TEST_F(VideoResourceUpdaterTest, CreateForHardwarePlanes_DualNV12) {
   EXPECT_EQ((GLenum)GL_TEXTURE_EXTERNAL_OES,
             resources.resources[0].mailbox_holder.texture_target);
   // |updater| doesn't set |buffer_format| in this case.
-  EXPECT_EQ(viz::RGBA_8888, resources.resources[0].format);
+  EXPECT_EQ(viz::RED_8, resources.resources[0].format);
+  EXPECT_EQ(viz::RG_88, resources.resources[1].format);
 
   video_frame = CreateTestYuvHardwareVideoFrame(media::PIXEL_FORMAT_NV12, 2,
                                                 GL_TEXTURE_RECTANGLE_ARB);
@@ -726,7 +727,8 @@ TEST_F(VideoResourceUpdaterTest, CreateForHardwarePlanes_DualNV12) {
   EXPECT_EQ(2u, resources.resources.size());
   EXPECT_EQ((GLenum)GL_TEXTURE_RECTANGLE_ARB,
             resources.resources[0].mailbox_holder.texture_target);
-  EXPECT_EQ(viz::RGBA_8888, resources.resources[0].format);
+  EXPECT_EQ(viz::RED_8, resources.resources[0].format);
+  EXPECT_EQ(viz::RG_88, resources.resources[1].format);
   EXPECT_EQ(0u, GetSharedImageCount());
 }
 

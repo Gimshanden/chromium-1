@@ -20,18 +20,14 @@ namespace performance_manager {
 namespace {
 
 // Observer used to make sure that signals are dispatched correctly.
-class SystemAndProcessObserver : public GraphObserver {
+class SystemAndProcessObserver : public GraphObserverDefaultImpl {
  public:
   // GraphObserver implementation:
   bool ShouldObserve(const NodeBase* node) override {
-    auto cu_type = node->id().type;
-    return cu_type == resource_coordinator::CoordinationUnitType::kSystem;
+    return node->type() == SystemNodeImpl::Type();
   }
 
-  void OnSystemEventReceived(
-      SystemNodeImpl* system_node,
-      resource_coordinator::mojom::Event event) override {
-    EXPECT_EQ(resource_coordinator::mojom::Event::kProcessCPUUsageReady, event);
+  void OnProcessCPUUsageReady(SystemNodeImpl* system_node) override {
     ++system_event_seen_count_;
   }
 
@@ -83,15 +79,11 @@ std::unique_ptr<ProcessResourceMeasurementBatch> CreateMeasurementBatch(
 
 }  // namespace
 
-TEST_F(SystemNodeImplTest, OnProcessCPUUsageReady) {
-  SystemAndProcessObserver observer;
+TEST_F(SystemNodeImplTest, GetIndexingKey) {
   MockMultiplePagesWithMultipleProcessesGraph mock_graph(graph());
-  mock_graph.system->AddObserver(&observer);
-  EXPECT_EQ(0u, observer.system_event_seen_count());
-  mock_graph.system->OnProcessCPUUsageReady();
-  EXPECT_EQ(1u, observer.system_event_seen_count());
-
-  mock_graph.system->RemoveObserver(&observer);
+  auto& sys = mock_graph.system;
+  EXPECT_EQ(sys->GetIndexingKey(),
+            static_cast<const void*>(static_cast<const NodeBase*>(sys.get())));
 }
 
 TEST_F(SystemNodeImplTest, DistributeMeasurementBatch) {

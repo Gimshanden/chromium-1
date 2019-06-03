@@ -31,11 +31,16 @@
 
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "cc/input/main_thread_scrolling_reason.h"
+#include "cc/input/scrollbar.h"
 #include "cc/layers/picture_layer.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/input/event_handler.h"
+#include "third_party/blink/renderer/core/layout/jank_tracker.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/paint/paint_timing_detector.h"
@@ -46,9 +51,6 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
-
-static const int kPixelsPerLineStep = 40;
-static const float kMinFractionToStepWhenPaging = 0.875f;
 
 namespace blink {
 
@@ -138,14 +140,14 @@ ScrollbarOrientation ScrollableArea::ScrollbarOrientationFromDirection(
 float ScrollableArea::ScrollStep(ScrollGranularity granularity,
                                  ScrollbarOrientation orientation) const {
   switch (granularity) {
-    case kScrollByLine:
+    case ScrollGranularity::kScrollByLine:
       return LineStep(orientation);
-    case kScrollByPage:
+    case ScrollGranularity::kScrollByPage:
       return PageStep(orientation);
-    case kScrollByDocument:
+    case ScrollGranularity::kScrollByDocument:
       return DocumentStep(orientation);
-    case kScrollByPixel:
-    case kScrollByPrecisePixel:
+    case ScrollGranularity::kScrollByPixel:
+    case ScrollGranularity::kScrollByPrecisePixel:
       return PixelStep(orientation);
     default:
       NOTREACHED();
@@ -154,9 +156,12 @@ float ScrollableArea::ScrollStep(ScrollGranularity granularity,
 }
 
 ScrollResult ScrollableArea::UserScroll(ScrollGranularity granularity,
-                                        const ScrollOffset& delta) {
+                                        const ScrollOffset& delta,
+                                        ScrollCallback on_finish) {
   TRACE_EVENT2("input", "ScrollableArea::UserScroll", "x", delta.Width(), "y",
                delta.Height());
+
+  base::ScopedClosureRunner run_on_return(std::move(on_finish));
 
   float step_x = ScrollStep(granularity, kHorizontalScrollbar);
   float step_y = ScrollStep(granularity, kVerticalScrollbar);
@@ -177,8 +182,8 @@ ScrollResult ScrollableArea::UserScroll(ScrollGranularity granularity,
   if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer())
     sequencer->AbortAnimations();
 
-  ScrollResult result =
-      GetScrollAnimator().UserScroll(granularity, pixel_delta);
+  ScrollResult result = GetScrollAnimator().UserScroll(
+      granularity, scrollable_axis_delta, run_on_return.Release());
 
   // Delta that wasn't scrolled because the axis is !userInputScrollable
   // should count as unusedScrollDelta.
@@ -193,18 +198,15 @@ void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
                                      ScrollType scroll_type,
                                      ScrollBehavior behavior,
                                      ScrollCallback on_finish) {
+  base::ScopedClosureRunner run_on_return(std::move(on_finish));
   if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer()) {
     if (sequencer->FilterNewScrollOrAbortCurrent(scroll_type)) {
-      if (on_finish)
-        std::move(on_finish).Run();
       return;
     }
   }
 
   ScrollOffset clamped_offset = ClampScrollOffset(offset);
   if (clamped_offset == GetScrollOffset()) {
-    if (on_finish)
-      std::move(on_finish).Run();
     return;
   }
 
@@ -222,11 +224,11 @@ void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
       break;
     case kProgrammaticScroll:
       ProgrammaticScrollHelper(clamped_offset, behavior, false,
-                               std::move(on_finish));
+                               run_on_return.Release());
       break;
     case kSequencedScroll:
       ProgrammaticScrollHelper(clamped_offset, behavior, true,
-                               std::move(on_finish));
+                               run_on_return.Release());
       break;
     case kUserScroll:
       UserScrollHelper(clamped_offset, behavior);
@@ -234,8 +236,6 @@ void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
     default:
       NOTREACHED();
   }
-  if (on_finish)
-    std::move(on_finish).Run();
 }
 
 void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
@@ -275,14 +275,27 @@ void ScrollableArea::ProgrammaticScrollHelper(const ScrollOffset& offset,
                                               ScrollCallback on_finish) {
   CancelScrollAnimation();
 
+  ScrollCallback callback = std::move(on_finish);
+  if (RuntimeEnabledFeatures::UpdateHoverFromScrollAtBeginFrameEnabled()) {
+    callback = ScrollCallback(base::BindOnce(
+        [](ScrollCallback original_callback,
+           WeakPersistent<ScrollableArea> area) {
+          if (area)
+            area->MarkHoverStateDirty();
+          if (original_callback)
+            std::move(original_callback).Run();
+        },
+        std::move(callback), WrapWeakPersistent(this)));
+  }
+
   if (scroll_behavior == kScrollBehaviorSmooth) {
     GetProgrammaticScrollAnimator().AnimateToOffset(offset, is_sequenced_scroll,
-                                                    std::move(on_finish));
+                                                    std::move(callback));
   } else {
     GetProgrammaticScrollAnimator().ScrollToOffsetWithoutAnimation(
         offset, is_sequenced_scroll);
-    if (on_finish)
-      std::move(on_finish).Run();
+    if (callback)
+      std::move(callback).Run();
   }
 }
 
@@ -348,9 +361,11 @@ void ScrollableArea::ScrollOffsetChanged(const ScrollOffset& offset,
         GetScrollOffset() - old_offset, scroll_type);
   }
 
-  if (RuntimeEnabledFeatures::FirstContentfulPaintPlusPlusEnabled()) {
-    if (GetScrollOffset() != old_offset && GetLayoutBox() &&
-        GetLayoutBox()->GetFrameView() &&
+  if (GetLayoutBox() &&
+      (RuntimeEnabledFeatures::FirstContentfulPaintPlusPlusEnabled() ||
+       RuntimeEnabledFeatures::ElementTimingEnabled(
+           &GetLayoutBox()->GetDocument()))) {
+    if (GetScrollOffset() != old_offset && GetLayoutBox()->GetFrameView() &&
         GetLayoutBox()
             ->GetFrameView()
             ->GetPaintTimingDetector()
@@ -358,6 +373,11 @@ void ScrollableArea::ScrollOffsetChanged(const ScrollOffset& offset,
       GetLayoutBox()->GetFrameView()->GetPaintTimingDetector().NotifyScroll(
           scroll_type);
     }
+  }
+
+  if (GetScrollOffset() != old_offset && GetLayoutBox() &&
+      GetLayoutBox()->GetFrameView()) {
+    GetLayoutBox()->GetFrameView()->GetJankTracker().NotifyScroll(scroll_type);
   }
 
   GetScrollAnimator().SetCurrentOffset(offset);
@@ -757,9 +777,27 @@ CompositorElementId ScrollableArea::GetScrollbarElementId(
       scrollable_element_id.GetInternalValue(), element_id_namespace);
 }
 
+void ScrollableArea::MarkHoverStateDirty() {
+  GetLayoutBox()->GetFrame()->GetEventHandler().MarkHoverStateDirty();
+}
+
 void ScrollableArea::Trace(blink::Visitor* visitor) {
   visitor->Trace(scroll_animator_);
   visitor->Trace(programmatic_scroll_animator_);
+}
+
+void ScrollableArea::InjectGestureScrollEvent(
+    WebGestureDevice device,
+    ScrollOffset delta,
+    ScrollGranularity granularity,
+    WebInputEvent::Type gesture_type) const {
+  // All ScrollableArea's have a layout box, except for the VisualViewport.
+  // We shouldn't be injecting scrolls for the visual viewport scrollbar, since
+  // it is not hit-testable.
+  DCHECK(GetLayoutBox());
+  GetChromeClient()->InjectGestureScrollEvent(
+      *GetLayoutBox()->GetFrame(), device, delta, granularity,
+      GetCompositorElementId(), gesture_type);
 }
 
 }  // namespace blink

@@ -5,6 +5,7 @@
 #include "cc/tiles/paint_worklet_image_cache.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
 
 namespace cc {
@@ -47,10 +48,7 @@ void PaintWorkletImageCache::SetPaintWorkletLayerPainter(
 
 scoped_refptr<TileTask> PaintWorkletImageCache::GetTaskForPaintWorkletImage(
     const DrawImage& image) {
-  // As described in crbug.com/939192, the |painter_| could be null, and we
-  // should not create any raster task.
-  if (!painter_)
-    return nullptr;
+  DCHECK(painter_);
   DCHECK(image.paint_image().IsPaintWorklet());
   return base::MakeRefCounted<PaintWorkletTaskImpl>(this, image.paint_image());
 }
@@ -73,6 +71,8 @@ void PaintWorkletImageCache::PaintImageInTask(const PaintImage& paint_image) {
   // matches the PaintGeneratedImage::Draw.
   sk_sp<PaintRecord> record =
       painter_->Paint(paint_image.paint_worklet_input());
+  if (!record)
+    return;
   {
     base::AutoLock hold(records_lock_);
     // It is possible for two or more threads to both pass through the first
@@ -85,15 +85,9 @@ void PaintWorkletImageCache::PaintImageInTask(const PaintImage& paint_image) {
   }
 }
 
-std::pair<PaintRecord*, base::OnceCallback<void()>>
+std::pair<sk_sp<PaintRecord>, base::OnceCallback<void()>>
 PaintWorkletImageCache::GetPaintRecordAndRef(PaintWorkletInput* input) {
   base::AutoLock hold(records_lock_);
-  // If the |painter_| is null, then GetTaskForPaintWorkletImage will return a
-  // null TileTask, and hence there will be no cache entry for this input.
-  if (!painter_) {
-    return std::make_pair(sk_make_sp<PaintOpBuffer>().get(),
-                          base::OnceCallback<void()>());
-  }
   DCHECK(records_.find(input) != records_.end());
   records_[input].used_ref_count++;
   records_[input].num_of_frames_not_accessed = 0u;
@@ -103,7 +97,7 @@ PaintWorkletImageCache::GetPaintRecordAndRef(PaintWorkletInput* input) {
   auto callback =
       base::BindOnce(&PaintWorkletImageCache::DecrementCacheRefCount,
                      base::Unretained(this), base::Unretained(input));
-  return std::make_pair(records_[input].record.get(), std::move(callback));
+  return std::make_pair(records_[input].record, std::move(callback));
 }
 
 void PaintWorkletImageCache::SetNumOfFramesToPurgeCacheEntryForTest(

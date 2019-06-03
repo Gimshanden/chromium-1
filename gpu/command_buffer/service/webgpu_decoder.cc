@@ -17,9 +17,13 @@ namespace webgpu {
 WebGPUDecoder* WebGPUDecoder::Create(
     DecoderClient* client,
     CommandBufferServiceBase* command_buffer_service,
+    SharedImageManager* shared_image_manager,
+    MemoryTracker* memory_tracker,
     gles2::Outputter* outputter) {
 #if BUILDFLAG(USE_DAWN)
-  return CreateWebGPUDecoderImpl(client, command_buffer_service, outputter);
+  return CreateWebGPUDecoderImpl(client, command_buffer_service,
+                                 shared_image_manager, memory_tracker,
+                                 outputter);
 #else
   NOTREACHED();
   return nullptr;
@@ -32,6 +36,15 @@ WebGPUDecoder::WebGPUDecoder(DecoderClient* client,
     : CommonDecoder(client, command_buffer_service) {}
 
 WebGPUDecoder::~WebGPUDecoder() {}
+
+ContextResult WebGPUDecoder::Initialize(
+    const scoped_refptr<gl::GLSurface>& surface,
+    const scoped_refptr<gl::GLContext>& context,
+    bool offscreen,
+    const gles2::DisallowedFeatures& disallowed_features,
+    const ContextCreationAttribs& attrib_helper) {
+  return ContextResult::kSuccess;
+}
 
 }  // namespace webgpu
 }  // namespace gpu

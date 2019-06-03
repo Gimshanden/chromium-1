@@ -7,17 +7,17 @@ package org.chromium.chrome.browser.touchless;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
-import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.Callback;
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.touchless.R;
-import org.chromium.ui.widget.ChipView;
 
 /**
  * View for the button to open the last tab.
@@ -25,7 +25,13 @@ import org.chromium.ui.widget.ChipView;
 // TODO(crbug.com/948858): Add render tests for this view.
 public class OpenLastTabView extends FrameLayout {
     private LinearLayout mPlaceholder;
-    private ChipView mLastTabChip;
+    private TextView mPlaceholderText;
+
+    private LinearLayout mLastTabView;
+    private ImageView mIconView;
+    private TextView mTitleText;
+    private TextView mTimestampText;
+    private Callback<View> mAsyncFocusDelegate;
 
     public OpenLastTabView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -38,35 +44,12 @@ public class OpenLastTabView extends FrameLayout {
         super.onFinishInflate();
 
         mPlaceholder = findViewById(R.id.placeholder);
-        mLastTabChip = findViewById(R.id.last_tab_chip);
-        // Allow the system ui to control our background.
-        mLastTabChip.setBackground(null);
+        mPlaceholderText = findViewById(R.id.placeholder_text);
 
-        TextView primaryTextView = mLastTabChip.getPrimaryTextView();
-        TextView secondaryTextView = mLastTabChip.getSecondaryTextView();
-
-        LinearLayout.LayoutParams params =
-                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT);
-        // Allow timestamp to expand to as much as it needs.
-        params.weight = 1;
-        primaryTextView.setLayoutParams(params);
-        primaryTextView.setSingleLine(true);
-        primaryTextView.setEllipsize(TextUtils.TruncateAt.END);
-        primaryTextView.setPadding((int) getContext().getResources().getDimension(
-                                           R.dimen.open_last_tab_primary_text_margin_left),
-                0, 0, 0);
-        ApiCompatibilityUtils.setTextAppearance(
-                primaryTextView, R.style.TextAppearance_BlackTitle2);
-
-        params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        secondaryTextView.setLayoutParams(params);
-        secondaryTextView.setSingleLine(true);
-        // Note: this should never actually need to truncate, but I've included it as a fallback.
-        secondaryTextView.setEllipsize(TextUtils.TruncateAt.END);
-        secondaryTextView.setTextAlignment(TEXT_ALIGNMENT_VIEW_END);
-        ApiCompatibilityUtils.setTextAppearance(
-                secondaryTextView, R.style.TextAppearance_BlackCaption);
+        mLastTabView = findViewById(R.id.open_last_tab);
+        mIconView = findViewById(R.id.favicon);
+        mTitleText = findViewById(R.id.title);
+        mTimestampText = findViewById(R.id.timestamp);
     }
 
     void setLoadSuccess(boolean loadSuccess) {
@@ -74,26 +57,54 @@ public class OpenLastTabView extends FrameLayout {
 
         if (loadSuccess) {
             mPlaceholder.setVisibility(View.GONE);
-            mLastTabChip.setVisibility(View.VISIBLE);
+            mLastTabView.setVisibility(View.VISIBLE);
         } else {
-            mLastTabChip.setVisibility(View.GONE);
+            mLastTabView.setVisibility(View.GONE);
             mPlaceholder.setVisibility(View.VISIBLE);
         }
     }
 
+    void setFirstLaunched(boolean firstLaunched) {
+        if (firstLaunched) {
+            mPlaceholderText.setText(R.string.open_last_tab_placeholder_first_launch);
+        }
+    }
+
     void setOpenLastTabOnClickListener(OnClickListener onClickListener) {
-        mLastTabChip.setOnClickListener(onClickListener);
+        mLastTabView.setOnClickListener(onClickListener);
     }
 
     void setFavicon(Bitmap favicon) {
-        mLastTabChip.setIcon(new BitmapDrawable(getContext().getResources(), favicon), false);
+        mIconView.setImageDrawable(new BitmapDrawable(getContext().getResources(), favicon));
     }
 
     void setTitle(String title) {
-        mLastTabChip.getPrimaryTextView().setText(title);
+        mTitleText.setText(title);
     }
 
     void setTimestamp(String timestamp) {
-        mLastTabChip.getSecondaryTextView().setText(timestamp);
+        mTimestampText.setText(timestamp);
+    }
+
+    void setOnFocusCallback(Runnable callback) {
+        mLastTabView.setOnFocusChangeListener((View view, boolean hasFocus) -> {
+            if (hasFocus) {
+                callback.run();
+            }
+        });
+    }
+
+    void triggerRequestFocus() {
+        if (mAsyncFocusDelegate != null) {
+            mAsyncFocusDelegate.onResult(mLastTabView);
+        }
+    }
+
+    void setAsyncFocusDelegate(Callback<View> asyncFocusDelegate) {
+        mAsyncFocusDelegate = asyncFocusDelegate;
+    }
+
+    void setContextMenuDelegate(ContextMenuManager.Delegate delegate) {
+        ContextMenuManager.registerViewForTouchlessContextMenu(mLastTabView, delegate);
     }
 }

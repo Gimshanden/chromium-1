@@ -145,6 +145,11 @@ void VideoCaptureDeviceAndroid::AllocateAndStart(
     return;
   }
 
+  // TODO(julien.isorce): Use Camera.SENSOR_COLOR_TRANSFORM2 to build a
+  // gfx::ColorSpace, and rename VideoCaptureDeviceAndroid::GetColorspace()
+  // to GetPixelFormat, see http://crbug.com/959901.
+  capture_color_space_ = gfx::ColorSpace();
+
   capture_format_.frame_size.SetSize(
       Java_VideoCapture_queryWidth(env, j_capture_),
       Java_VideoCapture_queryHeight(env, j_capture_));
@@ -624,7 +629,8 @@ void VideoCaptureDeviceAndroid::SendIncomingDataToClient(
   base::AutoLock lock(lock_);
   if (!client_)
     return;
-  client_->OnIncomingCapturedData(data, length, capture_format_, rotation,
+  client_->OnIncomingCapturedData(data, length, capture_format_,
+                                  capture_color_space_, rotation,
                                   reference_time, timestamp);
 }
 
@@ -736,13 +742,13 @@ void VideoCaptureDeviceAndroid::DoSetPhotoOptions(
   const double width = settings->has_width ? settings->width : 0.0;
   const double height = settings->has_height ? settings->height : 0.0;
 
-  std::vector<float> points_of_interest_marshalled;
+  std::vector<double> points_of_interest_marshalled;
   for (const auto& point : settings->points_of_interest) {
     points_of_interest_marshalled.push_back(point->x);
     points_of_interest_marshalled.push_back(point->y);
   }
-  ScopedJavaLocalRef<jfloatArray> points_of_interest =
-      base::android::ToJavaFloatArray(env, points_of_interest_marshalled);
+  ScopedJavaLocalRef<jdoubleArray> points_of_interest =
+      base::android::ToJavaDoubleArray(env, points_of_interest_marshalled);
 
   const double exposure_compensation = settings->has_exposure_compensation
                                            ? settings->exposure_compensation

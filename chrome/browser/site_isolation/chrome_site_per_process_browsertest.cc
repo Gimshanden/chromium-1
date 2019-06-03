@@ -448,7 +448,7 @@ class ChromeSitePerProcessPDFTest : public ChromeSitePerProcessTest {
     blink::WebGestureEvent event(blink::WebInputEvent::kGestureScrollUpdate,
                                  blink::WebInputEvent::kNoModifiers,
                                  ui::EventTimeForNow(),
-                                 blink::kWebGestureDeviceTouchscreen);
+                                 blink::WebGestureDevice::kTouchscreen);
     // This should not crash.
     content::ResendGestureScrollUpdateToEmbedder(guest_web_contents, event);
   }
@@ -504,16 +504,27 @@ class ChromeSitePerProcessPDFTest : public ChromeSitePerProcessTest {
   DISALLOW_COPY_AND_ASSIGN(ChromeSitePerProcessPDFTest);
 };
 
+class ChromeSitePerProcessBrowserPluginPDFTest
+    : public ChromeSitePerProcessPDFTest {
+  void SetUpCommandLine(base::CommandLine* cl) override {
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kMimeHandlerViewInCrossProcessFrame);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
 // Regression test for https://crbug.com/870536. Ensure that the test doesn't
 // crash when a GestureScrollBegin is sent to BrowserPluginGuest, while the
 // GestureScrollUpdates are sent to its embedder. For both non-OOPIF and OOPIF
 // cases.
-IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessPDFTest,
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessBrowserPluginPDFTest,
                        ResendGestureToEmbedderOOPIF) {
   ResendGestureToEmbedder("b.com");
 }
 
-IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessPDFTest,
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessBrowserPluginPDFTest,
                        ResendGestureToEmbedderNonOOPIF) {
   ResendGestureToEmbedder("a.com");
 }
@@ -521,12 +532,12 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessPDFTest,
 // Regression test for https://crbug.com/873211. MaybeSendSyntheticTapGesture
 // can be called with no touch action set in TouchActionFilter and results in
 // a crash.
-IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessPDFTest,
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessBrowserPluginPDFTest,
                        SendSyntheticTapGestureOOPIF) {
   SendSyntheticTapGesture("b.com");
 }
 
-IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessPDFTest,
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessBrowserPluginPDFTest,
                        SendSyntheticTapGestureNonOOPIF) {
   SendSyntheticTapGesture("a.com");
 }
@@ -578,8 +589,7 @@ class MailtoExternalProtocolHandlerDelegate
   content::WebContents* web_contents() { return web_contents_; }
 
   void RunExternalProtocolDialog(const GURL& url,
-                                 int render_process_host_id,
-                                 int routing_id,
+                                 content::WebContents* web_contents,
                                  ui::PageTransition page_transition,
                                  bool has_user_gesture) override {}
 
@@ -1193,7 +1203,7 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest, TwoFingerTapContextMenu) {
       blink::WebInputEvent::kGestureTwoFingerTap,
       blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests(),
-      blink::kWebGestureDeviceTouchscreen);
+      blink::WebGestureDevice::kTouchscreen);
   event.SetPositionInWidget(child_location);
   event.SetPositionInScreen(child_location_in_root);
   event.data.two_finger_tap.first_finger_width = 10;

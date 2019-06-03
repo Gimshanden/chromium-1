@@ -11,13 +11,12 @@
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/button.h"
 
-namespace gfx {
-struct VectorIcon;
-}  // namespace gfx
-
 namespace views {
-class ImageButton;
+class Button;
+class ImageView;
 }  // namespace views
+
+class ExtensionsContainer;
 
 // This bubble view displays a list of user extensions.
 // TODO(pbos): Once there's more functionality in here (getting to
@@ -26,20 +25,25 @@ class ExtensionsMenuView : public views::ButtonListener,
                            public views::BubbleDialogDelegateView,
                            public ToolbarActionsModel::Observer {
  public:
-  ExtensionsMenuView(views::View* anchor_view, Browser* browser);
+  ExtensionsMenuView(views::View* anchor_view,
+                     Browser* browser,
+                     ExtensionsContainer* extensions_container);
   ~ExtensionsMenuView() override;
 
-  static void ShowBubble(views::View* anchor_view, Browser* browser);
+  static void ShowBubble(views::View* anchor_view,
+                         Browser* browser,
+                         ExtensionsContainer* extensions_container);
   static bool IsShowing();
   static void Hide();
   static ExtensionsMenuView* GetExtensionsMenuViewForTesting();
+  static std::unique_ptr<views::ImageView> CreateFixedSizeIconView();
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::BubbleDialogDelegateView:
-  base::string16 GetAccessibleWindowTitle() const override;
-  bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
+  base::string16 GetWindowTitle() const override;
+  bool ShouldShowCloseButton() const override;
   int GetDialogButtons() const override;
   bool ShouldSnapFrameWidth() const override;
 
@@ -57,18 +61,25 @@ class ExtensionsMenuView : public views::ButtonListener,
   void OnToolbarHighlightModeChanged(bool is_highlighting) override;
   void OnToolbarModelInitialized() override;
 
+  views::View* extension_menu_button_container_for_testing() {
+    return extension_menu_button_container_for_testing_;
+  }
+  views::Button* manage_extensions_button_for_testing() {
+    return manage_extensions_button_for_testing_;
+  }
+
  private:
   void Repopulate();
-
-  std::unique_ptr<views::ImageButton> CreateImageButtonForHeader(
-      const gfx::VectorIcon& icon,
-      int id,
-      const base::string16& tooltip);
+  std::unique_ptr<views::View> CreateExtensionButtonsContainer();
 
   Browser* const browser_;
+  ExtensionsContainer* const extensions_container_;
   ToolbarActionsModel* const model_;
   ScopedObserver<ToolbarActionsModel, ToolbarActionsModel::Observer>
       model_observer_;
+
+  views::View* extension_menu_button_container_for_testing_ = nullptr;
+  views::Button* manage_extensions_button_for_testing_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionsMenuView);
 };

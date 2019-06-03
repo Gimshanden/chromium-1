@@ -97,7 +97,7 @@ void IOSChromeMainParts::PreCreateThreads() {
 
   // The initial read is done synchronously, the TaskPriority is thus only used
   // for flushes to disks and BACKGROUND is therefore appropriate. Priority of
-  // remaining BACKGROUND+BLOCK_SHUTDOWN tasks is bumped by the TaskScheduler on
+  // remaining BACKGROUND+BLOCK_SHUTDOWN tasks is bumped by the ThreadPool on
   // shutdown.
   scoped_refptr<base::SequencedTaskRunner> local_state_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
@@ -249,13 +249,13 @@ void IOSChromeMainParts::SetupMetrics() {
 }
 
 void IOSChromeMainParts::StartMetricsRecording() {
-  bool wifiOnly = local_state_->GetBoolean(prefs::kMetricsReportingWifiOnly);
   bool isConnectionCellular = net::NetworkChangeNotifier::IsConnectionCellular(
       net::NetworkChangeNotifier::GetConnectionType());
   bool mayUpload = false;
   if (base::FeatureList::IsEnabled(kUmaCellular)) {
     mayUpload = !isConnectionCellular;
   } else {
+    bool wifiOnly = local_state_->GetBoolean(prefs::kMetricsReportingWifiOnly);
     mayUpload = !wifiOnly || !isConnectionCellular;
   }
 

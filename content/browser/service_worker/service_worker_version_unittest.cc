@@ -18,6 +18,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
+#include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/fake_embedded_worker_instance_client.h"
@@ -27,7 +28,6 @@
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/common/service_worker/service_worker_utils.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_service.mojom.h"
@@ -114,6 +114,8 @@ void StartWorker(ServiceWorkerVersion* version,
 
 class ServiceWorkerVersionTest : public testing::Test {
  protected:
+  using FetchHandlerExistence = blink::mojom::FetchHandlerExistence;
+
   struct RunningStateListener : public ServiceWorkerVersion::Observer {
     RunningStateListener() : last_status(EmbeddedWorkerStatus::STOPPED) {}
     ~RunningStateListener() override {}
@@ -161,7 +163,10 @@ class ServiceWorkerVersionTest : public testing::Test {
     version_->script_cache_map()->SetResources(records);
     version_->SetMainScriptHttpResponseInfo(
         EmbeddedWorkerTestHelper::CreateHttpResponseInfo());
-    version_->set_fetch_handler_existence(GetFetchHandlerExistence());
+    if (GetFetchHandlerExistence() !=
+        ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN) {
+      version_->set_fetch_handler_existence(GetFetchHandlerExistence());
+    }
 
     // Make the registration findable via storage functions.
     base::Optional<blink::ServiceWorkerStatusCode> status;
@@ -392,13 +397,13 @@ TEST_F(ServiceWorkerVersionTest, StartUnregisteredButStillLiveWorker) {
   base::Optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
   helper_->context()->storage()->DeleteRegistration(
-      registration_->id(), registration_->scope().GetOrigin(),
+      registration_, registration_->scope().GetOrigin(),
       ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
   run_loop.Run();
   ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
 
-  // The live registration is marked as deleted, but still exists.
-  ASSERT_TRUE(registration_->is_deleted());
+  // The live registration is marked as uninstalling, but still exists.
+  ASSERT_TRUE(registration_->is_uninstalling());
 
   {
     // Stop the worker.
@@ -1186,9 +1191,6 @@ TEST_F(ServiceWorkerVersionTest, BadOrigin) {
 
 TEST_F(ServiceWorkerVersionTest,
        ForegroundServiceWorkerCountUpdatedByControllee) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kServiceWorkerForegroundPriority);
-
   // Start the worker before we have a controllee.
   base::Optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
@@ -1224,9 +1226,6 @@ TEST_F(ServiceWorkerVersionTest,
 
 TEST_F(ServiceWorkerVersionTest,
        ForegroundServiceWorkerCountNotUpdatedBySameProcessControllee) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kServiceWorkerForegroundPriority);
-
   // Start the worker before we have a controllee.
   base::Optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
@@ -1252,9 +1251,6 @@ TEST_F(ServiceWorkerVersionTest,
 
 TEST_F(ServiceWorkerVersionTest,
        ForegroundServiceWorkerCountUpdatedByControlleeProcessIdChange) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kServiceWorkerForegroundPriority);
-
   // Start the worker before we have a controllee.
   base::Optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
@@ -1277,7 +1273,7 @@ TEST_F(ServiceWorkerVersionTest,
   base::WeakPtr<ServiceWorkerProviderHost> host =
       ServiceWorkerProviderHost::PreCreateNavigationHost(
           helper_->context()->AsWeakPtr(), true /* is_parent_frame_secure */,
-          base::NullCallback(), &provider_info);
+          FrameTreeNode::kFrameTreeNodeInvalidId, &provider_info);
   remote_endpoint.BindForWindow(std::move(provider_info));
   host->UpdateUrls(registration_->scope(), registration_->scope());
   host->SetControllerRegistration(registration_,
@@ -1306,9 +1302,6 @@ TEST_F(ServiceWorkerVersionTest,
 
 TEST_F(ServiceWorkerVersionTest,
        ForegroundServiceWorkerCountUpdatedByWorkerStatus) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kServiceWorkerForegroundPriority);
-
   // Add a controllee in a different process from the service worker.
   auto remote_endpoint = ActivateWithControllee();
 
@@ -1351,9 +1344,6 @@ class ServiceWorkerVersionNoFetchHandlerTest : public ServiceWorkerVersionTest {
 
 TEST_F(ServiceWorkerVersionNoFetchHandlerTest,
        ForegroundServiceWorkerCountNotUpdated) {
-  base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(features::kServiceWorkerForegroundPriority);
-
   // Start the worker before we have a controllee.
   base::Optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
@@ -1596,6 +1586,25 @@ TEST_F(ServiceWorkerNavigationHintUMATest, StartWhileStopping) {
   StopWorker();
   // The UMA must be recorded when the worker stopped.
   histogram_tester_.ExpectTotalCount(kStartHintPrecision, 2);
+}
+
+TEST_F(ServiceWorkerVersionTest, InstalledFetchEventHandlerExists) {
+  auto* service_worker =
+      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
+  StartWorker(version_.get(), ServiceWorkerMetrics::EventType::UNKNOWN);
+  service_worker->RunUntilInitializeGlobalScope();
+  EXPECT_EQ(FetchHandlerExistence::EXISTS,
+            service_worker->fetch_handler_existence());
+}
+
+TEST_F(ServiceWorkerVersionNoFetchHandlerTest,
+       InstalledFetchEventHandlerDoesNotExist) {
+  auto* service_worker =
+      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
+  StartWorker(version_.get(), ServiceWorkerMetrics::EventType::UNKNOWN);
+  service_worker->RunUntilInitializeGlobalScope();
+  EXPECT_EQ(FetchHandlerExistence::DOES_NOT_EXIST,
+            service_worker->fetch_handler_existence());
 }
 
 }  // namespace service_worker_version_unittest

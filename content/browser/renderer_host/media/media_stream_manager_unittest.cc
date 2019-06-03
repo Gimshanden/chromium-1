@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -200,7 +201,7 @@ class MediaStreamManagerTest : public ::testing::Test {
         .WillByDefault(Invoke(
             [](VideoCaptureProvider::GetDeviceInfosCallback& result_callback) {
               std::vector<media::VideoCaptureDeviceInfo> stub_results;
-              base::ResetAndReturn(&result_callback).Run(stub_results);
+              std::move(result_callback).Run(stub_results);
             }));
   }
 
@@ -258,7 +259,8 @@ class MediaStreamManagerTest : public ::testing::Test {
             [](base::RunLoop* wait_loop, bool request_audio,
                blink::MediaStreamDevice* audio_device,
                blink::MediaStreamDevice* video_device,
-               blink::MediaStreamRequestResult result, const std::string& label,
+               blink::mojom::MediaStreamRequestResult result,
+               const std::string& label,
                const blink::MediaStreamDevices& audio_devices,
                const blink::MediaStreamDevices& video_devices) {
               if (request_audio) {
@@ -540,7 +542,7 @@ TEST_F(MediaStreamManagerTest, GetDisplayMediaRequestCallsUIProxy) {
   controls.video.stream_type = blink::MEDIA_DISPLAY_VIDEO_CAPTURE;
 
   MediaStreamManager::GenerateStreamCallback generate_stream_callback =
-      base::BindOnce([](blink::MediaStreamRequestResult result,
+      base::BindOnce([](blink::mojom::MediaStreamRequestResult result,
                         const std::string& label,
                         const blink::MediaStreamDevices& audio_devices,
                         const blink::MediaStreamDevices& video_devices) {});
@@ -583,7 +585,8 @@ TEST_F(MediaStreamManagerTest, DesktopCaptureDeviceStopped) {
   MediaStreamManager::GenerateStreamCallback generate_stream_callback =
       base::BindOnce(
           [](base::RunLoop* wait_loop, blink::MediaStreamDevice* video_device,
-             blink::MediaStreamRequestResult result, const std::string& label,
+             blink::mojom::MediaStreamRequestResult result,
+             const std::string& label,
              const blink::MediaStreamDevices& audio_devices,
              const blink::MediaStreamDevices& video_devices) {
             EXPECT_EQ(0u, audio_devices.size());
@@ -640,7 +643,8 @@ TEST_F(MediaStreamManagerTest, DesktopCaptureDeviceChanged) {
   MediaStreamManager::GenerateStreamCallback generate_stream_callback =
       base::BindOnce(
           [](base::RunLoop* wait_loop, blink::MediaStreamDevice* video_device,
-             blink::MediaStreamRequestResult result, const std::string& label,
+             blink::mojom::MediaStreamRequestResult result,
+             const std::string& label,
              const blink::MediaStreamDevices& audio_devices,
              const blink::MediaStreamDevices& video_devices) {
             EXPECT_EQ(0u, audio_devices.size());

@@ -52,13 +52,13 @@ using content::Referrer;
 
 namespace {
 
-bool AreCommittedInterstitialsEnabled() {
+bool AreSSLCommittedInterstitialsEnabled() {
   return base::FeatureList::IsEnabled(features::kSSLCommittedInterstitials);
 }
 
 content::InterstitialPageDelegate* GetInterstitialDelegate(
     content::WebContents* tab) {
-  if (AreCommittedInterstitialsEnabled()) {
+  if (AreSSLCommittedInterstitialsEnabled()) {
     security_interstitials::SecurityInterstitialTabHelper* helper =
         security_interstitials::SecurityInterstitialTabHelper::FromWebContents(
             tab);
@@ -163,10 +163,9 @@ class LoginPromptBrowserTest : public InProcessBrowserTest {
 };
 
 void LoginPromptBrowserTest::SetAuthFor(LoginHandler* handler) {
-  const net::AuthChallengeInfo* challenge = handler->auth_info();
+  const net::AuthChallengeInfo& challenge = handler->auth_info();
 
-  ASSERT_TRUE(challenge);
-  auto i = auth_map_.find(challenge->realm);
+  auto i = auth_map_.find(challenge.realm);
   EXPECT_TRUE(auth_map_.end() != i);
   if (i != auth_map_.end()) {
     const AuthInfo& info = i->second;
@@ -604,10 +603,10 @@ void MultiRealmLoginPromptBrowserTest::RunTest(const F& for_each_realm_func) {
         login_prompt_observer_.handlers().begin(),
         login_prompt_observer_.handlers().end(),
         [&seen_realms](LoginHandler* handler) {
-          return seen_realms.count(handler->auth_info()->realm) == 0;
+          return seen_realms.count(handler->auth_info().realm) == 0;
         });
     ASSERT_TRUE(it != login_prompt_observer_.handlers().end());
-    seen_realms.insert((*it)->auth_info()->realm);
+    seen_realms.insert((*it)->auth_info().realm);
 
     for_each_realm_func(*it);
   }
@@ -1508,7 +1507,7 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
     ui_test_utils::NavigateToURL(browser(), broken_ssl_page);
     ASSERT_EQ("127.0.0.1", contents->GetURL().host());
     ASSERT_TRUE(contents->GetURL().SchemeIs("https"));
-    if (AreCommittedInterstitialsEnabled()) {
+    if (AreSSLCommittedInterstitialsEnabled()) {
       ASSERT_TRUE(WaitForRenderFrameReady(contents->GetMainFrame()));
     } else {
       content::WaitForInterstitialAttach(contents);
@@ -1581,7 +1580,7 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
 
   // Redirect to a broken SSL page. This redirect should not accidentally
   // proceed through the SSL interstitial.
-  if (AreCommittedInterstitialsEnabled()) {
+  if (AreSSLCommittedInterstitialsEnabled()) {
     content::TestNavigationObserver observer(contents);
     EXPECT_TRUE(content::ExecuteScript(
         browser()->tab_strip_model()->GetActiveWebContents(),
@@ -1647,4 +1646,30 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest, TestBasicAuthDisabled) {
   }
 }
 
+// Tests that when HTTP Auth committed interstitials are enabled, a cross-origin
+// main-frame auth challenge cancels the auth request.
+IN_PROC_BROWSER_TEST_F(
+    LoginPromptBrowserTest,
+    TestAuthChallengeCancelsNavigationWithCommittedInterstitials) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      features::kHTTPAuthCommittedInterstitials);
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  content::WebContents* contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  NavigationController* controller = &contents->GetController();
+  LoginPromptBrowserTestObserver observer;
+  observer.Register(content::Source<NavigationController>(controller));
+
+  GURL test_page = embedded_test_server()->GetURL(kAuthBasicPage);
+  ui_test_utils::NavigateToURL(browser(), test_page);
+
+  const base::string16 kExpectedTitle =
+      base::ASCIIToUTF16("Denied: Missing Authorization Header");
+  content::TitleWatcher title_watcher(contents, kExpectedTitle);
+  EXPECT_EQ(kExpectedTitle, title_watcher.WaitAndGetTitle());
+
+  EXPECT_EQ(0, observer.auth_cancelled_count());
+}
 }  // namespace

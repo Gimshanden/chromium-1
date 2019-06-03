@@ -211,11 +211,11 @@ bool SQLiteCursor::GetFavicon(favicon_base::FaviconID id,
 
 void SQLiteCursor::GetFaviconForIDInUIThread(
     favicon_base::FaviconID id,
-    const favicon_base::FaviconRawBitmapCallback& callback) {
+    favicon_base::FaviconRawBitmapCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!tracker_.get())
     tracker_.reset(new base::CancelableTaskTracker());
-  service_->GetLargestRawFaviconForID(id, callback, tracker_.get());
+  service_->GetLargestRawFaviconForID(id, std::move(callback), tracker_.get());
 }
 
 void SQLiteCursor::OnFaviconData(
@@ -238,7 +238,7 @@ SQLiteCursor::JavaColumnType SQLiteCursor::GetColumnTypeInternal(int column) {
   if (column == statement_->favicon_index())
     return SQLiteCursor::BLOB;
 
-  return ToJavaColumnType(statement_->statement()->ColumnType(column));
+  return ToJavaColumnType(statement_->statement()->GetColumnType(column));
 }
 
 void SQLiteCursor::RunMoveStatementOnUIThread(int pos) {

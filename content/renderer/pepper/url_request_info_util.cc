@@ -177,12 +177,12 @@ bool CreateWebURLRequest(PP_Instance instance,
     name_version = "internal_testing_only";
   }
 
-  dest->SetURL(
+  dest->SetUrl(
       frame->GetDocument().CompleteURL(WebString::FromUTF8(data->url)));
   dest->SetReportUploadProgress(data->record_upload_progress);
 
   if (!data->method.empty())
-    dest->SetHTTPMethod(WebString::FromUTF8(data->method));
+    dest->SetHttpMethod(WebString::FromUTF8(data->method));
 
   dest->SetSiteForCookies(frame->GetDocument().SiteForCookies());
 

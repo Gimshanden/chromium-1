@@ -32,10 +32,6 @@ RenderProcessUserData::RenderProcessUserData(
     content::RenderProcessHost* render_process_host)
     : host_(render_process_host),
       process_node_(PerformanceManager::GetInstance()->CreateProcessNode()) {
-  // The process itself shouldn't have been created at this point.
-  DCHECK(!host_->GetProcess().IsValid() ||
-         base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kSingleProcess));
   host_->AddObserver(this);
 
   // Push this instance to the list.
@@ -69,26 +65,30 @@ void RenderProcessUserData::DetachAndDestroyAll() {
     first_->host_->RemoveUserData(kRenderProcessUserDataKey);
 }
 
-void RenderProcessUserData::CreateForRenderProcessHost(
-    content::RenderProcessHost* host) {
-  std::unique_ptr<RenderProcessUserData> user_data =
-      base::WrapUnique(new RenderProcessUserData(host));
-
-  host->SetUserData(kRenderProcessUserDataKey, std::move(user_data));
-}
-
+// static
 RenderProcessUserData* RenderProcessUserData::GetForRenderProcessHost(
     content::RenderProcessHost* host) {
   return static_cast<RenderProcessUserData*>(
       host->GetUserData(kRenderProcessUserDataKey));
 }
 
+// static
+RenderProcessUserData* RenderProcessUserData::GetOrCreateForRenderProcessHost(
+    content::RenderProcessHost* host) {
+  auto* raw_user_data = GetForRenderProcessHost(host);
+  if (raw_user_data)
+    return raw_user_data;
+  std::unique_ptr<RenderProcessUserData> user_data =
+      base::WrapUnique(new RenderProcessUserData(host));
+  raw_user_data = user_data.get();
+  host->SetUserData(kRenderProcessUserDataKey, std::move(user_data));
+  return raw_user_data;
+}
+
 void RenderProcessUserData::RenderProcessReady(
     content::RenderProcessHost* host) {
   PerformanceManager* performance_manager = PerformanceManager::GetInstance();
 
-  // TODO(siggi): Change this to pass the process into the graph node.
-  const base::ProcessId pid = host->GetProcess().Pid();
   const base::Time launch_time =
 #if defined(OS_ANDROID)
       // Process::CreationTime() is not available on Android. Since this
@@ -100,12 +100,9 @@ void RenderProcessUserData::RenderProcessReady(
 #endif
 
   performance_manager->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&ProcessNodeImpl::SetPID,
-                                base::Unretained(process_node_.get()), pid));
-  performance_manager->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&ProcessNodeImpl::SetLaunchTime,
-                     base::Unretained(process_node_.get()), launch_time));
+      FROM_HERE, base::BindOnce(&ProcessNodeImpl::SetProcess,
+                                base::Unretained(process_node_.get()),
+                                host->GetProcess().Duplicate(), launch_time));
 }
 
 void RenderProcessUserData::RenderProcessExited(

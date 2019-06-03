@@ -8,7 +8,6 @@
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/style/style_image.h"
@@ -17,6 +16,7 @@
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
 #include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
@@ -24,6 +24,10 @@ namespace blink {
 
 // TODO(npm): decide on a reasonable value for the threshold.
 constexpr const float kImageTimingSizeThreshold = 0.15f;
+
+// The maximum amount of characters included in Element Timing for inline
+// images.
+constexpr const unsigned kInlineImageMaxChars = 100u;
 
 // static
 const char ImageElementTiming::kSupplementName[] = "ImageElementTiming";
@@ -41,7 +45,8 @@ ImageElementTiming& ImageElementTiming::From(LocalDOMWindow& window) {
 
 ImageElementTiming::ImageElementTiming(LocalDOMWindow& window)
     : Supplement<LocalDOMWindow>(window) {
-  DCHECK(origin_trials::ElementTimingEnabled(GetSupplementable()->document()));
+  DCHECK(RuntimeEnabledFeatures::ElementTimingEnabled(
+      GetSupplementable()->document()));
 }
 
 void ImageElementTiming::NotifyImagePainted(
@@ -57,7 +62,7 @@ void ImageElementTiming::NotifyImagePainted(
 }
 
 void ImageElementTiming::NotifyImagePaintedInternal(
-    const Node* node,
+    Node* node,
     const LayoutObject& layout_object,
     const ImageResourceContent& cached_image,
     const PropertyTreeState& current_paint_chunk_properties) {
@@ -70,9 +75,16 @@ void ImageElementTiming::NotifyImagePaintedInternal(
   if (!frame || !node->IsElementNode())
     return;
 
+  // We do not expose elements in shadow trees, for now. We might expose
+  // something once the discussions at
+  // https://github.com/WICG/element-timing/issues/3 and
+  // https://github.com/w3c/webcomponents/issues/816 have been resolved.
+  if (node->IsInShadowTree())
+    return;
+
   FloatRect intersection_rect = ComputeIntersectionRect(
       frame, layout_object, current_paint_chunk_properties);
-  const Element* element = ToElement(node);
+  Element* element = ToElement(node);
   const AtomicString attr =
       element->FastGetAttribute(html_names::kElementtimingAttr);
   if (!ShouldReportElement(frame, attr, intersection_rect))
@@ -80,9 +92,13 @@ void ImageElementTiming::NotifyImagePaintedInternal(
 
   const AtomicString& id = element->GetIdAttribute();
 
+  const KURL& url = cached_image.Url();
   DCHECK(GetSupplementable()->document() == &layout_object.GetDocument());
   DCHECK(layout_object.GetDocument().GetSecurityOrigin());
-  if (!Performance::PassesTimingAllowCheck(
+  // It's ok to expose rendering timestamp for data URIs so exclude those from
+  // the Timing-Allow-Origin check.
+  if (!url.ProtocolIsData() &&
+      !Performance::PassesTimingAllowCheck(
           cached_image.GetResponse(),
           *layout_object.GetDocument().GetSecurityOrigin(),
           &layout_object.GetDocument())) {
@@ -93,34 +109,38 @@ void ImageElementTiming::NotifyImagePaintedInternal(
          performance->ShouldBufferEntries())) {
       // Create an entry with a |startTime| of 0.
       performance->AddElementTiming(
-          AtomicString(cached_image.Url().GetString()), intersection_rect,
-          TimeTicks(), cached_image.LoadResponseEnd(), attr,
-          cached_image.IntrinsicSize(kDoNotRespectImageOrientation), id);
+          AtomicString(url.GetString()), intersection_rect, TimeTicks(),
+          cached_image.LoadResponseEnd(), attr,
+          cached_image.IntrinsicSize(kDoNotRespectImageOrientation), id,
+          element);
     }
     return;
   }
 
-  WebLayerTreeView* layerTreeView =
-      frame->GetChromeClient().GetWebLayerTreeView(frame);
-  if (!layerTreeView)
-    return;
-
-  element_timings_.emplace_back(
-      AtomicString(cached_image.Url().GetString()), intersection_rect,
+  // If the image URL is a data URL ("data:image/..."), then the |name| of the
+  // PerformanceElementTiming entry should be the URL trimmed to 100 characters.
+  // If it is not, then pass in the full URL regardless of the length to be
+  // consistent with Resource Timing.
+  const String& image_name = url.ProtocolIsData()
+                                 ? url.GetString().Left(kInlineImageMaxChars)
+                                 : url.GetString();
+  element_timings_.emplace_back(MakeGarbageCollected<ElementTimingInfo>(
+      AtomicString(image_name), intersection_rect,
       cached_image.LoadResponseEnd(), attr,
-      cached_image.IntrinsicSize(kDoNotRespectImageOrientation), id);
+      cached_image.IntrinsicSize(kDoNotRespectImageOrientation), id, element));
   // Only queue a swap promise when |element_timings_| was empty. All of the
   // records in |element_timings_| will be processed when the promise succeeds
   // or fails, and at that time the vector is cleared.
   if (element_timings_.size() == 1) {
-    layerTreeView->NotifySwapTime(ConvertToBaseCallback(
-        CrossThreadBind(&ImageElementTiming::ReportImagePaintSwapTime,
-                        WrapCrossThreadWeakPersistent(this))));
+    frame->GetChromeClient().NotifySwapTime(
+        *frame,
+        CrossThreadBindOnce(&ImageElementTiming::ReportImagePaintSwapTime,
+                            WrapCrossThreadWeakPersistent(this)));
   }
 }
 
 void ImageElementTiming::NotifyBackgroundImagePainted(
-    const Node* node,
+    Node* node,
     const StyleImage* background_image,
     const PropertyTreeState& current_paint_chunk_properties) {
   DCHECK(node);
@@ -146,7 +166,7 @@ FloatRect ImageElementTiming::ComputeIntersectionRect(
     const LayoutObject& layout_object,
     const PropertyTreeState& current_paint_chunk_properties) {
   // Compute the visible part of the image rect.
-  LayoutRect image_visual_rect = layout_object.FirstFragment().VisualRect();
+  IntRect image_visual_rect = layout_object.FirstFragment().VisualRect();
 
   FloatClipRect visual_rect = FloatClipRect(FloatRect(image_visual_rect));
   GeometryMapper::LocalToAncestorVisualRect(current_paint_chunk_properties,
@@ -173,7 +193,7 @@ bool ImageElementTiming::ShouldReportElement(
                                                kImageTimingSizeThreshold;
 }
 
-void ImageElementTiming::ReportImagePaintSwapTime(WebLayerTreeView::SwapResult,
+void ImageElementTiming::ReportImagePaintSwapTime(WebWidgetClient::SwapResult,
                                                   base::TimeTicks timestamp) {
   WindowPerformance* performance =
       DOMWindowPerformance::performance(*GetSupplementable());
@@ -181,9 +201,10 @@ void ImageElementTiming::ReportImagePaintSwapTime(WebLayerTreeView::SwapResult,
                       performance->ShouldBufferEntries())) {
     for (const auto& element_timing : element_timings_) {
       performance->AddElementTiming(
-          element_timing.name, element_timing.rect, timestamp,
-          element_timing.response_end, element_timing.identifier,
-          element_timing.intrinsic_size, element_timing.id);
+          element_timing->name, element_timing->rect, timestamp,
+          element_timing->response_end, element_timing->identifier,
+          element_timing->intrinsic_size, element_timing->id,
+          element_timing->element);
     }
   }
   element_timings_.clear();
@@ -200,6 +221,7 @@ void ImageElementTiming::NotifyBackgroundImageRemoved(
 }
 
 void ImageElementTiming::Trace(blink::Visitor* visitor) {
+  visitor->Trace(element_timings_);
   Supplement<LocalDOMWindow>::Trace(visitor);
 }
 

@@ -5,6 +5,7 @@
 #include <memory>
 #include <utility>
 
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -27,10 +28,10 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
     // https://crbug.com/893292.
     set_should_verify_dialog_bounds(false);
 
-    auto model = std::make_unique<AuthenticatorRequestDialogModel>();
+    auto model = std::make_unique<AuthenticatorRequestDialogModel>(
+        /*relying_party_id=*/"example.com");
     ::device::FidoRequestHandlerBase::TransportAvailabilityInfo
         transport_availability;
-    transport_availability.rp_id = "example.com";
     transport_availability.available_transports = {
         AuthenticatorTransport::kBluetoothLowEnergy,
         AuthenticatorTransport::kUsbHumanInterfaceDevice,
@@ -83,8 +84,9 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
     } else if (name == "ble_activate") {
       model->SetCurrentStep(
           AuthenticatorRequestDialogModel::Step::kBleActivate);
-    } else if (name == "touchid") {
-      model->SetCurrentStep(AuthenticatorRequestDialogModel::Step::kTouchId);
+    } else if (name == "touchid_incognito") {
+      model->SetCurrentStep(
+          AuthenticatorRequestDialogModel::Step::kTouchIdIncognitoSpeedBump);
     } else if (name == "cable_activate") {
       model->SetCurrentStep(
           AuthenticatorRequestDialogModel::Step::kCableActivate);
@@ -110,17 +112,21 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
     } else if (name == "authenticator_removed") {
       model->SetCurrentStep(AuthenticatorRequestDialogModel::Step::
                                 kClientPinErrorAuthenticatorRemoved);
-    } else if (name == "missing_resident_keys") {
+    } else if (name == "missing_capability") {
       model->SetCurrentStep(
-          AuthenticatorRequestDialogModel::Step::kMissingResidentKeys);
-    } else if (name == "missing_user_verification") {
+          AuthenticatorRequestDialogModel::Step::kMissingCapability);
+    } else if (name == "storage_full") {
       model->SetCurrentStep(
-          AuthenticatorRequestDialogModel::Step::kMissingUserVerification);
+          AuthenticatorRequestDialogModel::Step::kStorageFull);
     } else if (name == "account_select") {
       const std::vector<std::pair<std::string, std::string>> infos = {
           {"foo@example.com", "Test User 1"},
-          {"bar@example.com", "Test User 2"},
-          {"bat@example.com", "Test User 3"},
+          {"", "Test User 2"},
+          {"", ""},
+          {"bat@example.com", "Test User 4"},
+          {"verylong@reallylongreallylongreallylongreallylongreallylong.com",
+           "Very Long String Very Long String Very Long String Very Long "
+           "String Very Long String Very Long String "},
       };
       std::vector<device::AuthenticatorGetAssertionResponse> responses;
 
@@ -132,8 +138,8 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
         device::AuthenticatorGetAssertionResponse response(
             std::move(auth_data), {10, 11, 12, 13} /* signature */);
         device::PublicKeyCredentialUserEntity user({1, 2, 3, 4});
-        user.SetUserName(info.first);
-        user.SetDisplayName(info.second);
+        user.name = info.first;
+        user.display_name = info.second;
         response.SetUserEntity(std::move(user));
         responses.emplace_back(std::move(response));
       }
@@ -141,6 +147,8 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
       model->SelectAccount(
           std::move(responses),
           base::Bind([](device::AuthenticatorGetAssertionResponse) {}));
+    } else if (name == "request_attestation_permission") {
+      model->RequestAttestationPermission(base::DoNothing());
     }
 
     ShowAuthenticatorRequestDialog(
@@ -213,9 +221,15 @@ IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_ble_activate) {
   ShowAndVerifyUi();
 }
 
+#if defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_touchid) {
   ShowAndVerifyUi();
 }
+
+IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_touchid_incognito) {
+  ShowAndVerifyUi();
+}
+#endif  // defined(OS_MACOSX)
 
 IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_cable_activate) {
   ShowAndVerifyUi();
@@ -256,16 +270,24 @@ IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest,
   ShowAndVerifyUi();
 }
 
-IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest,
-                       InvokeUi_missing_resident_keys) {
+IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_missing_capability) {
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_storage_full) {
   ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest,
-                       InvokeUi_missing_user_verification) {
+                       InvokeUi_resident_credential_confirm) {
   ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest, InvokeUi_account_select) {
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(AuthenticatorDialogTest,
+                       InvokeUi_request_attestation_permission) {
   ShowAndVerifyUi();
 }

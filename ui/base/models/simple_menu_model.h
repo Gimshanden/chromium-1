@@ -90,9 +90,9 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   void AddCheckItemWithStringId(int command_id, int string_id);
   void AddRadioItem(int command_id, const base::string16& label, int group_id);
   void AddRadioItemWithStringId(int command_id, int string_id, int group_id);
-  void AddHighlightedItemWithStringIdAndIcon(int command_id,
-                                             int string_id,
-                                             const gfx::ImageSkia& icon);
+  void AddHighlightedItemWithIcon(int command_id,
+                                  const base::string16& label,
+                                  const gfx::ImageSkia& icon);
 
   // Adds a separator of the specified type to the model.
   // - Adding a separator after another separator is always invalid if they
@@ -108,6 +108,10 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
                   const base::string16& label,
                   MenuModel* model);
   void AddSubMenuWithStringId(int command_id, int string_id, MenuModel* model);
+  void AddSubMenuWithStringIdAndIcon(int command_id,
+                                     int string_id,
+                                     MenuModel* model,
+                                     const gfx::ImageSkia& icon);
   void AddActionableSubMenu(int command_id,
                             const base::string16& label,
                             MenuModel* model);
@@ -192,11 +196,6 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   void MenuWillShow() override;
   void MenuWillClose() override;
 
-  // Sets |histogram_name_|.
-  void set_histogram_name(const std::string& histogram_name) {
-    histogram_name_ = histogram_name;
-  }
-
  protected:
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
   Delegate* delegate() { return delegate_; }
@@ -229,9 +228,6 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
 
   typedef std::vector<Item> ItemVector;
 
-  // Records the command for UMA.
-  void RecordHistogram(int command_id) const;
-
   // Returns |index|.
   int ValidateItemIndex(int index) const;
 
@@ -246,9 +242,6 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   ItemVector items_;
 
   Delegate* delegate_;
-
-  // The UMA histogram name that is be used to log command ids.
-  std::string histogram_name_;
 
   base::WeakPtrFactory<SimpleMenuModel> method_factory_;
 

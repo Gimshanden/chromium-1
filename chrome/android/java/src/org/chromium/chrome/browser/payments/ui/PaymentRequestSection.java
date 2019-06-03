@@ -783,6 +783,12 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         public TextView getLineItemAmountForTest(int index) {
             return mLineItemAmountsForTest.get(index);
         }
+
+        /** @return The number of line items. */
+        @VisibleForTesting
+        public int getNumberOfLineItemsForTest() {
+            return mLineItemAmountsForTest.size();
+        }
     }
 
     /**
@@ -991,11 +997,13 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
                     ApiCompatibilityUtils.setTextAppearance(
                             labelView, R.style.TextAppearance_BlackBody);
+                    labelView.setId(R.id.payments_description_label);
                 } else if (mRowType == OPTION_ROW_TYPE_WARNING) {
                     // Warnings use three columns.
                     columnSpan = 3;
                     ApiCompatibilityUtils.setTextAppearance(
                             labelView, R.style.TextAppearance_PaymentsUiSectionWarningText);
+                    labelView.setId(R.id.payments_warning_label);
                 }
 
                 // The label spans two columns if no option or edit icon, or spans three columns if

@@ -7,13 +7,11 @@
 
 #include "device/vr/public/mojom/vr_service.mojom-blink.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "third_party/blink/public/platform/web_callbacks.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/page/focus_changed_observer.h"
 #include "third_party/blink/renderer/modules/xr/xr_session.h"
-#include "third_party/blink/renderer/modules/xr/xr_session_creation_options.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -39,18 +37,16 @@ class XR final : public EventTargetWithInlineData,
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(devicechange, kDevicechange)
 
-  ScriptPromise supportsSessionMode(ScriptState*, const String&);
-  ScriptPromise requestSession(ScriptState*, const XRSessionCreationOptions*);
+  ScriptPromise supportsSession(ScriptState*, const String&);
+  ScriptPromise requestSession(ScriptState*, const String&);
 
   XRFrameProvider* frameProvider();
 
-  const device::mojom::blink::XRDevicePtr& xrDevicePtr() const {
-    return device_;
-  }
-  const device::mojom::blink::XRFrameDataProviderPtr& xrMagicWindowProviderPtr()
-      const {
-    return magic_window_provider_;
-  }
+  bool CanRequestNonImmersiveFrameData() const;
+  void GetNonImmersiveFrameData(
+      device::mojom::blink::XRFrameDataRequestOptionsPtr,
+      device::mojom::blink::XRFrameDataProvider::GetFrameDataCallback);
+
   const device::mojom::blink::XREnvironmentIntegrationProviderAssociatedPtr&
   xrEnvironmentProviderPtr();
 
@@ -75,7 +71,21 @@ class XR final : public EventTargetWithInlineData,
   void AddEnvironmentProviderErrorHandler(
       EnvironmentProviderErrorCallback callback);
 
+  void ExitPresent();
+
+  TimeTicks NavigationStart() const { return navigation_start_; }
+
  private:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class SessionRequestStatus : int {
+    // `requestSession` succeeded.
+    kSuccess = 0,
+    // `requestSession` failed with other (unknown) error.
+    kOtherError = 1,
+    kMaxValue = kOtherError,
+  };
+
   class PendingSessionQuery final
       : public GarbageCollected<PendingSessionQuery> {
     DISALLOW_COPY_AND_ASSIGN(PendingSessionQuery);
@@ -98,7 +108,7 @@ class XR final : public EventTargetWithInlineData,
   void OnRequestSessionReturned(PendingSessionQuery*,
                                 device::mojom::blink::XRSessionPtr);
 
-  void DispatchSupportsSessionMode(PendingSessionQuery*);
+  void DispatchSupportsSession(PendingSessionQuery*);
   void OnSupportsSessionReturned(PendingSessionQuery*, bool supports_session);
 
   void EnsureDevice();
@@ -111,18 +121,23 @@ class XR final : public EventTargetWithInlineData,
       XRSession::SessionMode mode,
       XRSession::EnvironmentBlendMode blend_mode,
       device::mojom::blink::XRSessionClientRequest client_request,
-      device::mojom::blink::VRDisplayInfoPtr display_info);
+      device::mojom::blink::VRDisplayInfoPtr display_info,
+      bool sensorless_session = false);
   XRSession* CreateSensorlessInlineSession();
 
   void Dispose();
 
+  void OnDeviceDisconnect();
   void OnEnvironmentProviderDisconnect();
+  void OnMagicWindowProviderDisconnect();
+
+  // Reports that session request has returned.
+  void ReportRequestSessionResult(XRSession::SessionMode session_mode,
+                                  SessionRequestStatus status);
 
   bool pending_device_ = false;
 
   // Indicates whether use of requestDevice has already been logged.
-  bool did_log_requestDevice_ = false;
-  bool did_log_returned_device_ = false;
   bool did_log_supports_immersive_ = false;
 
   // Indicates whether we've already logged a request for an immersive session.
@@ -136,6 +151,9 @@ class XR final : public EventTargetWithInlineData,
   HeapVector<Member<PendingSessionQuery>> pending_mode_queries_;
   HeapVector<Member<PendingSessionQuery>> pending_session_requests_;
 
+  HeapHashSet<Member<PendingSessionQuery>> outstanding_support_queries_;
+  HeapHashSet<Member<PendingSessionQuery>> outstanding_request_queries_;
+
   Vector<EnvironmentProviderErrorCallback>
       environment_provider_error_callbacks_;
 
@@ -147,6 +165,10 @@ class XR final : public EventTargetWithInlineData,
   device::mojom::blink::XREnvironmentIntegrationProviderAssociatedPtr
       environment_provider_;
   mojo::Binding<device::mojom::blink::VRServiceClient> binding_;
+
+  // Time at which navigation started. Used as the base for relative timestamps,
+  // such as for Gamepad objects.
+  TimeTicks navigation_start_;
 };
 
 }  // namespace blink

@@ -24,7 +24,6 @@
 #include "third_party/blink/public/mojom/service_worker/service_worker_container.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "url/gurl.h"
@@ -78,9 +77,22 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
       std::unique_ptr<network::SharedURLLoaderFactoryInfo>
           fallback_factory_info);
 
+  // Clones this fetch context for a nested worker.
+  // For non-PlzDedicatedWorker. This will be removed once PlzDedicatedWorker is
+  // enabled by default.
+  scoped_refptr<WebWorkerFetchContextImpl> CloneForNestedWorkerDeprecated(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  // For PlzDedicatedWorker. The cloned fetch context does not inherit some
+  // fields (e.g., ServiceWorkerProviderContext) from this fetch context, and
+  // instead that takes values passed from the browser process.
+  scoped_refptr<WebWorkerFetchContextImpl> CloneForNestedWorker(
+      ServiceWorkerProviderContext* service_worker_provider_context,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo> loader_factory_info,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+          fallback_factory_info,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
   // blink::WebWorkerFetchContext implementation:
-  scoped_refptr<blink::WebWorkerFetchContext> CloneForNestedWorker(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
   void SetTerminateSyncLoadEvent(base::WaitableEvent*) override;
   void InitializeOnWorkerThread(blink::AcceptLanguagesWatcher*) override;
   blink::WebURLLoaderFactory* GetURLLoaderFactory() override;
@@ -98,7 +110,7 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
   void DidDisplayContentWithCertificateErrors() override;
   void DidRunInsecureContent(const blink::WebSecurityOrigin&,
                              const blink::WebURL& insecure_url) override;
-  void SetApplicationCacheHostID(int id) override;
+  void SetApplicationCacheHostID(const base::UnguessableToken& id) override;
   void SetSubresourceFilterBuilder(
       std::unique_ptr<blink::WebDocumentSubresourceFilter::Builder>) override;
   std::unique_ptr<blink::WebDocumentSubresourceFilter> TakeSubresourceFilter()
@@ -114,7 +126,6 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
   // it's copied from the ancestor frame (directly for non-nested workers, or
   // indirectly via its parent worker for nested workers). For shared workers,
   // it's copied from the shadow page.
-  void set_service_worker_provider_id(int id);
   void set_is_controlled_by_service_worker(
       blink::mojom::ControllerServiceWorkerMode mode);
   void set_ancestor_frame_id(int id);
@@ -168,6 +179,17 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
 
   ~WebWorkerFetchContextImpl() override;
 
+  scoped_refptr<WebWorkerFetchContextImpl> CloneForNestedWorkerInternal(
+      blink::mojom::ServiceWorkerWorkerClientRequest
+          service_worker_client_request,
+      blink::mojom::ServiceWorkerWorkerClientRegistryPtrInfo
+          service_worker_worker_client_registry_ptr_info,
+      blink::mojom::ServiceWorkerContainerHostPtrInfo container_host_ptr_info,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo> loader_factory_info,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+          fallback_factory_info,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
   bool Send(IPC::Message* message);
 
   // Resets the service worker url loader factory of a URLLoaderFactoryImpl
@@ -199,7 +221,6 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
   // Consumed on the worker thread to create |fallback_factory_|.
   std::unique_ptr<network::SharedURLLoaderFactoryInfo> fallback_factory_info_;
 
-  int service_worker_provider_id_ = blink::kInvalidServiceWorkerProviderId;
   blink::mojom::ControllerServiceWorkerMode is_controlled_by_service_worker_ =
       blink::mojom::ControllerServiceWorkerMode::kNoController;
 
@@ -248,7 +269,7 @@ class CONTENT_EXPORT WebWorkerFetchContextImpl
   base::Optional<url::Origin> top_frame_origin_;
   bool is_secure_context_ = false;
   GURL origin_url_;
-  int appcache_host_id_ = blink::mojom::kAppCacheNoHostId;
+  base::UnguessableToken appcache_host_id_;
 
   blink::mojom::RendererPreferences renderer_preferences_;
 

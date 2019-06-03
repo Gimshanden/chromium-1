@@ -70,10 +70,6 @@ MenuButtonController::MenuButtonController(
 
 MenuButtonController::~MenuButtonController() = default;
 
-MenuButtonController* MenuButtonController::AsMenuButtonController() {
-  return this;
-}
-
 bool MenuButtonController::OnMousePressed(const ui::MouseEvent& event) {
   if (button()->request_focus_on_press())
     button()->RequestFocus();
@@ -142,7 +138,7 @@ bool MenuButtonController::OnKeyReleased(const ui::KeyEvent& event) {
 void MenuButtonController::UpdateAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->role = ax::mojom::Role::kPopUpButton;
   node_data->SetHasPopup(ax::mojom::HasPopup::kMenu);
-  if (button()->enabled())
+  if (button()->GetEnabled())
     node_data->SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);
 }
 
@@ -166,19 +162,18 @@ bool MenuButtonController::IsTriggerableEvent(const ui::Event& event) {
          IsTriggerableEventType(event) && IsIntentionalMenuTrigger();
 }
 
-bool MenuButtonController::OnGestureEvent(ui::GestureEvent* event) {
+void MenuButtonController::OnGestureEvent(ui::GestureEvent* event) {
   if (button()->state() != Button::STATE_DISABLED) {
     auto ref = weak_factory_.GetWeakPtr();
     if (delegate()->IsTriggerableEvent(*event) && !Activate(event)) {
-      if (!ref)
-        return false;
       // When |Activate()| returns |false|, it means the click was handled by
       // a button listener and has handled the gesture event. So, there is no
       // need to further process the gesture event here. However, if the
       // listener didn't run menu code, we should make sure to reset our state.
-      if (button()->state() == Button::STATE_HOVERED)
+      if (ref && button()->state() == Button::STATE_HOVERED)
         button()->SetState(Button::STATE_NORMAL);
-      return false;
+
+      return;
     }
     if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
       event->SetHandled();
@@ -191,7 +186,7 @@ bool MenuButtonController::OnGestureEvent(ui::GestureEvent* event) {
       button()->SetState(Button::STATE_NORMAL);
     }
   }
-  return true;
+  ButtonController::OnGestureEvent(event);
 }
 
 bool MenuButtonController::Activate(const ui::Event* event) {

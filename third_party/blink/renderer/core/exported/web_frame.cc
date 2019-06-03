@@ -121,8 +121,6 @@ bool WebFrame::Swap(WebFrame* frame) {
     } else {
       Page* other_page = local_frame.GetPage();
       other_page->SetMainFrame(&local_frame);
-      if (PageScheduler* page_scheduler = other_page->GetPageScheduler())
-        page_scheduler->SetIsMainFrameLocal(true);
       // This trace event is needed to detect the main frame of the
       // renderer in telemetry metrics. See crbug.com/692112#c11.
       TRACE_EVENT_INSTANT1("loading", "markAsMainFrame",
@@ -159,14 +157,11 @@ WebSecurityOrigin WebFrame::GetSecurityOrigin() const {
       ToCoreFrame(*this)->GetSecurityContext()->GetSecurityOrigin());
 }
 
-void WebFrame::SetFrameOwnerPolicy(
-    WebSandboxFlags flags,
-    const blink::ParsedFeaturePolicy& container_policy) {
+void WebFrame::SetFrameOwnerPolicy(const FramePolicy& frame_policy) {
   // At the moment, this is only used to replicate sandbox flags and container
   // policy for frames with a remote owner.
-  auto* owner = To<RemoteFrameOwner>(ToCoreFrame(*this)->Owner());
-  owner->SetSandboxFlags(static_cast<SandboxFlags>(flags));
-  owner->SetContainerPolicy(container_policy);
+  To<RemoteFrameOwner>(ToCoreFrame(*this)->Owner())
+      ->SetFramePolicy(frame_policy);
 }
 
 WebInsecureRequestPolicy WebFrame::GetInsecureRequestPolicy() const {
@@ -174,9 +169,9 @@ WebInsecureRequestPolicy WebFrame::GetInsecureRequestPolicy() const {
 }
 
 std::vector<unsigned> WebFrame::GetInsecureRequestToUpgrade() const {
-  SecurityContext::InsecureNavigationsSet* set =
+  const SecurityContext::InsecureNavigationsSet& set =
       ToCoreFrame(*this)->GetSecurityContext()->InsecureNavigationsToUpgrade();
-  return SecurityContext::SerializeInsecureNavigationSet(*set);
+  return SecurityContext::SerializeInsecureNavigationSet(set);
 }
 
 void WebFrame::SetFrameOwnerProperties(

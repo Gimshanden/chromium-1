@@ -184,11 +184,21 @@ input:focus::after {
   transform: translateX(50%);
 }
 
+.horizontal-center-stripe {
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+}
+
 .top-stripe.right-stripe {
   transform: translate(50%, -50%);
 }
 
 .top-stripe.left-stripe {
+  transform: translate(-50%, -50%);
+}
+
+.top-stripe.horizontal-center-stripe {
   transform: translate(-50%, -50%);
 }
 
@@ -209,29 +219,32 @@ body.tablet-landscape .actions-group {
 }
 
 #modes-group {
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,1) 10% 90%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,1) var(--modes-gradient-padding) calc(100% - var(--modes-gradient-padding)), rgba(0,0,0,0) 100%);
   bottom: var(--modes-bottom);
   flex-direction: column;
-  height: var(--modes-height);
+  height: calc(var(--modes-height) - var(--modes-gradient-padding) * 2);
   justify-content: flex-start;
   overflow: scroll;
+  padding: var(--modes-gradient-padding) 3px;
   pointer-events: auto;
 }
 
 .mode-item {
-  margin: 5px 0;
+  flex: 0 0 var(--mode-item-height);
   position: relative;
 }
 
-label.mode-item>span {
-  border-radius: 16px / 50%;
+div.mode-item>span {
+  border-radius: 13px / 50%;
   color: white;
   display: inline-block;
   font-family: 'Roboto', sans-serif;
   font-size: 14px;
-  font-weight: 400;
-  padding: 10px 15px;
-  text-shadow: 2px 3px 3px rgba(32, 33, 36, 0.5);
+  font-weight: 500;
+  line-height: 32px;
+  margin: 8px 0;
+  padding: 0 12px;
+  text-shadow: 0 2px 3px rgba(32, 33, 36, 0.3);
 }
 
 .mode-item>input {
@@ -241,9 +254,13 @@ label.mode-item>span {
 }
 
 .mode-item>input:checked + span {
-  background: rgb(238, 238, 238);
+  background: white;
   color: black;
   text-shadow: none;
+}
+
+.mode-item>input:focus + span {
+  margin-bottom: 6px;
 }
 
 button.shutter {
@@ -374,12 +391,12 @@ body.mode-switching:not(.streaming) #camera-mode {
 }
 
 #options-group {
-  bottom: calc((var(--bottom-line) + (var(--big-icon)/2)) + 30px);
-  flex-direction: column;
+  bottom: calc((var(--bottom-line) + (var(--big-icon) / 2)) + 30px);
+  flex-direction: column-reverse;
 }
 
 body:not(.multi-camera) #options-group {
-  bottom: calc((var(--bottom-line) - 18px) - (var(--small-icon)/2));
+  bottom: calc((var(--bottom-line) - 18px) - (var(--small-icon) / 2));
 }
 
 #options-group input {
@@ -430,8 +447,11 @@ body._10sec #toggle-timer:checked {
 #settings,
 #gridsettings,
 #timersettings,
+#resolutionsettings,
+#photoresolutionsettings,
+#videoresolutionsettings,
 #browser,
-#dialog,
+#message-dialog,
 #warning {
   bottom: 0;
   left: 0;
@@ -447,8 +467,11 @@ body.camera #camera,
 body.settings #settings,
 body.gridsettings #gridsettings,
 body.timersettings #timersettings,
+body.resolutionsettings #resolutionsettings,
+body.photoresolutionsettings #photoresolutionsettings,
+body.videoresolutionsettings #videoresolutionsettings,
 body.browser #browser,
-body.dialog #dialog,
+body.message-dialog #message-dialog,
 body.warning #warning {
   opacity: 1;
   transition: opacity 100ms;
@@ -457,6 +480,9 @@ body.warning #warning {
 
 body.gridsettings #gridsettings,
 body.timersettings #timersettings,
+body.resolutionsettings #resolutionsettings,
+body.photoresolutionsettings #photoresolutionsettings,
+body.videoresolutionsettings #videoresolutionsettings,
 body.settings #settings {
   /* Avoid flicking for transition between settings. */
   transition: opacity 0ms;
@@ -466,7 +492,15 @@ body.settings .left-stripe,
 body.gridsettings .left-stripe,
 body.gridsettings #settings,
 body.timersettings .left-stripe,
-body.timersettings #settings {
+body.timersettings #settings,
+body.resolutionsettings .left-stripe,
+body.resolutionsettings #settings,
+body.photoresolutionsettings .left-stripe,
+body.photoresolutionsettings #settings,
+body.photoresolutionsettings #resolutionsettings,
+body.videoresolutionsettings .left-stripe,
+body.videoresolutionsettings #settings,
+body.videoresolutionsettings #resolutionsettings {
   opacity: 0;
 }
 
@@ -481,9 +515,17 @@ body.timersettings #settings {
 #camera {
   --big-icon: 48px;
   --bottom-line: 56px;
-  --modes-height: 120px;
-  --modes-bottom: calc((var(--bottom-line) + (var(--big-icon)/2)) + 24px);
+  --mode-item-height: 48px;
+  --modes-bottom: calc((var(--bottom-line) + (var(--big-icon) / 2)) + 24px);
+  --modes-gradient-padding: 24px;
+  --modes-height: 140px;
   --small-icon: 40px;
+}
+
+@media screen and (min-height: 800px) {
+  #camera {
+    --modes-height: calc(var(--mode-item-height) * 4 + var(--modes-gradient-padding) * 2);
+  }
 }
 
 body.w-letterbox.w-letterbox-s #camera {
@@ -515,20 +557,20 @@ body:not(.w-letterbox).preview-vertical-dock #camera {
   position: relative;
 }
 
-body:.w-letterbox.w-letterbox-l #preview-wrapper {
+body.w-letterbox.w-letterbox-l #preview-wrapper {
   left: 72px;
 }
 
 body:not(.w-letterbox).preview-vertical-dock #preview-wrapper {
-  bottom: calc((var(--bottom-line) + (var(--big-icon)/2)) + 12px);
+  bottom: calc((var(--bottom-line) + (var(--big-icon) / 2)) + 12px);
 }
 
-body:not(.mode-switching).square-mode #preview-wrapper {
+body.square-preview #preview-wrapper {
   height: 0; /* Calculate at runtime. */
   width: 0; /* Calculate at runtime. */
 }
 
-body:not(.mode-switching).square-mode #preview-video {
+body.square-preview #preview-video {
   left: 0; /* Calculate at runtime. */
   position: absolute;
   top: 0; /* Calculate at runtime. */
@@ -872,14 +914,79 @@ body.ext-fs #browser-export {
   }
 }
 
+#banner {
+  background: white;
+  border-radius: 8px;
+  bottom: -130px;
+  display: none;
+  padding: 26px 29px;
+  width: 460px;
+}
+
+#banner.animate {
+  animation: emerge 12000ms ease-out;
+  display: block;
+}
+
+@keyframes emerge {
+  0%,
+  100% {
+    bottom: -130;
+  }
+  10%,
+  90% {
+    bottom: 31px;
+  }
+}
+
+#banner-title {
+  color: rgb(26, 115, 232);
+  margin-bottom: 10px;
+}
+
+#banner-title-icon {
+  background-image: url(../images/camera_intro_banner_icon.svg);
+  display: inline-block;
+  height: 20px;
+  margin-right: 10px;
+  vertical-align: middle;
+  width: 20px;
+}
+
+#banner-title-text {
+  font: 450 18px 'Google Sans', sans-serif;
+  vertical-align: middle;
+}
+
+#banner-msg {
+  color: rgb(95, 99, 104);
+  font: 375 15px/22px 'Roboto';
+}
+
+#banner-learn-more {
+  color: rgb(26, 115, 232);
+  cursor: pointer;
+}
+
+#banner-close {
+  background-image: url(../images/camera_intro_banner_close.svg);
+  display: block;
+  height: 20px;
+  position: absolute;
+  right: 15px;
+  top: 15px;
+  width: 20px;
+}
+
 .menu {
   background: rgba(0, 0, 0, 0.75);
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 100vh;
   left: 0;
   min-width: 360px;
   opacity: 0.9;
+  overflow-y: scroll;
   position: absolute;
   top: 0;
 }
@@ -896,6 +1003,10 @@ body.ext-fs #browser-export {
   justify-content: flex-start;
   padding: 0 20px 0 24px;
   text-align: left;
+}
+
+.menu-item.resol-item {
+  padding-left: 60px;
 }
 
 .menu-header {
@@ -922,11 +1033,21 @@ body.ext-fs #browser-export {
   display: none;
 }
 
+body:not(.has-front-camera) #settings-front-photores,
+body:not(.has-front-camera) #settings-front-videores,
+body:not(.has-back-camera) #settings-back-photores,
+body:not(.has-back-camera) #settings-back-videores,
+body:not(.has-front-camera):not(.has-back-camera) #builtin-photo-header,
+body:not(.has-front-camera):not(.has-back-camera) #builtin-video-header {
+  display: none;
+}
+
 body._3x3 .description span[i18n-content=label_grid_3x3],
 body._4x4 .description span[i18n-content=label_grid_4x4],
 body.golden .description span[i18n-content=label_grid_golden],
 body._3sec .description span[i18n-content=label_timer_3s],
-body._10sec .description span[i18n-content=label_timer_10s] {
+body._10sec .description span[i18n-content=label_timer_10s],
+.menu-item.resol-item .description span {
   display: inline;
 }
 
@@ -970,6 +1091,14 @@ body._10sec .description span[i18n-content=label_timer_10s] {
   background-image: url(../images/settings_timer_duration.svg);
 }
 
+body.no-resolution-settings #settings-resolution {
+  display: none;
+}
+
+#settings-resolution .icon {
+  background-image: url(../images/settings_resolution.svg);
+}
+
 #settings-feedback .icon {
   background-image: url(../images/settings_feedback.svg);
 }
@@ -979,12 +1108,14 @@ body._10sec .description span[i18n-content=label_timer_10s] {
 }
 
 #settings-gridtype .icon.end,
-#settings-timerdur .icon.end {
+#settings-timerdur .icon.end,
+#settings-resolution .icon.end,
+.resol-item.multi-option .icon.end {
   background-image: url(../images/settings_button_expand.svg);
 }
 
 #warning,
-#dialog {
+.dialog {
   align-items: center;
   display: flex;
   justify-content: center;
@@ -1004,13 +1135,14 @@ body._10sec .description span[i18n-content=label_timer_10s] {
   white-space: pre-wrap;
 }
 
-#dialog {
-  background: rgba(0, 0, 0, 0.8);
+.dialog {
+  background: rgba(0, 0, 0, 0.6);
 }
 
-#dialog-popup {
+.dialog-popup {
   background: white;
-  border-radius: 4px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
   display: flex;
   flex-direction: column;
   padding: 20px;
@@ -1018,11 +1150,11 @@ body._10sec .description span[i18n-content=label_timer_10s] {
   transition: transform 200ms;
 }
 
-body.dialog #dialog #dialog-popup {
+.dialog .dialog-popup {
   transform: translateY(0);
 }
 
-#dialog #dialog-msg {
+.dialog .dialog-msg {
   color: rgb(32, 33, 36);
   cursor: text;
   font-family: 'Roboto', sans-serif;
@@ -1035,29 +1167,29 @@ body.dialog #dialog #dialog-popup {
   white-space: pre-wrap;
 }
 
-#dialog #dialog-msg::-webkit-scrollbar {
+.dialog .dialog-msg::-webkit-scrollbar {
   height: 6px;
   width: 6px;
 }
 
-#dialog #dialog-msg::-webkit-scrollbar-track {
+.dialog .dialog-msg::-webkit-scrollbar-track {
   background: transparent;
 }
 
-#dialog #dialog-msg::-webkit-scrollbar-thumb {
+.dialog .dialog-msg::-webkit-scrollbar-thumb {
   background: gray;
   height: 6px;
   width: 6px;
 }
 
-#dialog-buttons {
+.dialog-buttons {
   align-items: center;
   display: flex;
   justify-content: flex-end;
   margin: 0 -2px;
 }
 
-#dialog-buttons button {
+.dialog-buttons button {
   background-color: white;
   border-style: solid;
   color: rgb(37, 129, 223);
@@ -1067,13 +1199,13 @@ body.dialog #dialog #dialog-popup {
   padding: 6px 18px;
 }
 
-#dialog-buttons button:focus {
+.dialog-buttons button:focus {
   background-color: rgb(37, 129, 223);
   border-color: rgb(37, 129, 223);
   color: white;
 }
 
-#dialog-buttons button:focus::after {
+.dialog-buttons button:focus::after {
   border: none;
 }
 

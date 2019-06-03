@@ -20,6 +20,10 @@ namespace autofill {
 class PasswordRequirementsSpec;
 }
 
+namespace network {
+class SharedURLLoaderFactory;
+}
+
 namespace password_manager {
 
 // A service that fetches, stores and returns requirements for generating a
@@ -47,9 +51,10 @@ class PasswordRequirementsService : public KeyedService {
   // |main_frame_domain| and stores it into the MRU cache.
   void PrefetchSpec(const GURL& main_frame_domain);
 
-  // Stores the password requirements for the field identified via
-  // |form_signature| and |field_signature| in the MRU cache.
-  void AddSpec(autofill::FormSignature form_signature,
+  // Stores the password requirements for |main_frame_domain| and for the field
+  // identified via |form_signature| and |field_signature| in the MRU caches.
+  void AddSpec(const GURL& main_frame_domain,
+               autofill::FormSignature form_signature,
                autofill::FieldSignature field_signature,
                const autofill::PasswordRequirementsSpec& spec);
 
@@ -75,6 +80,9 @@ class PasswordRequirementsService : public KeyedService {
 
   DISALLOW_COPY_AND_ASSIGN(PasswordRequirementsService);
 };
+
+std::unique_ptr<PasswordRequirementsService> CreatePasswordRequirementsService(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
 
 }  // namespace password_manager
 

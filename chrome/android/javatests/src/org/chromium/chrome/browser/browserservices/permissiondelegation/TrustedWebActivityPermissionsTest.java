@@ -19,11 +19,13 @@ import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.browserservices.Origin;
 import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
 import org.chromium.chrome.browser.customtabs.CustomTabsTestUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
 
@@ -43,6 +45,8 @@ public class TrustedWebActivityPermissionsTest {
     private EmbeddedTestServer mTestServer;
     private String mTestPage;
     private Origin mOrigin;
+    private String mPackage;
+    private TrustedWebActivityPermissionManager mPermissionManager;
 
     @Before
     public void setUp() throws InterruptedException, ProcessInitException, TimeoutException {
@@ -55,42 +59,49 @@ public class TrustedWebActivityPermissionsTest {
                 ServerCertificate.CERT_OK);
         mTestPage = mTestServer.getURL(TEST_PAGE);
         mOrigin = new Origin(mTestPage);
+        mPackage = InstrumentationRegistry.getTargetContext().getPackageName();
 
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(
                 CustomTabsTestUtils.createMinimalCustomTabIntent(
                         InstrumentationRegistry.getTargetContext(), mTestPage));
 
-        TrustedWebActivityPermissionManager.clearForTesting();
+        mPermissionManager = ChromeApplication.getComponent().resolveTwaPermissionManager();
+        mPermissionManager.clearForTesting();
         assertEquals("\"default\"", getNotificationPermission());
     }
 
     @After
     public void tearDown() throws TimeoutException {
-        TrustedWebActivityPermissionManager.clearForTesting();
+        mPermissionManager.clearForTesting();
         mTestServer.stopAndDestroyServer();
     }
 
     @Test
     @MediumTest
     public void allowNotifications() throws TimeoutException, InterruptedException {
-        TrustedWebActivityPermissionManager.register(mOrigin, true);
+        TestThreadUtils.runOnUiThreadBlocking(() ->
+                mPermissionManager.register(mOrigin, mPackage, true));
         assertEquals("\"granted\"", getNotificationPermission());
     }
 
     @Test
     @MediumTest
     public void blockNotifications() throws TimeoutException, InterruptedException {
-        TrustedWebActivityPermissionManager.register(mOrigin, false);
+        TestThreadUtils.runOnUiThreadBlocking(() ->
+                mPermissionManager.register(mOrigin, mPackage, false));
         assertEquals("\"denied\"", getNotificationPermission());
     }
 
     @Test
     @MediumTest
     public void unregisterTwa() throws TimeoutException, InterruptedException {
-        TrustedWebActivityPermissionManager.register(mOrigin, true);
+        TestThreadUtils.runOnUiThreadBlocking(() ->
+                mPermissionManager.register(mOrigin, mPackage, true));
         assertEquals("\"granted\"", getNotificationPermission());
 
-        TrustedWebActivityPermissionManager.unregister(mOrigin);
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mPermissionManager.unregister(mOrigin);
+        });
         assertEquals("\"default\"", getNotificationPermission());
     }
 

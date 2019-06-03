@@ -14,6 +14,7 @@
 #include "base/files/file_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
@@ -36,6 +37,7 @@
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/session/connection_holder.h"
 #include "components/crx_file/id_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -50,6 +52,7 @@
 namespace {
 
 constexpr char kActivity[] = "activity";
+constexpr char kFrameworkPackageName[] = "android";
 constexpr char kIconResourceId[] = "icon_resource_id";
 constexpr char kIconVersion[] = "icon_version";
 constexpr char kInstallTime[] = "install_time";
@@ -62,7 +65,7 @@ constexpr char kName[] = "name";
 constexpr char kNotificationsEnabled[] = "notifications_enabled";
 constexpr char kPackageName[] = "package_name";
 constexpr char kPackageVersion[] = "package_version";
-constexpr char kPermissions[] = "permissions";
+constexpr char kPermissionStates[] = "permission_states";
 constexpr char kSticky[] = "sticky";
 constexpr char kShortcut[] = "shortcut";
 constexpr char kShouldSync[] = "should_sync";
@@ -70,6 +73,8 @@ constexpr char kSuspended[] = "suspended";
 constexpr char kSystem[] = "system";
 constexpr char kUninstalled[] = "uninstalled";
 constexpr char kVPNProvider[] = "vpnprovider";
+constexpr char kPermissionStateGranted[] = "granted";
+constexpr char kPermissionStateManaged[] = "managed";
 
 // Defines current version for app icons. This is used for invalidation icons in
 // case we change how app icons are produced on Android side. Can be updated in
@@ -209,14 +214,37 @@ ArcAppIconDescriptor MapDefaultAppIconDescriptor(
 // Whether skip install_time for comparing two |AppInfo|.
 bool ignore_compare_app_info_install_time = false;
 
+// Reason for installation enumeration; Used for UMA counter for reason for
+// install.
+enum class InstallationCounterReasonEnum {
+  USER = 0,     // Application installed by user.
+  DEFAULT = 1,  // Application part of the default set.
+  OEM = 2,      // OEM application.
+  POLICY = 3,   // Installed by policy.
+  UNKNOWN = 4,
+  kMaxValue = UNKNOWN,
+};
+
+// Reasons for uninstalls. Only one, USER, for now.
+enum class UninstallCounterReasonEnum {
+  USER = 0,  // Uninstall triggered by user.
+  kMaxValue = USER
+};
+
 }  // namespace
+
+// static
+ArcAppListPrefs* ArcAppListPrefs::Create(Profile* profile) {
+  return new ArcAppListPrefs(profile, nullptr);
+}
 
 // static
 ArcAppListPrefs* ArcAppListPrefs::Create(
     Profile* profile,
     arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
-        app_connection_holder) {
-  return new ArcAppListPrefs(profile, app_connection_holder);
+        app_connection_holder_for_testing) {
+  DCHECK(app_connection_holder_for_testing);
+  return new ArcAppListPrefs(profile, app_connection_holder_for_testing);
 }
 
 // static
@@ -224,6 +252,8 @@ void ArcAppListPrefs::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterDictionaryPref(arc::prefs::kArcApps);
   registry->RegisterDictionaryPref(arc::prefs::kArcPackages);
+  registry->RegisterIntegerPref(arc::prefs::kArcFrameworkVersion,
+                                -1 /* default_value */);
   registry->RegisterDictionaryPref(
       arc::prefs::kArcSetNotificationsEnabledDeferred);
   ArcDefaultAppList::RegisterProfilePrefs(registry);
@@ -339,14 +369,16 @@ class ArcAppListPrefs::ResizeRequest : public ImageDecoder::ImageRequest {
 ArcAppListPrefs::ArcAppListPrefs(
     Profile* profile,
     arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
-        app_connection_holder)
+        app_connection_holder_for_testing)
     : profile_(profile),
       prefs_(profile->GetPrefs()),
-      app_connection_holder_(app_connection_holder),
+      app_connection_holder_for_testing_(app_connection_holder_for_testing),
+      file_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       weak_ptr_factory_(this) {
   VLOG(1) << "ARC app list prefs created";
   DCHECK(profile);
-  DCHECK(app_connection_holder);
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   const base::FilePath& base_path = profile->GetPath();
   base_path_ = base_path.AppendASCII(arc::prefs::kArcApps);
@@ -380,7 +412,7 @@ ArcAppListPrefs::~ArcAppListPrefs() {
     return;
   DCHECK(arc::ArcServiceManager::Get());
   arc_session_manager->RemoveObserver(this);
-  app_connection_holder_->RemoveObserver(this);
+  app_connection_holder()->RemoveObserver(this);
 }
 
 void ArcAppListPrefs::StartPrefs() {
@@ -404,9 +436,9 @@ void ArcAppListPrefs::StartPrefs() {
 
   VLOG(1) << "Registering host...";
 
-  app_connection_holder_->SetHost(this);
-  app_connection_holder_->AddObserver(this);
-  if (!app_connection_holder_->IsConnected())
+  app_connection_holder()->SetHost(this);
+  app_connection_holder()->AddObserver(this);
+  if (!app_connection_holder()->IsConnected())
     OnConnectionClosed();
 }
 
@@ -474,7 +506,7 @@ void ArcAppListPrefs::RequestIcon(const std::string& app_id,
   if (!ready_apps_.count(app_id))
     return;
 
-  if (!app_connection_holder_->IsConnected()) {
+  if (!app_connection_holder()->IsConnected()) {
     // AppInstance should be ready since we have app_id in ready_apps_. This
     // can happen in browser_tests.
     return;
@@ -498,14 +530,14 @@ void ArcAppListPrefs::SendIconRequest(const std::string& app_id,
                          weak_ptr_factory_.GetWeakPtr(), app_id, descriptor);
   if (app_info.icon_resource_id.empty()) {
     auto* app_instance =
-        ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder_, RequestAppIcon);
+        ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder(), RequestAppIcon);
     if (!app_instance)
       return;  // Error is logged in macro.
     app_instance->RequestAppIcon(app_info.package_name, app_info.activity,
                                  descriptor.GetSizeInPixels(),
                                  std::move(callback));
   } else {
-    auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder_,
+    auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder(),
                                                      RequestShortcutIcon);
     if (!app_instance)
       return;  // Error is logged in macro.
@@ -543,7 +575,7 @@ void ArcAppListPrefs::SetNotificationsEnabled(const std::string& app_id,
     return;
   }
 
-  auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder_,
+  auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_connection_holder(),
                                                    SetNotificationsEnabled);
   if (!app_instance)
     return;
@@ -597,7 +629,8 @@ std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
   bool should_sync = false;
   bool system = false;
   bool vpn_provider = false;
-  base::flat_map<arc::mojom::AppPermission, bool> permissions;
+  base::flat_map<arc::mojom::AppPermission, arc::mojom::PermissionStatePtr>
+      permissions;
 
   GetInt64FromPref(package, kLastBackupAndroidId, &last_backup_android_id);
   GetInt64FromPref(package, kLastBackupTime, &last_backup_time);
@@ -605,7 +638,7 @@ std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
   package->GetBoolean(kShouldSync, &should_sync);
   package->GetBoolean(kSystem, &system);
   package->GetBoolean(kVPNProvider, &vpn_provider);
-  const base::Value* permission_val = package->FindKey(kPermissions);
+  const base::Value* permission_val = package->FindKey(kPermissionStates);
   if (permission_val) {
     const base::DictionaryValue* permission_dict = nullptr;
     permission_val->GetAsDictionary(&permission_dict);
@@ -617,18 +650,29 @@ std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
       base::StringToInt64(iter.key(), &permission_type);
       DCHECK_NE(-1, permission_type);
 
-      bool value = false;
-      iter.value().GetAsBoolean(&value);
+      const base::Value& permission_state = iter.value();
 
-      arc::mojom::AppPermission permission =
-          static_cast<arc::mojom::AppPermission>(permission_type);
-      permissions.insert(std::make_pair(permission, value));
+      const base::DictionaryValue* permission_state_dict;
+      if (permission_state.GetAsDictionary(&permission_state_dict)) {
+        bool granted =
+            permission_state_dict->FindBoolKey(kPermissionStateGranted)
+                .value_or(false);
+        bool managed =
+            permission_state_dict->FindBoolKey(kPermissionStateManaged)
+                .value_or(false);
+        arc::mojom::AppPermission permission =
+            static_cast<arc::mojom::AppPermission>(permission_type);
+        permissions.emplace(permission,
+                            arc::mojom::PermissionState::New(granted, managed));
+      } else {
+        LOG(ERROR) << "Permission state was not a dictionary.";
+      }
     }
   }
 
   return std::make_unique<PackageInfo>(
       package_name, package_version, last_backup_android_id, last_backup_time,
-      should_sync, system, vpn_provider, permissions);
+      should_sync, system, vpn_provider, std::move(permissions));
 }
 
 std::vector<std::string> ArcAppListPrefs::GetAppIds() const {
@@ -1195,6 +1239,19 @@ void ArcAppListPrefs::RemoveApp(const std::string& app_id) {
   tracked_apps_.erase(app_id);
 }
 
+arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
+ArcAppListPrefs::app_connection_holder() {
+  // Some tests set their own holder. If it's set, return the holder.
+  if (app_connection_holder_for_testing_)
+    return app_connection_holder_for_testing_;
+  auto* arc_service_manager = arc::ArcServiceManager::Get();
+  // The null check is for unit tests. On production, |arc_service_manager| is
+  // always non-null.
+  if (!arc_service_manager)
+    return nullptr;
+  return arc_service_manager->arc_bridge_service()->app();
+}
+
 void ArcAppListPrefs::AddOrUpdatePackagePrefs(
     const arc::mojom::ArcPackageInfo& package) {
   DCHECK(IsArcAndroidEnabledForProfile(profile_));
@@ -1222,17 +1279,51 @@ void ArcAppListPrefs::AddOrUpdatePackagePrefs(
   package_dict->SetBoolean(kSystem, package.system);
   package_dict->SetBoolean(kUninstalled, false);
   package_dict->SetBoolean(kVPNProvider, package.vpn_provider);
-  if (package.permissions.has_value()) {
-    base::DictionaryValue permission_dict;
-    for (const auto& permission : package.permissions.value()) {
-      permission_dict.SetBoolean(
+
+  base::DictionaryValue permissions_dict;
+  if (package.permission_states.has_value()) {
+    // Support new format
+    for (const auto& permission : package.permission_states.value()) {
+      base::DictionaryValue permission_state_dict;
+      permission_state_dict.SetBoolKey(kPermissionStateGranted,
+                                       permission.second->granted);
+      permission_state_dict.SetBoolKey(kPermissionStateManaged,
+                                       permission.second->managed);
+      permissions_dict.SetKey(
           base::NumberToString(static_cast<int64_t>(permission.first)),
-          permission.second);
+          std::move(permission_state_dict));
     }
-    package_dict->SetKey(kPermissions, std::move(permission_dict));
+    package_dict->SetKey(kPermissionStates, std::move(permissions_dict));
+  } else if (package.permissions.has_value()) {
+    // Support deprecated format
+    for (const auto& permission : package.permissions.value()) {
+      base::DictionaryValue permission_state_dict;
+      permission_state_dict.SetBoolKey(kPermissionStateGranted,
+                                       permission.second);
+      // Assume deprecated format is not managed.
+      permission_state_dict.SetBoolKey(kPermissionStateManaged, false);
+      permissions_dict.SetKey(
+          base::NumberToString(static_cast<int64_t>(permission.first)),
+          std::move(permission_state_dict));
+    }
+    package_dict->SetKey(kPermissionStates, std::move(permissions_dict));
   } else {
-    // Remove kPermissions from dict if there are no permissions.
-    package_dict->RemoveKey(kPermissions);
+    // Remove kPermissionStates from dict if there are no permissions.
+    package_dict->RemoveKey(kPermissionStates);
+  }
+
+  // TODO (crbug.com/xxxxx): Remove in M78. This is required to force updating
+  // icons for all packages in case framework version is changed. Prior to this
+  // change |InvalidatePackageIcons| for framework did not refresh all packages.
+  if (package_name == kFrameworkPackageName) {
+    const int last_framework_version =
+        profile_->GetPrefs()->GetInteger(arc::prefs::kArcFrameworkVersion);
+    if (last_framework_version != package.package_version) {
+      InvalidatePackageIcons(package_name);
+      profile_->GetPrefs()->SetInteger(arc::prefs::kArcFrameworkVersion,
+                                       package.package_version);
+    }
+    return;
   }
 
   if (old_package_version == -1 ||
@@ -1252,7 +1343,7 @@ void ArcAppListPrefs::RemovePackageFromPrefs(const std::string& package_name) {
 void ArcAppListPrefs::OnAppListRefreshed(
     std::vector<arc::mojom::AppInfoPtr> apps) {
   DCHECK(app_list_refreshed_callback_.is_null());
-  if (!app_connection_holder_->IsConnected()) {
+  if (!app_connection_holder()->IsConnected()) {
     LOG(ERROR) << "App instance is not connected. Delaying app list refresh. "
                << "See b/70566216.";
     app_list_refreshed_callback_ =
@@ -1362,14 +1453,22 @@ void ArcAppListPrefs::InvalidateAppIcons(const std::string& app_id) {
 }
 
 void ArcAppListPrefs::InvalidatePackageIcons(const std::string& package_name) {
+  if (package_name == kFrameworkPackageName) {
+    VLOG(1)
+        << "Android framework was changed, refreshing icons for all packages";
+    for (const auto& package_name_to_invalidate : GetPackagesFromPrefs()) {
+      if (package_name_to_invalidate != kFrameworkPackageName)
+        InvalidatePackageIcons(package_name_to_invalidate);
+    }
+  }
   for (const std::string& app_id : GetAppsForPackage(package_name))
     InvalidateAppIcons(app_id);
 }
 
 void ArcAppListPrefs::ScheduleAppFolderDeletion(const std::string& app_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  file_task_runner_->PostTask(
+      FROM_HERE,
       base::BindOnce(&DeleteAppFolderFromFileThread, GetAppPath(app_id)));
 }
 
@@ -1509,6 +1608,8 @@ void ArcAppListPrefs::HandlePackageRemoved(const std::string& package_name) {
 }
 
 void ArcAppListPrefs::OnPackageRemoved(const std::string& package_name) {
+  UMA_HISTOGRAM_ENUMERATION("Arc.AppUninstallReason",
+                            UninstallCounterReasonEnum::USER);
   HandlePackageRemoved(package_name);
 
   for (auto& observer : observer_list_)
@@ -1721,8 +1822,8 @@ void ArcAppListPrefs::InstallIcon(const std::string& app_id,
                                   const ArcAppIconDescriptor& descriptor,
                                   const std::vector<uint8_t>& content_png) {
   const base::FilePath icon_path = GetIconPath(app_id, descriptor);
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReplyWithResult(
+      file_task_runner_.get(), FROM_HERE,
       base::BindOnce(&InstallIconFromFileThread, icon_path, content_png),
       base::BindOnce(&ArcAppListPrefs::OnIconInstalled,
                      weak_ptr_factory_.GetWeakPtr(), app_id, descriptor));
@@ -1762,6 +1863,18 @@ void ArcAppListPrefs::OnInstallationFinished(
     }
     for (auto& observer : observer_list_)
       observer.OnInstallationFinished(result->package_name, result->success);
+    if (result->success) {
+      InstallationCounterReasonEnum reason =
+          InstallationCounterReasonEnum::USER;
+      if (IsDefault(result->package_name)) {
+        reason = InstallationCounterReasonEnum::DEFAULT;
+      } else if (IsOem(result->package_name)) {
+        reason = InstallationCounterReasonEnum::OEM;
+      } else if (IsControlledByPolicy(result->package_name)) {
+        reason = InstallationCounterReasonEnum::POLICY;
+      }
+      UMA_HISTOGRAM_ENUMERATION("Arc.AppInstalledReason", reason);
+    }
   }
 
   if (!installing_packages_count_) {
@@ -1844,7 +1957,8 @@ ArcAppListPrefs::PackageInfo::PackageInfo(
     bool should_sync,
     bool system,
     bool vpn_provider,
-    const base::flat_map<arc::mojom::AppPermission, bool>& permissions)
+    base::flat_map<arc::mojom::AppPermission, arc::mojom::PermissionStatePtr>
+        permissions)
     : package_name(package_name),
       package_version(package_version),
       last_backup_android_id(last_backup_android_id),
@@ -1852,7 +1966,7 @@ ArcAppListPrefs::PackageInfo::PackageInfo(
       should_sync(should_sync),
       system(system),
       vpn_provider(vpn_provider),
-      permissions(permissions) {}
+      permissions(std::move(permissions)) {}
 
 // Need to add explicit destructor for chromium style checker error:
 // Complex class/struct needs an explicit out-of-line destructor

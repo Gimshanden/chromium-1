@@ -190,6 +190,7 @@
 <translation id="3245321423178950146">Hindi Kilalang Artist</translation>
 <translation id="3252266817569339921">Pranses</translation>
 <translation id="3254434849914415189">Piliin ang default na app para sa mga <ph name="FILE_TYPE" /> na file:</translation>
+<translation id="3264582393905923483">Konteksto</translation>
 <translation id="3280431534455935878">Ihinahanda</translation>
 <translation id="3280987981688031357">Vinyl record</translation>
 <translation id="3296763833017966289">Georgian</translation>
@@ -261,6 +262,7 @@
 <translation id="421017592316736757">Kailangan kang mag-online upang ma-access ang file na ito.</translation>
 <translation id="4212740939091998969">Mayroon nang folder na may pangalang "<ph name="FOLDER_NAME" />." Pumili ng ibang pangalan.</translation>
 <translation id="4215448920900139318">Bina-back up ang <ph name="FILE_COUNT" /></translation>
+<translation id="4242533952199664413">Buksan ang mga setting</translation>
 <translation id="426015154560005552">Arabic keyboard</translation>
 <translation id="4261901459838235729">Presentation ng Google</translation>
 <translation id="4290535918735525311">1 folder ang naibahagi sa Linux</translation>
@@ -504,6 +506,7 @@
 <translation id="6979158407327259162">Google Drive</translation>
 <translation id="6990081529015358884">Naubusan ka na ng espasyo</translation>
 <translation id="6998711733709403587"><ph name="SELCTED_FOLDERS_COUNT" /> (na) folder ang napili</translation>
+<translation id="7012943028104619157"><ph name="ROOT_TITLE" /> (<ph name="ROOT_SUMMARY" />)</translation>
 <translation id="7014174261166285193">Nabigo ang pag-install.</translation>
 <translation id="7040138676081995583">Buksan gamit ang...</translation>
 <translation id="7100897339030255923"><ph name="COUNT" /> (na) item ang pinili</translation>

@@ -16,7 +16,7 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/history/history_test_utils.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chrome/browser/policy/profile_policy_connector_builder.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/blocked_content/list_item_position.h"
@@ -434,6 +434,9 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   ASSERT_EQ(1, GetBlockedContentsCount());
 }
 
+// This feature is being reverted on trunk but an easily-merged CL is needed for
+// merging back to stable. https://crbug.com/936080
+#if 0
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, NoPopupsLaunchWhenTabIsClosed) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
@@ -447,6 +450,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, NoPopupsLaunchWhenTabIsClosed) {
   // Expect no popup.
   ASSERT_EQ(1u, chrome::GetBrowserCount(browser()->profile()));
 }
+#endif
 
 // This only exists for the AllowPopupsWhenTabIsClosedWithSpecialPolicy test.
 // Remove this in Chrome 82. https://crbug.com/937569
@@ -469,8 +473,7 @@ class PopupBlockerSpecialPolicyBrowserTest : public PopupBlockerBrowserTest {
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
 #else
-    policy::ProfilePolicyConnectorFactory::GetInstance()
-        ->PushProviderForTesting(&policy_provider_);
+    policy::PushProfilePolicyConnectorProviderForTesting(&policy_provider_);
 #endif
   }
 

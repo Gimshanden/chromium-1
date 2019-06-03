@@ -262,14 +262,13 @@ class MockLogoCache : public LogoCache {
 
 class FakeImageDecoder : public image_fetcher::ImageDecoder {
  public:
-  void DecodeImage(
-      const std::string& image_data,
-      const gfx::Size& desired_image_frame_size,
-      const image_fetcher::ImageDecodedCallback& callback) override {
+  void DecodeImage(const std::string& image_data,
+                   const gfx::Size& desired_image_frame_size,
+                   image_fetcher::ImageDecodedCallback callback) override {
     gfx::Image image = gfx::Image::CreateFrom1xPNGBytes(
         reinterpret_cast<const uint8_t*>(image_data.data()), image_data.size());
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, image));
+        FROM_HERE, base::BindOnce(std::move(callback), image));
   }
 };
 
@@ -417,8 +416,8 @@ void LogoServiceImplTest::SetServerResponseWhenFingerprint(
   std::string headers(base::StringPrintf(
       "HTTP/1.1 %d %s\nContent-type: text/html\n\n",
       static_cast<int>(response_code), GetHttpReasonPhrase(response_code)));
-  head.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   head.mime_type = "text/html";
   network::URLLoaderCompletionStatus status;
   status.error_code = error_code;

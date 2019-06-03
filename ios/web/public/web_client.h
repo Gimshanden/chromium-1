@@ -14,7 +14,7 @@
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/values.h"
 #include "ios/web/public/user_agent.h"
 #include "mojo/public/cpp/system/message_pipe.h"
@@ -107,6 +107,9 @@ class WebClient {
   // Returns the raw bytes of a scale independent data resource.
   virtual base::RefCountedMemory* GetDataResourceBytes(int resource_id) const;
 
+  // Returns whether the contents of a resource are compressed (with gzip).
+  virtual bool IsDataResourceGzipped(int resource_id) const;
+
   // Returns a list of additional WebUI schemes, if any. These additional
   // schemes act as aliases to the about: scheme. The additional schemes may or
   // may not serve specific WebUI pages depending on the particular
@@ -152,6 +155,12 @@ class WebClient {
   // If no overlay is provided for the service, this returns |base::nullopt|.
   virtual base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece name);
+
+  // Allows the embedder to provide manifests for additional services available
+  // at runtime. Any extra manifests returned by this method should have
+  // corresponding logic to actually run the service on-demand in
+  // |HandleServiceRequest()|.
+  virtual std::vector<service_manager::Manifest> GetExtraServiceManifests();
 
   // Allows the embedder to bind an interface request for a WebState-scoped
   // interface that originated from the main frame of |web_state|. Called if

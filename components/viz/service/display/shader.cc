@@ -602,13 +602,6 @@ void FragmentShader::SetRoundedCornerFunctions(
         vec4 ApplyRoundedCorner(vec4 src) {
           vec2 rcCoord = gl_FragCoord.xy - roundedCornerRect.xy;
 
-          // If outside bounds, then just clip everything.
-          if (rcCoord.x < 0.0 || rcCoord.y < 0.0 ||
-              rcCoord.x > roundedCornerRect.z ||
-              rcCoord.y > roundedCornerRect.w) {
-            return vec4(0.0);
-          }
-
           vec4 isCorner = IsCorner(rcCoord);
 
           // Get the radius to use based on the corner this fragment lies in.
@@ -1117,12 +1110,6 @@ std::string FragmentShader::GetShaderSource() const {
     HDR("uniform vec4 background_color;");
     SRC("// Apply uniform background color blending");
     SRC("texColor += background_color * (1.0 - texColor.a);");
-  }
-
-  // Apply swizzle.
-  if (swizzle_mode_ == DO_SWIZZLE) {
-    SRC("// Apply swizzle");
-    SRC("texColor = texColor.bgra;\n");
   }
 
   // Finally apply the output color matrix to texColor.

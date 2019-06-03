@@ -6,6 +6,8 @@
 
 #include <utility>
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/mojom/referrer.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_event_listener.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.h"
@@ -13,6 +15,8 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/node.h"
+#include "third_party/blink/renderer/core/event_type_names.h"
+#include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -22,6 +26,7 @@
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/portal/document_portals.h"
 #include "third_party/blink/renderer/core/html/portal/portal_activate_options.h"
+#include "third_party/blink/renderer/core/html/portal/portal_post_message_helper.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/thread_debugger.h"
@@ -30,7 +35,11 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/weborigin/referrer.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -38,10 +47,12 @@ namespace blink {
 HTMLPortalElement::HTMLPortalElement(
     Document& document,
     const base::UnguessableToken& portal_token,
-    mojom::blink::PortalAssociatedPtr portal_ptr)
+    mojom::blink::PortalAssociatedPtr portal_ptr,
+    mojom::blink::PortalClientAssociatedRequest portal_client_request)
     : HTMLFrameOwnerElement(html_names::kPortalTag, document),
       portal_token_(portal_token),
-      portal_ptr_(std::move(portal_ptr)) {}
+      portal_ptr_(std::move(portal_ptr)),
+      portal_client_binding_(this, std::move(portal_client_request)) {}
 
 HTMLPortalElement::~HTMLPortalElement() {}
 
@@ -50,17 +61,28 @@ void HTMLPortalElement::Trace(Visitor* visitor) {
   visitor->Trace(portal_frame_);
 }
 
-HTMLElement* HTMLPortalElement::Create(Document& document) {
-  if (RuntimeEnabledFeatures::PortalsEnabled())
-    return MakeGarbageCollected<HTMLPortalElement>(document);
-  return HTMLUnknownElement::Create(html_names::kPortalTag, document);
-}
-
 void HTMLPortalElement::Navigate() {
   KURL url = GetNonEmptyURLAttribute(html_names::kSrcAttr);
-  if (!url.IsEmpty() && portal_ptr_) {
-    portal_ptr_->Navigate(url);
+  if (!portal_ptr_ || url.IsEmpty())
+    return;
+
+  if (!url.ProtocolIsInHTTPFamily()) {
+    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
+        mojom::ConsoleMessageSource::kRendering,
+        mojom::ConsoleMessageLevel::kWarning,
+        "Portals only allow navigation to protocols in the HTTP family."));
+    return;
   }
+
+  auto referrer_policy_to_use = ReferrerPolicyAttribute();
+  if (referrer_policy_to_use == network::mojom::ReferrerPolicy::kDefault)
+    referrer_policy_to_use = GetDocument().GetReferrerPolicy();
+  Referrer referrer = SecurityPolicy::GenerateReferrer(
+      referrer_policy_to_use, url, GetDocument().OutgoingReferrer());
+  auto mojo_referrer = mojom::blink::Referrer::New(
+      KURL(NullURL(), referrer.referrer), referrer.referrer_policy);
+
+  portal_ptr_->Navigate(url, std::move(mojo_referrer));
 }
 
 void HTMLPortalElement::ConsumePortal() {
@@ -69,6 +91,7 @@ void HTMLPortalElement::ConsumePortal() {
     portal_token_ = base::UnguessableToken();
   }
   portal_ptr_.reset();
+  portal_client_binding_.Close();
 }
 
 namespace {
@@ -122,42 +145,6 @@ BlinkTransferableMessage ActivateDataAsMessage(
   }
 
   return msg;
-}
-
-BlinkTransferableMessage CreateMessageForPostMessage(
-    ScriptState* script_state,
-    const ScriptValue& message,
-    const WindowPostMessageOptions* options,
-    ExceptionState& exception_state) {
-  BlinkTransferableMessage transferable_message;
-  Transferables transferables;
-  scoped_refptr<SerializedScriptValue> serialized_message =
-      PostMessageHelper::SerializeMessageByMove(script_state->GetIsolate(),
-                                                message, options, transferables,
-                                                exception_state);
-  if (exception_state.HadException())
-    return {};
-  DCHECK(serialized_message);
-  transferable_message.message = serialized_message;
-
-  // Disentangle the port in preparation for sending it to the remote context.
-  auto* execution_context = ExecutionContext::From(script_state);
-  transferable_message.ports = MessagePort::DisentanglePorts(
-      execution_context, transferables.message_ports, exception_state);
-  if (exception_state.HadException())
-    return {};
-
-  if (ThreadDebugger* debugger =
-          ThreadDebugger::From(script_state->GetIsolate())) {
-    transferable_message.sender_stack_trace_id =
-        debugger->StoreCurrentStackTrace("postMessage");
-  }
-
-  transferable_message.user_activation =
-      PostMessageHelper::CreateUserActivationSnapshot(execution_context,
-                                                      options);
-
-  return transferable_message;
 }
 
 }  // namespace
@@ -214,17 +201,20 @@ ScriptPromise HTMLPortalElement::activate(ScriptState* script_state,
   // PortalPtr stays alive until the callback is called.
   is_activating_ = true;
   auto* raw_portal_ptr = portal_ptr_.get();
-  raw_portal_ptr->Activate(std::move(data),
-                           WTF::Bind(
-                               [](HTMLPortalElement* portal,
-                                  mojom::blink::PortalAssociatedPtr portal_ptr,
-                                  ScriptPromiseResolver* resolver) {
-                                 resolver->Resolve();
-                                 portal->is_activating_ = false;
-                                 portal->ConsumePortal();
-                               },
-                               WrapPersistent(this), std::move(portal_ptr_),
-                               WrapPersistent(resolver)));
+  raw_portal_ptr->Activate(
+      std::move(data),
+      WTF::Bind(
+          [](HTMLPortalElement* portal,
+             mojom::blink::PortalAssociatedPtr portal_ptr,
+             ScriptPromiseResolver* resolver, bool was_adopted) {
+            if (was_adopted)
+              portal->GetDocument().GetPage()->SetInsidePortal(true);
+            resolver->Resolve();
+            portal->is_activating_ = false;
+            portal->ConsumePortal();
+          },
+          WrapPersistent(this), std::move(portal_ptr_),
+          WrapPersistent(resolver)));
   return promise;
 }
 
@@ -251,18 +241,55 @@ void HTMLPortalElement::postMessage(ScriptState* script_state,
     return;
   }
 
-  scoped_refptr<const SecurityOrigin> target_origin = nullptr;
-  if (options->targetOrigin() == "/")
-    target_origin = GetDocument().GetSecurityOrigin();
-  else if (options->targetOrigin() != "*")
-    target_origin = SecurityOrigin::CreateFromString(options->targetOrigin());
-
-  BlinkTransferableMessage transferable_message = CreateMessageForPostMessage(
-      script_state, message, options, exception_state);
+  scoped_refptr<const SecurityOrigin> target_origin =
+      PostMessageHelper::GetTargetOrigin(options, GetDocument(),
+                                         exception_state);
   if (exception_state.HadException())
     return;
 
-  portal_ptr_->PostMessage(std::move(transferable_message), target_origin);
+  BlinkTransferableMessage transferable_message =
+      PortalPostMessageHelper::CreateMessage(script_state, message, options,
+                                             exception_state);
+  if (exception_state.HadException())
+    return;
+
+  portal_ptr_->PostMessageToGuest(std::move(transferable_message),
+                                  target_origin);
+}
+
+EventListener* HTMLPortalElement::onmessage() {
+  return GetAttributeEventListener(event_type_names::kMessage);
+}
+
+void HTMLPortalElement::setOnmessage(EventListener* listener) {
+  SetAttributeEventListener(event_type_names::kMessage, listener);
+}
+
+EventListener* HTMLPortalElement::onmessageerror() {
+  return GetAttributeEventListener(event_type_names::kMessageerror);
+}
+
+void HTMLPortalElement::setOnmessageerror(EventListener* listener) {
+  SetAttributeEventListener(event_type_names::kMessageerror, listener);
+}
+
+void HTMLPortalElement::ForwardMessageFromGuest(
+    BlinkTransferableMessage message,
+    const scoped_refptr<const SecurityOrigin>& source_origin,
+    const scoped_refptr<const SecurityOrigin>& target_origin) {
+  if (!portal_ptr_)
+    return;
+
+  PortalPostMessageHelper::CreateAndDispatchMessageEvent(
+      this, std::move(message), source_origin, target_origin);
+}
+
+void HTMLPortalElement::DispatchLoadEvent() {
+  if (!portal_ptr_)
+    return;
+
+  DispatchLoad();
+  GetDocument().CheckCompleted();
 }
 
 HTMLPortalElement::InsertionNotificationRequest HTMLPortalElement::InsertedInto(
@@ -290,9 +317,11 @@ HTMLPortalElement::InsertionNotificationRequest HTMLPortalElement::InsertedInto(
         WTF::Bind(&HTMLPortalElement::ConsumePortal, WrapWeakPersistent(this)));
     DocumentPortals::From(GetDocument()).OnPortalInserted(this);
   } else {
+    mojom::blink::PortalClientAssociatedPtr client;
+    portal_client_binding_.Bind(mojo::MakeRequest(&client));
     std::tie(portal_frame_, portal_token_) =
         GetDocument().GetFrame()->Client()->CreatePortal(
-            this, mojo::MakeRequest(&portal_ptr_));
+            this, mojo::MakeRequest(&portal_ptr_), client.PassInterface());
     portal_ptr_.set_connection_error_handler(
         WTF::Bind(&HTMLPortalElement::ConsumePortal, WrapWeakPersistent(this)));
     DocumentPortals::From(GetDocument()).OnPortalInserted(this);
@@ -321,8 +350,36 @@ void HTMLPortalElement::ParseAttribute(
     const AttributeModificationParams& params) {
   HTMLFrameOwnerElement::ParseAttribute(params);
 
-  if (params.name == html_names::kSrcAttr)
+  if (params.name == html_names::kSrcAttr) {
     Navigate();
+    return;
+  }
+
+  if (params.name == html_names::kReferrerpolicyAttr) {
+    referrer_policy_ = network::mojom::ReferrerPolicy::kDefault;
+    if (!params.new_value.IsNull()) {
+      SecurityPolicy::ReferrerPolicyFromString(
+          params.new_value, kDoNotSupportReferrerPolicyLegacyKeywords,
+          &referrer_policy_);
+    }
+    return;
+  }
+
+  struct {
+    const QualifiedName& name;
+    const AtomicString& event_name;
+  } event_handler_attributes[] = {
+      {html_names::kOnmessageAttr, event_type_names::kMessage},
+      {html_names::kOnmessageerrorAttr, event_type_names::kMessageerror},
+  };
+  for (const auto& attribute : event_handler_attributes) {
+    if (params.name == attribute.name) {
+      SetAttributeEventListener(
+          attribute.event_name,
+          CreateAttributeEventListener(this, attribute.name, params.new_value));
+      return;
+    }
+  }
 }
 
 LayoutObject* HTMLPortalElement::CreateLayoutObject(const ComputedStyle& style,
@@ -335,6 +392,10 @@ void HTMLPortalElement::AttachLayoutTree(AttachContext& context) {
 
   if (GetLayoutEmbeddedContent() && ContentFrame())
     SetEmbeddedContentView(ContentFrame()->View());
+}
+
+network::mojom::ReferrerPolicy HTMLPortalElement::ReferrerPolicyAttribute() {
+  return referrer_policy_;
 }
 
 }  // namespace blink

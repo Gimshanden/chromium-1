@@ -178,6 +178,13 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
 
   // Upon destruction, child processes should unregister themselves by calling
   // this method exactly once. This call must be made on the UI thread.
+  //
+  // Note: Pre-Remove() permissions remain in effect on the IO thread until
+  // the task posted to the IO thread by this call runs and removes the entry
+  // from |pending_remove_state_|.
+  // This UI -> IO task sequence ensures that any pending tasks, on the IO
+  // thread, for this |child_id| are allowed to run before access is completely
+  // revoked.
   void Remove(int child_id);
 
   // Whenever the browser processes commands the child process to commit a URL,
@@ -254,23 +261,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   void LockToOrigin(const IsolationContext& isolation_context,
                     int child_id,
                     const GURL& lock_url);
-
-  // Used to indicate the result of comparing a process's origin lock to
-  // another value:
-  enum class CheckOriginLockResult {
-    // The process does not exist, or it has no origin lock.
-    NO_LOCK,
-    // The process has an origin lock and it matches the passed-in value.
-    HAS_EQUAL_LOCK,
-    // The process has an origin lock and it does not match the passed-in
-    // value.
-    HAS_WRONG_LOCK,
-  };
-
-  // Check the origin lock of the process specified by |child_id| against
-  // |site_url|.  See the definition of |CheckOriginLockResult| for possible
-  // returned values.
-  CheckOriginLockResult CheckOriginLock(int child_id, const GURL& site_url);
 
   // Retrieves the current origin lock of process |child_id|.  Returns an empty
   // GURL if the process does not exist or if it is not locked to an origin.
@@ -487,6 +477,14 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // owned by this object and are protected by |lock_|.  References to them must
   // not escape this class.
   SecurityStateMap security_state_ GUARDED_BY(lock_);
+
+  // This map holds the SecurityState for a child process after Remove()
+  // is called on the UI thread. An entry stays in this map until a task has
+  // run on the IO thread. This is necessary to provide consistent security
+  // decisions and avoid races between the UI & IO threads during child process
+  // shutdown. This separate map is used to preserve SecurityState info AND
+  // preventing mutation of that state after Remove() is called.
+  SecurityStateMap pending_remove_state_ GUARDED_BY(lock_);
 
   FileSystemPermissionPolicyMap file_system_policy_map_ GUARDED_BY(lock_);
 

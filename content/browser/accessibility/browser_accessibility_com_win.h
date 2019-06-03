@@ -38,8 +38,9 @@ const GUID GUID_IAccessibleContentDocument = {
     {0x95, 0x21, 0x07, 0xed, 0x28, 0xfb, 0x07, 0x2e}};
 
 namespace ui {
+
 enum TextBoundaryDirection;
-enum TextBoundaryType;
+
 }  // namespace ui
 
 namespace content {
@@ -469,12 +470,11 @@ class __declspec(uuid("562072fe-3390-43b1-9e2c-dd4118f5ac79"))
   // Sets the selection given a start and end offset in IA2 Hypertext.
   void SetIA2HypertextSelection(LONG start_offset, LONG end_offset);
 
-  // Search forwards (direction == 1) or backwards (direction == -1)
-  // from the given offset until the given boundary is found, and
-  // return the offset of that boundary.
-  LONG FindBoundary(IA2TextBoundaryType ia2_boundary,
-                    LONG start_offset,
-                    ui::TextBoundaryDirection direction);
+  // Search forwards or backwards from the given offset until the given IA2
+  // text boundary is found, and return the offset of that boundary.
+  LONG FindIA2Boundary(IA2TextBoundaryType ia2_boundary,
+                       LONG start_offset,
+                       ui::TextBoundaryDirection direction);
 
   // Searches forward from the given offset until the start of the next style
   // is found, or searches backward from the given offset until the start of the

@@ -42,6 +42,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/url_loader_interceptor.h"
 #include "net/base/escape.h"
+#include "net/base/features.h"
 #include "net/base/load_flags.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/mock_host_resolver.h"
@@ -137,6 +138,14 @@ class NoStatePrefetchBrowserTest
   }
 
  protected:
+  // Loads kPrefetchLoaderPath and specifies |target_url| as a query param. The
+  // |loader_url| looks something like:
+  // http://127.0.0.1:port_number/prerender/prefetch_loader.html?replace_text=\
+  // UkVQTEFDRV9XSVRIX1BSRUZFVENIX1VSTA==:aHR0cDovL3d3dy52dlci5odG1s.
+  // When the embedded test server receives the request, it uses the specified
+  // query params to replace the "REPLACE_WITH_PREFETCH_URL" string in the HTML
+  // response with |target_url|. See method UpdateReplacedText() from embedded
+  // test server.
   std::unique_ptr<TestPrerender> PrefetchFromURL(
       const GURL& target_url,
       FinalStatus expected_final_status) {
@@ -203,6 +212,29 @@ class NoStatePrefetchBrowserTest
   DISALLOW_COPY_AND_ASSIGN(NoStatePrefetchBrowserTest);
 };
 
+class NoStatePrefetchBrowserTestHttpCache
+    : public NoStatePrefetchBrowserTest,
+      public testing::WithParamInterface<bool> {
+ protected:
+  void SetUp() override {
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          net::features::kSplitCacheByTopFrameOrigin);
+    }
+    NoStatePrefetchBrowserTest::SetUp();
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(DefaultKeyedHttpCache,
+                         NoStatePrefetchBrowserTestHttpCache,
+                         ::testing::Values(false));
+INSTANTIATE_TEST_SUITE_P(DoubleKeyedHttpCache,
+                         NoStatePrefetchBrowserTestHttpCache,
+                         ::testing::Values(true));
+
 // Checks that a page is correctly prefetched in the case of a
 // <link rel=prerender> tag and the JavaScript on the page is not executed.
 IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest, PrefetchSimple) {
@@ -231,18 +263,42 @@ IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest, PrefetchBigger) {
   WaitForRequestCount(src_server()->GetURL(kPrefetchPngRedirect), 1);
 }
 
-// Checks that a page load following a prefetch reuses preload-scanned
-// resources from cache without failing over to network.
-IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest, LoadAfterPrefetch) {
+// Checks that a page load following a prefetch reuses preload-scanned resources
+// and link rel 'prerender' main resource from cache without failing over to
+// network.
+IN_PROC_BROWSER_TEST_P(NoStatePrefetchBrowserTestHttpCache, LoadAfterPrefetch) {
   {
     std::unique_ptr<TestPrerender> test_prerender = PrefetchFromFile(
         kPrefetchPageBigger, FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
+    WaitForRequestCount(src_server()->GetURL(kPrefetchPageBigger), 1);
     WaitForRequestCount(src_server()->GetURL(kPrefetchJpeg), 1);
     WaitForRequestCount(src_server()->GetURL(kPrefetchPng2), 1);
   }
   ui_test_utils::NavigateToURL(current_browser(),
                                src_server()->GetURL(kPrefetchPageBigger));
   // Check that the request counts did not increase.
+  WaitForRequestCount(src_server()->GetURL(kPrefetchPageBigger), 1);
+  WaitForRequestCount(src_server()->GetURL(kPrefetchJpeg), 1);
+  WaitForRequestCount(src_server()->GetURL(kPrefetchPng2), 1);
+}
+
+// Checks that a page load following a cross origin prefetch reuses
+// preload-scanned resources and link rel 'prerender' main resource
+// from cache without failing over to network.
+IN_PROC_BROWSER_TEST_P(NoStatePrefetchBrowserTestHttpCache,
+                       LoadAfterPrefetchCrossOrigin) {
+  static const std::string kSecondaryDomain = "www.foo.com";
+  GURL cross_domain_url =
+      embedded_test_server()->GetURL(kSecondaryDomain, kPrefetchPageBigger);
+
+  PrefetchFromURL(cross_domain_url, FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
+  WaitForRequestCount(src_server()->GetURL(kPrefetchPageBigger), 1);
+  WaitForRequestCount(src_server()->GetURL(kPrefetchJpeg), 1);
+  WaitForRequestCount(src_server()->GetURL(kPrefetchPng2), 1);
+
+  ui_test_utils::NavigateToURL(current_browser(), cross_domain_url);
+  // Check that the request counts did not increase.
+  WaitForRequestCount(src_server()->GetURL(kPrefetchPageBigger), 1);
   WaitForRequestCount(src_server()->GetURL(kPrefetchJpeg), 1);
   WaitForRequestCount(src_server()->GetURL(kPrefetchPng2), 1);
 }
@@ -301,6 +357,66 @@ IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest, PrefetchCookieCrossDomain) {
       cross_domain_url, options,
       base::BindOnce(GetCookieCallback, loop.QuitClosure()));
   loop.Run();
+}
+
+// Check cookie loading for a cross-domain prefetched pages.
+IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest,
+                       PrefetchCookieCrossDomainSameSiteStrict) {
+  constexpr char kSecondaryDomain[] = "www.foo.com";
+  GURL cross_domain_url =
+      embedded_test_server()->GetURL(kSecondaryDomain, "/echoall");
+
+  EXPECT_TRUE(SetCookie(current_browser()->profile(), cross_domain_url,
+                        "cookie_A=A; SameSite=Strict;"));
+  EXPECT_TRUE(SetCookie(current_browser()->profile(), cross_domain_url,
+                        "cookie_B=B; SameSite=Lax;"));
+
+  std::unique_ptr<TestPrerender> test_prerender =
+      PrefetchFromURL(cross_domain_url, FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
+
+  ui_test_utils::NavigateToURL(current_browser(), cross_domain_url);
+
+  EXPECT_TRUE(WaitForLoadStop(
+      current_browser()->tab_strip_model()->GetActiveWebContents()));
+
+  std::string html_content;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      current_browser()->tab_strip_model()->GetActiveWebContents(),
+      "domAutomationController.send(document.body.innerHTML)", &html_content));
+
+  // For any cross origin navigation (including prerender), SameSite Strict
+  // cookies should not be sent, but Lax should.
+  EXPECT_EQ(std::string::npos, html_content.find("cookie_A=A"));
+  EXPECT_NE(std::string::npos, html_content.find("cookie_B=B"));
+}
+
+// Check cookie loading for a same-domain prefetched pages.
+IN_PROC_BROWSER_TEST_F(NoStatePrefetchBrowserTest,
+                       PrefetchCookieSameDomainSameSiteStrict) {
+  GURL same_domain_url = embedded_test_server()->GetURL("/echoall");
+
+  EXPECT_TRUE(SetCookie(current_browser()->profile(), same_domain_url,
+                        "cookie_A=A; SameSite=Strict;"));
+  EXPECT_TRUE(SetCookie(current_browser()->profile(), same_domain_url,
+                        "cookie_B=B; SameSite=Lax;"));
+
+  std::unique_ptr<TestPrerender> test_prerender =
+      PrefetchFromURL(same_domain_url, FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
+
+  ui_test_utils::NavigateToURL(current_browser(), same_domain_url);
+
+  EXPECT_TRUE(WaitForLoadStop(
+      current_browser()->tab_strip_model()->GetActiveWebContents()));
+
+  std::string html_content;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      current_browser()->tab_strip_model()->GetActiveWebContents(),
+      "domAutomationController.send(document.body.innerHTML)", &html_content));
+
+  // For any same origin navigation (including prerender), SameSite Strict
+  // cookies should not be sent, but Lax should.
+  EXPECT_NE(std::string::npos, html_content.find("cookie_A=A"));
+  EXPECT_NE(std::string::npos, html_content.find("cookie_B=B"));
 }
 
 // Check that the LOAD_PREFETCH flag is set.

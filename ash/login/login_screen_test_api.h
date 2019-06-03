@@ -27,6 +27,9 @@ class LoginScreenTestApi : public mojom::LoginScreenTestApi {
   void IsLoginShelfShown(IsLoginShelfShownCallback callback) override;
   void IsRestartButtonShown(IsRestartButtonShownCallback callback) override;
   void IsShutdownButtonShown(IsShutdownButtonShownCallback callback) override;
+  void IsAuthErrorBubbleShown(IsAuthErrorBubbleShownCallback callback) override;
+  void IsGuestButtonShown(IsGuestButtonShownCallback callback) override;
+  void IsAddUserButtonShown(IsAddUserButtonShownCallback callback) override;
   void SubmitPassword(const AccountId& account_id,
                       const std::string& password,
                       SubmitPasswordCallback callback) override;
@@ -34,6 +37,7 @@ class LoginScreenTestApi : public mojom::LoginScreenTestApi {
   void LaunchApp(const std::string& app_id,
                  LaunchAppCallback callback) override;
   void ClickAddUserButton(ClickAddUserButtonCallback callback) override;
+  void ClickGuestButton(ClickGuestButtonCallback callback) override;
   // This blocks until UI update number becomes greater than the
   // |previous_update_count|.  Where |previous_update_count| presumably is
   // coming from GetUiUpdateCount().  This way test remembers the "current" UI

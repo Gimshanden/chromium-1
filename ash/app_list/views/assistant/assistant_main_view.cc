@@ -59,25 +59,18 @@ void AssistantMainView::RequestFocus() {
   dialog_plate_->RequestFocus();
 }
 
-void AssistantMainView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
-  layer_mask_->layer()->SetBounds(GetLocalBounds());
-}
-
 void AssistantMainView::InitLayout() {
+  constexpr int radius = search_box::kSearchBoxBorderCornerRadiusSearchResult;
+
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
-
-  layer_mask_ = views::Painter::CreatePaintedLayer(
-      views::Painter::CreateSolidRoundRectPainter(
-          SK_ColorBLACK, search_box::kSearchBoxBorderCornerRadiusSearchResult));
-  layer_mask_->layer()->SetFillsBoundsOpaquely(false);
-  layer()->SetMaskLayer(layer_mask_->layer());
+  layer()->SetRoundedCornerRadius({radius, radius, radius, radius});
 
   views::BoxLayout* layout =
       SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kVertical));
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // Dialog plate.
   dialog_plate_ = new DialogPlate(delegate_);

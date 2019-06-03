@@ -75,19 +75,29 @@ source_set("dns") {
       "serial_worker.h",
     ]
 
-    if (is_posix || is_fuchsia) {
-      sources += [ "dns_config_service_posix.cc" ]
+    if (is_fuchsia) {
+      sources += [
+        "dns_config_service_fuchsia.cc",
+        "dns_config_service_fuchsia.h",
+      ]
+    }
 
-      if (enable_built_in_dns) {
+    if (is_posix) {
+      sources += [
+        "dns_config_service_posix.cc",
+        "dns_config_service_posix.h",
+      ]
+    }
+
+    if (enable_built_in_dns) {
+      sources += [ "dns_client.cc" ]
+
+      if (is_posix || is_fuchsia) {
         sources += [
           "address_sorter_posix.cc",
           "address_sorter_posix.h",
         ]
       }
-    }
-
-    if (enable_built_in_dns) {
-      sources += [ "dns_client.cc" ]
     }
 
     if (enable_mdns) {
@@ -134,6 +144,7 @@ source_set("host_resolver") {
   # restriction.
   visibility = [
     ":dns",
+    ":dns_client",
     ":host_resolver_manager",
     ":mdns_client",
     "//net",
@@ -213,6 +224,13 @@ source_set("host_resolver_manager") {
   # Whitelist-only access so we can keep track of all usage external to the
   # network stack and network service.
   friend = [
+    # chromecast/browser/url_request_context_factory.cc
+    # URLRequestContext creation for chromecast.
+    "//chromecast/browser",
+
+    # Tests and test support.
+    "//components/cronet:cronet_common_unittests",
+
     # Network stack/service.
     "//net/*",
     "//services/network/*",
@@ -279,13 +297,13 @@ source_set("dns_client") {
       "dns_client.h",
       "dns_response.h",
       "dns_transaction.h",
-      "dns_util.h",
       "record_parsed.h",
       "record_rdata.h",
     ]
   }
 
   deps = [
+    ":host_resolver",
     "//net:net_deps",
   ]
   public_deps = [
@@ -352,6 +370,7 @@ source_set("mdns_client") {
 source_set("tests") {
   testonly = true
   sources = [
+    "context_host_resolver_unittest.cc",
     "dns_config_service_unittest.cc",
     "dns_config_service_win_unittest.cc",
     "dns_hosts_unittest.cc",
@@ -369,7 +388,7 @@ source_set("tests") {
     "serial_worker_unittest.cc",
   ]
 
-  if (is_posix || is_fuchsia) {
+  if (is_posix) {
     sources += [ "dns_config_service_posix_unittest.cc" ]
   }
 
@@ -429,8 +448,8 @@ source_set("test_support") {
 source_set("fuzzer_test_support") {
   testonly = true
   sources = [
-    "fuzzed_context_host_resolver.cc",
-    "fuzzed_context_host_resolver.h",
+    "fuzzed_host_resolver_util.cc",
+    "fuzzed_host_resolver_util.h",
   ]
   deps = [
     "//base",

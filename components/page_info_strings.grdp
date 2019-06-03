@@ -244,8 +244,17 @@
     <message name="IDS_PAGE_INFO_TYPE_SENSORS" desc="The label used for the sensor permission controls in the Page Info popup. Title case format.">
       Motion or Light Sensors
     </message>
+    <message name="IDS_PAGE_INFO_TYPE_MOTION_SENSORS" desc="The label used for the motion sensor (accelerometer, gyroscope, magnetometer) permission controls in the Page Info popup. Title case format.">
+      Motion Sensors
+    </message>
     <message name="IDS_PAGE_INFO_TYPE_USB" desc="The label used for the USB permission controls in the Page Info popup.">
       USB devices
+    </message>
+    <message name="IDS_PAGE_INFO_TYPE_SERIAL" desc="The label used for the serial port permission controls in the Page Info popup.">
+      Serial ports
+    </message>
+    <message name="IDS_PAGE_INFO_TYPE_BLUETOOTH_SCANNING" desc="The label used for the Bluetooth scanning controls in the Page Info popup.">
+      Bluetooth scanning
     </message>
     <!-- TODO(crbug.com/716303): A few permissions are missing here. -->
 
@@ -457,9 +466,9 @@
 
   <!-- Misc site settings -->
   <message name="IDS_PAGE_INFO_VR_PRESENTING_TEXT" desc="The string used in the page info that states that an active VR presentation is in progress.">
-    VR session is active
+    VR session in progress
   </message>
   <message name="IDS_PAGE_INFO_VR_TURN_OFF_BUTTON_TEXT" desc="Label on the button that's used to turn off the VR presentation.">
-    End session
+    End
   </message>
 </grit-part>

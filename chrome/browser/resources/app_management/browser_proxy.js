@@ -18,19 +18,78 @@ cr.define('app_management', function() {
         this.handler = new app_management.FakePageHandler(
             this.callbackRouter.createProxy());
 
+        const permissionOptions = {};
+        permissionOptions[PwaPermissionType.CONTENT_SETTINGS_TYPE_GEOLOCATION] =
+            {
+              permissionValue: TriState.kAllow,
+              isManaged: true,
+            };
+        permissionOptions[PwaPermissionType
+                              .CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA] = {
+          permissionValue: TriState.kBlock,
+          isManaged: true
+        };
+
         const /** @type {!Array<App>}*/ appList = [
           app_management.FakePageHandler.createApp(
-              'ahfgeienlihckogmohjhadlkjgocpleb', {title: 'Web Store'}),
+              'blpcfgokakmgnkcojhhkbfblekacnbeo',
+              {
+                title: 'Built in app, not implemented',
+                type: AppType.kBuiltIn,
+                installSource: InstallSource.kSystem,
+              },
+              ),
           app_management.FakePageHandler.createApp(
               'aohghmighlieiainnegkcijnfilokake',
-              {title: 'Docs', type: AppType.kArc}),
+              {
+                title: 'Arc app',
+                type: AppType.kArc,
+                installSource: InstallSource.kUser,
+              },
+              ),
           app_management.FakePageHandler.createApp(
               'blpcfgokakmgnkcojhhkbfbldkacnbeo',
-              {title: 'Youtube', type: AppType.kCrostini}),
+              {
+                title: 'Crostini app, not implemented',
+                type: AppType.kCrostini,
+                installSource: InstallSource.kUser,
+              },
+              ),
           app_management.FakePageHandler.createApp(
-              'pjkljhegncpnkpknbcohdijeoejaedia', {title: 'Gmail'}),
+              'pjkljhegncpnkkknowihdijeoejaedia',
+              {
+                title: 'Chrome App',
+                type: AppType.kExtension,
+              },
+              ),
           app_management.FakePageHandler.createApp(
-              'aapocclcgogkmnckokdopfmhonfmgoek', {title: 'Slide'}),
+              'aapocclcdoekwnckovdopfmtonfmgok',
+              {
+                title: 'Web App',
+                type: AppType.kWeb,
+              },
+              ),
+          app_management.FakePageHandler.createApp(
+              'pjkljhegncpnkkknbcohdijeoejaedia',
+              {
+                title: 'Chrome App, OEM installed',
+                type: AppType.kExtension,
+                installSource: InstallSource.kOem,
+              },
+              ),
+          app_management.FakePageHandler.createApp(
+              'aapocclcgogkmnckokdopfmhonfmgok',
+              {
+                title: 'Web App, policy applied',
+                type: AppType.kWeb,
+                isPinned: apps.mojom.OptionalBool.kTrue,
+                isPolicyPinned: apps.mojom.OptionalBool.kTrue,
+                installSource: apps.mojom.InstallSource.kPolicy,
+                permissions:
+                    app_management.FakePageHandler.createWebPermissions(
+                        permissionOptions),
+              },
+              ),
         ];
 
         this.handler.setApps(appList);

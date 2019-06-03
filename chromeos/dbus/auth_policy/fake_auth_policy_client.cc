@@ -14,10 +14,9 @@
 #include "base/task/post_task.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
-#include "chromeos/dbus/cryptohome/tpm_util.h"
 #include "chromeos/dbus/session_manager/session_manager_client.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/proto/cloud_policy.pb.h"
 #include "dbus/message.h"
@@ -79,7 +78,7 @@ void FakeAuthPolicyClient::JoinAdDomain(
     const authpolicy::JoinDomainRequest& request,
     int password_fd,
     JoinCallback callback) {
-  DCHECK(!tpm_util::IsActiveDirectoryLocked());
+  DCHECK(!InstallAttributes::Get()->IsActiveDirectoryManaged());
   authpolicy::ErrorType error = authpolicy::ERROR_NONE;
   std::string machine_domain;
   if (!started_) {
@@ -120,7 +119,7 @@ void FakeAuthPolicyClient::AuthenticateUser(
     const authpolicy::AuthenticateUserRequest& request,
     int password_fd,
     AuthCallback callback) {
-  DCHECK(tpm_util::IsActiveDirectoryLocked());
+  DCHECK(InstallAttributes::Get()->IsActiveDirectoryManaged());
   authpolicy::ErrorType error = authpolicy::ERROR_NONE;
   authpolicy::ActiveDirectoryAccountInfo account_info;
   if (auth_error_ != authpolicy::ERROR_NONE) {
@@ -190,7 +189,7 @@ void FakeAuthPolicyClient::RefreshDevicePolicy(RefreshPolicyCallback callback) {
     return;
   }
 
-  if (!tpm_util::IsActiveDirectoryLocked()) {
+  if (!InstallAttributes::Get()->IsActiveDirectoryManaged()) {
     // Pretend that policy was fetched and cached inside authpolicyd.
     std::move(callback).Run(
         authpolicy::ERROR_DEVICE_POLICY_CACHED_BUT_NOT_SENT);
@@ -211,7 +210,14 @@ void FakeAuthPolicyClient::RefreshDevicePolicy(RefreshPolicyCallback callback) {
 
 void FakeAuthPolicyClient::RefreshUserPolicy(const AccountId& account_id,
                                              RefreshPolicyCallback callback) {
-  DCHECK(tpm_util::IsActiveDirectoryLocked());
+  if (refresh_user_policy_error_.has_value()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback),
+                                  refresh_user_policy_error_.value()));
+    refresh_user_policy_error_.reset();
+    return;
+  }
+  DCHECK(InstallAttributes::Get()->IsActiveDirectoryManaged());
   if (!started_) {
     LOG(ERROR) << "authpolicyd not started";
     std::move(callback).Run(authpolicy::ERROR_DBUS_FAILURE);
@@ -255,9 +261,9 @@ void FakeAuthPolicyClient::ConnectToSignal(
 void FakeAuthPolicyClient::WaitForServiceToBeAvailable(
     dbus::ObjectProxy::WaitForServiceToBeAvailableCallback callback) {
   if (started_) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(std::move(callback), true /* service_is_available */));
+    // Explicitly violate async pattern so testing code would not have to wait
+    // the callback.
+    std::move(callback).Run(true /* service_is_available */);
     return;
   }
   wait_for_service_to_be_available_callbacks_.push_back(std::move(callback));

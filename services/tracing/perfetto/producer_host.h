@@ -13,8 +13,8 @@
 #include "base/macros.h"
 #include "services/tracing/perfetto/producer_host.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/producer.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/tracing_service.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/producer.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/tracing_service.h"
 
 namespace perfetto {
 class CommitDataRequest;
@@ -61,6 +61,9 @@ class ProducerHost : public tracing::mojom::ProducerHost,
   void Flush(perfetto::FlushRequestID,
              const perfetto::DataSourceInstanceID* raw_data_source_ids,
              size_t num_data_sources) override;
+  void ClearIncrementalState(
+      const perfetto::DataSourceInstanceID* data_source_ids,
+      size_t num_data_sources) override;
 
   // mojom::ProducerHost implementation.
   // This interface gets called by the per-process ProducerClients
@@ -85,6 +88,7 @@ class ProducerHost : public tracing::mojom::ProducerHost,
 
  private:
   mojom::ProducerClientPtr producer_client_;
+  bool is_in_process_ = false;
 
  protected:
   // Perfetto guarantees that no OnXX callbacks are invoked on |this|

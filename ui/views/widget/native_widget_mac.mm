@@ -14,6 +14,10 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/crash/core/common/crash_key.h"
+#import "components/remote_cocoa/app_shim/bridged_content_view.h"
+#import "components/remote_cocoa/app_shim/bridged_native_widget_impl.h"
+#import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/display/display.h"
@@ -29,12 +33,8 @@
 #include "ui/views/widget/drop_helper.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/native_frame_view.h"
-#import "ui/views_bridge_mac/bridged_content_view.h"
-#import "ui/views_bridge_mac/bridged_native_widget_impl.h"
-#import "ui/views_bridge_mac/native_widget_mac_nswindow.h"
-#import "ui/views_bridge_mac/views_nswindow_delegate.h"
 
-using views_bridge_mac::mojom::WindowVisibilityState;
+using remote_cocoa::mojom::WindowVisibilityState;
 
 namespace views {
 namespace {
@@ -129,21 +129,21 @@ void NativeWidgetMac::InitNativeWidget(const Widget::InitParams& params) {
       BridgedNativeWidgetHostImpl::GetFromNativeView(params.parent);
 
   // Determine the factory through which to create the bridge
-  BridgeFactoryHost* bridge_factory_host =
-      parent_host ? parent_host->bridge_factory_host() : GetBridgeFactoryHost();
+  remote_cocoa::ApplicationHost* application_host =
+      parent_host ? parent_host->application_host()
+                  : GetRemoteCocoaApplicationHost();
 
   // Compute the parameters to describe the NSWindow.
-  auto create_window_params =
-      views_bridge_mac::mojom::CreateWindowParams::New();
+  auto create_window_params = remote_cocoa::mojom::CreateWindowParams::New();
   create_window_params->window_class =
-      views_bridge_mac::mojom::WindowClass::kDefault;
+      remote_cocoa::mojom::WindowClass::kDefault;
   create_window_params->style_mask = StyleMaskForParams(params);
   create_window_params->titlebar_appears_transparent = false;
   create_window_params->window_title_hidden = false;
   PopulateCreateWindowParams(params, create_window_params.get());
 
-  if (bridge_factory_host) {
-    bridge_host_->CreateRemoteBridge(bridge_factory_host,
+  if (application_host) {
+    bridge_host_->CreateRemoteBridge(application_host,
                                      std::move(create_window_params));
   } else {
     base::scoped_nsobject<NativeWidgetMacNSWindow> window(
@@ -376,15 +376,14 @@ void NativeWidgetMac::StackAbove(gfx::NativeView native_view) {
 
   if (!sibling_host) {
     // This will only work if |this| is in-process.
-    DCHECK(!bridge_host_->bridge_factory_host());
+    DCHECK(!bridge_host_->application_host());
     NSInteger view_parent = native_view.GetNativeNSView().window.windowNumber;
     [GetNativeWindow().GetNativeNSWindow() orderWindow:NSWindowAbove
                                             relativeTo:view_parent];
     return;
   }
 
-  if (bridge_host_->bridge_factory_host() ==
-      sibling_host->bridge_factory_host()) {
+  if (bridge_host_->application_host() == sibling_host->application_host()) {
     // Check if |native_view|'s BridgedNativeWidgetHostImpl corresponds to the
     // same process as |this|.
     bridge()->StackAbove(sibling_host->bridged_native_widget_id());
@@ -648,20 +647,20 @@ void NativeWidgetMac::SetVisibilityAnimationDuration(
 
 void NativeWidgetMac::SetVisibilityAnimationTransition(
     Widget::VisibilityTransition widget_transitions) {
-  views_bridge_mac::mojom::VisibilityTransition transitions =
-      views_bridge_mac::mojom::VisibilityTransition::kNone;
+  remote_cocoa::mojom::VisibilityTransition transitions =
+      remote_cocoa::mojom::VisibilityTransition::kNone;
   switch (widget_transitions) {
     case Widget::ANIMATE_NONE:
-      transitions = views_bridge_mac::mojom::VisibilityTransition::kNone;
+      transitions = remote_cocoa::mojom::VisibilityTransition::kNone;
       break;
     case Widget::ANIMATE_SHOW:
-      transitions = views_bridge_mac::mojom::VisibilityTransition::kShow;
+      transitions = remote_cocoa::mojom::VisibilityTransition::kShow;
       break;
     case Widget::ANIMATE_HIDE:
-      transitions = views_bridge_mac::mojom::VisibilityTransition::kHide;
+      transitions = remote_cocoa::mojom::VisibilityTransition::kHide;
       break;
     case Widget::ANIMATE_BOTH:
-      transitions = views_bridge_mac::mojom::VisibilityTransition::kBoth;
+      transitions = remote_cocoa::mojom::VisibilityTransition::kBoth;
       break;
   }
   if (bridge())
@@ -707,31 +706,16 @@ void NativeWidgetMac::SetInitNativeWidgetCallback(
 // NativeWidgetMac, protected:
 
 NativeWidgetMacNSWindow* NativeWidgetMac::CreateNSWindow(
-    const views_bridge_mac::mojom::CreateWindowParams* params) {
+    const remote_cocoa::mojom::CreateWindowParams* params) {
   return BridgedNativeWidgetImpl::CreateNSWindow(params).autorelease();
 }
 
-BridgeFactoryHost* NativeWidgetMac::GetBridgeFactoryHost() {
+remote_cocoa::ApplicationHost*
+NativeWidgetMac::GetRemoteCocoaApplicationHost() {
   return nullptr;
 }
 
-bool NativeWidgetMac::RedispatchKeyEvent(NSEvent* event) {
-  // If the target window is in-process, then redispatch the event directly,
-  // and give an accurate return value.
-  if (bridge_impl())
-    return bridge_impl()->RedispatchKeyEvent(event);
-
-  // If the target window is out of process then always report the event as
-  // handled (because it should never be handled in this process).
-  bridge()->RedispatchKeyEvent(
-      [event type], [event modifierFlags], [event timestamp],
-      base::SysNSStringToUTF16([event characters]),
-      base::SysNSStringToUTF16([event charactersIgnoringModifiers]),
-      [event keyCode]);
-  return true;
-}
-
-views_bridge_mac::mojom::BridgedNativeWidget* NativeWidgetMac::bridge() const {
+remote_cocoa::mojom::BridgedNativeWidget* NativeWidgetMac::bridge() const {
   return bridge_host_ ? bridge_host_->bridge() : nullptr;
 }
 
@@ -780,7 +764,6 @@ namespace internal {
 
 // static
 NativeWidgetPrivate* NativeWidgetPrivate::CreateNativeWidget(
-    const Widget::InitParams& init_params,
     internal::NativeWidgetDelegate* delegate) {
   return new NativeWidgetMac(delegate);
 }

@@ -11,15 +11,21 @@ namespace base {
 class TaskTraits;
 }
 
-// System permission state.
+namespace system_media_permissions {
+
+class MediaAuthorizationWrapper;
+
+// System permission state. These are also used in stats - do not remove or
+// re-arrange the values.
 enum class SystemPermission {
   kNotDetermined = 0,
-  kNotAllowed = 1,
-  kAllowed = 2
+  kRestricted = 1,
+  kDenied = 2,
+  kAllowed = 3,
+  kMaxValue = kAllowed
 };
 
-// On 10.14 and above: returns if system permission is allowed or not, or not
-// determined.
+// On 10.14 and above: returns the system permission.
 // On 10.13 and below: returns |SystemPermission::kAllowed|, since there are no
 // system media capture permissions.
 SystemPermission CheckSystemAudioCapturePermission();
@@ -37,5 +43,10 @@ void RequestSystemAudioCapturePermisson(base::OnceClosure callback,
                                         const base::TaskTraits& traits);
 void RequestSystemVideoCapturePermisson(base::OnceClosure callback,
                                         const base::TaskTraits& traits);
+
+// Sets the wrapper object for OS calls. For test mocking purposes.
+void SetMediaAuthorizationWrapperForTesting(MediaAuthorizationWrapper* wrapper);
+
+}  // namespace system_media_permissions
 
 #endif  // CHROME_BROWSER_MEDIA_WEBRTC_SYSTEM_MEDIA_CAPTURE_PERMISSIONS_MAC_H_

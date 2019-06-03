@@ -190,6 +190,7 @@
 <translation id="3245321423178950146">Artista desconocido</translation>
 <translation id="3252266817569339921">Francés</translation>
 <translation id="3254434849914415189">Seleccionar la aplicación predeterminada para los archivos <ph name="FILE_TYPE" />:</translation>
+<translation id="3264582393905923483">Contexto</translation>
 <translation id="3280431534455935878">Preparando la descarga</translation>
 <translation id="3280987981688031357">Disco de vinilo</translation>
 <translation id="3296763833017966289">Georgiano</translation>
@@ -261,6 +262,7 @@
 <translation id="421017592316736757">Tienes que estar conectado para acceder a este archivo.</translation>
 <translation id="4212740939091998969">Ya existe una carpeta con el nombre "<ph name="FOLDER_NAME" />". Elige otro.</translation>
 <translation id="4215448920900139318">Guardando una copia de seguridad de <ph name="FILE_COUNT" /></translation>
+<translation id="4242533952199664413">Abrir la configuración</translation>
 <translation id="426015154560005552">Teclado árabe</translation>
 <translation id="4261901459838235729">Presentación de Google</translation>
 <translation id="4290535918735525311">Se compartió 1 carpeta con Linux</translation>
@@ -310,6 +312,7 @@
 <translation id="4839847978919684242"><ph name="SELCTED_FILES_COUNT" /> elementos seleccionados</translation>
 <translation id="4850886885716139402">Ver</translation>
 <translation id="485316830061041779">Alemán</translation>
+<translation id="4867079195717347957">Haz clic para ordenar la columna de forma descendente.</translation>
 <translation id="4873265419374180291"><ph name="NUMBER_OF_BYTES" /> bytes</translation>
 <translation id="4880214202172289027">Control deslizante del volumen</translation>
 <translation id="4880520557730313061">Autocorrección</translation>
@@ -350,6 +353,7 @@
 <translation id="5167131699331641907">Teclado para Países Bajos</translation>
 <translation id="5170477580121653719">Espacio libre en Google Drive: <ph name="SPACE_AVAILABLE" /></translation>
 <translation id="5177526793333269655">Vista de miniatura</translation>
+<translation id="5194713942430106590">Haz clic para ordenar la columna de forma ascendente.</translation>
 <translation id="5218183485292899140">Francés (Suiza)</translation>
 <translation id="5234764350956374838">Rechazar</translation>
 <translation id="5241298539944515331">Teclado vietnamita (VIQR)</translation>
@@ -409,6 +413,7 @@
 <translation id="5818003990515275822">Coreano</translation>
 <translation id="5819442873484330149">Hangul de triple alternancia (final)</translation>
 <translation id="5833610766403489739">Este archivo se extravió. Comprueba las opciones de la ubicación de descargas y vuelve a intentarlo.</translation>
+<translation id="5838051104334203064">Las apps de Play Store no pueden acceder a este dispositivo</translation>
 <translation id="5838825566232597749">Internacional Workman (EE. UU.)</translation>
 <translation id="5850516540536751549">No se admite este tipo de archivo. Visita <ph name="BEGIN_LINK" />Chrome Web Store<ph name="END_LINK" /> para buscar una aplicación que pueda abrir este tipo de archivo.
     <ph name="BEGIN_LINK_HELP" />Más información<ph name="END_LINK_HELP" /></translation>
@@ -504,6 +509,7 @@
 <translation id="6979158407327259162">Google Drive</translation>
 <translation id="6990081529015358884">Te has quedado sin espacio.</translation>
 <translation id="6998711733709403587"><ph name="SELCTED_FOLDERS_COUNT" /> carpetas seleccionadas</translation>
+<translation id="7012943028104619157"><ph name="ROOT_TITLE" /> (<ph name="ROOT_SUMMARY" />)</translation>
 <translation id="7014174261166285193">Error de instalación</translation>
 <translation id="7040138676081995583">Abrir con...</translation>
 <translation id="7100897339030255923"><ph name="COUNT" /> elementos seleccionados</translation>

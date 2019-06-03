@@ -35,7 +35,6 @@
 #include "chrome/browser/performance_manager/performance_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/background_tab_navigation_throttle.h"
-#include "chrome/browser/resource_coordinator/tab_activity_watcher.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/resource_coordinator/tab_manager_features.h"
@@ -94,22 +93,6 @@ constexpr TimeDelta kDefaultBackgroundTabLoadTimeout =
 // load the next background tab when the loading slots free up.
 constexpr size_t kNumOfLoadingSlots = 1;
 
-struct LifecycleUnitAndSortKey {
-  explicit LifecycleUnitAndSortKey(LifecycleUnit* lifecycle_unit)
-      : lifecycle_unit(lifecycle_unit),
-        sort_key(lifecycle_unit->GetSortKey()) {}
-
-  bool operator<(const LifecycleUnitAndSortKey& other) const {
-    return sort_key < other.sort_key;
-  }
-  bool operator>(const LifecycleUnitAndSortKey& other) const {
-    return sort_key > other.sort_key;
-  }
-
-  LifecycleUnit* lifecycle_unit;
-  LifecycleUnit::SortKey sort_key;
-};
-
 std::unique_ptr<base::trace_event::ConvertableToTraceFormat> DataAsTraceValue(
     TabManager::BackgroundTabLoadingMode mode,
     size_t num_of_pending_navigations,
@@ -166,8 +149,7 @@ class TabManager::TabManagerSessionRestoreObserver final
   TabManager* tab_manager_;
 };
 
-TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
-                       TabLoadTracker* tab_load_tracker)
+TabManager::TabManager(TabLoadTracker* tab_load_tracker)
     : state_transitions_callback_(
           base::BindRepeating(&TabManager::PerformStateTransitions,
                               base::Unretained(this))),
@@ -183,10 +165,22 @@ TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
 #endif
   browser_tab_strip_tracker_.Init();
   session_restore_observer_.reset(new TabManagerSessionRestoreObserver(this));
-  if (performance_manager::PerformanceManager::GetInstance()) {
-    resource_coordinator_signal_observer_.reset(
-        new ResourceCoordinatorSignalObserver(page_signal_receiver));
+
+  // Create the graph observer. This is the source of page almost idle data and
+  // EQT measurements.
+  if (auto* perf_man = performance_manager::PerformanceManager::GetInstance()) {
+    // The performance manager is torn down on its own sequence so its safe to
+    // pass it unretained. The observer itself learns of the tab manager tear
+    // down via the weak ptr it is given.
+    perf_man->task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &performance_manager::PerformanceManager::RegisterObserver,
+            base::Unretained(perf_man),
+            std::make_unique<ResourceCoordinatorSignalObserver>(
+                weak_ptr_factory_.GetWeakPtr())));
   }
+
   stats_collector_.reset(new TabManagerStatsCollector());
   proactive_freeze_discard_params_ =
       GetStaticProactiveTabFreezeAndDiscardParams();
@@ -200,7 +194,6 @@ TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
 
 TabManager::~TabManager() {
   tab_load_tracker_->RemoveObserver(this);
-  resource_coordinator_signal_observer_.reset();
 
   if (metrics::DesktopSessionDurationTracker::IsInitialized())
     metrics::DesktopSessionDurationTracker::Get()->RemoveObserver(this);
@@ -232,21 +225,13 @@ void TabManager::Start() {
 }
 
 LifecycleUnitVector TabManager::GetSortedLifecycleUnits() {
-  std::vector<LifecycleUnitAndSortKey> lifecycle_units_and_sort_keys;
-  lifecycle_units_and_sort_keys.reserve(lifecycle_units_.size());
-  for (auto* lifecycle_unit : lifecycle_units_)
-    lifecycle_units_and_sort_keys.emplace_back(lifecycle_unit);
-
-  std::sort(lifecycle_units_and_sort_keys.begin(),
-            lifecycle_units_and_sort_keys.end());
-
-  LifecycleUnitVector sorted_lifecycle_units;
-  sorted_lifecycle_units.reserve(lifecycle_units_and_sort_keys.size());
-  for (auto& lifecycle_unit_and_sort_key : lifecycle_units_and_sort_keys) {
-    sorted_lifecycle_units.push_back(
-        lifecycle_unit_and_sort_key.lifecycle_unit);
-  }
-
+  LifecycleUnitVector sorted_lifecycle_units(lifecycle_units_.begin(),
+                                             lifecycle_units_.end());
+  // Sort lifecycle_units with ascending importance.
+  std::sort(sorted_lifecycle_units.begin(), sorted_lifecycle_units.end(),
+            [](LifecycleUnit* a, LifecycleUnit* b) {
+              return a->GetSortKey() < b->GetSortKey();
+            });
   return sorted_lifecycle_units;
 }
 
@@ -254,8 +239,6 @@ void TabManager::DiscardTab(LifecycleUnitDiscardReason reason,
                             TabDiscardDoneCB tab_discard_done) {
   if (reason == LifecycleUnitDiscardReason::URGENT) {
     stats_collector_->RecordWillDiscardUrgently(GetNumAliveTabs());
-    resource_coordinator::TabActivityWatcher::GetInstance()
-        ->LogOldestNTabFeatures();
   }
 
 #if defined(OS_CHROMEOS)
@@ -443,10 +426,8 @@ void TabManager::OnTabStripModelChanged(
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
   if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      WebContentsData::CopyState(delta.replace.old_contents,
-                                 delta.replace.new_contents);
-    }
+    auto* replace = change.GetReplace();
+    WebContentsData::CopyState(replace->old_contents, replace->new_contents);
   }
 
   if (selection.active_tab_changed() && !tab_strip_model->empty())

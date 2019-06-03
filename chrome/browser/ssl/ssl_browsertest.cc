@@ -127,6 +127,7 @@
 #include "content/public/common/page_state.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/common/web_preferences.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
@@ -1579,9 +1580,6 @@ IN_PROC_BROWSER_TEST_P(SSLUITest, TestHTTPSExpiredCertAndProceed) {
 
 // Visits a page in an app window with https error and proceed:
 IN_PROC_BROWSER_TEST_P(SSLUITest, InAppTestHTTPSExpiredCertAndProceed) {
-  auto feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  feature_list->InitAndEnableFeature(features::kDesktopPWAWindowing);
-
   ASSERT_TRUE(https_server_expired_.Start());
 
   const GURL app_url = https_server_expired_.GetURL("/ssl/google.html");
@@ -1598,9 +1596,6 @@ IN_PROC_BROWSER_TEST_P(SSLUITest, InAppTestHTTPSExpiredCertAndProceed) {
 // Visits a page with https error and proceed. Then open the app and proceed.
 IN_PROC_BROWSER_TEST_P(SSLUITestCommitted,
                        InAppTestHTTPSExpiredCertAndPreviouslyProceeded) {
-  auto feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  feature_list->InitAndEnableFeature(features::kDesktopPWAWindowing);
-
   ASSERT_TRUE(https_server_expired_.Start());
 
   const GURL app_url = https_server_expired_.GetURL("/ssl/google.html");
@@ -2007,27 +2002,6 @@ IN_PROC_BROWSER_TEST_P(SSLUITest, SymantecEnforcementIsNotDisabled) {
   EXPECT_FALSE(last_ssl_config_.symantec_enforcement_disabled);
   EXPECT_FALSE(CreateDefaultNetworkContextParams()
                    ->initial_ssl_config->symantec_enforcement_disabled);
-}
-
-// Enables support for Symantec's Legacy PKI via policy, and then ensures that
-// the SSLConfig is configured to trust the Legacy PKI.
-IN_PROC_BROWSER_TEST_P(SSLUITest, SymantecPrefsCanEnable) {
-  EXPECT_FALSE(last_ssl_config_.symantec_enforcement_disabled);
-  EXPECT_FALSE(CreateDefaultNetworkContextParams()
-                   ->initial_ssl_config->symantec_enforcement_disabled);
-
-  // Enable, and make sure the default network context params reflect the
-  // change.
-  base::RunLoop run_loop;
-  set_ssl_config_updated_callback(run_loop.QuitClosure());
-  ASSERT_NO_FATAL_FAILURE(
-      EnablePolicy(g_browser_process->local_state(),
-                   policy::key::kEnableSymantecLegacyInfrastructure,
-                   prefs::kCertEnableSymantecLegacyInfrastructure));
-  run_loop.Run();
-  EXPECT_TRUE(last_ssl_config_.symantec_enforcement_disabled);
-  EXPECT_TRUE(CreateDefaultNetworkContextParams()
-                  ->initial_ssl_config->symantec_enforcement_disabled);
 }
 
 class CertificateTransparencySSLUITest : public CertVerifierBrowserTest {
@@ -2445,8 +2419,8 @@ class ClientCertStoreStub : public net::ClientCertStore {
 
   // net::ClientCertStore:
   void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
-                      const ClientCertListCallback& callback) override {
-    callback.Run(std::move(list_));
+                      ClientCertListCallback callback) override {
+    std::move(callback).Run(std::move(list_));
   }
 
  private:
@@ -3795,14 +3769,24 @@ class SSLUIWorkerFetchTest : public testing::WithParamInterface<
         << "strictly_block_blockable_mixed_content="
         << (strictly_block_blockable_mixed_content ? "true " : "false "));
 
+    // Run the tests in a new tab. This forces each call of
+    // RunMixedContentSettingsTest in a single test case to use different tabs
+    // and thus different processes, bypassing a subtle race condition where
+    // processes can get re-used under Site Isolation and retain their mixed
+    // content status (see crbug.com/890372). This ensures all error state is
+    // cleared.
+    chrome::NewTab(browser());
+    CheckErrorStateIsCleared();
+
     WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
 
     browser_client->SetMixedContentSettings(
         allow_running_insecure_content, strict_mixed_content_checking,
         strictly_block_blockable_mixed_content);
-
-    // Clears the error state which may be set by the previous test case.
-    ClearErrorState();
+    tab->GetRenderViewHost()->OnWebkitPreferencesChanged();
+    CheckMixedContentSettings(allow_running_insecure_content,
+                              strict_mixed_content_checking,
+                              strictly_block_blockable_mixed_content);
 
     const base::string16 loaded_title = base::ASCIIToUTF16("LOADED");
     const base::string16 failed_title = base::ASCIIToUTF16("FAILED");
@@ -3835,6 +3819,7 @@ class SSLUIWorkerFetchTest : public testing::WithParamInterface<
       content::TitleWatcher watcher(tab, loaded_title);
       watcher.AlsoWaitForTitle(failed_title);
       SetAllowRunningInsecureContent();
+      tab->GetRenderViewHost()->OnWebkitPreferencesChanged();
       EXPECT_EQ(expected_load_after_allow ? loaded_title : failed_title,
                 watcher.WaitAndGetTitle());
     }
@@ -3849,6 +3834,8 @@ class SSLUIWorkerFetchTest : public testing::WithParamInterface<
                                             : security_state::SECURE,
         expected_show_dangerous_after_allow ? AuthState::RAN_INSECURE_CONTENT
                                             : AuthState::NONE);
+
+    chrome::CloseTab(browser());
   }
 
   base::ScopedTempDir tmp_dir_;
@@ -3862,17 +3849,30 @@ class SSLUIWorkerFetchTest : public testing::WithParamInterface<
     renderer->SetAllowRunningInsecureContent();
   }
 
-  void ClearErrorState() {
+  void CheckErrorStateIsCleared() {
     WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
-    content::TestNavigationObserver observer(tab, 1);
-    ui_test_utils::NavigateToURL(browser(),
-                                 embedded_test_server()->GetURL("/empty.html"));
-    observer.Wait();
     EXPECT_FALSE(
         TabSpecificContentSettings::FromWebContents(tab)->IsContentBlocked(
             CONTENT_SETTINGS_TYPE_MIXEDSCRIPT));
     CheckSecurityState(tab, CertError::NONE, security_state::NONE,
                        AuthState::NONE);
+    EXPECT_FALSE(SecurityStateTabHelper::FromWebContents(tab)
+                     ->GetVisibleSecurityState()
+                     ->ran_mixed_content);
+  }
+
+  void CheckMixedContentSettings(bool allow_running_insecure_content,
+                                 bool strict_mixed_content_checking,
+                                 bool strictly_block_blockable_mixed_content) {
+    WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
+    const content::WebPreferences& prefs =
+        tab->GetMainFrame()->GetRenderViewHost()->GetWebkitPreferences();
+    ASSERT_EQ(prefs.strictly_block_blockable_mixed_content,
+              strictly_block_blockable_mixed_content);
+    ASSERT_EQ(prefs.allow_running_insecure_content,
+              allow_running_insecure_content);
+    ASSERT_EQ(prefs.strict_mixed_content_checking,
+              strict_mixed_content_checking);
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -3975,9 +3975,10 @@ IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
 }
 
 // This test checks the behavior of mixed content blocking for the requests
-// from a dedicated worker by changing the settings in WebPreferences.
-// TODO(crbug.com/890372): This test is flaky.
-IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest, DISABLED_MixedContentSettings) {
+// from a dedicated worker by changing the settings in WebPreferences
+// with allow_running_insecure_content = true.
+IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
+                       MixedContentSettings_AllowRunningInsecureContent) {
   ChromeContentBrowserClientForMixedContentTest browser_client;
   content::ContentBrowserClient* old_browser_client =
       content::SetBrowserClientForTesting(&browser_client);
@@ -3988,51 +3989,82 @@ IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest, DISABLED_MixedContentSettings) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   WriteTestFiles(*embedded_test_server(), "example.com");
+  for (bool strict_mixed_content_checking : {true, false}) {
+    for (bool strictly_block_blockable_mixed_content : {true, false}) {
+      if (strict_mixed_content_checking) {
+        RunMixedContentSettingsTest(
+            &browser_client, true /* allow_running_insecure_content */,
+            strict_mixed_content_checking,
+            strictly_block_blockable_mixed_content, false /* expected_load */,
+            false /* expected_show_blocked */,
+            false /* expected_show_dangerous */,
+            false /* expected_load_after_allow */,
+            false /* expected_show_blocked_after_allow */,
+            false /* expected_show_dangerous_after_allow */);
+      } else {
+        RunMixedContentSettingsTest(
+            &browser_client, true /* allow_running_insecure_content */,
+            strict_mixed_content_checking,
+            strictly_block_blockable_mixed_content, true /* expected_load */,
+            false /* expected_show_blocked */,
+            true /* expected_show_dangerous */,
+            true /* expected_load_after_allow */,
+            false /* expected_show_blocked_after_allow */,
+            true /* expected_show_dangerous_after_allow */);
+      }
+    }
+  }
 
-  for (bool allow_running_insecure_content : {true, false}) {
-    for (bool strict_mixed_content_checking : {true, false}) {
-      for (bool strictly_block_blockable_mixed_content : {true, false}) {
-        if (strict_mixed_content_checking) {
-          RunMixedContentSettingsTest(
-              &browser_client, allow_running_insecure_content,
-              strict_mixed_content_checking,
-              strictly_block_blockable_mixed_content, false /* expected_load */,
-              false /* expected_show_blocked */,
-              false /* expected_show_dangerous */,
-              false /* expected_load_after_allow */,
-              false /* expected_show_blocked_after_allow */,
-              false /* expected_show_dangerous_after_allow */);
-        } else if (allow_running_insecure_content) {
-          RunMixedContentSettingsTest(
-              &browser_client, allow_running_insecure_content,
-              strict_mixed_content_checking,
-              strictly_block_blockable_mixed_content, true /* expected_load */,
-              false /* expected_show_blocked */,
-              true /* expected_show_dangerous */,
-              true /* expected_load_after_allow */,
-              false /* expected_show_blocked_after_allow */,
-              true /* expected_show_dangerous_after_allow */);
-        } else if (strictly_block_blockable_mixed_content) {
-          RunMixedContentSettingsTest(
-              &browser_client, allow_running_insecure_content,
-              strict_mixed_content_checking,
-              strictly_block_blockable_mixed_content, false /* expected_load */,
-              false /* expected_show_blocked */,
-              false /* expected_show_dangerous */,
-              false /* expected_load_after_allow */,
-              false /* expected_show_blocked_after_allow */,
-              false /* expected_show_dangerous_after_allow */);
-        } else {
-          RunMixedContentSettingsTest(
-              &browser_client, allow_running_insecure_content,
-              strict_mixed_content_checking,
-              strictly_block_blockable_mixed_content, false /* expected_load */,
-              true /* expected_show_blocked */,
-              false /* expected_show_dangerous */,
-              true /* expected_load_after_allow */,
-              false /* expected_show_blocked_after_allow */,
-              true /* expected_show_dangerous_after_allow */);
-        }
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+
+// This test checks the behavior of mixed content blocking for the requests
+// from a dedicated worker by changing the settings in WebPreferences
+// with allow_running_insecure_content = false.
+IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
+                       MixedContentSettings_DisallowRunningInsecureContent) {
+  ChromeContentBrowserClientForMixedContentTest browser_client;
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  https_server_.ServeFilesFromDirectory(tmp_dir_.GetPath());
+  embedded_test_server()->ServeFilesFromDirectory(tmp_dir_.GetPath());
+  ASSERT_TRUE(https_server_.Start());
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  WriteTestFiles(*embedded_test_server(), "example.com");
+  for (bool strict_mixed_content_checking : {true, false}) {
+    for (bool strictly_block_blockable_mixed_content : {true, false}) {
+      if (strict_mixed_content_checking) {
+        RunMixedContentSettingsTest(
+            &browser_client, false /* allow_running_insecure_content */,
+            strict_mixed_content_checking,
+            strictly_block_blockable_mixed_content, false /* expected_load */,
+            false /* expected_show_blocked */,
+            false /* expected_show_dangerous */,
+            false /* expected_load_after_allow */,
+            false /* expected_show_blocked_after_allow */,
+            false /* expected_show_dangerous_after_allow */);
+      } else if (strictly_block_blockable_mixed_content) {
+        RunMixedContentSettingsTest(
+            &browser_client, false /* allow_running_insecure_content */,
+            strict_mixed_content_checking,
+            strictly_block_blockable_mixed_content, false /* expected_load */,
+            false /* expected_show_blocked */,
+            false /* expected_show_dangerous */,
+            false /* expected_load_after_allow */,
+            false /* expected_show_blocked_after_allow */,
+            false /* expected_show_dangerous_after_allow */);
+      } else {
+        RunMixedContentSettingsTest(
+            &browser_client, false /* allow_running_insecure_content */,
+            strict_mixed_content_checking,
+            strictly_block_blockable_mixed_content, false /* expected_load */,
+            true /* expected_show_blocked */,
+            false /* expected_show_dangerous */,
+            true /* expected_load_after_allow */,
+            false /* expected_show_blocked_after_allow */,
+            true /* expected_show_dangerous_after_allow */);
       }
     }
   }
@@ -4042,10 +4074,10 @@ IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest, DISABLED_MixedContentSettings) {
 
 // This test checks that all mixed content requests from a dedicated worker are
 // blocked regardless of the settings in WebPreferences when
-// block-all-mixed-content CSP is set.
-// TODO(crbug.com/890372): This test is flaky.
-IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
-                       DISABLED_MixedContentSettingsWithBlockingCSP) {
+// block-all-mixed-content CSP is set with allow_running_insecure_content=true.
+IN_PROC_BROWSER_TEST_P(
+    SSLUIWorkerFetchTest,
+    MixedContentSettingsWithBlockingCSP_AllowRunningInsecureContent) {
   ChromeContentBrowserClientForMixedContentTest browser_client;
   content::ContentBrowserClient* old_browser_client =
       content::SetBrowserClientForTesting(&browser_client);
@@ -4060,20 +4092,51 @@ IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
             "HTTP/1.1 200 OK\n"
             "Content-Type: text/html\n"
             "Content-Security-Policy: block-all-mixed-content;");
+  for (bool strict_mixed_content_checking : {true, false}) {
+    for (bool strictly_block_blockable_mixed_content : {true, false}) {
+      RunMixedContentSettingsTest(
+          &browser_client, true /* allow_running_insecure_content */,
+          strict_mixed_content_checking, strictly_block_blockable_mixed_content,
+          false /* expected_load */, false /* expected_show_blocked */,
+          false /* expected_show_dangerous */,
+          false /* expected_load_after_allow */,
+          false /* expected_show_blocked_after_allow */,
+          false /* expected_show_dangerous_after_allow */);
+    }
+  }
+  content::SetBrowserClientForTesting(old_browser_client);
+}
 
-  for (bool allow_running_insecure_content : {true, false}) {
-    for (bool strict_mixed_content_checking : {true, false}) {
-      for (bool strictly_block_blockable_mixed_content : {true, false}) {
-        RunMixedContentSettingsTest(
-            &browser_client, allow_running_insecure_content,
-            strict_mixed_content_checking,
-            strictly_block_blockable_mixed_content, false /* expected_load */,
-            false /* expected_show_blocked */,
-            false /* expected_show_dangerous */,
-            false /* expected_load_after_allow */,
-            false /* expected_show_blocked_after_allow */,
-            false /* expected_show_dangerous_after_allow */);
-      }
+// This test checks that all mixed content requests from a dedicated worker are
+// blocked regardless of the settings in WebPreferences when
+// block-all-mixed-content CSP is set with allow_running_insecure_content=false.
+IN_PROC_BROWSER_TEST_P(
+    SSLUIWorkerFetchTest,
+    MixedContentSettingsWithBlockingCSP_DisallowRunningInsecureContent) {
+  ChromeContentBrowserClientForMixedContentTest browser_client;
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  https_server_.ServeFilesFromDirectory(tmp_dir_.GetPath());
+  embedded_test_server()->ServeFilesFromDirectory(tmp_dir_.GetPath());
+  ASSERT_TRUE(https_server_.Start());
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  WriteTestFiles(*embedded_test_server(), "example.com");
+  WriteFile(FILE_PATH_LITERAL("worker_test.html.mock-http-headers"),
+            "HTTP/1.1 200 OK\n"
+            "Content-Type: text/html\n"
+            "Content-Security-Policy: block-all-mixed-content;");
+  for (bool strict_mixed_content_checking : {true, false}) {
+    for (bool strictly_block_blockable_mixed_content : {true, false}) {
+      RunMixedContentSettingsTest(
+          &browser_client, false /* allow_running_insecure_content */,
+          strict_mixed_content_checking, strictly_block_blockable_mixed_content,
+          false /* expected_load */, false /* expected_show_blocked */,
+          false /* expected_show_dangerous */,
+          false /* expected_load_after_allow */,
+          false /* expected_show_blocked_after_allow */,
+          false /* expected_show_dangerous_after_allow */);
     }
   }
   content::SetBrowserClientForTesting(old_browser_client);
@@ -4083,8 +4146,7 @@ IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest,
 // which is started from a subframe are blocked if
 // allow_running_insecure_content setting is false or
 // strict_mixed_content_checking setting is true.
-// TODO(crbug.com/890372): This test is flaky.
-IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest, DISABLED_MixedContentSubFrame) {
+IN_PROC_BROWSER_TEST_P(SSLUIWorkerFetchTest, MixedContentSubFrame) {
   // TODO(carlosil): Reenable tests once confirmed not flaky for committed
   // interstitials.
   if (AreCommittedInterstitialsEnabled())
@@ -7252,6 +7314,19 @@ IN_PROC_BROWSER_TEST_P(SSLUITest, NetworkErrorDoesntRevokeExemptions) {
 
   // We shouldn't get an interstitial this time.
   EXPECT_FALSE(IsShowingInterstitial(tab));
+}
+
+// Checks we don't attempt to show an interstitial (or crash) when visiting an
+// SSL error related page in chrome://network-errors. Regression test for
+// crbug.com/953812
+IN_PROC_BROWSER_TEST_P(SSLUITest, NoInterstitialOnNetworkErrorPage) {
+  GURL invalid_cert_url(content::kChromeUINetworkErrorURL);
+  GURL::Replacements replacements;
+  replacements.SetPathStr("-207");
+  invalid_cert_url = invalid_cert_url.ReplaceComponents(replacements);
+  ui_test_utils::NavigateToURL(browser(), invalid_cert_url);
+  EXPECT_FALSE(IsShowingInterstitial(
+      browser()->tab_strip_model()->GetActiveWebContents()));
 }
 
 // This SPKI hash is from a self signed certificate generated using the

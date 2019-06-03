@@ -4,9 +4,38 @@
 
 #include "components/send_tab_to_self/features.h"
 
+#include "components/sync/base/sync_prefs.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/driver/sync_driver_switches.h"
+
 namespace send_tab_to_self {
 
-const base::Feature kSendTabToSelfReceive{"SendTabToSelfReceive",
+const base::Feature kSendTabToSelfShowSendingUI{
+    "SendTabToSelfShowSendingUI", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSendTabToSelfBroadcast{"SendTabToSelfBroadcast",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSendTabToSelfHistory{"SendTabToSelfHistory",
                                           base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSendTabToSelfWhenSignedIn{
+    "SendTabToSelfWhenSignedIn", base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool IsReceivingEnabledByUserOnThisDevice(PrefService* prefs) {
+  syncer::SyncPrefs sync_prefs(prefs);
+  return base::FeatureList::IsEnabled(switches::kSyncSendTabToSelf) &&
+         sync_prefs.GetSelectedTypes().Has(syncer::UserSelectableType::kTabs);
+}
+
+bool EnabledOnSignIn() {
+  return base::FeatureList::IsEnabled(switches::kSyncSendTabToSelf) &&
+         base::FeatureList::IsEnabled(kSendTabToSelfWhenSignedIn);
+}
+
+bool HistoryViewEnabled() {
+  return base::FeatureList::IsEnabled(switches::kSyncSendTabToSelf) &&
+         base::FeatureList::IsEnabled(kSendTabToSelfHistory);
+}
 
 }  // namespace send_tab_to_self

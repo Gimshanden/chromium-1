@@ -19,9 +19,10 @@
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
-#include "third_party/blink/public/web/modules/mediastream/video_track_adapter.h"
+#include "third_party/blink/public/web/modules/mediastream/video_track_adapter_settings.h"
 #include "third_party/blink/public/web/web_heap.h"
 
 using ::testing::_;
@@ -29,10 +30,6 @@ using ::testing::DoAll;
 using ::testing::SaveArg;
 
 namespace content {
-
-ACTION_P(RunClosure, closure) {
-  closure.Run();
-}
 
 class MediaStreamVideoSourceTest : public ::testing::Test {
  public:
@@ -42,7 +39,7 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
         child_process_(new ChildProcess()),
         number_of_successful_constraints_applied_(0),
         number_of_failed_constraints_applied_(0),
-        result_(blink::MEDIA_DEVICE_OK),
+        result_(blink::mojom::MediaStreamRequestResult::OK),
         result_name_(""),
         mock_source_(new MockMediaStreamVideoSource(
             media::VideoCaptureFormat(gfx::Size(1280, 720),
@@ -128,7 +125,7 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
     return number_of_failed_constraints_applied_;
   }
 
-  blink::MediaStreamRequestResult error_type() const { return result_; }
+  blink::mojom::MediaStreamRequestResult error_type() const { return result_; }
   blink::WebString error_name() const { return result_name_; }
 
   MockMediaStreamVideoSource* mock_source() { return mock_source_; }
@@ -159,9 +156,10 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
                                            int height,
                                            MockMediaStreamVideoSink* sink) {
     base::RunLoop run_loop;
-    base::Closure quit_closure = run_loop.QuitClosure();
-    EXPECT_CALL(*sink, OnVideoFrame())
-        .WillOnce(RunClosure(std::move(quit_closure)));
+    base::OnceClosure quit_closure = run_loop.QuitClosure();
+    EXPECT_CALL(*sink, OnVideoFrame()).WillOnce([&]() {
+      std::move(quit_closure).Run();
+    });
     scoped_refptr<media::VideoFrame> frame =
         media::VideoFrame::CreateBlackFrame(gfx::Size(width, height));
     mock_source()->DeliverVideoFrame(frame);
@@ -181,10 +179,11 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
       MockMediaStreamVideoSink* sink1,
       MockMediaStreamVideoSink* sink2) {
     base::RunLoop run_loop;
-    base::Closure quit_closure = run_loop.QuitClosure();
+    base::OnceClosure quit_closure = run_loop.QuitClosure();
     EXPECT_CALL(*sink1, OnVideoFrame());
-    EXPECT_CALL(*sink2, OnVideoFrame())
-        .WillOnce(RunClosure(std::move(quit_closure)));
+    EXPECT_CALL(*sink2, OnVideoFrame()).WillOnce([&]() {
+      std::move(quit_closure).Run();
+    });
     scoped_refptr<media::VideoFrame> frame =
         media::VideoFrame::CreateBlackFrame(gfx::Size(width, height));
     mock_source()->DeliverVideoFrame(frame);
@@ -238,11 +237,11 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
 
  private:
   void OnConstraintsApplied(blink::WebPlatformMediaStreamSource* source,
-                            blink::MediaStreamRequestResult result,
+                            blink::mojom::MediaStreamRequestResult result,
                             const blink::WebString& result_name) {
     ASSERT_EQ(source, web_source().GetPlatformSource());
 
-    if (result == blink::MEDIA_DEVICE_OK) {
+    if (result == blink::mojom::MediaStreamRequestResult::OK) {
       ++number_of_successful_constraints_applied_;
     } else {
       result_ = result;
@@ -261,7 +260,7 @@ class MediaStreamVideoSourceTest : public ::testing::Test {
   blink::WebMediaStreamTrack track_to_release_;
   int number_of_successful_constraints_applied_;
   int number_of_failed_constraints_applied_;
-  blink::MediaStreamRequestResult result_;
+  blink::mojom::MediaStreamRequestResult result_;
   blink::WebString result_name_;
   blink::WebMediaStreamSource web_source_;
   // |mock_source_| is owned by |web_source_|.
@@ -420,11 +419,11 @@ TEST_F(MediaStreamVideoSourceTest, MutedSource) {
             blink::WebMediaStreamSource::kReadyStateLive);
 
   base::RunLoop run_loop;
-  base::Closure quit_closure = run_loop.QuitClosure();
+  base::OnceClosure quit_closure = run_loop.QuitClosure();
   bool muted_state = false;
   EXPECT_CALL(*mock_source(), DoSetMutedState(_))
-      .WillOnce(
-          DoAll(SaveArg<0>(&muted_state), RunClosure(std::move(quit_closure))));
+      .WillOnce(DoAll(SaveArg<0>(&muted_state),
+                      [&](auto) { std::move(quit_closure).Run(); }));
   run_loop.Run();
   EXPECT_EQ(muted_state, true);
 
@@ -432,10 +431,10 @@ TEST_F(MediaStreamVideoSourceTest, MutedSource) {
             blink::WebMediaStreamSource::kReadyStateMuted);
 
   base::RunLoop run_loop2;
-  base::Closure quit_closure2 = run_loop2.QuitClosure();
+  base::OnceClosure quit_closure2 = run_loop2.QuitClosure();
   EXPECT_CALL(*mock_source(), DoSetMutedState(_))
       .WillOnce(DoAll(SaveArg<0>(&muted_state),
-                      RunClosure(std::move(quit_closure2))));
+                      [&](auto) { std::move(quit_closure2).Run(); }));
   DeliverVideoFrameAndWaitForRenderer(640, 480, &sink);
   run_loop2.Run();
 

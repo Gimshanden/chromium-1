@@ -156,7 +156,12 @@ struct AutocompleteMatch {
   const gfx::VectorIcon& GetVectorIcon(bool is_bookmark) const;
 #endif
 
-  // Comparison function for determining when one match is better than another.
+  // Returns text explaining why this suggestion was displayed. Can return an
+  // empty string if there is no explanation.
+  base::string16 GetWhyThisSuggestionText() const;
+
+  // Comparison function for determining whether the first match is better than
+  // the second.
   static bool MoreRelevant(const AutocompleteMatch& elem1,
                            const AutocompleteMatch& elem2);
 
@@ -273,6 +278,11 @@ struct AutocompleteMatch {
   static url_formatter::FormatUrlTypes GetFormatTypes(bool preserve_scheme,
                                                       bool preserve_subdomain);
 
+  // Logs the search engine used to navigate to a search page or auto complete
+  // suggestion. For direct URL navigations, nothing is logged.
+  static void LogSearchEngineUsed(const AutocompleteMatch& match,
+                                  TemplateURLService* template_url_service);
+
   // Computes the stripped destination URL (via GURLToStrippedGURL()) and
   // stores the result in |stripped_destination_url|.  |input| is used for the
   // same purpose as in GURLToStrippedGURL().
@@ -365,10 +375,6 @@ struct AutocompleteMatch {
   // Estimates dynamic memory usage.
   // See base/trace_event/memory_usage_estimator.h for more info.
   size_t EstimateMemoryUsage() const;
-
-  // Some types of matches (answers for dictionary definitions, e.g.) do not
-  // follow the common rules for reversing lines.
-  bool IsExceptedFromLineReversal() const;
 
   // Not to be confused with |has_tab_match|, this returns true if the match
   // has a matching tab and will use a switch-to-tab button. It returns false,

@@ -264,10 +264,13 @@ class _BuildHelper(object):
   @property
   def main_lib_path(self):
     # Cannot extract this from GN because --cloud needs to work without GN.
+    # TODO(agrieve): Could maybe extract from .apk?
     if self.IsLinux():
       return 'chrome'
-    if 'monochrome' in self.target:
+    if 'monochrome' in self.target or 'trichrome' in self.target:
       ret = 'lib.unstripped/libmonochrome_base.so'
+    elif 'webview' in self.target:
+      ret = 'lib.unstripped/libwebviewchromium.so'
     else:
       ret = 'lib.unstripped/libchrome_base.so'
     # Maintain support for measuring non-bundle apks.
@@ -336,6 +339,8 @@ class _BuildHelper(object):
 
   def _GenGnCmd(self):
     gn_args = 'is_official_build=true'
+    gn_args += ' android_channel="stable"'
+    gn_args += ' enable_chrome_language_splits=true'
     # Variables often become unused when experimenting with macros to reduce
     # size, so don't fail on warnings.
     gn_args += ' treat_warnings_as_errors=false'
@@ -497,6 +502,34 @@ class _DiffArchiveManager(object):
       _PrintFile(short_diff_path)
     logging.info('See detailed diff results here: %s',
                  os.path.relpath(diff_path))
+
+  def GenerateHtmlReport(self, before_id, after_id):
+    """Generate HTML report given two build archives."""
+    before = self.build_archives[before_id]
+    after = self.build_archives[after_id]
+    diff_path = self._DiffDir(before, after)
+    if not self._CanDiff(before, after):
+      logging.info(
+          'Skipping HTML report for %s due to missing build archives.',
+          diff_path)
+      return
+
+    supersize_path = os.path.join(_BINARY_SIZE_DIR, 'supersize')
+
+    report_path = os.path.join(diff_path, 'diff.ndjson')
+
+    supersize_cmd = [supersize_path, 'html_report', '--diff-with',
+      before.archived_size_path,
+      after.archived_size_path,
+      report_path]
+
+    logging.info('Creating HTML report')
+
+    _RunCmd(supersize_cmd)
+
+    logging.info('View using a local server via: %s start_server %s',
+      os.path.relpath(supersize_path),
+      os.path.relpath(report_path))
 
   def Summarize(self):
     path = os.path.join(self.archive_dir, 'last_diff_summary.txt')
@@ -1000,6 +1033,7 @@ def main():
                                     subrepo, args.include_slow_options,
                                     args.unstripped)
     consecutive_failures = 0
+    i = 0
     for i, archive in enumerate(diff_mngr.build_archives):
       if archive.Exists():
         step = 'download' if build.IsCloud() else 'build'
@@ -1029,9 +1063,9 @@ def main():
       if i != 0:
         diff_mngr.MaybeDiff(i - 1, i)
 
+    diff_mngr.GenerateHtmlReport(0, i)
     diff_mngr.Summarize()
 
 
 if __name__ == '__main__':
   sys.exit(main())
-

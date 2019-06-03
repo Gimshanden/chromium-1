@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "ash/public/interfaces/login_screen.mojom.h"
 #include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
@@ -19,6 +18,10 @@
 #include "ui/gfx/native_widget_types.h"
 
 class AccountId;
+
+namespace ash {
+enum class OobeDialogState;
+}
 
 namespace content {
 class WebContents;
@@ -90,7 +93,7 @@ class LoginDisplayHost {
   // Starts out-of-box-experience flow or shows other screen handled by
   // Wizard controller i.e. camera, recovery.
   // One could specify start screen with |first_screen|.
-  virtual void StartWizard(OobeScreen first_screen) = 0;
+  virtual void StartWizard(OobeScreenId first_screen) = 0;
 
   // Returns current WizardController, if it exists.
   // Result should not be stored.
@@ -142,7 +145,7 @@ class LoginDisplayHost {
   virtual void UpdateOobeDialogSize(int width, int height) = 0;
 
   // Update the state of the oobe dialog.
-  virtual void UpdateOobeDialogState(ash::mojom::OobeDialogState state) = 0;
+  virtual void UpdateOobeDialogState(ash::OobeDialogState state) = 0;
 
   // Get users that are visible in the login screen UI.
   // This is mainly used by views login screen. WebUI login screen will

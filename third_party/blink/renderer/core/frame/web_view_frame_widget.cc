@@ -70,11 +70,11 @@ void WebViewFrameWidget::EndRafAlignedInput() {
 }
 
 void WebViewFrameWidget::BeginUpdateLayers() {
-  web_view_->BeginRafAlignedInput();
+  web_view_->BeginUpdateLayers();
 }
 
 void WebViewFrameWidget::EndUpdateLayers() {
-  web_view_->EndRafAlignedInput();
+  web_view_->EndUpdateLayers();
 }
 
 void WebViewFrameWidget::BeginCommitCompositorFrame() {
@@ -97,11 +97,6 @@ void WebViewFrameWidget::RecordEndOfFrameMetrics(
 void WebViewFrameWidget::UpdateLifecycle(LifecycleUpdate requested_update,
                                          LifecycleUpdateReason reason) {
   web_view_->UpdateLifecycle(requested_update, reason);
-}
-
-void WebViewFrameWidget::PaintContent(cc::PaintCanvas* canvas,
-                                      const WebRect& view_port) {
-  web_view_->PaintContent(canvas, view_port);
 }
 
 void WebViewFrameWidget::ThemeChanged() {

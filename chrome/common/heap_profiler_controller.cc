@@ -7,21 +7,14 @@
 #include <cmath>
 
 #include "base/bind.h"
-#include "base/command_line.h"
-#include "base/feature_list.h"
-#include "base/metrics/field_trial_params.h"
-#include "base/metrics/metrics_hashes.h"
 #include "base/rand_util.h"
 #include "base/sampling_heap_profiler/module_cache.h"
 #include "base/sampling_heap_profiler/sampling_heap_profiler.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
 #include "components/metrics/call_stack_profile_builder.h"
-#include "content/public/common/content_switches.h"
 
 namespace {
 
-constexpr char kMetadataSizeField[] = "HeapProfiler.AllocationInBytes";
 constexpr base::TimeDelta kHeapCollectionInterval =
     base::TimeDelta::FromHours(24);
 
@@ -30,24 +23,6 @@ base::TimeDelta RandomInterval(base::TimeDelta mean) {
   // given mean interval.
   return -std::log(base::RandDouble()) * mean;
 }
-
-class SampleMetadataRecorder : public metrics::MetadataRecorder {
- public:
-  SampleMetadataRecorder()
-      : field_hash_(base::HashMetricName(kMetadataSizeField)) {}
-
-  void SetCurrentSampleSize(size_t size) { current_sample_size_ = size; }
-
-  std::pair<uint64_t, int64_t> GetHashAndValue() const override {
-    return std::make_pair(field_hash_, current_sample_size_);
-  }
-
- private:
-  const uint64_t field_hash_;
-  size_t current_sample_size_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(SampleMetadataRecorder);
-};
 
 }  // namespace
 
@@ -97,13 +72,11 @@ void HeapProfilerController::RetrieveAndSendSnapshot() {
     return;
 
   base::ModuleCache module_cache;
-  SampleMetadataRecorder metadata_recorder;
   metrics::CallStackProfileParams params(
       metrics::CallStackProfileParams::BROWSER_PROCESS,
       metrics::CallStackProfileParams::UNKNOWN_THREAD,
       metrics::CallStackProfileParams::PERIODIC_HEAP_COLLECTION);
-  metrics::CallStackProfileBuilder profile_builder(params, nullptr,
-                                                   &metadata_recorder);
+  metrics::CallStackProfileBuilder profile_builder(params);
 
   for (const base::SamplingHeapProfiler::Sample& sample : samples) {
     std::vector<base::Frame> frames;
@@ -114,9 +87,11 @@ void HeapProfilerController::RetrieveAndSendSnapshot() {
           module_cache.GetModuleForAddress(address);
       frames.emplace_back(address, module);
     }
-    metadata_recorder.SetCurrentSampleSize(sample.total);
-    profile_builder.RecordMetadata();
-    profile_builder.OnSampleCompleted(std::move(frames));
+    size_t count = std::max<size_t>(
+        static_cast<size_t>(
+            std::llround(static_cast<double>(sample.total) / sample.size)),
+        1);
+    profile_builder.OnSampleCompleted(std::move(frames), sample.total, count);
   }
 
   profile_builder.OnProfileCompleted(base::TimeDelta(), base::TimeDelta());

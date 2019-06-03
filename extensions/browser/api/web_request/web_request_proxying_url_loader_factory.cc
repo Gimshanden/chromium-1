@@ -98,12 +98,12 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
   // https://developer.chrome.com/extensions/webRequest#event-onBeforeRequest.
   network::ResourceRequest request_for_info = request_;
   request_for_info.request_initiator = original_initiator_;
-  info_.emplace(
+  info_.emplace(WebRequestInfoInitParams(
       request_id_, factory_->render_process_id_, request_.render_frame_id,
       factory_->navigation_ui_data_ ? factory_->navigation_ui_data_->DeepCopy()
                                     : nullptr,
       routing_id_, factory_->resource_context_, request_for_info, is_download_,
-      !(options_ & network::mojom::kURLLoadOptionSynchronous));
+      !(options_ & network::mojom::kURLLoadOptionSynchronous)));
 
   current_request_uses_header_client_ =
       factory_->url_loader_header_client_binding_ &&
@@ -279,8 +279,8 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::OnUploadProgress(
 }
 
 void WebRequestProxyingURLLoaderFactory::InProgressRequest::
-    OnReceiveCachedMetadata(const std::vector<uint8_t>& data) {
-  target_client_->OnReceiveCachedMetadata(data);
+    OnReceiveCachedMetadata(mojo_base::BigBuffer data) {
+  target_client_->OnReceiveCachedMetadata(std::move(data));
 }
 
 void WebRequestProxyingURLLoaderFactory::InProgressRequest::
@@ -310,7 +310,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::OnComplete(
 }
 
 void WebRequestProxyingURLLoaderFactory::InProgressRequest::HandleAuthRequest(
-    net::AuthChallengeInfo* auth_info,
+    const net::AuthChallengeInfo& auth_info,
     scoped_refptr<net::HttpResponseHeaders> response_headers,
     WebRequestAPI::AuthRequestCallback callback) {
   DCHECK(!auth_credentials_);
@@ -328,7 +328,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::HandleAuthRequest(
   // which indicated a need to authenticate.
   HandleResponseOrRedirectHeaders(base::BindOnce(
       &InProgressRequest::ContinueAuthRequest, weak_factory_.GetWeakPtr(),
-      base::RetainedRef(auth_info), std::move(callback)));
+      auth_info, std::move(callback)));
 }
 
 void WebRequestProxyingURLLoaderFactory::InProgressRequest::OnLoaderCreated(
@@ -427,7 +427,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
     }
   }
   head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.length()));
+      net::HttpUtil::AssembleRawHeaders(headers));
   head.encoded_data_length = 0;
 
   current_response_ = head;
@@ -552,10 +552,13 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
       }
     }
 
-    target_loader_->FollowRedirect(
-        pending_follow_redirect_params_->removed_headers,
-        pending_follow_redirect_params_->modified_headers,
-        pending_follow_redirect_params_->new_url);
+    if (target_loader_.is_bound()) {
+      target_loader_->FollowRedirect(
+          pending_follow_redirect_params_->removed_headers,
+          pending_follow_redirect_params_->modified_headers,
+          pending_follow_redirect_params_->new_url);
+    }
+
     pending_follow_redirect_params_.reset();
   }
 
@@ -576,7 +579,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
 }
 
 void WebRequestProxyingURLLoaderFactory::InProgressRequest::ContinueAuthRequest(
-    net::AuthChallengeInfo* auth_info,
+    const net::AuthChallengeInfo& auth_info,
     WebRequestAPI::AuthRequestCallback callback,
     int error_code) {
   if (error_code != net::OK) {
@@ -595,7 +598,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::ContinueAuthRequest(
   net::NetworkDelegate::AuthRequiredResponse response =
       ExtensionWebRequestEventRouter::GetInstance()->OnAuthRequired(
           factory_->browser_context_, factory_->info_map_, &info_.value(),
-          *auth_info, continuation, &auth_credentials_.value());
+          auth_info, continuation, &auth_credentials_.value());
 
   // At least one extension has a blocking handler for this request, so we'll
   // just wait for them to finish. |OnAuthRequestHandled()| will be invoked
@@ -754,6 +757,7 @@ void WebRequestProxyingURLLoaderFactory::InProgressRequest::
   net::CompletionRepeatingCallback copyable_callback =
       base::AdaptCallbackForRepeating(std::move(continuation));
   if (request_.url.SchemeIsHTTPOrHTTPS()) {
+    DCHECK(info_.has_value());
     int result =
         ExtensionWebRequestEventRouter::GetInstance()->OnHeadersReceived(
             factory_->browser_context_, factory_->info_map_, &info_.value(),
@@ -923,7 +927,7 @@ void WebRequestProxyingURLLoaderFactory::OnLoaderCreated(
 }
 
 void WebRequestProxyingURLLoaderFactory::HandleAuthRequest(
-    net::AuthChallengeInfo* auth_info,
+    const net::AuthChallengeInfo& auth_info,
     scoped_refptr<net::HttpResponseHeaders> response_headers,
     int32_t request_id,
     WebRequestAPI::AuthRequestCallback callback) {

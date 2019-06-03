@@ -35,6 +35,7 @@
 #include "base/numerics/checked_math.h"
 #include "build/build_config.h"
 #include "cc/layers/texture_layer_client.h"
+#include "components/viz/common/resources/transferable_resource.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
@@ -83,8 +84,7 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
 
   Canvas2DLayerBridge(const IntSize&,
                       AccelerationMode,
-                      const CanvasColorParams&,
-                      bool needs_y_flip = true);
+                      const CanvasColorParams&);
 
   ~Canvas2DLayerBridge() override;
 
@@ -196,7 +196,6 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
   bool hibernation_scheduled_ = false;
   bool dont_use_idle_scheduling_for_testing_ = false;
   bool context_lost_ = false;
-  bool needs_y_flip_;
 
   const AccelerationMode acceleration_mode_;
   const CanvasColorParams color_params_;
@@ -211,6 +210,7 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
   mutable SnapshotState snapshot_state_;
 
   CanvasResourceHost* resource_host_;
+  viz::TransferableResource previous_frame_resource_;
 
   base::WeakPtrFactory<Canvas2DLayerBridge> weak_ptr_factory_;
 

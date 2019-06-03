@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/scoped_file.h"
+#include "build/build_config.h"
 #include "media/base/scopedfd_helper.h"
 #include "media/base/video_frame_layout.h"
 #include "media/gpu/format_utils.h"
@@ -27,8 +28,8 @@ scoped_refptr<VideoFrame> CreateVideoFrameOzone(VideoPixelFormat pixel_format,
                                                 const gfx::Size& coded_size,
                                                 const gfx::Rect& visible_rect,
                                                 const gfx::Size& natural_size,
-                                                gfx::BufferUsage buffer_usage,
-                                                base::TimeDelta timestamp) {
+                                                base::TimeDelta timestamp,
+                                                gfx::BufferUsage buffer_usage) {
   ui::OzonePlatform* platform = ui::OzonePlatform::GetInstance();
   DCHECK(platform);
   ui::SurfaceFactoryOzone* factory = platform->GetSurfaceFactoryOzone();
@@ -36,8 +37,11 @@ scoped_refptr<VideoFrame> CreateVideoFrameOzone(VideoPixelFormat pixel_format,
 
   gfx::BufferFormat buffer_format =
       VideoPixelFormatToGfxBufferFormat(pixel_format);
-  auto pixmap = factory->CreateNativePixmap(
-      gfx::kNullAcceleratedWidget, coded_size, buffer_format, buffer_usage);
+  auto pixmap =
+      factory->CreateNativePixmap(gfx::kNullAcceleratedWidget, VK_NULL_HANDLE,
+                                  coded_size, buffer_format, buffer_usage);
+  if (!pixmap)
+    return nullptr;
 
   const size_t num_planes = VideoFrame::NumPlanes(pixel_format);
   std::vector<VideoFrameLayout::Plane> planes(num_planes);
@@ -45,14 +49,15 @@ scoped_refptr<VideoFrame> CreateVideoFrameOzone(VideoPixelFormat pixel_format,
   for (size_t i = 0; i < num_planes; ++i) {
     planes[i].stride = pixmap->GetDmaBufPitch(i);
     planes[i].offset = pixmap->GetDmaBufOffset(i);
-    planes[i].modifier = pixmap->GetDmaBufModifier(i);
     buffer_sizes[i] = planes[i].offset +
                       planes[i].stride * VideoFrame::Rows(i, pixel_format,
                                                           coded_size.height());
   }
-
   auto layout = VideoFrameLayout::CreateWithPlanes(
-      pixel_format, coded_size, std::move(planes), std::move(buffer_sizes));
+      pixel_format, coded_size, std::move(planes), std::move(buffer_sizes),
+      VideoFrameLayout::kBufferAddressAlignment,
+      pixmap->GetBufferFormatModifier());
+
   if (!layout)
     return nullptr;
 
@@ -87,11 +92,11 @@ scoped_refptr<VideoFrame> CreatePlatformVideoFrame(
     const gfx::Size& coded_size,
     const gfx::Rect& visible_rect,
     const gfx::Size& natural_size,
-    gfx::BufferUsage buffer_usage,
-    base::TimeDelta timestamp) {
+    base::TimeDelta timestamp,
+    gfx::BufferUsage buffer_usage) {
 #if defined(USE_OZONE)
   return CreateVideoFrameOzone(pixel_format, coded_size, visible_rect,
-                               natural_size, buffer_usage, timestamp);
+                               natural_size, timestamp, buffer_usage);
 #endif  // defined(USE_OZONE)
   NOTREACHED();
   return nullptr;
@@ -102,18 +107,26 @@ gfx::GpuMemoryBufferHandle CreateGpuMemoryBufferHandle(
   DCHECK(video_frame);
 
   gfx::GpuMemoryBufferHandle handle;
+#if defined(OS_LINUX)
   handle.type = gfx::NATIVE_PIXMAP;
 
   std::vector<base::ScopedFD> duped_fds =
       DuplicateFDs(video_frame->DmabufFds());
   const size_t num_planes = VideoFrame::NumPlanes(video_frame->format());
-  DCHECK_EQ(num_planes, duped_fds.size());
+  const size_t num_buffers = video_frame->layout().buffer_sizes().size();
+  DCHECK_EQ(video_frame->layout().planes().size(), num_planes);
+  handle.native_pixmap_handle.modifier = video_frame->layout().modifier();
   for (size_t i = 0; i < num_planes; ++i) {
     const auto& plane = video_frame->layout().planes()[i];
+    size_t buffer_size = 0;
+    if (i < num_buffers)
+      buffer_size = video_frame->layout().buffer_sizes()[i];
     handle.native_pixmap_handle.planes.emplace_back(
-        plane.stride, plane.offset, i, std::move(duped_fds[i]), plane.modifier);
+        plane.stride, plane.offset, buffer_size, std::move(duped_fds[i]));
   }
-
+#else
+  NOTREACHED();
+#endif  // defined(OS_LINUX)
   return handle;
 }
 

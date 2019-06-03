@@ -42,7 +42,7 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/time.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
-#include "third_party/skia/third_party/skcms/skcms.h"
+#include "third_party/skia/include/third_party/skcms/skcms.h"
 
 class SkColorSpace;
 
@@ -65,6 +65,8 @@ class PLATFORM_EXPORT ImagePlanes final {
 
  public:
   ImagePlanes();
+  // TODO(crbug/910276): To support YUVA, ImagePlanes needs to support a
+  // variable number of planes.
   ImagePlanes(void* planes[3], const size_t row_bytes[3]);
 
   void* Plane(int);
@@ -128,6 +130,16 @@ class PLATFORM_EXPORT ImageDecoder {
     kHighBitDepthToHalfFloat
   };
 
+  // The first three values are as defined in webp/decode.h, the last value
+  // specifies WebP animation formats.
+  enum CompressionFormat {
+    kUndefinedFormat = 0,
+    kLossyFormat = 1,
+    kLosslessFormat = 2,
+    kWebPAnimationFormat = 3,
+    kMaxValue = kWebPAnimationFormat,
+  };
+
   virtual ~ImageDecoder() = default;
 
   // Returns a caller-owned decoder of the appropriate type.  Returns nullptr if
@@ -167,6 +179,14 @@ class PLATFORM_EXPORT ImageDecoder {
   // This is useful for callers to determine whether a decoder instantiation
   // failure is due to insufficient or bad data.
   static bool HasSufficientDataToSniffImageType(const SharedBuffer&);
+
+  // Looks at the image data to determine and return the image MIME type.
+  static String SniffImageType(scoped_refptr<SharedBuffer> image_data);
+
+  // Returns the image data's compression format.
+  static CompressionFormat GetCompressionFormat(
+      scoped_refptr<SharedBuffer> image_data,
+      String mime_type);
 
   void SetData(scoped_refptr<SegmentReader> data, bool all_data_received) {
     if (failed_)

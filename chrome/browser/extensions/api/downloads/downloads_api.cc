@@ -65,7 +65,6 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
@@ -314,8 +313,9 @@ class DownloadFileIconExtractorImpl : public DownloadFileIconExtractor {
                              IconURLCallback callback) override;
 
  private:
-  void OnIconLoadComplete(
-      float scale, const IconURLCallback& callback, gfx::Image* icon);
+  void OnIconLoadComplete(float scale,
+                          const IconURLCallback& callback,
+                          gfx::Image icon);
 
   base::CancelableTaskTracker cancelable_task_tracker_;
 };
@@ -338,12 +338,15 @@ bool DownloadFileIconExtractorImpl::ExtractIconURLForPath(
 }
 
 void DownloadFileIconExtractorImpl::OnIconLoadComplete(
-    float scale, const IconURLCallback& callback, gfx::Image* icon) {
+    float scale,
+    const IconURLCallback& callback,
+    gfx::Image icon) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   callback.Run(
-      !icon ? std::string()
-            : webui::GetBitmapDataUrl(
-                  icon->ToImageSkia()->GetRepresentation(scale).GetBitmap()));
+      icon.IsEmpty()
+          ? std::string()
+          : webui::GetBitmapDataUrl(
+                icon.ToImageSkia()->GetRepresentation(scale).GetBitmap()));
 }
 
 IconLoader::IconSize IconLoaderSizeFromPixelSize(int pixel_size) {
@@ -1029,7 +1032,7 @@ bool DownloadsDownloadFunction::RunAsync() {
         })");
   std::unique_ptr<download::DownloadUrlParameters> download_params(
       new download::DownloadUrlParameters(
-          download_url, render_frame_host()->GetProcess()->GetID(),
+          download_url, source_process_id(),
           render_frame_host()->GetRenderViewHost()->GetRoutingID(),
           render_frame_host()->GetRoutingID(), traffic_annotation));
 

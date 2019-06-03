@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -24,6 +23,7 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_util.h"
+#include "net/quic/address_utils.h"
 #include "net/quic/mock_crypto_client_stream_factory.h"
 #include "net/quic/quic_chromium_alarm_factory.h"
 #include "net/quic/quic_chromium_connection_helper.h"
@@ -38,6 +38,7 @@
 #include "net/test/gtest_util.h"
 #include "net/test/test_with_scoped_task_environment.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_protocol.h"
+#include "net/third_party/quiche/src/quic/core/crypto/null_decrypter.h"
 #include "net/third_party/quiche/src/quic/core/crypto/quic_decrypter.h"
 #include "net/third_party/quiche/src/quic/core/crypto/quic_encrypter.h"
 #include "net/third_party/quiche/src/quic/core/http/spdy_utils.h"
@@ -138,7 +139,7 @@ class TestDelegateBase : public BidirectionalStreamImpl::Delegate {
     ++on_data_read_count_;
     CHECK_GE(bytes_read, OK);
     data_received_.append(read_buf_->data(), bytes_read);
-    base::ResetAndReturn(&callback_).Run(bytes_read);
+    std::move(callback_).Run(bytes_read);
   }
 
   void OnDataSent() override {
@@ -392,7 +393,7 @@ class DeleteStreamDelegate : public TestDelegateBase {
 
 class BidirectionalStreamQuicImplTest
     : public ::testing::TestWithParam<
-          std::tuple<quic::QuicTransportVersion, bool>>,
+          std::tuple<quic::ParsedQuicVersion, bool>>,
       public WithScopedTaskEnvironment {
  protected:
   static const bool kFin = true;
@@ -462,10 +463,8 @@ class BidirectionalStreamQuicImplTest
   }
 
   void ProcessPacket(std::unique_ptr<quic::QuicReceivedPacket> packet) {
-    connection_->ProcessUdpPacket(
-        quic::QuicSocketAddress(quic::QuicSocketAddressImpl(self_addr_)),
-        quic::QuicSocketAddress(quic::QuicSocketAddressImpl(peer_addr_)),
-        *packet);
+    connection_->ProcessUdpPacket(ToQuicSocketAddress(self_addr_),
+                                  ToQuicSocketAddress(peer_addr_), *packet);
   }
 
   // Configures the test fixture to use the list of expected writes.
@@ -494,13 +493,16 @@ class BidirectionalStreamQuicImplTest
         new QuicChromiumConnectionHelper(&clock_, &random_generator_));
     alarm_factory_.reset(new QuicChromiumAlarmFactory(runner_.get(), &clock_));
     connection_ = new quic::QuicConnection(
-        connection_id_,
-        quic::QuicSocketAddress(quic::QuicSocketAddressImpl(peer_addr_)),
-        helper_.get(), alarm_factory_.get(),
+        connection_id_, ToQuicSocketAddress(peer_addr_), helper_.get(),
+        alarm_factory_.get(),
         new QuicChromiumPacketWriter(socket.get(), runner_.get()),
         true /* owns_writer */, quic::Perspective::IS_CLIENT,
-        quic::test::SupportedVersions(
-            quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO, version_)));
+        quic::test::SupportedVersions(version_));
+    if (connection_->version().KnowsWhichDecrypterToUse()) {
+      connection_->InstallDecrypter(quic::ENCRYPTION_FORWARD_SECURE,
+                                    quic::QuicMakeUnique<quic::NullDecrypter>(
+                                        quic::Perspective::IS_CLIENT));
+    }
     base::TimeTicks dns_end = base::TimeTicks::Now();
     base::TimeTicks dns_start = dns_end - base::TimeDelta::FromMilliseconds(1);
 
@@ -816,11 +818,12 @@ class BidirectionalStreamQuicImplTest
   QuicChromiumClientSession* session() const { return session_.get(); }
 
   quic::QuicStreamId GetNthClientInitiatedBidirectionalStreamId(int n) {
-    return quic::test::GetNthClientInitiatedBidirectionalStreamId(version_, n);
+    return quic::test::GetNthClientInitiatedBidirectionalStreamId(
+        version_.transport_version, n);
   }
 
   std::string ConstructDataHeader(size_t body_len) {
-    if (version_ != quic::QUIC_VERSION_99) {
+    if (version_.transport_version != quic::QUIC_VERSION_99) {
       return "";
     }
     quic::HttpEncoder encoder;
@@ -830,7 +833,7 @@ class BidirectionalStreamQuicImplTest
   }
 
  protected:
-  const quic::QuicTransportVersion version_;
+  const quic::ParsedQuicVersion version_;
   const bool client_headers_include_h2_stream_dependency_;
   BoundTestNetLog net_log_;
   scoped_refptr<TestTaskRunner> runner_;
@@ -863,9 +866,8 @@ class BidirectionalStreamQuicImplTest
 INSTANTIATE_TEST_SUITE_P(
     Version,
     BidirectionalStreamQuicImplTest,
-    ::testing::Combine(
-        ::testing::ValuesIn(quic::AllSupportedTransportVersions()),
-        ::testing::Bool()));
+    ::testing::Combine(::testing::ValuesIn(quic::AllVersionsExcept99()),
+                       ::testing::Bool()));
 
 TEST_P(BidirectionalStreamQuicImplTest, GetRequest) {
   SetRequest("GET", "/", DEFAULT_PRIORITY);
@@ -1059,7 +1061,7 @@ TEST_P(BidirectionalStreamQuicImplTest, CoalesceDataBuffersNotHeadersFrame) {
   AddWrite(ConstructRequestHeadersPacketInner(
       2, GetNthClientInitiatedBidirectionalStreamId(0), !kFin, DEFAULT_PRIORITY,
       &spdy_request_headers_frame_length, &header_stream_offset));
-  if (version_ != quic::QUIC_VERSION_99) {
+  if (version_.transport_version != quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(3, kIncludeVersion, !kFin,
                                                      0, {kBody1, kBody2}));
   } else {
@@ -1077,7 +1079,7 @@ TEST_P(BidirectionalStreamQuicImplTest, CoalesceDataBuffersNotHeadersFrame) {
   std::string header5 = ConstructDataHeader(strlen(kBody5));
   quic::QuicStreamOffset data_offset =
       strlen(kBody1) + strlen(kBody2) + header.length() + header2.length();
-  if (version_ != quic::QUIC_VERSION_99) {
+  if (version_.transport_version != quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(
         5, !kIncludeVersion, kFin, data_offset, {kBody3, kBody4, kBody5}));
   } else {
@@ -1194,7 +1196,7 @@ TEST_P(BidirectionalStreamQuicImplTest,
   AddWrite(ConstructInitialSettingsPacket(1, &header_stream_offset));
   const char kBody1[] = "here are some data";
   std::string header = ConstructDataHeader(strlen(kBody1));
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructRequestHeadersAndMultipleDataFramesPacket(
         2, !kFin, DEFAULT_PRIORITY, &header_stream_offset,
         &spdy_request_headers_frame_length, {header, kBody1}));
@@ -1209,7 +1211,7 @@ TEST_P(BidirectionalStreamQuicImplTest,
   const char kBody2[] = "really small";
   std::string header2 = ConstructDataHeader(strlen(kBody2));
   quic::QuicStreamOffset data_offset = strlen(kBody1) + header.length();
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(
         4, !kIncludeVersion, kFin, data_offset, {header2, kBody2}));
   } else {
@@ -1313,7 +1315,7 @@ TEST_P(BidirectionalStreamQuicImplTest,
   std::string header = ConstructDataHeader(strlen(kBody1));
   std::string header2 = ConstructDataHeader(strlen(kBody2));
 
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructRequestHeadersAndMultipleDataFramesPacket(
         2, !kFin, DEFAULT_PRIORITY, &header_stream_offset,
         &spdy_request_headers_frame_length, {header, kBody1, header2, kBody2}));
@@ -1333,7 +1335,7 @@ TEST_P(BidirectionalStreamQuicImplTest,
   std::string header5 = ConstructDataHeader(strlen(kBody5));
   quic::QuicStreamOffset data_offset =
       strlen(kBody1) + strlen(kBody2) + header.length() + header2.length();
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(
         4, !kIncludeVersion, kFin, data_offset,
         {header3, kBody3, header4, kBody4, header5, kBody5}));
@@ -1520,7 +1522,7 @@ TEST_P(BidirectionalStreamQuicImplTest, PostRequest) {
       2, GetNthClientInitiatedBidirectionalStreamId(0), !kFin, DEFAULT_PRIORITY,
       &spdy_request_headers_frame_length, &header_stream_offset));
   std::string header = ConstructDataHeader(strlen(kUploadData));
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(3, kIncludeVersion, kFin,
                                                      0, {header, kUploadData}));
   } else {
@@ -1613,7 +1615,7 @@ TEST_P(BidirectionalStreamQuicImplTest, EarlyDataOverrideRequest) {
       2, GetNthClientInitiatedBidirectionalStreamId(0), !kFin, DEFAULT_PRIORITY,
       &spdy_request_headers_frame_length, &header_stream_offset));
   std::string header = ConstructDataHeader(strlen(kUploadData));
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(3, kIncludeVersion, kFin,
                                                      0, {header, kUploadData}));
   } else {
@@ -1708,7 +1710,7 @@ TEST_P(BidirectionalStreamQuicImplTest, InterleaveReadDataAndSendData) {
       &spdy_request_headers_frame_length, &header_stream_offset));
 
   std::string header = ConstructDataHeader(strlen(kUploadData));
-  if (version_ != quic::QUIC_VERSION_99) {
+  if (version_.transport_version != quic::QUIC_VERSION_99) {
     AddWrite(ConstructAckAndDataPacket(3, !kIncludeVersion, 2, 1, 2, !kFin, 0,
                                        kUploadData, &client_maker_));
     AddWrite(ConstructAckAndDataPacket(4, !kIncludeVersion, 3, 3, 3, kFin,
@@ -2257,7 +2259,7 @@ TEST_P(BidirectionalStreamQuicImplTest, AsyncFinRead) {
       2, GetNthClientInitiatedBidirectionalStreamId(0), !kFin, DEFAULT_PRIORITY,
       &spdy_request_headers_frame_length, &header_stream_offset));
   std::string header = ConstructDataHeader(strlen(kBody));
-  if (version_ == quic::QUIC_VERSION_99) {
+  if (version_.transport_version == quic::QUIC_VERSION_99) {
     AddWrite(ConstructClientMultipleDataFramesPacket(3, kIncludeVersion, kFin,
                                                      0, {header, kBody}));
   } else {

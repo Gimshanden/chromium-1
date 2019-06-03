@@ -15,6 +15,7 @@
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "ui/gl/color_space_utils.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface.h"
@@ -26,7 +27,8 @@ SkiaOutputDeviceGL::SkiaOutputDeviceGL(
     gpu::SurfaceHandle surface_handle,
     scoped_refptr<gpu::gles2::FeatureInfo> feature_info,
     const DidSwapBufferCompleteCallback& did_swap_buffer_complete_callback)
-    : SkiaOutputDevice(did_swap_buffer_complete_callback),
+    : SkiaOutputDevice(false /*need_swap_semaphore */,
+                       did_swap_buffer_complete_callback),
       surface_handle_(surface_handle),
       feature_info_(feature_info) {
   DCHECK(surface_handle_);
@@ -75,11 +77,8 @@ void SkiaOutputDeviceGL::Reshape(const gfx::Size& size,
                                  float device_scale_factor,
                                  const gfx::ColorSpace& color_space,
                                  bool has_alpha) {
-  // Conversion to GLSurface's color space follows the same logic as in
-  // gl::GetGLColorSpace().
   gl::GLSurface::ColorSpace surface_color_space =
-      color_space.IsHDR() ? gl::GLSurface::ColorSpace::SCRGB_LINEAR
-                          : gl::GLSurface::ColorSpace::UNSPECIFIED;
+      gl::ColorSpaceUtils::GetGLSurfaceColorSpace(color_space);
   if (!gl_surface_->Resize(size, device_scale_factor, surface_color_space,
                            has_alpha)) {
     LOG(FATAL) << "Failed to resize.";
@@ -104,6 +103,7 @@ void SkiaOutputDeviceGL::Reshape(const gfx::Size& size,
 }
 
 gfx::SwapResponse SkiaOutputDeviceGL::SwapBuffers(
+    const GrBackendSemaphore& semaphore,
     BufferPresentedCallback feedback) {
   // TODO(backer): Support SwapBuffersAsync
   StartSwapBuffers({});
@@ -112,6 +112,7 @@ gfx::SwapResponse SkiaOutputDeviceGL::SwapBuffers(
 
 gfx::SwapResponse SkiaOutputDeviceGL::PostSubBuffer(
     const gfx::Rect& rect,
+    const GrBackendSemaphore& semaphore,
     BufferPresentedCallback feedback) {
   // TODO(backer): Support PostSubBufferAsync
   StartSwapBuffers({});

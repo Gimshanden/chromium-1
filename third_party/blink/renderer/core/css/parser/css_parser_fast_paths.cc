@@ -662,11 +662,9 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyID::kOverflowWrap:
       return value_id == CSSValueID::kNormal ||
              value_id == CSSValueID::kBreakWord;
+    case CSSPropertyID::kOverflowBlock:
+    case CSSPropertyID::kOverflowInline:
     case CSSPropertyID::kOverflowX:
-      return value_id == CSSValueID::kVisible ||
-             value_id == CSSValueID::kHidden ||
-             value_id == CSSValueID::kScroll || value_id == CSSValueID::kAuto ||
-             value_id == CSSValueID::kOverlay;
     case CSSPropertyID::kOverflowY:
       return value_id == CSSValueID::kVisible ||
              value_id == CSSValueID::kHidden ||
@@ -899,7 +897,10 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
              value_id == CSSValueID::kSubpixelAntialiased;
     case CSSPropertyID::kLineBreak:
       return value_id == CSSValueID::kAuto || value_id == CSSValueID::kLoose ||
-             value_id == CSSValueID::kNormal || value_id == CSSValueID::kStrict;
+             value_id == CSSValueID::kNormal ||
+             value_id == CSSValueID::kStrict ||
+             (RuntimeEnabledFeatures::CSS3TextBreakAnywhereEnabled() &&
+              value_id == CSSValueID::kAnywhere);
     case CSSPropertyID::kWebkitLineBreak:
       return value_id == CSSValueID::kAuto || value_id == CSSValueID::kLoose ||
              value_id == CSSValueID::kNormal ||
@@ -956,8 +957,7 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
              value_id == CSSValueID::kPreWrap ||
              value_id == CSSValueID::kPreLine ||
              value_id == CSSValueID::kNowrap ||
-             (RuntimeEnabledFeatures::CSS3TextBreakSpacesEnabled() &&
-              value_id == CSSValueID::kBreakSpaces);
+             value_id == CSSValueID::kBreakSpaces;
     case CSSPropertyID::kWordBreak:
       return value_id == CSSValueID::kNormal ||
              value_id == CSSValueID::kBreakAll ||
@@ -1012,6 +1012,8 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyID::kObjectFit:
     case CSSPropertyID::kOutlineStyle:
     case CSSPropertyID::kOverflowAnchor:
+    case CSSPropertyID::kOverflowBlock:
+    case CSSPropertyID::kOverflowInline:
     case CSSPropertyID::kOverflowWrap:
     case CSSPropertyID::kOverflowX:
     case CSSPropertyID::kOverflowY:

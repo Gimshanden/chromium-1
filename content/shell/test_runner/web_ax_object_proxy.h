@@ -76,6 +76,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
 
   // The following selection functions return global information about the
   // current selection and can be called on any object in the tree.
+  bool SelectionIsBackward();
   v8::Local<v8::Value> SelectionAnchorObject();
   int SelectionAnchorOffset();
   std::string SelectionAnchorAffinity();
@@ -90,8 +91,6 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   // a textarea.
   int SelectionStart();
   int SelectionEnd();
-  int SelectionStartLineNumber();
-  int SelectionEndLineNumber();
 
   bool IsAtomic();
   bool IsAutofillAvailable();
@@ -160,7 +159,6 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   v8::Local<v8::Object> AriaOwnsElementAtIndex(unsigned index);
   std::string AllAttributes();
   std::string AttributesOfChildren();
-  int LineForIndex(int index);
   std::string BoundsForRange(int start, int end);
   v8::Local<v8::Object> ChildAtIndex(int index);
   v8::Local<v8::Object> ElementAtPoint(int x, int y);

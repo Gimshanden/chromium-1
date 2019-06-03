@@ -7,11 +7,10 @@ cr.define('downloads', function() {
     is: 'downloads-toolbar',
 
     properties: {
-      downloadsShowing: {
-        reflectToAttribute: true,
+      hasClearableDownloads: {
         type: Boolean,
         value: false,
-        observer: 'downloadsShowingChanged_',
+        observer: 'updateClearAll_',
       },
 
       spinnerActive: {
@@ -35,7 +34,7 @@ cr.define('downloads', function() {
 
     /** @return {boolean} Whether "Clear all" should be allowed. */
     canClearAll: function() {
-      return this.getSearchText().length == 0 && this.downloadsShowing;
+      return this.getSearchText().length == 0 && this.hasClearableDownloads;
     },
 
     /** @return {string} The full text being searched. */
@@ -52,15 +51,12 @@ cr.define('downloads', function() {
     },
 
     /** @private */
-    downloadsShowingChanged_: function() {
-      this.updateClearAll_();
-    },
-
-    /** @private */
     onClearAllTap_: function() {
       assert(this.canClearAll());
       this.mojoHandler_.clearAll();
       this.$.moreActionsMenu.close();
+      cr.toastManager.getInstance().show(
+          loadTimeData.getString('toastClearedAll'), true);
     },
 
     /** @private */

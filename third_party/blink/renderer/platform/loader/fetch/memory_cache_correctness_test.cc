@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/raw_resource.h"
@@ -39,6 +40,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_resource.h"
+#include "third_party/blink/renderer/platform/loader/testing/test_loader_factory.h"
 #include "third_party/blink/renderer/platform/loader/testing/test_resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 
@@ -63,7 +65,7 @@ class MemoryCacheCorrectnessTest : public testing::Test {
       response.SetCurrentRequestUrl(KURL(kResourceURL));
     ResourceRequest request(response.CurrentRequestUrl());
     request.SetRequestorOrigin(GetSecurityOrigin());
-    MockResource* resource = MockResource::Create(request);
+    auto* resource = MakeGarbageCollected<MockResource>(request);
     resource->SetResponse(response);
     resource->FinishForTest();
     AddResourceToMemoryCache(resource);
@@ -72,8 +74,8 @@ class MemoryCacheCorrectnessTest : public testing::Test {
   }
   MockResource* ResourceFromResourceRequest(ResourceRequest request) {
     if (request.Url().IsNull())
-      request.SetURL(KURL(kResourceURL));
-    MockResource* resource = MockResource::Create(request);
+      request.SetUrl(KURL(kResourceURL));
+    auto* resource = MakeGarbageCollected<MockResource>(request);
     ResourceResponse response(KURL{kResourceURL});
     response.SetMimeType("text/html");
     resource->SetResponse(response);
@@ -111,7 +113,7 @@ class MemoryCacheCorrectnessTest : public testing::Test {
   void SetUp() override {
     // Save the global memory cache to restore it upon teardown.
     global_memory_cache_ = ReplaceMemoryCacheForTesting(
-        MemoryCache::Create(platform_->test_task_runner()));
+        MakeGarbageCollected<MemoryCache>(platform_->test_task_runner()));
 
     security_origin_ = SecurityOrigin::CreateUniqueOpaque();
     MockFetchContext* context = MakeGarbageCollected<MockFetchContext>();
@@ -119,8 +121,9 @@ class MemoryCacheCorrectnessTest : public testing::Test {
         MakeGarbageCollected<TestResourceFetcherProperties>(security_origin_);
     properties->SetShouldBlockLoadingSubResource(true);
     fetcher_ = MakeGarbageCollected<ResourceFetcher>(
-        ResourceFetcherInit(*properties, context,
-                            base::MakeRefCounted<scheduler::FakeTaskRunner>()));
+        ResourceFetcherInit(properties->MakeDetachable(), context,
+                            base::MakeRefCounted<scheduler::FakeTaskRunner>(),
+                            MakeGarbageCollected<TestLoaderFactory>()));
   }
   void TearDown() override {
     GetMemoryCache()->EvictResources();
@@ -376,7 +379,7 @@ TEST_F(MemoryCacheCorrectnessTest, FreshWithFreshRedirect) {
 
   ResourceRequest request(redirect_url);
   request.SetRequestorOrigin(GetSecurityOrigin());
-  MockResource* first_resource = MockResource::Create(request);
+  auto* first_resource = MakeGarbageCollected<MockResource>(request);
 
   ResourceResponse fresh301_response(redirect_url);
   fresh301_response.SetHttpStatusCode(301);
@@ -417,7 +420,7 @@ TEST_F(MemoryCacheCorrectnessTest, FreshWithStaleRedirect) {
 
   ResourceRequest request(redirect_url);
   request.SetRequestorOrigin(GetSecurityOrigin());
-  MockResource* first_resource = MockResource::Create(request);
+  auto* first_resource = MakeGarbageCollected<MockResource>(request);
 
   ResourceResponse stale301_response(redirect_url);
   stale301_response.SetHttpStatusCode(301);
@@ -451,7 +454,7 @@ TEST_F(MemoryCacheCorrectnessTest, FreshWithStaleRedirect) {
 
 TEST_F(MemoryCacheCorrectnessTest, PostToSameURLTwice) {
   ResourceRequest request1{KURL(kResourceURL)};
-  request1.SetHTTPMethod(http_names::kPOST);
+  request1.SetHttpMethod(http_names::kPOST);
   request1.SetRequestorOrigin(GetSecurityOrigin());
   RawResource* resource1 =
       RawResource::CreateForTest(request1, ResourceType::kRaw);
@@ -459,7 +462,7 @@ TEST_F(MemoryCacheCorrectnessTest, PostToSameURLTwice) {
   AddResourceToMemoryCache(resource1);
 
   ResourceRequest request2{KURL(kResourceURL)};
-  request2.SetHTTPMethod(http_names::kPOST);
+  request2.SetHttpMethod(http_names::kPOST);
   request2.SetRequestorOrigin(GetSecurityOrigin());
   FetchParameters fetch2(request2);
   RawResource* resource2 = RawResource::FetchSynchronously(fetch2, Fetcher());
@@ -513,7 +516,7 @@ TEST_F(MemoryCacheCorrectnessTest, 302RedirectExplicitlyFreshMaxAge) {
 
   ResourceRequest request(redirect_url);
   request.SetRequestorOrigin(GetSecurityOrigin());
-  MockResource* first_resource = MockResource::Create(request);
+  auto* first_resource = MakeGarbageCollected<MockResource>(request);
 
   ResourceResponse fresh302_response(redirect_url);
   fresh302_response.SetHttpStatusCode(302);
@@ -554,7 +557,7 @@ TEST_F(MemoryCacheCorrectnessTest, 302RedirectExplicitlyFreshExpires) {
 
   ResourceRequest request(redirect_url);
   request.SetRequestorOrigin(GetSecurityOrigin());
-  MockResource* first_resource = MockResource::Create(request);
+  auto* first_resource = MakeGarbageCollected<MockResource>(request);
 
   ResourceResponse fresh302_response(redirect_url);
   fresh302_response.SetHttpStatusCode(302);

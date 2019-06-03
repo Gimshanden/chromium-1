@@ -21,6 +21,7 @@
 #include "media/base/channel_layout.h"
 #include "media/base/sample_rates.h"
 #include "media/webrtc/webrtc_switches.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_processor_options.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_constraints_util.h"
 #include "third_party/webrtc/media/base/media_channel.h"
@@ -92,7 +93,7 @@ ProcessedLocalAudioSource::ProcessedLocalAudioSource(
     const blink::MediaStreamDevice& device,
     bool disable_local_echo,
     const blink::AudioProcessingProperties& audio_processing_properties,
-    const ConstraintsCallback& started_callback,
+    ConstraintsOnceCallback started_callback,
     PeerConnectionDependencyFactory* factory,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : blink::MediaStreamAudioSource(std::move(task_runner),
@@ -101,7 +102,7 @@ ProcessedLocalAudioSource::ProcessedLocalAudioSource(
       consumer_render_frame_id_(consumer_render_frame_id),
       pc_factory_(factory),
       audio_processing_properties_(audio_processing_properties),
-      started_callback_(started_callback),
+      started_callback_(std::move(started_callback)),
       volume_(0),
       allow_invalid_render_frame_id_for_testing_(false),
       weak_factory_(this) {
@@ -357,7 +358,8 @@ int ProcessedLocalAudioSource::MaxVolume() const {
 }
 
 void ProcessedLocalAudioSource::OnCaptureStarted() {
-  started_callback_.Run(this, blink::MEDIA_DEVICE_OK, "");
+  std::move(started_callback_)
+      .Run(this, blink::mojom::MediaStreamRequestResult::OK, "");
 }
 
 void ProcessedLocalAudioSource::Capture(const media::AudioBus* audio_bus,

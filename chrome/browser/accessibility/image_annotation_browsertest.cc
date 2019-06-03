@@ -8,10 +8,14 @@
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/service_manager_connection.h"
@@ -44,8 +48,8 @@ void DescribeNodesWithAnnotations(const ui::AXNode& node,
     descriptions->push_back(ui::ToString(node.data().role) + std::string(" ") +
                             annotation);
   }
-  for (int i = 0; i < node.child_count(); i++)
-    DescribeNodesWithAnnotations(*node.children()[i], descriptions);
+  for (const auto* child : node.children())
+    DescribeNodesWithAnnotations(*child, descriptions);
 }
 
 std::vector<std::string> DescribeNodesWithAnnotations(
@@ -55,6 +59,15 @@ std::vector<std::string> DescribeNodesWithAnnotations(
   DCHECK(tree.root());
   DescribeNodesWithAnnotations(*tree.root(), &descriptions);
   return descriptions;
+}
+
+bool HasNodeWithAnnotationStatus(const ui::AXTreeUpdate& tree_update,
+                                 ax::mojom::ImageAnnotationStatus status) {
+  for (const auto& node_data : tree_update.nodes) {
+    if (node_data.GetImageAnnotationStatus() == status)
+      return true;
+  }
+  return false;
 }
 
 // A fake implementation of the Annotator mojo interface that
@@ -83,6 +96,7 @@ class FakeAnnotator : public image_annotation::mojom::Annotator {
   }
 
   void AnnotateImage(const std::string& image_id,
+                     const std::string& description_language_tag,
                      image_annotation::mojom::ImageProcessorPtr image_processor,
                      AnnotateImageCallback callback) override {
     if (return_error_code_) {
@@ -105,7 +119,7 @@ class FakeAnnotator : public image_annotation::mojom::Annotator {
     image_annotation::mojom::AnnotationPtr label_annotation =
         image_annotation::mojom::Annotation::New(
             image_annotation::mojom::AnnotationType::kLabel, 1.0,
-            image_filename + " Label");
+            image_filename + " '" + description_language_tag + "' Label");
 
     // Return enabled results as an annotation.
     std::vector<image_annotation::mojom::AnnotationPtr> annotations;
@@ -210,6 +224,20 @@ class ImageAnnotationBrowserTest : public InProcessBrowserTest {
     ui::AXMode mode = ui::kAXModeComplete;
     mode.set_mode(ui::AXMode::kLabelImages, true);
     web_contents->SetAccessibilityMode(mode);
+
+    SetAcceptLanguages("en,fr");
+  }
+
+  void SetAcceptLanguages(const std::string& accept_languages) {
+    content::BrowserContext* context =
+        static_cast<content::BrowserContext*>(browser()->profile());
+    DCHECK(context);
+
+    PrefService* prefs = user_prefs::UserPrefs::Get(context);
+    DCHECK(prefs);
+
+    prefs->Set(language::prefs::kAcceptLanguages,
+               base::Value(accept_languages));
   }
 
  protected:
@@ -233,7 +261,7 @@ IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest,
 
   content::WaitForAccessibilityTreeToContainNodeWithName(
       web_contents,
-      "Appears to say: red.png Annotation. Appears to be: red.png Label");
+      "Appears to say: red.png Annotation. Appears to be: red.png 'en' Label");
 }
 
 IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImagesInLinks) {
@@ -245,9 +273,9 @@ IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImagesInLinks) {
   // that never happens, the test will time out.
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  while (8 > DescribeNodesWithAnnotations(
-                 content::GetAccessibilityTreeSnapshot(web_contents))
-                 .size()) {
+  while (10 > DescribeNodesWithAnnotations(
+                  content::GetAccessibilityTreeSnapshot(web_contents))
+                  .size()) {
     content::WaitForAccessibilityTreeToChange(web_contents);
   }
 
@@ -264,13 +292,39 @@ IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImagesInLinks) {
                            "image Appears to say: printer.png Annotation",
                            "image Appears to say: red.png Annotation",
                            "link Appears to say: printer.png Annotation",
-                           "image Appears to say: printer.png Annotation"));
+                           "image Appears to say: printer.png Annotation",
+                           "link Appears to say: green.png Annotation",
+                           "image Appears to say: green.png Annotation"));
 }
 
 IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImageDoc) {
   FakeAnnotator::SetReturnOcrResults(true);
   ui_test_utils::NavigateToURL(
       browser(), https_server_.GetURL("/image_annotation_doc.html"));
+
+  // Block until the accessibility tree has at least 2 annotations. If
+  // that never happens, the test will time out.
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  while (2 > DescribeNodesWithAnnotations(
+                 content::GetAccessibilityTreeSnapshot(web_contents))
+                 .size()) {
+    content::WaitForAccessibilityTreeToChange(web_contents);
+  }
+
+  // When a document contains exactly one image, the document should be
+  // annotated with the image's annotation, too.
+  ui::AXTreeUpdate ax_tree_update =
+      content::GetAccessibilityTreeSnapshot(web_contents);
+  EXPECT_THAT(
+      DescribeNodesWithAnnotations(ax_tree_update),
+      testing::ElementsAre("rootWebArea Appears to say: red.png Annotation",
+                           "image Appears to say: red.png Annotation"));
+}
+
+IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImageUrl) {
+  FakeAnnotator::SetReturnOcrResults(true);
+  ui_test_utils::NavigateToURL(browser(), https_server_.GetURL("/red.png"));
 
   // Block until the accessibility tree has at least 2 annotations. If
   // that never happens, the test will time out.
@@ -321,8 +375,8 @@ IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, AnnotationError) {
   ui_test_utils::NavigateToURL(
       browser(), https_server_.GetURL("/image_annotation_doc.html"));
 
-  // Block until the annotation status for the root is empty. If that
-  // never occurs then the test will time out.
+  // Block until the annotation status for the root contains an error code. If
+  // that never occurs then the test will time out.
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ui::AXTreeUpdate snapshot =
@@ -344,5 +398,134 @@ IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, ImageWithSrcSet) {
       browser()->tab_strip_model()->GetActiveWebContents();
   content::WaitForAccessibilityTreeToContainNodeWithName(
       web_contents,
-      "Appears to say: red.png Annotation. Appears to be: red.png Label");
+      "Appears to say: red.png Annotation. Appears to be: red.png 'en' Label");
+}
+
+IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest, AnnotationLanguages) {
+  FakeAnnotator::SetReturnOcrResults(true);
+  FakeAnnotator::SetReturnLabelResults(true);
+
+  ui_test_utils::NavigateToURL(browser(),
+                               https_server_.GetURL("/image_annotation.html"));
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WaitForAccessibilityTreeToContainNodeWithName(
+      web_contents,
+      "Appears to say: red.png Annotation. Appears to be: red.png 'en' Label");
+
+  SetAcceptLanguages("fr,en");
+  ui_test_utils::NavigateToURL(browser(),
+                               https_server_.GetURL("/image_annotation.html"));
+  web_contents = browser()->tab_strip_model()->GetActiveWebContents();
+  content::WaitForAccessibilityTreeToContainNodeWithName(
+      web_contents,
+      "Appears to say: red.png Annotation. Appears to be: red.png 'fr' Label");
+}
+
+IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest,
+                       DoesntAnnotateInternalPages) {
+  FakeAnnotator::SetReturnLabelResults(true);
+  ui_test_utils::NavigateToURL(browser(), GURL("chrome://version"));
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ui::AXMode mode = ui::kAXModeComplete;
+  mode.set_mode(ui::AXMode::kLabelImages, true);
+  web_contents->SetAccessibilityMode(mode);
+  std::string svg_image =
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><circle "
+      "cx='50' cy='50' r='40' fill='yellow' /></svg>";
+  const std::string javascript =
+      "var image = document.createElement('img');"
+      "image.src = \"" +
+      svg_image +
+      "\";"
+      "var outer = document.getElementById('outer');"
+      "outer.insertBefore(image, outer.childNodes[0]);";
+  EXPECT_TRUE(content::ExecuteScript(web_contents, javascript));
+
+  ui::AXTreeUpdate snapshot =
+      content::GetAccessibilityTreeSnapshot(web_contents);
+  // Wait for the accessibility tree to contain an error that the image cannot
+  // be annotated due to the page url's scheme.
+  while (!HasNodeWithAnnotationStatus(
+      snapshot,
+      ax::mojom::ImageAnnotationStatus::kWillNotAnnotateDueToScheme)) {
+    content::WaitForAccessibilityTreeToChange(web_contents);
+    snapshot = content::GetAccessibilityTreeSnapshot(web_contents);
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest,
+                       TutorMessageOnlyOnFirstImage) {
+  // We should not promote the image annotation service on more than one image
+  // in the same renderer.
+
+  FakeAnnotator::SetReturnOcrResults(false);
+  FakeAnnotator::SetReturnLabelResults(false);
+
+  // The following test page should have at least two images on it.
+  ui_test_utils::NavigateToURL(browser(),
+                               https_server_.GetURL("/image_annotation.html"));
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ui::AXMode mode = ui::kAXModeComplete;
+  mode.set_mode(ui::AXMode::kLabelImages, false);
+  web_contents->SetAccessibilityMode(mode);
+
+  // Block until there are at least two images that have been processed. One of
+  // them should get the tutor message and the other shouldn't. The annotation
+  // status for the image that didn't get the tutor message should be
+  // kSilentlyEligibleForAnnotation whilst the status for the image that did
+  // should be kEligibleForAnnotation. If that never occurs then the test will
+  // time out.
+  ui::AXTreeUpdate snapshot =
+      content::GetAccessibilityTreeSnapshot(web_contents);
+  while (
+      !HasNodeWithAnnotationStatus(
+          snapshot,
+          ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation) ||
+      !HasNodeWithAnnotationStatus(
+          snapshot, ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation)) {
+    content::WaitForAccessibilityTreeToChange(web_contents);
+    snapshot = content::GetAccessibilityTreeSnapshot(web_contents);
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ImageAnnotationBrowserTest,
+                       TutorMessageOnlyOnFirstImageInLinks) {
+  // We should not promote the image annotation service on more than one image
+  // in the same renderer.
+
+  FakeAnnotator::SetReturnOcrResults(false);
+  FakeAnnotator::SetReturnLabelResults(false);
+
+  // The following test page should have at least two images on it.
+  ui_test_utils::NavigateToURL(
+      browser(), https_server_.GetURL("/image_annotation_link.html"));
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ui::AXMode mode = ui::kAXModeComplete;
+  mode.set_mode(ui::AXMode::kLabelImages, false);
+  web_contents->SetAccessibilityMode(mode);
+
+  // Block until there are at least two images that have been processed. One of
+  // them should get the tutor message and the other shouldn't. The annotation
+  // status for the image that didn't get the tutor message should be
+  // kSilentlyEligibleForAnnotation whilst the status for the image that did
+  // should be kEligibleForAnnotation. If that never occurs then the test will
+  // time out.
+  ui::AXTreeUpdate snapshot =
+      content::GetAccessibilityTreeSnapshot(web_contents);
+  while (
+      !HasNodeWithAnnotationStatus(
+          snapshot,
+          ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation) ||
+      !HasNodeWithAnnotationStatus(
+          snapshot, ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation)) {
+    content::WaitForAccessibilityTreeToChange(web_contents);
+    snapshot = content::GetAccessibilityTreeSnapshot(web_contents);
+  }
 }

@@ -20,8 +20,8 @@
 #include "base/values.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/trace_config.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/trace_packet.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_config.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_packet.h"
 #include "third_party/perfetto/protos/perfetto/trace/chrome/chrome_trace_event.pb.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pb.h"
 
@@ -195,11 +195,12 @@ class JsonTraceExporterTest : public testing::Test {
             base::BindRepeating(&JsonTraceExporterTest::OnTraceEventJSON,
                                 base::Unretained(this)))) {}
 
-  void OnTraceEventJSON(const std::string& json,
+  void OnTraceEventJSON(std::string* json,
                         base::DictionaryValue* metadata,
                         bool has_more) {
-    unparsed_trace_data_ += json;
-    unparsed_trace_data_sequence_.push_back(json);
+    unparsed_trace_data_ += *json;
+    unparsed_trace_data_sequence_.push_back(std::string());
+    unparsed_trace_data_sequence_.back().swap(*json);
     if (has_more) {
       return;
     }
@@ -207,7 +208,7 @@ class JsonTraceExporterTest : public testing::Test {
         base::JSONReader::ReadDeprecated(unparsed_trace_data_));
     EXPECT_TRUE(parsed_trace_data_);
     if (!parsed_trace_data_) {
-      LOG(ERROR) << "Couldn't parse json: \n" << json;
+      LOG(ERROR) << "Couldn't parse json: \n" << unparsed_trace_data_;
     }
 
     // The TraceAnalyzer expects the raw trace output, without the

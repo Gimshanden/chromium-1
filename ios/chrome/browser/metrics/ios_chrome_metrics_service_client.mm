@@ -40,8 +40,8 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_status_metrics_provider.h"
-#include "components/sync/device_info/device_count_metrics_provider.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync_device_info/device_count_metrics_provider.h"
 #include "components/ukm/ukm_service.h"
 #include "components/variations/variations_associated_data.h"
 #include "components/version_info/version_info.h"
@@ -53,6 +53,7 @@
 #include "ios/chrome/browser/google/google_brand.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/metrics/ios_chrome_stability_metrics_provider.h"
+#include "ios/chrome/browser/metrics/ios_user_type_metrics_provider.h"
 #include "ios/chrome/browser/metrics/mobile_session_shutdown_metrics_provider.h"
 #include "ios/chrome/browser/signin/ios_chrome_signin_status_metrics_provider_delegate.h"
 #include "ios/chrome/browser/sync/device_info_sync_service_factory.h"
@@ -238,6 +239,9 @@ void IOSChromeMetricsServiceClient::Initialize() {
 
   metrics_service_->RegisterMetricsProvider(
       std::make_unique<translate::TranslateRankerMetricsProvider>());
+
+  metrics_service_->RegisterMetricsProvider(
+      std::make_unique<IOSUserTypeMetricsProvider>());
 }
 
 void IOSChromeMetricsServiceClient::CollectFinalHistograms() {

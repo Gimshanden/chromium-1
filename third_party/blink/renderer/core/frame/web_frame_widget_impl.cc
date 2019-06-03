@@ -228,9 +228,9 @@ void WebFrameWidgetImpl::Resize(const WebSize& new_size) {
       // TODO(wjmaclean): This is updating when the size of the *child frame*
       // have changed which are completely independent of the WebView, and in an
       // OOPIF where the main frame is remote, are these limits even useful?
-      Client()->SetPageScaleFactorAndLimits(1.f,
-                                            View()->MinimumPageScaleFactor(),
-                                            View()->MaximumPageScaleFactor());
+      Client()->SetPageScaleStateAndLimits(
+          1.f, false /* is_pinch_gesture_active */,
+          View()->MinimumPageScaleFactor(), View()->MaximumPageScaleFactor());
     }
   }
 }
@@ -324,9 +324,8 @@ void WebFrameWidgetImpl::EndRafAlignedInput() {
 }
 
 void WebFrameWidgetImpl::BeginUpdateLayers() {
-  if (LocalRootImpl()) {
+  if (LocalRootImpl())
     update_layers_start_time_.emplace(CurrentTimeTicks());
-  }
 }
 
 void WebFrameWidgetImpl::EndUpdateLayers() {
@@ -385,12 +384,6 @@ void WebFrameWidgetImpl::UpdateLifecycle(LifecycleUpdate requested_update,
       LocalRootImpl()->GetFrame()->GetDocument()->Lifecycle());
   PageWidgetDelegate::UpdateLifecycle(*GetPage(), *LocalRootImpl()->GetFrame(),
                                       requested_update, reason);
-}
-
-void WebFrameWidgetImpl::PaintContent(cc::PaintCanvas* canvas,
-                                      const WebRect& rect) {
-  // Out-of-process iframes require compositing.
-  NOTREACHED();
 }
 
 void WebFrameWidgetImpl::ThemeChanged() {
@@ -671,7 +664,7 @@ void WebFrameWidgetImpl::UpdateRenderThrottlingStatus(bool is_throttled,
   DCHECK(LocalRootImpl()->Parent());
   DCHECK(LocalRootImpl()->Parent()->IsWebRemoteFrame());
   LocalRootImpl()->GetFrameView()->UpdateRenderThrottlingStatus(
-      is_throttled, subtree_throttled);
+      is_throttled, subtree_throttled, true);
 }
 
 WebURL WebFrameWidgetImpl::GetURLForDebugTrace() {
@@ -712,10 +705,10 @@ void WebFrameWidgetImpl::HandleMouseDown(LocalFrame& main_frame,
             location));
     result.SetToShadowHostIfInRestrictedShadowRoot();
     Node* hit_node = result.InnerNode();
+    auto* html_element = DynamicTo<HTMLElement>(hit_node);
     if (!result.GetScrollbar() && hit_node && hit_node->GetLayoutObject() &&
-        hit_node->GetLayoutObject()->IsEmbeddedObject() &&
-        hit_node->IsHTMLElement() &&
-        ToHTMLElement(hit_node)->IsPluginElement()) {
+        hit_node->GetLayoutObject()->IsEmbeddedObject() && html_element &&
+        html_element->IsPluginElement()) {
       mouse_capture_element_ = ToHTMLPlugInElement(hit_node);
       TRACE_EVENT_ASYNC_BEGIN0("input", "capturing mouse", this);
     }
@@ -1002,14 +995,6 @@ void WebFrameWidgetImpl::SetLayerTreeView(WebLayerTreeView* layer_tree_view,
 
   GetPage()->LayerTreeViewInitialized(*layer_tree_view_, *animation_host_,
                                       LocalRootImpl()->GetFrame()->View());
-
-  // TODO(kenrb): Currently GPU rasterization is always enabled for OOPIFs.
-  // This is okay because it is only necessarily to set the trigger to false
-  // for certain cases that affect the top-level frame, but it would be better
-  // to be consistent with the top-level frame. Ideally the logic should
-  // be moved from WebViewImpl into WebFrameWidget and used for all local
-  // frame roots. https://crbug.com/712794
-  layer_tree_view_->HeuristicsForGpuRasterizationUpdated(true);
 }
 
 void WebFrameWidgetImpl::SetIsAcceleratedCompositingActive(bool active) {
@@ -1035,27 +1020,7 @@ PaintLayerCompositor* WebFrameWidgetImpl::Compositor() const {
 
 void WebFrameWidgetImpl::SetRootGraphicsLayer(GraphicsLayer* layer) {
   root_graphics_layer_ = layer;
-  root_layer_ = layer ? layer->CcLayer() : nullptr;
-
-  SetIsAcceleratedCompositingActive(!!layer);
-
-  // TODO(danakj): Is this called after Close?? (With a null layer?)
-  if (!layer_tree_view_)
-    return;
-
-  // WebFrameWidgetImpl is used for child frames, which always have a
-  // transparent background color.
-  Client()->SetBackgroundColor(SK_ColorTRANSPARENT);
-  // Pass the limits even though this is for subframes, as the limits will
-  // be needed in setting the raster scale.
-  // TODO(wjmaclean): In an OOPIF where the main frame is remote, are these
-  // limits even useful?
-  Client()->SetPageScaleFactorAndLimits(1.f, View()->MinimumPageScaleFactor(),
-                                        View()->MaximumPageScaleFactor());
-
-  // TODO(danakj): SetIsAcceleratedCompositingActive() also sets the root layer
-  // if it's not null..
-  Client()->SetRootLayer(root_layer_);
+  SetRootLayer(layer ? layer->CcLayer() : nullptr);
 }
 
 void WebFrameWidgetImpl::SetRootLayer(scoped_refptr<cc::Layer> layer) {
@@ -1072,8 +1037,17 @@ void WebFrameWidgetImpl::SetRootLayer(scoped_refptr<cc::Layer> layer) {
   Client()->SetBackgroundColor(SK_ColorTRANSPARENT);
   // Pass the limits even though this is for subframes, as the limits will
   // be needed in setting the raster scale.
-  Client()->SetPageScaleFactorAndLimits(1.f, View()->MinimumPageScaleFactor(),
-                                        View()->MaximumPageScaleFactor());
+  Client()->SetPageScaleStateAndLimits(1.f, false /* is_pinch_gesture_active */,
+                                       View()->MinimumPageScaleFactor(),
+                                       View()->MaximumPageScaleFactor());
+
+  // TODO(kenrb): Currently GPU rasterization is always enabled for OOPIFs.
+  // This is okay because it is only necessarily to set the trigger to false
+  // for certain cases that affect the top-level frame, but it would be better
+  // to be consistent with the top-level frame. Ideally the logic should
+  // be moved from WebViewImpl into WebFrameWidget and used for all local
+  // frame roots. https://crbug.com/712794
+  Client()->SetAllowGpuRasterization(true);
 
   // TODO(danakj): SetIsAcceleratedCompositingActive() also sets the root layer
   // if it's not null..

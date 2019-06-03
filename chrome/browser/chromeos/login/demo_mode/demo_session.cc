@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ash/public/interfaces/locale.mojom.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
@@ -98,16 +99,14 @@ std::vector<std::string> GetIgnorePinPolicyApps() {
 // Copies photos into the Downloads directory.
 // TODO(michaelpg): Test this behavior (requires overriding the Downloads
 // directory).
-void InstallDemoMedia(base::FilePath offline_resources_path) {
+void InstallDemoMedia(const base::FilePath& offline_resources_path,
+                      const base::FilePath& dest_path) {
   if (offline_resources_path.empty()) {
     LOG(ERROR) << "Offline resources not loaded - no media available.";
     return;
   }
 
   base::FilePath src_path = offline_resources_path.Append(kPhotosPath);
-  base::FilePath dest_path = file_manager::util::GetDownloadsFolderForProfile(
-      ProfileManager::GetActiveUserProfile());
-
   if (!base::CopyDirectory(src_path, dest_path, false /* recursive */))
     LOG(ERROR) << "Failed to install demo mode media.";
 }
@@ -120,10 +119,13 @@ std::string GetBoardName() {
 }
 
 std::string GetHighlightsAppId() {
-  if (GetBoardName() == "eve")
-    return extension_misc::kHighlightsAlt1AppId;
-  if (GetBoardName() == "nocturne")
-    return extension_misc::kHighlightsAlt2AppId;
+  std::string board = GetBoardName();
+  if (board == "eve")
+    return extension_misc::kHighlightsEveAppId;
+  if (board == "nocturne")
+    return extension_misc::kHighlightsNocturneAppId;
+  if (board == "atlas")
+    return extension_misc::kHighlightsAltAppId;
   return extension_misc::kHighlightsAppId;
 }
 
@@ -322,10 +324,13 @@ DemoSession* DemoSession::Get() {
 
 // static
 std::string DemoSession::GetScreensaverAppId() {
-  if (GetBoardName() == "eve")
-    return extension_misc::kScreensaverAlt1AppId;
-  if (GetBoardName() == "nocturne")
-    return extension_misc::kScreensaverAlt2AppId;
+  std::string board = GetBoardName();
+  if (board == "eve")
+    return extension_misc::kScreensaverEveAppId;
+  if (board == "nocturne")
+    return extension_misc::kScreensaverNocturneAppId;
+  if (board == "atlas")
+    return extension_misc::kScreensaverAltAppId;
   return extension_misc::kScreensaverAppId;
 }
 
@@ -447,9 +452,14 @@ void DemoSession::InstallDemoResources() {
   DCHECK(demo_resources_->loaded());
   if (offline_enrolled_)
     LoadAndLaunchHighlightsApp();
+
+  Profile* const profile = ProfileManager::GetActiveUserProfile();
+  DCHECK(profile);
+  const base::FilePath downloads =
+      file_manager::util::GetDownloadsFolderForProfile(profile);
   base::PostTaskWithTraits(
       FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
-      base::BindOnce(&InstallDemoMedia, demo_resources_->path()));
+      base::BindOnce(&InstallDemoMedia, demo_resources_->path(), downloads));
 }
 
 void DemoSession::LoadAndLaunchHighlightsApp() {

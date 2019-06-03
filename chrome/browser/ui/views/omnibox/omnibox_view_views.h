@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "build/build_config.h"
+#include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/search_engines/template_url_service_observer.h"
 #include "ui/base/window_open_disposition.h"
@@ -57,6 +58,12 @@ class OmniboxViewViews : public OmniboxView,
  public:
   // The internal view class name.
   static const char kViewClassName[];
+
+  // Range of command IDs to use for the items in the send tab to self submenu.
+  static const int kMinSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMinCommandId;
+  static const int kMaxSendTabToSelfSubMenuCommandId =
+      send_tab_to_self::SendTabToSelfSubMenuModel::kMaxCommandId;
 
   OmniboxViewViews(OmniboxEditController* controller,
                    std::unique_ptr<OmniboxClient> client,
@@ -121,6 +128,8 @@ class OmniboxViewViews : public OmniboxView,
   void RevertAll() override;
   void SetFocus() override;
   bool IsImeComposing() const override;
+  gfx::NativeView GetRelativeWindowForPopup() const override;
+  bool IsImeShowingPopup() const override;
 
   // views::Textfield:
   gfx::Size GetMinimumSize() const override;
@@ -219,8 +228,6 @@ class OmniboxViewViews : public OmniboxView,
   void OnBeforePossibleChange() override;
   bool OnAfterPossibleChange(bool allow_keyword_ui_change) override;
   gfx::NativeView GetNativeView() const override;
-  gfx::NativeView GetRelativeWindowForPopup() const override;
-  bool IsImeShowingPopup() const override;
   void ShowVirtualKeyboardIfEnabled() override;
   void HideImeIfNeeded() override;
   int GetOmniboxTextLength() const override;
@@ -302,7 +309,7 @@ class OmniboxViewViews : public OmniboxView,
 
   // Tracking state before and after a possible change.
   State state_before_change_;
-  bool ime_composing_before_change_;
+  bool ime_composing_before_change_ = false;
 
   // |location_bar_view_| can be NULL in tests.
   LocationBarView* location_bar_view_;
@@ -315,18 +322,23 @@ class OmniboxViewViews : public OmniboxView,
 #endif
 
   // True if any mouse button is currently depressed.
-  bool is_mouse_pressed_;
+  bool is_mouse_pressed_ = false;
+
+  // Applies a minimum threshold to drag events after unelision. Because the
+  // text shifts after unelision, we don't want unintentional mouse drags to
+  // change the selection.
+  bool filter_drag_events_for_unelision_ = false;
 
   // Should we select all the text when we see the mouse button get released?
   // We select in response to a click that focuses the omnibox, but we defer
   // until release, setting this variable back to false if we saw a drag, to
   // allow the user to select just a portion of the text.
-  bool select_all_on_mouse_release_;
+  bool select_all_on_mouse_release_ = false;
 
   // Indicates if we want to select all text in the omnibox when we get a
   // GESTURE_TAP. We want to select all only when the textfield is not in focus
   // and gets a tap. So we use this variable to remember focus state before tap.
-  bool select_all_on_gesture_tap_;
+  bool select_all_on_gesture_tap_ = false;
 
   // The time of the first character insert operation that has not yet been
   // painted. Used to measure omnibox responsiveness with a histogram.
@@ -357,6 +369,10 @@ class OmniboxViewViews : public OmniboxView,
       scoped_compositor_observer_;
   ScopedObserver<TemplateURLService, TemplateURLServiceObserver>
       scoped_template_url_service_observer_;
+
+  // Send tab to self submenu.
+  std::unique_ptr<send_tab_to_self::SendTabToSelfSubMenuModel>
+      send_tab_to_self_sub_menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxViewViews);
 };

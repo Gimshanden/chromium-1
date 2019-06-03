@@ -8,10 +8,10 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
-#include "base/callback_list.h"
 #include "base/macros.h"
-#include "remoting/signaling/ftl_services.grpc.pb.h"
+#include "remoting/proto/ftl/v1/ftl_services.grpc.pb.h"
+#include "remoting/signaling/message_tracker.h"
+#include "remoting/signaling/messaging_client.h"
 
 namespace remoting {
 
@@ -22,47 +22,25 @@ class RegistrationManager;
 class ScopedGrpcServerStream;
 
 // A class for sending and receiving messages via the FTL API.
-class FtlMessagingClient final {
+class FtlMessagingClient final : public MessagingClient {
  public:
-  using MessageCallback =
-      base::RepeatingCallback<void(const std::string& sender_id,
-                                   const std::string& sender_registration_id,
-                                   const std::string& message)>;
-  using MessageCallbackSubscription =
-      base::CallbackList<void(const std::string&,
-                              const std::string&,
-                              const std::string&)>::Subscription;
-  using DoneCallback = base::OnceCallback<void(const grpc::Status& status)>;
-
   // |token_getter| and |registration_manager| must outlive |this|.
   FtlMessagingClient(OAuthTokenGetter* token_getter,
                      RegistrationManager* registration_manager);
-  ~FtlMessagingClient();
+  ~FtlMessagingClient() override;
 
-  // Registers a callback which is run for each new message received.
-  // Simply delete the returned subscription object to unregister. The
-  // subscription object must be deleted before |this| is deleted.
+  // MessagingClient implementations.
   std::unique_ptr<MessageCallbackSubscription> RegisterMessageCallback(
-      const MessageCallback& callback);
-
-  // Retrieves messages from the user's inbox over slow path and calls the
-  // registered MessageCallback on every received message.
-  // |on_done| is called once the messages have been received and acked on the
-  // server's inbox.
-  void PullMessages(DoneCallback on_done);
+      const MessageCallback& callback) override;
+  void PullMessages(DoneCallback on_done) override;
   void SendMessage(const std::string& destination,
                    const std::string& destination_registration_id,
-                   const std::string& message_text,
-                   DoneCallback on_done);
-
-  // Opens a stream to continuously receive new messages from the server and
-  // calls the registered MessageCallback once a new message is received.
-  // |on_done| is called once the stream is successfully opened or failed to
-  // open due to an error.
-  void StartReceivingMessages(DoneCallback on_done);
-
-  // Stops the stream for continuously receiving new messages.
-  void StopReceivingMessages();
+                   const ftl::ChromotingMessage& message,
+                   DoneCallback on_done) override;
+  void StartReceivingMessages(base::OnceClosure on_ready,
+                              DoneCallback on_closed) override;
+  void StopReceivingMessages() override;
+  bool IsReceivingMessages() const override;
 
  private:
   using Messaging =
@@ -102,9 +80,8 @@ class FtlMessagingClient final {
   RegistrationManager* registration_manager_;
   std::unique_ptr<Messaging::Stub> messaging_stub_;
   std::unique_ptr<MessageReceptionChannel> reception_channel_;
-  base::CallbackList<
-      void(const std::string&, const std::string&, const std::string&)>
-      callback_list_;
+  MessageCallbackList callback_list_;
+  MessageTracker message_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(FtlMessagingClient);
 };

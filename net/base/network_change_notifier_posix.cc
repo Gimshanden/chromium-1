@@ -23,15 +23,12 @@ namespace net {
 class NetworkChangeNotifierPosix::DnsConfigService
     : public net::internal::DnsConfigServicePosix {
  public:
-  DnsConfigService() {
-    // After construction it lives on
-    // NetworkChangeNotifierPosix::dns_config_service_runner_.
-    DETACH_FROM_SEQUENCE(sequence_checker_);
-  }
+  DnsConfigService() = default;
   ~DnsConfigService() override = default;
 
   // net::internal::DnsConfigService() overrides.
   bool StartWatching() override {
+    CreateReaders();
     // DNS config changes are handled and notified by the network
     // state handlers.
     return true;
@@ -69,7 +66,9 @@ NetworkChangeNotifierPosix::NetworkChangeNotifierPosix(
   OnDNSChanged();
 }
 
-NetworkChangeNotifierPosix::~NetworkChangeNotifierPosix() = default;
+NetworkChangeNotifierPosix::~NetworkChangeNotifierPosix() {
+  ClearGlobalPointer();
+}
 
 void NetworkChangeNotifierPosix::OnDNSChanged() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);

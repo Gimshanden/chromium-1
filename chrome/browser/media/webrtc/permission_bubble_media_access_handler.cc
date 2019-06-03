@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/field_trial.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
@@ -26,8 +27,6 @@
 #if defined(OS_ANDROID)
 #include <vector>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/media/webrtc/screen_capture_infobar_delegate_android.h"
 #include "chrome/browser/permissions/permission_uma_util.h"
@@ -35,15 +34,21 @@
 #endif  // defined(OS_ANDROID)
 
 #if defined(OS_MACOSX)
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/media/webrtc/system_media_capture_permissions_mac.h"
+#include "chrome/browser/media/webrtc/system_media_capture_permissions_stats_mac.h"
 #endif
 
 using content::BrowserThread;
 
 using RepeatingMediaResponseCallback =
     base::RepeatingCallback<void(const blink::MediaStreamDevices& devices,
-                                 blink::MediaStreamRequestResult result,
+                                 blink::mojom::MediaStreamRequestResult result,
                                  std::unique_ptr<content::MediaStreamUI> ui)>;
+
+#if defined(OS_MACOSX)
+using system_media_permissions::SystemPermission;
+#endif
 
 struct PermissionBubbleMediaAccessHandler::PendingAccessRequest {
   PendingAccessRequest(const content::MediaStreamRequest& request,
@@ -122,8 +127,9 @@ void PermissionBubbleMediaAccessHandler::HandleRequest(
           chrome::android::kUserMediaScreenCapturing)) {
     // If screen capturing isn't enabled on Android, we'll use "invalid state"
     // as result, same as on desktop.
-    std::move(callback).Run(blink::MediaStreamDevices(),
-                            blink::MEDIA_DEVICE_INVALID_STATE, nullptr);
+    std::move(callback).Run(
+        blink::MediaStreamDevices(),
+        blink::mojom::MediaStreamRequestResult::INVALID_STATE, nullptr);
     return;
   }
 #endif  // defined(OS_ANDROID)
@@ -204,7 +210,7 @@ void PermissionBubbleMediaAccessHandler::OnAccessRequestResponse(
     content::WebContents* web_contents,
     int request_id,
     const blink::MediaStreamDevices& devices,
-    blink::MediaStreamRequestResult result,
+    blink::mojom::MediaStreamRequestResult result,
     std::unique_ptr<content::MediaStreamUI> ui) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -223,46 +229,57 @@ void PermissionBubbleMediaAccessHandler::OnAccessRequestResponse(
   if (request_it == requests_map.end())
     return;
 
-  blink::MediaStreamRequestResult final_result = result;
+  blink::mojom::MediaStreamRequestResult final_result = result;
 
 #if defined(OS_MACOSX)
   // If the request was approved, ask for system permissions if needed, and run
   // this function again when done.
-  if (result == blink::MEDIA_DEVICE_OK) {
+  if (result == blink::mojom::MediaStreamRequestResult::OK) {
     const content::MediaStreamRequest& request = request_it->second.request;
     if (request.audio_type == blink::MEDIA_DEVICE_AUDIO_CAPTURE) {
       const SystemPermission system_audio_permission =
-          CheckSystemAudioCapturePermission();
+          system_media_permissions::CheckSystemAudioCapturePermission();
+      UMA_HISTOGRAM_ENUMERATION(
+          "Media.Audio.Capture.Mac.MicSystemPermission.UserMedia",
+          system_audio_permission);
       if (system_audio_permission == SystemPermission::kNotDetermined) {
         // Using WeakPtr since callback can come at any time and we might be
         // destroyed.
-        RequestSystemAudioCapturePermisson(
+        system_media_permissions::RequestSystemAudioCapturePermisson(
             base::BindOnce(
                 &PermissionBubbleMediaAccessHandler::OnAccessRequestResponse,
                 weak_factory_.GetWeakPtr(), web_contents, request_id, devices,
                 result, std::move(ui)),
             {content::BrowserThread::UI});
         return;
-      } else if (system_audio_permission == SystemPermission::kNotAllowed) {
-        final_result = blink::MEDIA_DEVICE_SYSTEM_PERMISSION_DENIED;
+      } else if (system_audio_permission == SystemPermission::kRestricted ||
+                 system_audio_permission == SystemPermission::kDenied) {
+        final_result =
+            blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED;
+        system_media_permissions::SystemAudioCapturePermissionBlocked();
       }
     }
-
     if (request.video_type == blink::MEDIA_DEVICE_VIDEO_CAPTURE) {
       const SystemPermission system_video_permission =
-          CheckSystemVideoCapturePermission();
+          system_media_permissions::CheckSystemVideoCapturePermission();
+      UMA_HISTOGRAM_ENUMERATION(
+          "Media.Video.Capture.Mac.CameraSystemPermission.UserMedia",
+          system_video_permission);
       if (system_video_permission == SystemPermission::kNotDetermined) {
         // Using WeakPtr since callback can come at any time and we might be
         // destroyed.
-        RequestSystemVideoCapturePermisson(
+        system_media_permissions::RequestSystemVideoCapturePermisson(
             base::BindOnce(
                 &PermissionBubbleMediaAccessHandler::OnAccessRequestResponse,
                 weak_factory_.GetWeakPtr(), web_contents, request_id, devices,
                 result, std::move(ui)),
             {content::BrowserThread::UI});
         return;
-      } else if (system_video_permission == SystemPermission::kNotAllowed) {
-        final_result = blink::MEDIA_DEVICE_SYSTEM_PERMISSION_DENIED;
+      } else if (system_video_permission == SystemPermission::kRestricted ||
+                 system_video_permission == SystemPermission::kDenied) {
+        final_result =
+            blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED;
+        system_media_permissions::SystemVideoCapturePermissionBlocked();
       }
     }
   }

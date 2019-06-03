@@ -21,7 +21,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -605,6 +605,9 @@ class MessageLoopTypedTest
 #if defined(OS_ANDROID)
       case MessageLoop::TYPE_JAVA:
 #endif  // defined(OS_ANDROID)
+#if defined(OS_MACOSX)
+      case MessagePump::Type::NS_RUNLOOP:
+#endif  // defined(OS_MACOSX)
         break;
     }
     NOTREACHED();
@@ -2234,24 +2237,8 @@ TEST_F(MessageLoopTest, DeleteUnboundLoop) {
   std::unique_ptr<MessageLoop> unbound_loop(
       MessageLoop::CreateUnbound(MessageLoop::TYPE_DEFAULT));
   unbound_loop.reset();
-  EXPECT_TRUE(loop.IsBoundToCurrentThread());
+  EXPECT_TRUE(loop.task_runner()->RunsTasksInCurrentSequence());
   EXPECT_EQ(loop.task_runner(), ThreadTaskRunnerHandle::Get());
-}
-
-TEST_F(MessageLoopTest, ThreadName) {
-  {
-    std::string kThreadName("foo");
-    MessageLoop loop;
-    PlatformThread::SetName(kThreadName);
-    EXPECT_EQ(kThreadName, loop.GetThreadName());
-  }
-
-  {
-    std::string kThreadName("bar");
-    base::Thread thread(kThreadName);
-    ASSERT_TRUE(thread.StartAndWaitForTesting());
-    EXPECT_EQ(kThreadName, thread.thread_name());
-  }
 }
 
 // Verify that tasks posted to and code running in the scope of the same
@@ -2262,18 +2249,13 @@ TEST_F(MessageLoopTest, SequenceLocalStorageSetGet) {
   SequenceLocalStorageSlot<int> slot;
 
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      BindOnce(&SequenceLocalStorageSlot<int>::Set, Unretained(&slot), 11));
+      FROM_HERE, BindLambdaForTesting([&]() { slot.emplace(11); }));
 
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, BindOnce(
-                     [](SequenceLocalStorageSlot<int>* slot) {
-                       EXPECT_EQ(slot->Get(), 11);
-                     },
-                     &slot));
+      FROM_HERE, BindLambdaForTesting([&]() { EXPECT_EQ(*slot, 11); }));
 
   RunLoop().RunUntilIdle();
-  EXPECT_EQ(slot.Get(), 11);
+  EXPECT_EQ(*slot, 11);
 }
 
 // Verify that tasks posted to and code running in different MessageLoops access
@@ -2284,23 +2266,18 @@ TEST_F(MessageLoopTest, SequenceLocalStorageDifferentMessageLoops) {
   {
     MessageLoop loop;
     ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        BindOnce(&SequenceLocalStorageSlot<int>::Set, Unretained(&slot), 11));
+        FROM_HERE, BindLambdaForTesting([&]() { slot.emplace(11); }));
 
     RunLoop().RunUntilIdle();
-    EXPECT_EQ(slot.Get(), 11);
+    EXPECT_EQ(*slot, 11);
   }
 
   MessageLoop loop;
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, BindOnce(
-                     [](SequenceLocalStorageSlot<int>* slot) {
-                       EXPECT_NE(slot->Get(), 11);
-                     },
-                     &slot));
+      FROM_HERE, BindLambdaForTesting([&]() { EXPECT_FALSE(slot); }));
 
   RunLoop().RunUntilIdle();
-  EXPECT_NE(slot.Get(), 11);
+  EXPECT_NE(slot.GetOrCreateValue(), 11);
 }
 
 namespace {
@@ -2328,20 +2305,8 @@ class PostTaskOnDestroy {
 }  // namespace
 
 // Test that MessageLoop destruction handles a task's destructor posting another
-// task by:
-//  1) Not getting stuck clearing its task queue.
-//  2) DCHECKing when clearing pending tasks many times still doesn't yield an
-//     empty queue.
-TEST(MessageLoopDestructionTest, ExpectDeathWithStubbornPostTaskOnDestroy) {
-  std::unique_ptr<MessageLoop> loop = std::make_unique<MessageLoop>();
-
-  EXPECT_DCHECK_DEATH({
-    PostTaskOnDestroy::PostTaskWithPostingDestructor(1000);
-    loop.reset();
-  });
-}
-
-TEST(MessageLoopDestructionTest, DestroysFineWithReasonablePostTaskOnDestroy) {
+// task.
+TEST(MessageLoopDestructionTest, DestroysFineWithPostTaskOnDestroy) {
   std::unique_ptr<MessageLoop> loop = std::make_unique<MessageLoop>();
 
   PostTaskOnDestroy::PostTaskWithPostingDestructor(10);

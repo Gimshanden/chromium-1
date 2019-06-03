@@ -198,7 +198,7 @@ TEST(PaintWorkletImageCacheTest, MultipleRecordsInCache) {
       records[paint_image2.paint_worklet_input()].num_of_frames_not_accessed,
       1u);
 
-  std::pair<PaintRecord*, base::OnceCallback<void()>> pair =
+  std::pair<sk_sp<PaintRecord>, base::OnceCallback<void()>> pair =
       cache.GetPaintRecordAndRef(paint_image1.paint_worklet_input());
   // Run the callback to decrement the ref count.
   std::move(pair.second).Run();

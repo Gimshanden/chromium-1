@@ -73,6 +73,8 @@ class FakeRtpReceiver : public webrtc::RtpReceiverInterface {
   webrtc::RtpParameters GetParameters() const override;
   bool SetParameters(const webrtc::RtpParameters& parameters) override;
   void SetObserver(webrtc::RtpReceiverObserverInterface* observer) override;
+  void SetJitterBufferMinimumDelay(
+      absl::optional<double> delay_seconds) override;
   std::vector<webrtc::RtpSource> GetSources() const override;
   void SetTransport(
       rtc::scoped_refptr<webrtc::DtlsTransportInterface> transport) {
@@ -205,8 +207,8 @@ class MockPeerConnectionImpl : public webrtc::PeerConnectionInterface {
     return PeerConnectionInterface::kIceGatheringNew;
   }
 
-  bool StartRtcEventLog(rtc::PlatformFile file,
-                        int64_t max_size_bytes) override {
+  bool StartRtcEventLog(std::unique_ptr<webrtc::RtcEventLogOutput> output,
+                        int64_t output_period_ms) override {
     NOTIMPLEMENTED();
     return false;
   }

@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_TABSTRIP_H_
 #define CHROME_BROWSER_UI_BROWSER_TABSTRIP_H_
 
+#include "base/optional.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/page_transition_types.h"
@@ -12,7 +14,6 @@
 
 class Browser;
 class GURL;
-class TabGroupData;
 
 namespace gfx {
 class Rect;
@@ -27,7 +28,7 @@ void AddTabAt(Browser* browser,
               const GURL& url,
               int index,
               bool foreground,
-              const TabGroupData* group = nullptr);
+              base::Optional<TabGroupId> group = base::nullopt);
 
 // Adds a selected tab with the specified URL and transition, returns the
 // created WebContents.

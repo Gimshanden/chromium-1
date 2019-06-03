@@ -47,12 +47,11 @@ class XRSpace : public EventTargetWithInlineData {
 
   XRSession* session() const { return session_; }
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(reset, kReset)
-
   // EventTarget overrides.
   ExecutionContext* GetExecutionContext() const override;
   const AtomicString& InterfaceName() const override;
 
+  virtual TransformationMatrix OriginOffsetMatrix();
   virtual TransformationMatrix InverseOriginOffsetMatrix();
 
   void Trace(blink::Visitor*) override;

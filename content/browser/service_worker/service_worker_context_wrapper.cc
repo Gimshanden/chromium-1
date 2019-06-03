@@ -22,6 +22,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_process_manager.h"
 #include "content/browser/service_worker/service_worker_quota_client.h"
@@ -760,6 +761,8 @@ ServiceWorkerContextWrapper::GetProviderHostIds(const GURL& origin) const {
 
   std::unique_ptr<std::vector<GlobalFrameRoutingId>> provider_host_ids(
       new std::vector<GlobalFrameRoutingId>());
+  if (!context_core_)
+    return provider_host_ids;
 
   for (std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator> it =
            context_core_->GetClientProviderHostIterator(

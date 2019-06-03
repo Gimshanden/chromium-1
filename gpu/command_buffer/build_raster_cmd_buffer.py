@@ -107,7 +107,6 @@ _NAMED_TYPE_INFO = {
       'gfx::BufferUsage::GPU_READ',
       'gfx::BufferUsage::SCANOUT',
       'gfx::BufferUsage::GPU_READ_CPU_READ_WRITE',
-      'gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT',
     ],
     'invalid': [
       'gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE',
@@ -275,15 +274,6 @@ _FUNCTION_INFO = {
     'decoder_func': 'DoLoseContextCHROMIUM',
     'unit_test': False,
     'trace_level': 1,
-  },
-  'GenUnverifiedSyncTokenCHROMIUM': {
-    'type': 'NoCommand',
-  },
-  'VerifySyncTokensCHROMIUM' : {
-    'type': 'NoCommand',
-  },
-  'WaitSyncTokenCHROMIUM': {
-    'type': 'NoCommand',
   },
   'BeginRasterCHROMIUM': {
     'decoder_func': 'DoBeginRasterCHROMIUM',

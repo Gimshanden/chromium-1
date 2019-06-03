@@ -190,6 +190,7 @@
 <translation id="3245321423178950146">Bilinmeyen Sanatçı</translation>
 <translation id="3252266817569339921">Fransızca</translation>
 <translation id="3254434849914415189"><ph name="FILE_TYPE" /> dosyaları için varsayılan uygulamayı seç:</translation>
+<translation id="3264582393905923483">Bağlam</translation>
 <translation id="3280431534455935878">Hazırlanıyor</translation>
 <translation id="3280987981688031357">Vinil plak</translation>
 <translation id="3296763833017966289">Gürcüce</translation>
@@ -261,6 +262,7 @@
 <translation id="421017592316736757">Bu dosyaya erişebilmek için çevrimiçi olmalısınız.</translation>
 <translation id="4212740939091998969">"<ph name="FOLDER_NAME" />" adlı klasör zaten var. Lütfen farklı bir ad seçin.</translation>
 <translation id="4215448920900139318"><ph name="FILE_COUNT" /> yedekleniyor</translation>
+<translation id="4242533952199664413">Ayarları aç</translation>
 <translation id="426015154560005552">Arapça klavye</translation>
 <translation id="4261901459838235729">Google sunusu</translation>
 <translation id="4290535918735525311">Linux ile 1 klasör paylaşılıyor</translation>
@@ -310,6 +312,7 @@
 <translation id="4839847978919684242"><ph name="SELCTED_FILES_COUNT" /> öğe seçildi</translation>
 <translation id="4850886885716139402">Görüntüle</translation>
 <translation id="485316830061041779">Almanca</translation>
+<translation id="4867079195717347957">Sütunu azalan düzende sıralamak için tıklayın.</translation>
 <translation id="4873265419374180291"><ph name="NUMBER_OF_BYTES" /> bayt</translation>
 <translation id="4880214202172289027">Ses kaydırma çubuğu</translation>
 <translation id="4880520557730313061">Otomatik düzelt</translation>
@@ -350,6 +353,7 @@
 <translation id="5167131699331641907">Hollanda klavyesi</translation>
 <translation id="5170477580121653719">Kalan Google Drive alanı: <ph name="SPACE_AVAILABLE" />.</translation>
 <translation id="5177526793333269655">Küçük resim görünümü</translation>
+<translation id="5194713942430106590">Sütunu artan düzende sıralamak için tıklayın.</translation>
 <translation id="5218183485292899140">İsviçre Fransızcası</translation>
 <translation id="5234764350956374838">Kapat</translation>
 <translation id="5241298539944515331">Vietnamca klavye (VIQR)</translation>
@@ -409,6 +413,7 @@
 <translation id="5818003990515275822">Korece</translation>
 <translation id="5819442873484330149">Hangul 3 Grubu (Son)</translation>
 <translation id="5833610766403489739">Bu dosya başka bir yere gitti. Lütfen indirilenler için konum ayarınızı kontrol edin ve tekrar deneyin.</translation>
+<translation id="5838051104334203064">Play Store uygulamaları bu cihaza erişemez</translation>
 <translation id="5838825566232597749">ABD Workman uluslararası</translation>
 <translation id="5850516540536751549">Bu dosya türü desteklenmiyor. Bu dosya türünü açabilecek bir uygulama bulmak için lütfen <ph name="BEGIN_LINK" />Chrome Web Mağazası<ph name="END_LINK" />'nı ziyaret edin.
     <ph name="BEGIN_LINK_HELP" />Daha Fazla Bilgi Edinin<ph name="END_LINK_HELP" /></translation>
@@ -504,6 +509,7 @@
 <translation id="6979158407327259162">Google Drive</translation>
 <translation id="6990081529015358884">Boş yeriniz kalmadı</translation>
 <translation id="6998711733709403587"><ph name="SELCTED_FOLDERS_COUNT" /> klasör seçildi</translation>
+<translation id="7012943028104619157"><ph name="ROOT_TITLE" /> (<ph name="ROOT_SUMMARY" />)</translation>
 <translation id="7014174261166285193">Yükleme işlemi başarısız oldu.</translation>
 <translation id="7040138676081995583">Birlikte aç...</translation>
 <translation id="7100897339030255923"><ph name="COUNT" /> öğe seçildi</translation>

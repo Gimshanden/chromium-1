@@ -36,6 +36,40 @@ function setUpInIncognitoContext() {
 }
 
 function testGoodDevice(callback) {
+  // Turn off ARC so that the notification won't show the "OPEN SETTINGS"
+  // button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = false;
+
+  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
+    eventType: 'mount',
+    status: 'success',
+    volumeMetadata: {
+      isParentDevice: true,
+      deviceType: 'usb',
+      devicePath: '/device/path',
+      deviceLabel: 'label'
+    },
+    shouldNotify: true
+  });
+
+  // Since arcEnabled is false here, the notification doesn't mention ARC.
+  reportPromise(
+      mockChrome.notifications.resolver.promise.then(notifications => {
+        assertEquals(1, Object.keys(notifications).length);
+        const options = notifications['deviceNavigation:/device/path'];
+        assertEquals('REMOVABLE_DEVICE_NAVIGATION_MESSAGE', options.message);
+        assertTrue(options.isClickable);
+      }),
+      callback);
+}
+
+function testGoodDeviceWithAllowPlayStoreMessage(callback) {
+  // Turn on ARC so that the notification shows the "OPEN SETTINGS" button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = true;
+  // Turn off the ARC pref so that the notification shows the "Allow Play Store
+  // applications ..." label.
+  mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref = false;
+
   mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
     eventType: 'mount',
     status: 'success',
@@ -51,8 +85,46 @@ function testGoodDevice(callback) {
   reportPromise(
       mockChrome.notifications.resolver.promise.then(notifications => {
         assertEquals(1, Object.keys(notifications).length);
-        const options = notifications['deviceNavigation:/device/path'];
-        assertEquals('REMOVABLE_DEVICE_NAVIGATION_MESSAGE', options.message);
+        const options = notifications['deviceNavigationAppAccess:/device/path'];
+        assertEquals(
+            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE ' +
+                'REMOVABLE_DEVICE_ALLOW_PLAY_STORE_ACCESS_MESSAGE',
+            options.message);
+        assertTrue(options.isClickable);
+      }),
+      callback);
+}
+
+function testGoodDeviceWithPlayStoreAppsHaveAccessMessage(callback) {
+  // Turn on ARC so that the notification shows the "OPEN SETTINGS" button.
+  mockChrome.fileManagerPrivate.arcEnabledPref = true;
+  // Turn on the ARC pref so that the notification shows the "Play Store apps
+  // have ..." label.
+  mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref = true;
+
+  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
+    eventType: 'mount',
+    status: 'success',
+    volumeMetadata: {
+      isParentDevice: true,
+      deviceType: 'usb',
+      devicePath: '/device/path',
+      deviceLabel: 'label'
+    },
+    shouldNotify: true
+  });
+
+  // Since arcRemovableMediaAccessEnabled is true here, "Play Store apps have
+  // access to ..." message is shown.
+  reportPromise(
+      mockChrome.notifications.resolver.promise.then(notifications => {
+        assertEquals(1, Object.keys(notifications).length);
+        const options = notifications['deviceNavigationAppAccess:/device/path'];
+        assertEquals(
+            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE ' +
+                'REMOVABLE_DEVICE_PLAY_STORE_APPS_HAVE_ACCESS_MESSAGE',
+            options.message);
+        console.log(options.message);
         assertTrue(options.isClickable);
       }),
       callback);
@@ -114,33 +186,6 @@ function testMtpMediaDeviceWithImportEnabled(callback) {
   reportPromise(
       resolver.promise.then(event => {
         assertEquals('blabbity', event.volumeId);
-      }),
-      callback);
-}
-
-function testMediaDeviceWithImportDisabled(callback) {
-  mockChrome.commandLinePrivate.cloudImportDisabled = true;
-
-  mockChrome.fileManagerPrivate.onMountCompleted.dispatch({
-    eventType: 'mount',
-    status: 'success',
-    volumeMetadata: {
-      isParentDevice: true,
-      deviceType: 'usb',
-      devicePath: '/device/path',
-      deviceLabel: 'label',
-      hasMedia: true
-    },
-    shouldNotify: true
-  });
-
-  reportPromise(
-      mockChrome.notifications.resolver.promise.then(notifications => {
-        assertEquals(1, Object.keys(notifications).length);
-        assertEquals(
-            'REMOVABLE_DEVICE_NAVIGATION_MESSAGE',
-            notifications['deviceNavigation:/device/path'].message,
-            'Device notification did not have the right message.');
       }),
       callback);
 }
@@ -643,14 +688,6 @@ function setupFileSystem(volumeType, volumeId, fileNames) {
 function setupChromeApis() {
   // Mock chrome APIs.
   mockChrome = {
-    commandLinePrivate: {
-      hasSwitch: function(switchName, callback) {
-        if (switchName === 'disable-cloud-import') {
-          callback(mockChrome.commandLinePrivate.cloudImportDisabled);
-        }
-      },
-      cloudImportDisabled: false,
-    },
     extension: {
       inIncognitoContext: false,
     },
@@ -669,7 +706,16 @@ function setupChromeApis() {
       },
       getProfiles: function(callback) {
         callback([{profileId: 'userid@xyz.domain.org'}]);
-      }
+      },
+      getPreferences: function(callback) {
+        callback({
+          arcEnabled: mockChrome.fileManagerPrivate.arcEnabledPref,
+          arcRemovableMediaAccessEnabled:
+              mockChrome.fileManagerPrivate.arcRemovableMediaAccessEnabledPref
+        });
+      },
+      arcEnabledPref: false,
+      arcRemovableMediaAccessEnabledPref: true,
     },
     i18n: {
       getUILanguage: function() {

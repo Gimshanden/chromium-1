@@ -30,15 +30,14 @@
 
 #include "third_party/blink/renderer/core/loader/appcache/application_cache_host.h"
 
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/appcache/appcache.mojom-blink.h"
 #include "third_party/blink/public/mojom/appcache/appcache_info.mojom-blink.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_application_cache_host.h"
 #include "third_party/blink/renderer/core/events/application_cache_error_event.h"
 #include "third_party/blink/renderer/core/events/progress_event.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
@@ -50,6 +49,7 @@
 #include "third_party/blink/renderer/core/inspector/inspector_application_cache_agent.h"
 #include "third_party/blink/renderer/core/loader/appcache/application_cache.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/page/frame_tree.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -81,8 +81,8 @@ ApplicationCacheHost::~ApplicationCacheHost() {
 void ApplicationCacheHost::WillStartLoading(ResourceRequest& request) {
   if (!IsApplicationCacheEnabled() || !host_)
     return;
-  int host_id = host_->GetHostID();
-  if (host_id != mojom::blink::kAppCacheNoHostId)
+  const base::UnguessableToken& host_id = host_->GetHostID();
+  if (!host_id.is_empty())
     request.SetAppCacheHostID(host_id);
 }
 
@@ -134,7 +134,7 @@ void ApplicationCacheHost::SelectCacheWithManifest(const KURL& manifest_url) {
 
   LocalFrame* frame = document_loader_->GetFrame();
   Document* document = frame->GetDocument();
-  if (document->IsSandboxed(kSandboxOrigin)) {
+  if (document->IsSandboxed(WebSandboxFlags::kOrigin)) {
     // Prevent sandboxes from establishing application caches.
     SelectCacheWithoutManifest();
     return;
@@ -142,8 +142,6 @@ void ApplicationCacheHost::SelectCacheWithManifest(const KURL& manifest_url) {
   if (document->IsSecureContext()) {
     UseCounter::Count(document,
                       WebFeature::kApplicationCacheManifestSelectSecureOrigin);
-    UseCounter::CountCrossOriginIframe(
-        *document, WebFeature::kApplicationCacheManifestSelectSecureOrigin);
   } else {
     Deprecation::CountDeprecation(
         document, WebFeature::kApplicationCacheManifestSelectInsecureOrigin);
@@ -158,9 +156,9 @@ void ApplicationCacheHost::SelectCacheWithManifest(const KURL& manifest_url) {
     // navigation algorithm. The navigation will not result in the same resource
     // being loaded, because "foreign" entries are never picked during
     // navigation. see ApplicationCacheGroup::selectCache()
-    frame->ScheduleNavigation(*document, document->Url(),
-                              WebFrameLoadType::kReplaceCurrentItem,
-                              UserGestureStatus::kNone);
+    FrameLoadRequest request(document, ResourceRequest(document->Url()));
+    request.SetClientRedirectReason(ClientNavigationReason::kReload);
+    frame->Navigate(request, WebFrameLoadType::kReplaceCurrentItem);
   }
 }
 
@@ -220,9 +218,9 @@ ApplicationCacheHost::CacheInfo ApplicationCacheHost::ApplicationCacheInfo() {
                    web_info.padding_sizes);
 }
 
-int ApplicationCacheHost::GetHostID() const {
+const base::UnguessableToken& ApplicationCacheHost::GetHostID() const {
   if (!host_)
-    return mojom::blink::kAppCacheNoHostId;
+    return base::UnguessableToken::Null();
   return host_->GetHostID();
 }
 

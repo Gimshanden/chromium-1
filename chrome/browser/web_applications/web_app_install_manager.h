@@ -7,19 +7,17 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/callback_forward.h"
+#include "base/containers/flat_set.h"
+#include "base/containers/queue.h"
+#include "base/containers/unique_ptr_adapters.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/installable/installable_metrics.h"
 #include "chrome/browser/web_applications/components/install_manager.h"
-#include "chrome/browser/web_applications/components/web_app_install_utils.h"
-#include "content/public/browser/web_contents_observer.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
+#include "chrome/browser/web_applications/components/web_app_url_loader.h"
 
 class Profile;
-struct WebApplicationInfo;
-
-namespace blink {
-struct Manifest;
-}
 
 namespace content {
 class WebContents;
@@ -27,26 +25,32 @@ class WebContents;
 
 namespace web_app {
 
+enum class InstallResultCode;
+class AppRegistrar;
 class InstallFinalizer;
 class WebAppDataRetriever;
+class WebAppInstallTask;
 
-class WebAppInstallManager final : public InstallManager,
-                                   content::WebContentsObserver {
+class WebAppInstallManager final : public InstallManager {
  public:
-  WebAppInstallManager(Profile* profile, InstallFinalizer* install_finalizer);
+  WebAppInstallManager(Profile* profile,
+                       AppRegistrar* app_registrar,
+                       InstallFinalizer* install_finalizer);
   ~WebAppInstallManager() override;
 
   // InstallManager:
+  void Shutdown() override;
   bool CanInstallWebApp(content::WebContents* web_contents) override;
-  void InstallWebApp(content::WebContents* contents,
-                     bool force_shortcut_app,
-                     WebappInstallSource install_source,
-                     WebAppInstallDialogCallback dialog_callback,
-                     OnceInstallCallback callback) override;
-  void InstallWebAppFromBanner(content::WebContents* contents,
-                               WebappInstallSource install_source,
-                               WebAppInstallDialogCallback dialog_callback,
-                               OnceInstallCallback callback) override;
+  void InstallWebAppFromManifest(content::WebContents* contents,
+                                 WebappInstallSource install_source,
+                                 WebAppInstallDialogCallback dialog_callback,
+                                 OnceInstallCallback callback) override;
+  void InstallWebAppFromManifestWithFallback(
+      content::WebContents* contents,
+      bool force_shortcut_app,
+      WebappInstallSource install_source,
+      WebAppInstallDialogCallback dialog_callback,
+      OnceInstallCallback callback) override;
   void InstallWebAppFromInfo(
       std::unique_ptr<WebApplicationInfo> web_application_info,
       bool no_network_install,
@@ -63,55 +67,49 @@ class WebAppInstallManager final : public InstallManager,
       std::unique_ptr<WebApplicationInfo> web_application_info,
       OnceInstallCallback callback) override;
 
-  // WebContentsObserver:
-  void WebContentsDestroyed() override;
+  using DataRetrieverFactory =
+      base::RepeatingCallback<std::unique_ptr<WebAppDataRetriever>()>;
+  void SetDataRetrieverFactoryForTesting(
+      DataRetrieverFactory data_retriever_factory);
 
-  void SetDataRetrieverForTesting(
-      std::unique_ptr<WebAppDataRetriever> data_retriever);
-  void SetInstallFinalizerForTesting(InstallFinalizer* install_finalizer);
+  void SetUrlLoaderForTesting(std::unique_ptr<WebAppUrlLoader> url_loader);
+  bool has_web_contents_for_testing() const { return web_contents_ != nullptr; }
 
  private:
-  void CallInstallCallback(const AppId& app_id, InstallResultCode code);
-  void ReturnError(InstallResultCode code);
+  void MaybeStartQueuedTask();
+  void OnTaskCompleted(WebAppInstallTask* task,
+                       OnceInstallCallback callback,
+                       const AppId& app_id,
+                       InstallResultCode code);
+  void OnQueuedTaskCompleted(WebAppInstallTask* task,
+                             OnceInstallCallback callback,
+                             const AppId& app_id,
+                             InstallResultCode code);
 
-  // Checks typical errors like WebContents destroyed. Callers must return
-  // early if this is true. Note that if install interrupted, install_callback_
-  // is already invoked or may be invoked later - no actions needed from caller.
-  bool InstallInterrupted() const;
+  void CreateWebContentsIfNecessary();
+  void OnWebContentsReady(WebAppUrlLoader::Result result);
 
-  void OnGetWebApplicationInfo(
-      bool force_shortcut_app,
-      std::unique_ptr<WebApplicationInfo> web_app_info);
-  void OnDidPerformInstallableCheck(
-      std::unique_ptr<WebApplicationInfo> web_app_info,
-      bool force_shortcut_app,
-      const blink::Manifest& manifest,
-      bool is_installable);
-  void OnIconsRetrieved(std::unique_ptr<WebApplicationInfo> web_app_info,
-                        ForInstallableSite for_installable_site,
-                        IconsMap icons_map);
-  void OnDialogCompleted(ForInstallableSite for_installable_site,
-                         bool user_accepted,
-                         std::unique_ptr<WebApplicationInfo> web_app_info);
-  void OnInstallFinalized(std::unique_ptr<WebApplicationInfo> web_app_info,
-                          const AppId& app_id,
-                          InstallResultCode code);
-  void OnShortcutsCreated(std::unique_ptr<WebApplicationInfo> web_app_info,
-                          const AppId& app_id,
-                          bool shortcut_created);
+  DataRetrieverFactory data_retriever_factory_;
 
-  // TODO(loyso): Extract these parameters as a struct and reset it on every
-  // installation task:
-  WebAppInstallDialogCallback dialog_callback_;
-  OnceInstallCallback install_callback_;
-  // The mechanism via which the app creation was triggered.
-  static constexpr WebappInstallSource kNoInstallSource =
-      WebappInstallSource::COUNT;
-  WebappInstallSource install_source_ = kNoInstallSource;
+  std::unique_ptr<WebAppUrlLoader> url_loader_;
 
-  std::unique_ptr<WebAppDataRetriever> data_retriever_;
+  // All owned tasks.
+  using Tasks = base::flat_set<std::unique_ptr<WebAppInstallTask>,
+                               base::UniquePtrComparator>;
+  Tasks tasks_;
+
+  // Tasks can be queued for sequential completion (to be run one at a time).
+  // FIFO. This is a subset of |tasks_|.
+  using TaskQueue = base::queue<base::OnceClosure>;
+  TaskQueue task_queue_;
+  bool is_running_queued_task_ = false;
+
+  // A single WebContents, shared between tasks in |task_queue_|.
+  std::unique_ptr<content::WebContents> web_contents_;
+  bool web_contents_ready_ = false;
+
+  AppRegistrar* app_registrar_;
   InstallFinalizer* install_finalizer_;
-  Profile* profile_;
 
   base::WeakPtrFactory<WebAppInstallManager> weak_ptr_factory_{this};
 

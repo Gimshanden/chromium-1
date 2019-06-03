@@ -21,6 +21,7 @@
 #include "base/values.h"
 #include "chrome/common/content_restriction.h"
 #include "net/base/escape.h"
+#include "net/base/filename_util.h"
 #include "pdf/accessibility.h"
 #include "pdf/pdf.h"
 #include "pdf/pdf_features.h"
@@ -118,6 +119,9 @@ constexpr char kJSResetPrintPreviewModeType[] = "resetPrintPreviewMode";
 constexpr char kJSPrintPreviewUrl[] = "url";
 constexpr char kJSPrintPreviewGrayscale[] = "grayscale";
 constexpr char kJSPrintPreviewPageCount[] = "pageCount";
+// Background color changed (Page -> Plugin)
+constexpr char kJSBackgroundColorChangedType[] = "backgroundColorChanged";
+constexpr char kJSBackgroundColor[] = "backgroundColor";
 // Load preview page (Page -> Plugin)
 constexpr char kJSLoadPreviewPageType[] = "loadPreviewPage";
 constexpr char kJSPreviewPageUrl[] = "url";
@@ -693,6 +697,13 @@ void OutOfProcessInstance::HandleMessage(const pp::Var& message) {
     RotateCounterclockwise();
   } else if (type == kJSSelectAllType) {
     engine_->SelectAll();
+  } else if (type == kJSBackgroundColorChangedType) {
+    if (!dict.Get(pp::Var(kJSBackgroundColor)).is_string()) {
+      NOTREACHED();
+      return;
+    }
+    base::HexStringToUInt(dict.Get(pp::Var(kJSBackgroundColor)).AsString(),
+                          &background_color_);
   } else if (type == kJSResetPrintPreviewModeType) {
     if (!(dict.Get(pp::Var(kJSPrintPreviewUrl)).is_string() &&
           dict.Get(pp::Var(kJSPrintPreviewGrayscale)).is_bool() &&
@@ -1449,14 +1460,10 @@ bool OutOfProcessInstance::ShouldSaveEdits() const {
 void OutOfProcessInstance::SaveToBuffer(const std::string& token) {
   engine_->KillFormFocus();
 
-  GURL url(url_);
-  std::string file_name = url.ExtractFileName();
-  file_name = net::UnescapeURLComponent(file_name, net::UnescapeRule::SPACES);
-
   pp::VarDictionary message;
   message.Set(kType, kJSSaveDataType);
   message.Set(kJSToken, pp::Var(token));
-  message.Set(kJSFileName, pp::Var(file_name));
+  message.Set(kJSFileName, pp::Var(GetFileNameFromUrl(url_)));
   // This will be overwritten if the save is successful.
   message.Set(kJSDataToSave, pp::Var(pp::Var::Null()));
   const bool has_unsaved_changes =
@@ -1719,6 +1726,16 @@ void OutOfProcessInstance::RotateClockwise() {
 void OutOfProcessInstance::RotateCounterclockwise() {
   PrintPreviewHistogramEnumeration(ROTATE);
   engine_->RotateCounterclockwise();
+}
+
+std::string OutOfProcessInstance::GetFileNameFromUrl(const std::string& url) {
+  // Generate a file name. Unfortunately, MIME type can't be provided, since it
+  // requires IO.
+  base::string16 file_name = net::GetSuggestedFilename(
+      GURL(url), std::string() /* content_disposition */,
+      std::string() /* referrer_charset */, std::string() /* suggested_name */,
+      std::string() /* mime_type */, std::string() /* default_name */);
+  return base::UTF16ToUTF8(file_name);
 }
 
 void OutOfProcessInstance::PreviewDocumentLoadComplete() {

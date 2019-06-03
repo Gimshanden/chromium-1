@@ -35,12 +35,15 @@ class WebAppPolicyManager {
 
   void Start();
 
+  void ReinstallPlaceholderAppIfNecessary(const GURL& url);
+
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
  private:
   void InitChangeRegistrarAndRefreshPolicyInstalledApps();
 
   void RefreshPolicyInstalledApps();
+  void OnAppsSynchronized(PendingAppManager::SynchronizeResult result);
 
   Profile* profile_;
   PrefService* pref_service_;
@@ -49,6 +52,9 @@ class WebAppPolicyManager {
   PendingAppManager* pending_app_manager_;
 
   PrefChangeRegistrar pref_change_registrar_;
+
+  bool is_refreshing_ = false;
+  bool needs_refresh_ = false;
 
   base::WeakPtrFactory<WebAppPolicyManager> weak_ptr_factory_{this};
 

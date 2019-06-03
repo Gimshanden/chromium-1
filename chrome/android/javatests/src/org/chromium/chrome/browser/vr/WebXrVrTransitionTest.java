@@ -38,6 +38,7 @@ import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
@@ -67,8 +68,9 @@ import java.util.concurrent.TimeoutException;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr"})
-@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR and WebXR are only supported on K+
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        "enable-features=LogJsConsoleMessages", "enable-webvr"})
+@MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP) // WebVR and WebXR are only supported on L+
 @TargetApi(Build.VERSION_CODES.KITKAT) // Necessary to allow taking screenshots with UiAutomation
 public class WebXrVrTransitionTest {
     @ClassParameter
@@ -128,28 +130,32 @@ public class WebXrVrTransitionTest {
         // Verify that we're actually rendering WebXR/VR content and that it's blue (the canvas
         // is set to blue while presenting). This could be a proper RenderTest, but it's less
         // overhead to just directly check a pixel.
-        CriteriaHelper.pollInstrumentationThread(
-                ()
-                        -> {
-                    // Creating temporary directories doesn't seem to work, so use a fixed location
-                    // that we know we can write to.
-                    File dumpDirectory = new File(UrlUtils.getIsolatedTestFilePath(
-                            "chrome/test/data/vr/framebuffer_dumps"));
-                    if (!dumpDirectory.exists() && !dumpDirectory.isDirectory()) {
-                        Assert.assertTrue("Failed to make framebuffer dump directory",
-                                dumpDirectory.mkdirs());
-                    }
-                    File baseImagePath = new File(dumpDirectory, "dump");
-                    NativeUiUtils.dumpNextFramesFrameBuffers(baseImagePath.getPath());
-                    String filepath = baseImagePath.getPath()
-                            + NativeUiUtils.FRAME_BUFFER_SUFFIX_WEB_XR_CONTENT + ".png";
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-                    Bitmap bitmap = BitmapFactory.decodeFile(filepath, options);
-                    return bitmap != null && Color.BLUE == bitmap.getPixel(0, 0);
-                },
-                "Immersive session started, but browser not visibly in VR", POLL_TIMEOUT_LONG_MS,
-                POLL_CHECK_INTERVAL_LONG_MS);
+        // TODO(https://crbug.com/947252): Run this part unconditionally once the cause of the
+        // flakiness on older devices is fixed.
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
+            CriteriaHelper.pollInstrumentationThread(
+                    ()
+                            -> {
+                        // Creating temporary directories doesn't seem to work, so use a fixed
+                        // location that we know we can write to.
+                        File dumpDirectory = new File(UrlUtils.getIsolatedTestFilePath(
+                                "chrome/test/data/vr/framebuffer_dumps"));
+                        if (!dumpDirectory.exists() && !dumpDirectory.isDirectory()) {
+                            Assert.assertTrue("Failed to make framebuffer dump directory",
+                                    dumpDirectory.mkdirs());
+                        }
+                        File baseImagePath = new File(dumpDirectory, "dump");
+                        NativeUiUtils.dumpNextFramesFrameBuffers(baseImagePath.getPath());
+                        String filepath = baseImagePath.getPath()
+                                + NativeUiUtils.FRAME_BUFFER_SUFFIX_WEB_XR_CONTENT + ".png";
+                        BitmapFactory.Options options = new BitmapFactory.Options();
+                        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                        Bitmap bitmap = BitmapFactory.decodeFile(filepath, options);
+                        return bitmap != null && Color.BLUE == bitmap.getPixel(0, 0);
+                    },
+                    "Immersive session started, but browser not visibly in VR",
+                    POLL_TIMEOUT_LONG_MS, POLL_CHECK_INTERVAL_LONG_MS);
+        }
 
         framework.assertNoJavaScriptErrors();
     }
@@ -201,6 +207,7 @@ public class WebXrVrTransitionTest {
     @LargeTest
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
     @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
+    @DisabledTest(message = "https://crbug.com/969024")
     public void testNfcFiresVrdisplayactivate() throws InterruptedException {
         mWebVrTestFramework.loadUrlAndAwaitInitialization(
                 WebVrTestFramework.getFileUrlForHtmlTestFile("test_nfc_fires_vrdisplayactivate"),
@@ -281,6 +288,7 @@ public class WebXrVrTransitionTest {
     @MediumTest
     @Restriction({RESTRICTION_TYPE_DEVICE_DAYDREAM, RESTRICTION_TYPE_VR_SETTINGS_SERVICE})
     @VrSettingsFile(VrSettingsServiceUtils.FILE_DDVIEW_DONENABLED)
+    @DisabledTest(message = "https://crbug.com/969024")
     @CommandLineFlags
             .Remove({"enable-webvr"})
             @CommandLineFlags.Add({"enable-features=WebXR"})

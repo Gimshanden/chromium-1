@@ -106,14 +106,14 @@ suite('CrostiniPageTests', function() {
 
     test('Sanity', function() {
       assertTrue(!!subpage.$$('#crostini-shared-paths'));
-      assertTrue(!subpage.$$('#crostini-shared-usb-devices'));
+      assertTrue(!!subpage.$$('#crostini-shared-usb-devices'));
       assertTrue(!!subpage.$$('#crostini-export-import'));
       assertTrue(!!subpage.$$('#remove'));
     });
 
     test('SharedPaths', function() {
-      assertTrue(!!subpage.$$('#crostini-shared-paths .subpage-arrow'));
-      subpage.$$('#crostini-shared-paths .subpage-arrow').click();
+      assertTrue(!!subpage.$$('#crostini-shared-paths'));
+      subpage.$$('#crostini-shared-paths').click();
       return flushAsync().then(() => {
         subpage = crostiniPage.$$('settings-crostini-shared-paths');
         assertTrue(!!subpage);
@@ -121,8 +121,8 @@ suite('CrostiniPageTests', function() {
     });
 
     test('Export', function() {
-      assertTrue(!!subpage.$$('#crostini-export-import .subpage-arrow'));
-      subpage.$$('#crostini-export-import .subpage-arrow').click();
+      assertTrue(!!subpage.$$('#crostini-export-import'));
+      subpage.$$('#crostini-export-import').click();
       return flushAsync().then(() => {
         subpage = crostiniPage.$$('settings-crostini-export-import');
         assertTrue(!!subpage.$$('#export paper-button'));
@@ -133,8 +133,8 @@ suite('CrostiniPageTests', function() {
     });
 
     test('Import', function() {
-      assertTrue(!!subpage.$$('#crostini-export-import .subpage-arrow'));
-      subpage.$$('#crostini-export-import .subpage-arrow').click();
+      assertTrue(!!subpage.$$('#crostini-export-import'));
+      subpage.$$('#crostini-export-import').click();
       return flushAsync().then(() => {
         subpage = crostiniPage.$$('settings-crostini-export-import');
         assertTrue(!!subpage.$$('#import paper-button'));
@@ -205,9 +205,9 @@ suite('CrostiniPageTests', function() {
 
     test('Remove', function() {
       assertFalse(subpage.$.crostiniInstructionsRemove.hidden);
-      assertTrue(!!subpage.$$('.list-item button'));
+      assertTrue(!!subpage.$$('.list-item cr-icon-button'));
       // Remove first shared path, still one left.
-      subpage.$$('.list-item button').click();
+      subpage.$$('.list-item cr-icon-button').click();
       return crostiniBrowserProxy.whenCalled('removeCrostiniSharedPath')
           .then(([vmName, path]) => {
             assertEquals('termina', vmName);
@@ -223,7 +223,7 @@ suite('CrostiniPageTests', function() {
 
             // Remove remaining shared path, none left.
             crostiniBrowserProxy.resetResolver('removeCrostiniSharedPath');
-            subpage.$$('.list-item button').click();
+            subpage.$$('.list-item cr-icon-button').click();
             return crostiniBrowserProxy.whenCalled('removeCrostiniSharedPath');
           })
           .then(([vmName, path]) => {

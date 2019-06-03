@@ -15,13 +15,11 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
-import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.util.ColorUtils;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.ui.resources.ResourceManager;
 
 /**
@@ -52,55 +50,54 @@ public class TabListSceneLayer extends SceneLayer {
      * @param tabContentManager An object for accessing tab content.
      * @param resourceManager An object for accessing static and dynamic resources.
      * @param fullscreenManager The fullscreen manager for browser controls information.
+     * @param backgroundResourceId The resource ID for background. {@link #INVALID_RESOURCE_ID} if
+     *                             none. Only used in GridTabSwitcher.
      */
     public void pushLayers(Context context, RectF viewport, RectF contentViewport, Layout layout,
             LayerTitleCache layerTitleCache, TabContentManager tabContentManager,
-            ResourceManager resourceManager, ChromeFullscreenManager fullscreenManager) {
+            ResourceManager resourceManager, ChromeFullscreenManager fullscreenManager,
+            int backgroundResourceId) {
         if (mNativePtr == 0) return;
 
         Resources res = context.getResources();
         final float dpToPx = res.getDisplayMetrics().density;
+        final int tabListBgColor = getTabListBackgroundColor(context);
 
         LayoutTab[] tabs = layout.getLayoutTabsToRender();
         int tabsCount = tabs != null ? tabs.length : 0;
 
         nativeBeginBuildingFrame(mNativePtr);
 
-        nativeUpdateLayer(mNativePtr, getTabListBackgroundColor(context), viewport.left,
-                viewport.top, viewport.width(), viewport.height(), layerTitleCache,
-                tabContentManager, resourceManager);
+        nativeUpdateLayer(mNativePtr, tabListBgColor, viewport.left, viewport.top, viewport.width(),
+                viewport.height(), layerTitleCache, tabContentManager, resourceManager);
 
-        boolean isTabGroupEnabled = FeatureUtilities.isTabGroupsAndroidEnabled();
-
-        if (isTabGroupEnabled && layerTitleCache.getLayoutTabGroupCreationButton() != null) {
-            CompositorButton createGroupButton =
-                    layerTitleCache.getLayoutTabGroupCreationButton().getCreateGroupButton();
-            nativePutCreateGroupTextButtonLayer(mNativePtr,
-                    layerTitleCache.getLayoutTabGroupCreationButton().getButtonResourceId(),
-                    createGroupButton.getX() * dpToPx, createGroupButton.getY() * dpToPx,
-                    createGroupButton.isVisible());
+        if (backgroundResourceId != INVALID_RESOURCE_ID) {
+            nativePutBackgroundLayer(mNativePtr, backgroundResourceId);
         }
 
         boolean isHTSEnabled =
                 ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID);
+
+        final float shadowAlpha = ColorUtils.shouldUseLightForegroundOnBackground(tabListBgColor)
+                ? LayoutTab.SHADOW_ALPHA_ON_DARK_BG
+                : LayoutTab.SHADOW_ALPHA_ON_LIGHT_BG;
 
         for (int i = 0; i < tabsCount; i++) {
             LayoutTab t = tabs[i];
             assert t.isVisible() : "LayoutTab in that list should be visible";
             final float decoration = t.getDecorationAlpha();
 
-            float shadowAlpha = decoration / 2;
             int urlBarBackgroundId = R.drawable.modern_location_bar;
-            boolean useLightIcon = t.isIncognito() && !isHTSEnabled;
+            boolean useIncognitoColors = t.isIncognito() && !isHTSEnabled;
 
-            int defaultThemeColor = ColorUtils.getDefaultThemeColor(res, useLightIcon);
+            int defaultThemeColor = ColorUtils.getDefaultThemeColor(res, useIncognitoColors);
 
             // In the modern design, the text box is always drawn opaque in the compositor.
             float textBoxAlpha = 1.f;
 
-            int closeButtonColor = useLightIcon
+            int closeButtonColor = useIncognitoColors
                     ? Color.WHITE
-                    : ApiCompatibilityUtils.getColor(res, R.color.light_icon_color);
+                    : ApiCompatibilityUtils.getColor(res, R.color.default_icon_color_secondary);
             float closeButtonSizePx =
                     res.getDimensionPixelSize(R.dimen.tab_switcher_close_button_size);
 
@@ -126,8 +123,8 @@ public class TabListSceneLayer extends SceneLayer {
                     Math.min(t.getClippedHeight(), t.getScaledContentHeight()) * dpToPx,
                     t.getTiltXPivotOffset() * dpToPx, t.getTiltYPivotOffset() * dpToPx,
                     t.getTiltX(), t.getTiltY(), t.getAlpha(), t.getBorderAlpha() * decoration,
-                    t.getBorderInnerShadowAlpha() * decoration, decoration, shadowAlpha,
-                    t.getBorderCloseButtonAlpha() * decoration,
+                    t.getBorderInnerShadowAlpha() * decoration, decoration,
+                    shadowAlpha * decoration, t.getBorderCloseButtonAlpha() * decoration,
                     LayoutTab.CLOSE_BUTTON_WIDTH_DP * dpToPx, closeButtonSizePx,
                     t.getStaticToViewBlend(), t.getBorderScale(), t.getSaturation(),
                     t.getBrightness(), t.showToolbar(), defaultThemeColor,
@@ -210,6 +207,5 @@ public class TabListSceneLayer extends SceneLayer {
             float toolbarTextBoxAlpha, float toolbarAlpha, float toolbarYOffset,
             float sideBorderScale, boolean insetVerticalBorder);
 
-    private native void nativePutCreateGroupTextButtonLayer(long nativeTabListSceneLayer,
-            int buttonResourceId, float x, float y, boolean isVisible);
+    private native void nativePutBackgroundLayer(long nativeTabListSceneLayer, int resourceId);
 }

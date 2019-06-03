@@ -20,6 +20,7 @@ class WebContents;
 }
 
 namespace web_app {
+class InstallFinalizer;
 class WebAppDataRetriever;
 }
 
@@ -31,20 +32,22 @@ class BookmarkAppHelper;
 // crbug.com/915043.
 class BookmarkAppInstallManager final : public web_app::InstallManager {
  public:
-  explicit BookmarkAppInstallManager(Profile* profile);
+  BookmarkAppInstallManager(Profile* profile,
+                            web_app::InstallFinalizer* finalizer);
   ~BookmarkAppInstallManager() override;
 
   // InstallManager:
   bool CanInstallWebApp(content::WebContents* web_contents) override;
-  void InstallWebApp(content::WebContents* web_contents,
-                     bool force_shortcut_app,
-                     WebappInstallSource install_source,
-                     WebAppInstallDialogCallback dialog_callback,
-                     OnceInstallCallback callback) override;
-  void InstallWebAppFromBanner(content::WebContents* web_contents,
-                               WebappInstallSource install_source,
-                               WebAppInstallDialogCallback dialog_callback,
-                               OnceInstallCallback callback) override;
+  void InstallWebAppFromManifestWithFallback(
+      content::WebContents* web_contents,
+      bool force_shortcut_app,
+      WebappInstallSource install_source,
+      WebAppInstallDialogCallback dialog_callback,
+      OnceInstallCallback callback) override;
+  void InstallWebAppFromManifest(content::WebContents* web_contents,
+                                 WebappInstallSource install_source,
+                                 WebAppInstallDialogCallback dialog_callback,
+                                 OnceInstallCallback callback) override;
   void InstallWebAppFromInfo(
       std::unique_ptr<WebApplicationInfo> web_application_info,
       bool no_network_install,
@@ -64,7 +67,7 @@ class BookmarkAppInstallManager final : public web_app::InstallManager {
   using BookmarkAppHelperFactory =
       base::RepeatingCallback<std::unique_ptr<BookmarkAppHelper>(
           Profile*,
-          const WebApplicationInfo&,
+          std::unique_ptr<WebApplicationInfo>,
           content::WebContents*,
           WebappInstallSource)>;
 
@@ -80,10 +83,9 @@ class BookmarkAppInstallManager final : public web_app::InstallManager {
       DataRetrieverFactory data_retriever_factory);
 
  private:
-  Profile* profile_;
-
   BookmarkAppHelperFactory bookmark_app_helper_factory_;
   DataRetrieverFactory data_retriever_factory_;
+  web_app::InstallFinalizer* finalizer_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkAppInstallManager);
 };

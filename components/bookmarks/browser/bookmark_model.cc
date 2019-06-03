@@ -271,17 +271,12 @@ void BookmarkModel::RemoveAllUserBookmarks() {
 void BookmarkModel::Move(const BookmarkNode* node,
                          const BookmarkNode* new_parent,
                          int index) {
-  if (!loaded_ || !node || !IsValidIndex(new_parent, index, true) ||
-      is_root_node(new_parent) || is_permanent_node(node)) {
-    NOTREACHED();
-    return;
-  }
-
-  if (new_parent->HasAncestor(node)) {
-    // Can't make an ancestor of the node be a child of the node.
-    NOTREACHED();
-    return;
-  }
+  DCHECK(loaded_);
+  DCHECK(node);
+  DCHECK(IsValidIndex(new_parent, index, true));
+  DCHECK(!is_root_node(new_parent));
+  DCHECK(!is_permanent_node(node));
+  DCHECK(!new_parent->HasAncestor(node));
 
   const BookmarkNode* old_parent = node->parent();
   int old_index = old_parent->GetIndexOf(node);
@@ -313,17 +308,12 @@ void BookmarkModel::Move(const BookmarkNode* node,
 void BookmarkModel::Copy(const BookmarkNode* node,
                          const BookmarkNode* new_parent,
                          int index) {
-  if (!loaded_ || !node || !IsValidIndex(new_parent, index, true) ||
-      is_root_node(new_parent) || is_permanent_node(node)) {
-    NOTREACHED();
-    return;
-  }
-
-  if (new_parent->HasAncestor(node)) {
-    // Can't make an ancestor of the node be a child of the node.
-    NOTREACHED();
-    return;
-  }
+  DCHECK(loaded_);
+  DCHECK(node);
+  DCHECK(IsValidIndex(new_parent, index, true));
+  DCHECK(!is_root_node(new_parent));
+  DCHECK(!is_permanent_node(node));
+  DCHECK(!new_parent->HasAncestor(node));
 
   SetDateFolderModified(new_parent, Time::Now());
   BookmarkNodeData drag_data(node);
@@ -550,8 +540,8 @@ bool BookmarkModel::HasBookmarks() {
 }
 
 bool BookmarkModel::HasNoUserCreatedBookmarksOrFolders() {
-  return bookmark_bar_node_->empty() && other_node_->empty() &&
-         mobile_node_->empty();
+  return bookmark_bar_node_->children().empty() &&
+         other_node_->children().empty() && mobile_node_->children().empty();
 }
 
 bool BookmarkModel::IsBookmarked(const GURL& url) {
@@ -573,11 +563,9 @@ const BookmarkNode* BookmarkModel::AddFolderWithMetaInfo(
     int index,
     const base::string16& title,
     const BookmarkNode::MetaInfoMap* meta_info) {
-  if (!loaded_ || is_root_node(parent) || !IsValidIndex(parent, index, true)) {
-    // Can't add to the root.
-    NOTREACHED();
-    return nullptr;
-  }
+  DCHECK(loaded_);
+  DCHECK(!is_root_node(parent));
+  DCHECK(IsValidIndex(parent, index, true));
 
   std::unique_ptr<BookmarkNode> new_node =
       std::make_unique<BookmarkNode>(generate_next_node_id(), GURL());
@@ -606,11 +594,10 @@ const BookmarkNode* BookmarkModel::AddURLWithCreationTimeAndMetaInfo(
     const GURL& url,
     const Time& creation_time,
     const BookmarkNode::MetaInfoMap* meta_info) {
-  if (!loaded_ || !url.is_valid() || is_root_node(parent) ||
-      !IsValidIndex(parent, index, true)) {
-    NOTREACHED();
-    return nullptr;
-  }
+  DCHECK(loaded_);
+  DCHECK(url.is_valid());
+  DCHECK(!is_root_node(parent));
+  DCHECK(IsValidIndex(parent, index, true));
 
   // Syncing may result in dates newer than the last modified date.
   if (creation_time > parent->date_folder_modified())
@@ -643,8 +630,7 @@ void BookmarkModel::SortChildren(const BookmarkNode* parent) {
   if (U_FAILURE(error))
     collator.reset(nullptr);
   BookmarkNode* mutable_parent = AsMutable(parent);
-  std::sort(mutable_parent->children().begin(),
-            mutable_parent->children().end(),
+  std::sort(mutable_parent->children_.begin(), mutable_parent->children_.end(),
             SortComparator(collator.get()));
 
   if (store_)
@@ -675,11 +661,11 @@ void BookmarkModel::ReorderChildren(
     std::vector<std::unique_ptr<BookmarkNode>> new_children(
         ordered_nodes.size());
     BookmarkNode* mutable_parent = AsMutable(parent);
-    for (auto& child : mutable_parent->children()) {
+    for (auto& child : mutable_parent->children_) {
       size_t new_location = order[child.get()];
       new_children[new_location] = std::move(child);
     }
-    mutable_parent->children().swap(new_children);
+    mutable_parent->children_.swap(new_children);
 
     if (store_)
       store_->ScheduleSave();
@@ -806,7 +792,7 @@ void BookmarkModel::DoneLoading(std::unique_ptr<BookmarkLoadDetails> details) {
   index_->SetNodeSorter(std::make_unique<TypedCountSorter>(client_.get()));
   // Sorting the permanent nodes has to happen on the main thread, so we do it
   // here, after loading completes.
-  std::stable_sort(root_->children().begin(), root_->children().end(),
+  std::stable_sort(root_->children_.begin(), root_->children_.end(),
                    VisibilityComparator(client_.get()));
 
   root_->SetMetaInfoMap(details->model_meta_info_map());

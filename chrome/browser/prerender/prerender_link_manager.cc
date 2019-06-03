@@ -28,6 +28,7 @@
 #include "third_party/blink/public/common/prerender/prerender_rel_type.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "components/guest_view/browser/guest_view_base.h"
@@ -85,7 +86,7 @@ class PrerenderLinkManager::PendingPrerenderManager
   ~PendingPrerenderManager() override { CHECK(observed_launchers_.empty()); }
 
   void ObserveLauncher(PrerenderContents* launcher) {
-    DCHECK_EQ(FINAL_STATUS_MAX, launcher->final_status());
+    DCHECK_EQ(FINAL_STATUS_UNKNOWN, launcher->final_status());
     bool inserted = observed_launchers_.insert(launcher).second;
     if (inserted)
       launcher->AddObserver(this);
@@ -136,6 +137,7 @@ void PrerenderLinkManager::OnAddPrerender(int launcher_child_id,
                                           const GURL& url,
                                           uint32_t rel_types,
                                           const content::Referrer& referrer,
+                                          const url::Origin& initiator_origin,
                                           const gfx::Size& size,
                                           int render_view_route_id) {
   DCHECK_EQ(nullptr, FindByLauncherChildIdAndPrerenderId(launcher_child_id,
@@ -157,17 +159,17 @@ void PrerenderLinkManager::OnAddPrerender(int launcher_child_id,
       manager_->GetPrerenderContentsForRoute(launcher_child_id,
                                              render_view_route_id);
   if (prerender_contents &&
-      prerender_contents->final_status() != FINAL_STATUS_MAX) {
+      prerender_contents->final_status() != FINAL_STATUS_UNKNOWN) {
     // The launcher is a prerender about to be destroyed asynchronously, but
     // its AddLinkRelPrerender message raced with shutdown. Ignore it.
     DCHECK_NE(FINAL_STATUS_USED, prerender_contents->final_status());
     return;
   }
 
-  LinkPrerender
-      prerender(launcher_child_id, prerender_id, url, rel_types, referrer, size,
-                render_view_route_id, manager_->GetCurrentTimeTicks(),
-                prerender_contents);
+  LinkPrerender prerender(launcher_child_id, prerender_id, url, rel_types,
+                          referrer, initiator_origin, size,
+                          render_view_route_id, manager_->GetCurrentTimeTicks(),
+                          prerender_contents);
   prerenders_.push_back(prerender);
   RecordLinkManagerAdded(rel_types);
   if (prerender_contents)
@@ -229,6 +231,7 @@ PrerenderLinkManager::LinkPrerender::LinkPrerender(
     const GURL& url,
     uint32_t rel_types,
     const content::Referrer& referrer,
+    const url::Origin& initiator_origin,
     const gfx::Size& size,
     int render_view_route_id,
     TimeTicks creation_time,
@@ -238,6 +241,7 @@ PrerenderLinkManager::LinkPrerender::LinkPrerender(
       url(url),
       rel_types(rel_types),
       referrer(referrer),
+      initiator_origin(initiator_origin),
       size(size),
       render_view_route_id(render_view_route_id),
       creation_time(creation_time),
@@ -355,7 +359,7 @@ void PrerenderLinkManager::StartPrerenders() {
     std::unique_ptr<PrerenderHandle> handle =
         manager_->AddPrerenderFromLinkRelPrerender(
             it->launcher_child_id, it->render_view_route_id, it->url,
-            it->rel_types, it->referrer, it->size);
+            it->rel_types, it->referrer, it->initiator_origin, it->size);
     if (!handle) {
       // This prerender couldn't be launched, it's gone.
       prerenders_.erase(it);

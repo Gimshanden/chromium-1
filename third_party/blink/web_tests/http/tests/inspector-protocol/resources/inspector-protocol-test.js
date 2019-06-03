@@ -135,6 +135,11 @@ var TestRunner = class {
     return eval(`${source}\n//# sourceURL=${url}`);
   };
 
+  async loadScriptAbsolute(url) {
+    var source = await this._fetch(url);
+    return eval(`${source}\n//# sourceURL=${url}`);
+  };
+
   browserP() {
     return this._browserSession.protocol;
   }
@@ -260,7 +265,24 @@ TestRunner.Page = class {
   async loadHTML(html) {
     html = html.replace(/'/g, "\\'").replace(/\n/g, '\\n');
     var session = await this.createSession();
-    await session.protocol.Runtime.evaluate({expression: `document.write('${html}');document.close();`});
+    await session.protocol.Runtime.evaluate({
+      awaitPromise: true,
+      expression: `
+      document.write('${html}');
+
+      // wait for all scripts to load
+      const promise = new Promise(x => window._loadHTMLResolve = x).then(() => {
+        delete window._loadHTMLResolve;
+      });
+      // We do a document.write here to serialize with the previous document.write
+      if (document.querySelector('script[src]'))
+        document.write('<script>window._loadHTMLResolve(); document.currentScript.remove();</script>');
+      else
+        window._loadHTMLResolve();
+
+      document.close();
+      promise;
+    `});
     await session.disconnect();
   }
 };
@@ -328,8 +350,9 @@ TestRunner.Session = class {
   async _navigate(url) {
     await this.protocol.Page.enable();
     await this.protocol.Page.setLifecycleEventsEnabled({enabled: true});
-    await this.protocol.Page.navigate({url: url});
-    await this.protocol.Page.onceLifecycleEvent(event => event.params.name === 'load');
+    const frameId = (await this.protocol.Page.navigate({url: url})).result.frameId;
+    await this.protocol.Page.onceLifecycleEvent(
+        event => event.params.name === 'load' && event.params.frameId === frameId);
   }
 
   _dispatchMessage(message) {

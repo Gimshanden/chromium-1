@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/browser_navigator_browsertest.h"
-
 #include "ash/public/cpp/window_properties.h"
 #include "ash/public/interfaces/window_pin_type.mojom.h"
 #include "base/command_line.h"
 #include "chrome/browser/chromeos/login/chrome_restart_request.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/test_multi_user_window_manager_client.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "chrome/browser/ui/ash/multi_user/test_multi_user_window_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_navigator_browsertest.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
@@ -106,17 +106,15 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTestChromeOS,
 }
 
 // Subclass that tests navigation while in the Guest session.
-class BrowserGuestSessionNavigatorTest: public BrowserNavigatorTest {
+class BrowserGuestSessionNavigatorTest : public BrowserNavigatorTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     base::CommandLine command_line_copy = *command_line;
-    command_line_copy.AppendSwitchASCII(
-        chromeos::switches::kLoginProfile, "user");
+    command_line_copy.AppendSwitchASCII(chromeos::switches::kLoginProfile,
+                                        "user");
     command_line_copy.AppendSwitch(chromeos::switches::kGuestSession);
-    chromeos::GetOffTheRecordCommandLine(GetGoogleURL(),
-                                         true,
-                                         command_line_copy,
-                                         command_line);
+    chromeos::GetOffTheRecordCommandLine(GetGoogleURL(), true,
+                                         command_line_copy, command_line);
   }
 };
 
@@ -142,9 +140,9 @@ IN_PROC_BROWSER_TEST_F(BrowserGuestSessionNavigatorTest,
   EXPECT_NE(browser(), params.browser);
   EXPECT_EQ(incognito_browser, params.browser);
   EXPECT_EQ(2, incognito_browser->tab_strip_model()->count());
-  EXPECT_EQ(GURL("chrome://chrome/settings"),
-            incognito_browser->tab_strip_model()->GetActiveWebContents()->
-                GetURL());
+  EXPECT_EQ(
+      GURL("chrome://chrome/settings"),
+      incognito_browser->tab_strip_model()->GetActiveWebContents()->GetURL());
 }
 
 // Test that in multi user environments a newly created browser gets created
@@ -156,8 +154,8 @@ IN_PROC_BROWSER_TEST_F(BrowserGuestSessionNavigatorTest,
   {
     const AccountId desktop_account_id(
         AccountId::FromUserEmail("desktop_user_id@fake.com"));
-    TestMultiUserWindowManagerClient* client =
-        new TestMultiUserWindowManagerClient(browser(), desktop_account_id);
+    TestMultiUserWindowManager* window_manager =
+        TestMultiUserWindowManager::Create(browser(), desktop_account_id);
 
     EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
 
@@ -172,18 +170,19 @@ IN_PROC_BROWSER_TEST_F(BrowserGuestSessionNavigatorTest,
 
     EXPECT_EQ(2u, chrome::GetTotalBrowserCount());
 
-    aura::Window* created_window = client->created_window();
+    aura::Window* created_window = window_manager->created_window();
     ASSERT_TRUE(created_window);
     EXPECT_TRUE(
-        client->IsWindowOnDesktopOfUser(created_window, desktop_account_id));
+        MultiUserWindowManagerHelper::GetInstance()->IsWindowOnDesktopOfUser(
+            created_window, desktop_account_id));
   }
   // Test 2: Test that a window which is not visiting does not cause an owner
   // assignment of a newly created browser.
   {
     const AccountId browser_owner =
         multi_user_util::GetAccountIdFromProfile(browser()->profile());
-    TestMultiUserWindowManagerClient* client =
-        new TestMultiUserWindowManagerClient(browser(), browser_owner);
+    TestMultiUserWindowManager* window_manager =
+        TestMultiUserWindowManager::Create(browser(), browser_owner);
 
     // Navigate to the settings page.
     NavigateParams params(MakeNavigateParams(browser()));
@@ -198,7 +197,7 @@ IN_PROC_BROWSER_TEST_F(BrowserGuestSessionNavigatorTest,
 
     // The ShowWindowForUser should not have been called since the window is
     // already on the correct desktop.
-    ASSERT_FALSE(client->created_window());
+    ASSERT_FALSE(window_manager->created_window());
   }
 }
 

@@ -56,6 +56,7 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   void SetKeepActive(bool) override;
   bool IsMainFrameLocal() const override;
   void SetIsMainFrameLocal(bool is_local) override;
+  void OnLocalMainFrameNetworkAlmostIdle() override;
 
   std::unique_ptr<FrameScheduler> CreateFrameScheduler(
       FrameScheduler::Delegate* delegate,
@@ -74,8 +75,6 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
       int max_task_starvation_count) override;
   void AudioStateChanged(bool is_audio_playing) override;
   bool IsAudioPlaying() const override;
-  WTF::HashSet<SchedulingPolicy::Feature>
-  GetActiveFeaturesOptingOutFromBackForwardCache() const override;
   bool IsExemptFromBudgetBasedThrottling() const override;
   bool OptedOutFromAggressiveThrottlingForTest() const override;
   bool RequestBeginMainFrameNotExpected(bool new_state) override;
@@ -243,6 +242,7 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   MainThreadSchedulerImpl* main_thread_scheduler_;
 
   PageVisibilityState page_visibility_;
+  base::TimeTicks page_visibility_changed_time_;
   AudioState audio_state_;
   bool is_frozen_;
   bool reported_background_throttling_since_navigation_;
@@ -256,7 +256,15 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   CancelableClosureHolder do_throttle_page_callback_;
   CancelableClosureHolder on_audio_silent_closure_;
   CancelableClosureHolder do_freeze_page_callback_;
-  base::TimeDelta delay_for_background_tab_freezing_;
+  const base::TimeDelta delay_for_background_tab_freezing_;
+
+  // Whether a background page can be frozen before
+  // |delay_for_background_tab_freezing_| if network is idle.
+  const bool freeze_on_network_idle_enabled_;
+
+  // Delay after which a background page can be frozen if network is idle.
+  const base::TimeDelta delay_for_background_and_network_idle_tab_freezing_;
+
   std::unique_ptr<PageLifecycleStateTracker> page_lifecycle_state_tracker_;
   base::WeakPtrFactory<PageSchedulerImpl> weak_factory_;
 

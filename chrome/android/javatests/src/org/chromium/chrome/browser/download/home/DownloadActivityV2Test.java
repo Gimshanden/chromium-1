@@ -20,6 +20,7 @@ import org.mockito.MockitoAnnotations;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.download.home.filter.FilterCoordinator;
 import org.chromium.chrome.browser.download.home.list.UiUtils;
 import org.chromium.chrome.browser.download.items.OfflineContentAggregatorFactory;
 import org.chromium.chrome.browser.download.ui.StubbedProvider;
@@ -72,6 +73,7 @@ public class DownloadActivityV2Test extends DummyUiActivityTestCase {
         features.put(ChromeFeatureList.OVERSCROLL_HISTORY_NAVIGATION, false);
         features.put(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER, false);
         features.put(ChromeFeatureList.DOWNLOAD_RENAME, true);
+        features.put(ChromeFeatureList.DELEGATE_OVERSCROLL_SWIPES, false);
         ChromeFeatureList.setTestFeatures(features);
 
         StubbedOfflineContentProvider stubbedOfflineContentProvider =
@@ -93,6 +95,7 @@ public class DownloadActivityV2Test extends DummyUiActivityTestCase {
     }
 
     private void setUpUi() {
+        FilterCoordinator.setPrefetchUserSettingValueForTesting(true);
         DownloadManagerUiConfig config = new DownloadManagerUiConfig.Builder()
                                                  .setIsOffTheRecord(false)
                                                  .setIsSeparateActivity(true)

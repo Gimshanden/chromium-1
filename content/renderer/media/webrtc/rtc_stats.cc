@@ -35,6 +35,11 @@ class RTCStatsWhitelist {
     whitelisted_stats_types_.insert(webrtc::RTCRTPStreamStats::kType);
     whitelisted_stats_types_.insert(webrtc::RTCInboundRTPStreamStats::kType);
     whitelisted_stats_types_.insert(webrtc::RTCOutboundRTPStreamStats::kType);
+    whitelisted_stats_types_.insert(
+        webrtc::RTCRemoteInboundRtpStreamStats::kType);
+    whitelisted_stats_types_.insert(webrtc::RTCMediaSourceStats::kType);
+    whitelisted_stats_types_.insert(webrtc::RTCAudioSourceStats::kType);
+    whitelisted_stats_types_.insert(webrtc::RTCVideoSourceStats::kType);
     whitelisted_stats_types_.insert(webrtc::RTCTransportStats::kType);
   }
 
@@ -322,19 +327,19 @@ blink::WebVector<blink::WebString> RTCStatsMember::ValueSequenceString() const {
 rtc::scoped_refptr<RTCStatsCollectorCallbackImpl>
 RTCStatsCollectorCallbackImpl::Create(
     scoped_refptr<base::SingleThreadTaskRunner> main_thread,
-    std::unique_ptr<blink::WebRTCStatsReportCallback> callback,
+    blink::WebRTCStatsReportCallback callback,
     const std::vector<webrtc::NonStandardGroupId>& exposed_group_ids) {
   return rtc::scoped_refptr<RTCStatsCollectorCallbackImpl>(
       new rtc::RefCountedObject<RTCStatsCollectorCallbackImpl>(
-          std::move(main_thread), callback.release(), exposed_group_ids));
+          std::move(main_thread), std::move(callback), exposed_group_ids));
 }
 
 RTCStatsCollectorCallbackImpl::RTCStatsCollectorCallbackImpl(
     scoped_refptr<base::SingleThreadTaskRunner> main_thread,
-    blink::WebRTCStatsReportCallback* callback,
+    blink::WebRTCStatsReportCallback callback,
     const std::vector<webrtc::NonStandardGroupId>& exposed_group_ids)
     : main_thread_(std::move(main_thread)),
-      callback_(callback),
+      callback_(std::move(callback)),
       exposed_group_ids_(exposed_group_ids) {}
 
 RTCStatsCollectorCallbackImpl::~RTCStatsCollectorCallbackImpl() {
@@ -355,10 +360,9 @@ void RTCStatsCollectorCallbackImpl::OnStatsDeliveredOnMainThread(
   DCHECK(main_thread_->BelongsToCurrentThread());
   DCHECK(report);
   DCHECK(callback_);
-  callback_->OnStatsDelivered(std::make_unique<RTCStatsReport>(
-      base::WrapRefCounted(report.get()), exposed_group_ids_));
   // Make sure the callback is destroyed in the main thread as well.
-  callback_.reset();
+  std::move(callback_).Run(std::make_unique<RTCStatsReport>(
+      base::WrapRefCounted(report.get()), exposed_group_ids_));
 }
 
 void WhitelistStatsForTesting(const char* type) {

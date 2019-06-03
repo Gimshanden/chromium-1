@@ -19,9 +19,10 @@
 #include "chrome/browser/notifications/notification_trigger_scheduler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/buildflags.h"
-#include "components/history/core/browser/history_service.h"
-#include "components/history/core/browser/history_types.h"
+#include "components/content_settings/core/browser/content_settings_observer.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/platform_notification_service.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/message_center/public/cpp/notification.h"
 
 class GURL;
@@ -35,6 +36,7 @@ struct NotificationResources;
 // which Web Notifications can be controlled.
 class PlatformNotificationServiceImpl
     : public content::PlatformNotificationService,
+      public content_settings::Observer,
       public KeyedService {
  public:
   explicit PlatformNotificationServiceImpl(Profile* profile);
@@ -69,9 +71,8 @@ class PlatformNotificationServiceImpl
   void RecordNotificationUkmEvent(
       const content::NotificationDatabaseData& data) override;
 
-  void set_history_query_complete_closure_for_testing(
-      base::OnceClosure closure) {
-    history_query_complete_closure_for_testing_ = std::move(closure);
+  void set_ukm_recorded_closure_for_testing(base::OnceClosure closure) {
+    ukm_recorded_closure_for_testing_ = std::move(closure);
   }
 
   NotificationTriggerScheduler* GetNotificationTriggerScheduler();
@@ -92,12 +93,16 @@ class PlatformNotificationServiceImpl
   // KeyedService implementation.
   void Shutdown() override;
 
-  static void OnUrlHistoryQueryComplete(
-      base::OnceClosure callback,
+  // content_settings::Observer implementation.
+  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
+                               const ContentSettingsPattern& secondary_pattern,
+                               ContentSettingsType content_type,
+                               const std::string& resource_identifier) override;
+
+  static void DidGetBackgroundSourceId(
+      base::OnceClosure recorded_closure,
       const content::NotificationDatabaseData& data,
-      bool found_url,
-      const history::URLRow& url_row,
-      const history::VisitVector& visits);
+      base::Optional<ukm::SourceId> source_id);
 
   // Creates a new Web Notification-based Notification object. Should only be
   // called when the notification is first shown.
@@ -121,15 +126,11 @@ class PlatformNotificationServiceImpl
   // programmatically to avoid dispatching close events for them.
   std::unordered_set<std::string> closed_notifications_;
 
-  // Task tracker used for querying URLs in the history service.
-  base::CancelableTaskTracker task_tracker_;
-
   // Scheduler for notifications with a trigger.
   std::unique_ptr<NotificationTriggerScheduler> trigger_scheduler_;
 
-  // Testing-only closure to observe when querying the history service has been
-  // completed, and the result of logging UKM can be observed.
-  base::OnceClosure history_query_complete_closure_for_testing_;
+  // Testing-only closure to observe when a UKM event has been recorded.
+  base::OnceClosure ukm_recorded_closure_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformNotificationServiceImpl);
 };

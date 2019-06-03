@@ -39,7 +39,7 @@ std::string GetStringFromDictionary(const base::Value* dict, const char* key) {
 bool IsCaptivePortalState(const base::Value& properties, bool log) {
   std::string state =
       GetStringFromDictionary(&properties, shill::kStateProperty);
-  if (state != shill::kStatePortal)
+  if (!chromeos::NetworkState::StateIsPortalled(state))
     return false;
   if (!properties.FindKey(shill::kPortalDetectionFailedPhaseProperty) ||
       !properties.FindKey(shill::kPortalDetectionFailedStatusProperty)) {
@@ -58,7 +58,9 @@ bool IsCaptivePortalState(const base::Value& properties, bool log) {
   // returned and ignore other reasons.
   bool is_captive_portal =
       portal_detection_phase == shill::kPortalDetectionPhaseContent &&
-      portal_detection_status == shill::kPortalDetectionStatusFailure;
+      (portal_detection_status == shill::kPortalDetectionStatusSuccess ||
+       portal_detection_status == shill::kPortalDetectionStatusFailure ||
+       portal_detection_status == shill::kPortalDetectionStatusRedirect);
 
   if (log) {
     std::string name =
@@ -281,7 +283,7 @@ void NetworkState::GetStateProperties(base::Value* dictionary) const {
   if (NetworkTypePattern::Tether().MatchesType(type())) {
     dictionary->SetKey(kTetherBatteryPercentage,
                        base::Value(battery_percentage()));
-    dictionary->SetKey(kTetherCarrier, base::Value(carrier()));
+    dictionary->SetKey(kTetherCarrier, base::Value(tether_carrier()));
     dictionary->SetKey(kTetherHasConnectedToHost,
                        base::Value(tether_has_connected_to_host()));
     dictionary->SetKey(kTetherSignalStrength, base::Value(signal_strength()));
@@ -383,7 +385,27 @@ bool NetworkState::SecurityRequiresPassphraseOnly() const {
 
 std::string NetworkState::connection_state() const {
   if (!visible())
-    return shill::kStateDisconnect;
+    return shill::kStateIdle;
+  DCHECK(connection_state_ == shill::kStateIdle ||
+         connection_state_ == shill::kStateAssociation ||
+         connection_state_ == shill::kStateConfiguration ||
+         connection_state_ == shill::kStateReady ||
+         connection_state_ == shill::kStatePortal ||
+         connection_state_ == shill::kStateNoConnectivity ||
+         connection_state_ == shill::kStateRedirectFound ||
+         connection_state_ == shill::kStatePortalSuspected ||
+         // TODO(https://crbug.com/552190): Remove kStateOffline from this list
+         // when occurrences in chromium code have been eliminated.
+         connection_state_ == shill::kStateOffline ||
+         connection_state_ == shill::kStateOnline ||
+         connection_state_ == shill::kStateFailure ||
+         // TODO(https://crbug.com/552190): Remove kStateActivationFailure from
+         // this list when occurrences in chromium code have been eliminated.
+         connection_state_ == shill::kStateActivationFailure ||
+         // TODO(https://crbug.com/552190): Empty should not be a valid state,
+         // but e.g. new tether NetworkStates and unit tests use it currently.
+         connection_state_.empty());
+
   return connection_state_;
 }
 
@@ -443,6 +465,10 @@ bool NetworkState::IsConnectingOrConnected() const {
 bool NetworkState::IsActive() const {
   return IsConnectingOrConnected() ||
          activation_state() == shill::kActivationStateActivating;
+}
+
+bool NetworkState::IsOnline() const {
+  return connection_state() == shill::kStateOnline;
 }
 
 bool NetworkState::IsInProfile() const {
@@ -518,18 +544,61 @@ std::string NetworkState::GetErrorState() const {
   return last_error();
 }
 
+network_config::mojom::ActivationStateType
+NetworkState::GetMojoActivationState() const {
+  using network_config::mojom::ActivationStateType;
+  if (IsDefaultCellular())
+    return ActivationStateType::kNoService;
+  if (activation_state_.empty())
+    return ActivationStateType::kUnknown;
+  if (activation_state_ == shill::kActivationStateActivated)
+    return ActivationStateType::kActivated;
+  if (activation_state_ == shill::kActivationStateActivating)
+    return ActivationStateType::kActivating;
+  if (activation_state_ == shill::kActivationStateNotActivated)
+    return ActivationStateType::kNotActivated;
+  if (activation_state_ == shill::kActivationStatePartiallyActivated)
+    return ActivationStateType::kPartiallyActivated;
+  NET_LOG(ERROR) << "Unexpected shill activation state: " << activation_state_;
+  return ActivationStateType::kUnknown;
+}
+
+network_config::mojom::SecurityType NetworkState::GetMojoSecurity() const {
+  using network_config::mojom::SecurityType;
+  if (security_class_.empty() || security_class_ == shill::kSecurityNone)
+    return SecurityType::kNone;
+  if (IsDynamicWep())
+    return SecurityType::kWep8021x;
+
+  if (security_class_ == shill::kSecurityWep)
+    return SecurityType::kWepPsk;
+  if (security_class_ == shill::kSecurityPsk)
+    return SecurityType::kWpaPsk;
+  if (security_class_ == shill::kSecurity8021x)
+    return SecurityType::kWpaEap;
+  NET_LOG(ERROR) << "Unsupported shill security class: " << security_class_;
+  return SecurityType::kNone;
+}
+
 // static
 bool NetworkState::StateIsConnected(const std::string& connection_state) {
   return (connection_state == shill::kStateReady ||
           connection_state == shill::kStateOnline ||
-          connection_state == shill::kStatePortal);
+          StateIsPortalled(connection_state));
 }
 
 // static
 bool NetworkState::StateIsConnecting(const std::string& connection_state) {
   return (connection_state == shill::kStateAssociation ||
-          connection_state == shill::kStateConfiguration ||
-          connection_state == shill::kStateCarrier);
+          connection_state == shill::kStateConfiguration);
+}
+
+// static
+bool NetworkState::StateIsPortalled(const std::string& connection_state) {
+  return (connection_state == shill::kStatePortal ||
+          connection_state == shill::kStateNoConnectivity ||
+          connection_state == shill::kStateRedirectFound ||
+          connection_state == shill::kStatePortalSuspected);
 }
 
 // static

@@ -4,13 +4,11 @@
 
 library chromium.cast;
 
-using chromium.web;
+using fuchsia.web;
 
 [Discoverable]
 protocol CastChannel {
   /// Receives an opened Cast |channel| from the Cast application.
-  /// The return callback is invoked when the service is ready to accept a new
-  /// Cast Channel. OnOpened() should not be called again until this happens.
-  OnOpened(chromium.web.MessagePort channel) -> ();
+  /// Open() must not be called again until the preceding call has returned.
+  Open(fuchsia.web.MessagePort channel) -> ();
 };
-

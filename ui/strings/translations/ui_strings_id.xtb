@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Shift</translation>
 <translation id="1710340000377843106">sekarang</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{1 menit}other{# menit}}</translation>
-<translation id="1756116796893109054">Mengirim tab...</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> B</translation>
 <translation id="1801827354178857021">Periode</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 bulan}other{# bulan}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">Panah Bawah</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{1 hari}other{# hari}}</translation>
 <translation id="335581015389089642">Ucapan</translation>
+<translation id="3443810440409579745">Tab diterima.</translation>
 <translation id="3479552764303398839">Jangan sekarang</translation>
 <translation id="348799646910989694">Rak otomatis disembunyikan</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{1 hari lagi}other{# hari lagi}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">SERING DIGUNAKAN</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{1 bulan lagi}other{# bulan lagi}}</translation>
 <translation id="4841881773802181781">Penyisipan</translation>
+<translation id="4881695831933465202">Buka</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{1 detik}other{# detik}}</translation>
 <translation id="4971687151119236543">Lacak Media Sebelumnya</translation>
 <translation id="5046499563572181734">Tap di sini</translation>
@@ -108,6 +109,7 @@
 <translation id="5137751499640340777">Mulai Asisten Google</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> PB</translation>
 <translation id="5266161281976477809">Segitiga aksesibilitas</translation>
+<translation id="5278860589123563674">Gagal mengirim</translation>
 <translation id="528468243742722775">Berakhir</translation>
 <translation id="5329858601952122676">&amp;Hapus</translation>
 <translation id="5395308026110844773"><ph name="DRAGGED_APP_NAME" /> di atas <ph name="IN_PLACE_APP" />, lalu lepaskan untuk membuat folder.</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">Del</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> B/dtk</translation>
 <translation id="6156262341071374681">Tampilkan semua aplikasi</translation>
+<translation id="6165508094623778733">Pelajari lebih lanjut</translation>
 <translation id="6264365405983206840">Pilih Semu&amp;a</translation>
 <translation id="6351032674660237738">SARAN APLIKASI</translation>
 <translation id="6364916375976753737">Gulir ke Kiri</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{1 mnt lagi}other{# mnt lagi}}</translation>
 <translation id="7319740667687257810">Peluncur, tampilan sebagian</translation>
+<translation id="732374792807444530">Mengirim ke <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{1 mnt yang lalu}other{# mnt yang lalu}}</translation>
 <translation id="7389409599945284130"><ph name="MESSAGE" /> -</translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{1 menit lagi}other{# menit lagi}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{Lebih dari 1 notifikasi belum dibaca}other{Lebih dari # notifikasi belum dibaca}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{dalam 1 m}other{dalam # m}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" />+<ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">Mulai kueri suara Asisten Google</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{1 jam yang lalu}other{# jam yang lalu}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{1 dtk lagi}other{# dtk lagi}}</translation>
+<translation id="8144660977431427332">Penelusuran Anda difasilitasi oleh Asisten Google. <ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />, Dilengkapi otomatis</translation>
 <translation id="815598010540052116">Gulir ke Bawah</translation>
 <translation id="8170087467028567933">Menghapus saran ini akan menyembunyikannya dari akun Anda di seluruh perangkat.</translation>

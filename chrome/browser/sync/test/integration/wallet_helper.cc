@@ -14,8 +14,8 @@
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
@@ -113,7 +113,7 @@ void LogLists(const std::vector<Item*>& list_a,
   }
 }
 
-bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
+bool WalletDataAndMetadataMatch(
     int profile_a,
     const std::vector<CreditCard*>& server_cards_a,
     const std::vector<AutofillProfile*>& server_profiles_a,
@@ -128,11 +128,15 @@ bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
     LogLists(server_profiles_a, server_profiles_b);
     return false;
   }
-  // Check that all server profiles have converted to local ones.
-  for (AutofillProfile* profile : server_profiles_a) {
+  return true;
+}
+
+bool AddressesHaveConverted(
+    const std::vector<AutofillProfile*>& server_profiles) {
+  for (AutofillProfile* profile : server_profiles) {
     if (!profile->has_converted()) {
       DVLOG(1) << "Not all profiles are converted";
-      LogLists(server_profiles_a, server_profiles_b);
+      LogLists(server_profiles, std::vector<AutofillProfile*>());
       return false;
     }
   }
@@ -140,10 +144,14 @@ bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
 }
 
 void WaitForCurrentTasksToComplete(base::SequencedTaskRunner* task_runner) {
-  base::RunLoop loop;
-  task_runner->PostTask(
-      FROM_HERE, base::BindOnce(&base::RunLoop::Quit, base::Unretained(&loop)));
-  loop.Run();
+  // We are fine with the UI thread getting blocked. If using RunLoop here, in
+  // some uses of this functions, we would get nested RunLoops that tend to
+  // cause troubles. This is a more robust solution.
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&base::WaitableEvent::Signal,
+                                                  base::Unretained(&event)));
+  event.Wait();
 }
 
 void WaitForPDMToRefresh(int profile) {
@@ -516,9 +524,12 @@ bool AutofillWalletChecker::IsExitConditionSatisfied() {
       wallet_helper::GetPersonalDataManager(profile_a_);
   autofill::PersonalDataManager* pdm_b =
       wallet_helper::GetPersonalDataManager(profile_b_);
-  return WalletDataAndMetadataMatchAndAddressesHaveConverted(
-      profile_a_, pdm_a->GetServerCreditCards(), pdm_a->GetServerProfiles(),
-      profile_b_, pdm_b->GetServerCreditCards(), pdm_b->GetServerProfiles());
+  return WalletDataAndMetadataMatch(profile_a_, pdm_a->GetServerCreditCards(),
+                                    pdm_a->GetServerProfiles(), profile_b_,
+                                    pdm_b->GetServerCreditCards(),
+                                    pdm_b->GetServerProfiles()) &&
+         // If data matches, it suffices to check addresses from profile_a_.
+         AddressesHaveConverted(pdm_a->GetServerProfiles());
 }
 
 std::string AutofillWalletChecker::GetDebugMessage() const {
@@ -526,6 +537,36 @@ std::string AutofillWalletChecker::GetDebugMessage() const {
 }
 
 void AutofillWalletChecker::OnPersonalDataChanged() {
+  CheckExitCondition();
+}
+
+AutofillWalletConversionChecker::AutofillWalletConversionChecker(int profile)
+    : profile_(profile) {
+  wallet_helper::GetPersonalDataManager(profile_)->AddObserver(this);
+}
+
+AutofillWalletConversionChecker::~AutofillWalletConversionChecker() {
+  wallet_helper::GetPersonalDataManager(profile_)->RemoveObserver(this);
+}
+
+bool AutofillWalletConversionChecker::Wait() {
+  // We need to make sure we are not reading before any locally instigated async
+  // writes. This is run exactly one time before the first
+  // IsExitConditionSatisfied() is called.
+  WaitForPDMToRefresh(profile_);
+  return StatusChangeChecker::Wait();
+}
+
+bool AutofillWalletConversionChecker::IsExitConditionSatisfied() {
+  return AddressesHaveConverted(
+      wallet_helper::GetPersonalDataManager(profile_)->GetServerProfiles());
+}
+
+std::string AutofillWalletConversionChecker::GetDebugMessage() const {
+  return "Waiting for converted autofill wallet addresses";
+}
+
+void AutofillWalletConversionChecker::OnPersonalDataChanged() {
   CheckExitCondition();
 }
 
@@ -543,29 +584,17 @@ AutofillWalletMetadataSizeChecker::~AutofillWalletMetadataSizeChecker() {
 }
 
 bool AutofillWalletMetadataSizeChecker::IsExitConditionSatisfied() {
-  // There could be trailing metadata left on one of the clients. Check that
-  // metadata.size() is the same on both clients.
-  std::map<std::string, AutofillMetadata> addresses_metadata_a =
-      wallet_helper::GetServerAddressesMetadata(profile_a_);
-  std::map<std::string, AutofillMetadata> addresses_metadata_b =
-      wallet_helper::GetServerAddressesMetadata(profile_b_);
-  if (addresses_metadata_a.size() != addresses_metadata_b.size()) {
-    LOG(WARNING) << "Server addresses metadata mismatch, expected "
-                 << addresses_metadata_a.size()
-                 << ", found: " << addresses_metadata_b.size();
-    return false;
-  }
-  std::map<std::string, AutofillMetadata> cards_metadata_a =
-      wallet_helper::GetServerCardsMetadata(profile_a_);
-  std::map<std::string, AutofillMetadata> cards_metadata_b =
-      wallet_helper::GetServerCardsMetadata(profile_b_);
-  if (cards_metadata_a.size() != cards_metadata_b.size()) {
-    LOG(WARNING) << "Server cards metadata mismatch, expected "
-                 << cards_metadata_a.size() << ", found "
-                 << cards_metadata_b.size();
-    return false;
-  }
-  return true;
+  // This checker used to be flaky (crbug.com/921386) because of using RunLoops
+  // to load synchronously data from the DB in IsExitConditionSatisfiedImpl.
+  // Such a waiting RunLoop often processed another OnPersonalDataChanged() call
+  // resulting in nested RunLoops. This should be avoided now by blocking using
+  // WaitableEvent, instead. This check enforces that we do not nest it anymore.
+  DCHECK(!checking_exit_condition_in_flight_)
+      << "There should be no nested calls for IsExitConditionSatisfied()";
+  checking_exit_condition_in_flight_ = true;
+  bool exit_condition_is_satisfied = IsExitConditionSatisfiedImpl();
+  checking_exit_condition_in_flight_ = false;
+  return exit_condition_is_satisfied;
 }
 
 std::string AutofillWalletMetadataSizeChecker::GetDebugMessage() const {
@@ -574,6 +603,32 @@ std::string AutofillWalletMetadataSizeChecker::GetDebugMessage() const {
 
 void AutofillWalletMetadataSizeChecker::OnPersonalDataChanged() {
   CheckExitCondition();
+}
+
+bool AutofillWalletMetadataSizeChecker::IsExitConditionSatisfiedImpl() {
+  // There could be trailing metadata left on one of the clients. Check that
+  // metadata.size() is the same on both clients.
+  std::map<std::string, AutofillMetadata> addresses_metadata_a =
+      wallet_helper::GetServerAddressesMetadata(profile_a_);
+  std::map<std::string, AutofillMetadata> addresses_metadata_b =
+      wallet_helper::GetServerAddressesMetadata(profile_b_);
+  if (addresses_metadata_a.size() != addresses_metadata_b.size()) {
+    DVLOG(1) << "Server addresses metadata mismatch, expected "
+             << addresses_metadata_a.size()
+             << ", found: " << addresses_metadata_b.size();
+    return false;
+  }
+  std::map<std::string, AutofillMetadata> cards_metadata_a =
+      wallet_helper::GetServerCardsMetadata(profile_a_);
+  std::map<std::string, AutofillMetadata> cards_metadata_b =
+      wallet_helper::GetServerCardsMetadata(profile_b_);
+  if (cards_metadata_a.size() != cards_metadata_b.size()) {
+    DVLOG(1) << "Server cards metadata mismatch, expected "
+             << cards_metadata_a.size() << ", found "
+             << cards_metadata_b.size();
+    return false;
+  }
+  return true;
 }
 
 UssWalletSwitchToggler::UssWalletSwitchToggler() {}

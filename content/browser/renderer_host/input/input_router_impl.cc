@@ -55,12 +55,19 @@ bool WasHandled(InputEventAckState state) {
   }
 }
 
-ui::WebScopedInputEvent ScaleEvent(const WebInputEvent& event, double scale) {
+std::unique_ptr<InputEvent> ScaleEvent(const WebInputEvent& event,
+                                       double scale,
+                                       const ui::LatencyInfo& latency_info) {
   std::unique_ptr<blink::WebInputEvent> event_in_viewport =
       ui::ScaleWebInputEvent(event, scale);
-  if (event_in_viewport)
-    return ui::WebScopedInputEvent(event_in_viewport.release());
-  return ui::WebInputEventTraits::Clone(event);
+  if (event_in_viewport) {
+    return std::make_unique<InputEvent>(
+        ui::WebScopedInputEvent(event_in_viewport.release()),
+        latency_info.ScaledBy(scale));
+  }
+
+  return std::make_unique<InputEvent>(ui::WebInputEventTraits::Clone(event),
+                                      latency_info);
 }
 
 }  // namespace
@@ -171,7 +178,7 @@ void InputRouterImpl::SendGestureEventWithoutQueueing(
   wheel_event_queue_.OnGestureScrollEvent(gesture_event);
 
   if (gesture_event.event.SourceDevice() ==
-      blink::kWebGestureDeviceTouchscreen) {
+      blink::WebGestureDevice::kTouchscreen) {
     if (gesture_event.event.GetType() ==
         blink::WebInputEvent::kGestureScrollBegin) {
       touch_scroll_started_sent_ = false;
@@ -233,6 +240,10 @@ void InputRouterImpl::SetForceEnableZoom(bool enabled) {
 
 base::Optional<cc::TouchAction> InputRouterImpl::AllowedTouchAction() {
   return touch_action_filter_.allowed_touch_action();
+}
+
+base::Optional<cc::TouchAction> InputRouterImpl::ActiveTouchAction() {
+  return touch_action_filter_.active_touch_action();
 }
 
 void InputRouterImpl::BindHost(mojom::WidgetInputHandlerHostRequest request,
@@ -520,8 +531,8 @@ void InputRouterImpl::FilterAndSendWebInputEvent(
     return;
   }
 
-  std::unique_ptr<InputEvent> event = std::make_unique<InputEvent>(
-      ScaleEvent(input_event, device_scale_factor_), latency_info);
+  std::unique_ptr<InputEvent> event =
+      ScaleEvent(input_event, device_scale_factor_, latency_info);
   if (WebInputEventTraits::ShouldBlockEventStream(input_event)) {
     TRACE_EVENT_INSTANT0("input", "InputEventSentBlocking",
                          TRACE_EVENT_SCOPE_THREAD);

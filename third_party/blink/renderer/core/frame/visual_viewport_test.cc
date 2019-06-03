@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/geometry/double_point.h"
 #include "third_party/blink/renderer/platform/geometry/double_rect.h"
+#include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
@@ -113,6 +114,17 @@ class VisualViewportTest : public testing::Test,
   void UpdateAllLifecyclePhases() {
     WebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
         WebWidget::LifecycleUpdateReason::kTest);
+  }
+
+  void UpdateAllLifecyclePhasesExceptPaint() {
+    WebView()->MainFrameWidget()->UpdateLifecycle(
+        WebWidget::LifecycleUpdate::kPrePaint,
+        WebWidget::LifecycleUpdateReason::kTest);
+  }
+
+  PaintArtifactCompositor* paint_artifact_compositor() {
+    LocalFrameView& frame_view = *WebView()->MainFrameImpl()->GetFrameView();
+    return frame_view.GetPaintArtifactCompositorForTesting();
   }
 
   void ForceFullCompositingUpdate() { UpdateAllLifecyclePhases(); }
@@ -1888,20 +1900,21 @@ TEST_P(VisualViewportTest, SlowScrollAfterImplScroll) {
   // Send a scroll event on the main thread path.
   WebGestureEvent gsb(
       WebInputEvent::kGestureScrollBegin, WebInputEvent::kNoModifiers,
-      WebInputEvent::GetStaticTimeStampForTests(), kWebGestureDeviceTouchpad);
+      WebInputEvent::GetStaticTimeStampForTests(), WebGestureDevice::kTouchpad);
   gsb.SetFrameScale(1);
   gsb.data.scroll_begin.delta_x_hint = -50;
   gsb.data.scroll_begin.delta_x_hint = -60;
-  gsb.data.scroll_begin.delta_hint_units = WebGestureEvent::kPrecisePixels;
+  gsb.data.scroll_begin.delta_hint_units =
+      ScrollGranularity::kScrollByPrecisePixel;
   GetFrame()->GetEventHandler().HandleGestureEvent(gsb);
 
   WebGestureEvent gsu(
       WebInputEvent::kGestureScrollUpdate, WebInputEvent::kNoModifiers,
-      WebInputEvent::GetStaticTimeStampForTests(), kWebGestureDeviceTouchpad);
+      WebInputEvent::GetStaticTimeStampForTests(), WebGestureDevice::kTouchpad);
   gsu.SetFrameScale(1);
   gsu.data.scroll_update.delta_x = -50;
   gsu.data.scroll_update.delta_y = -60;
-  gsu.data.scroll_update.delta_units = WebGestureEvent::kPrecisePixels;
+  gsu.data.scroll_update.delta_units = ScrollGranularity::kScrollByPrecisePixel;
   gsu.data.scroll_update.velocity_x = 1;
   gsu.data.scroll_update.velocity_y = 1;
 
@@ -2545,6 +2558,72 @@ TEST_P(VisualViewportTest, DeviceEmulationTransformNode) {
   WebView()->SetDeviceEmulationTransform(TransformationMatrix());
   UpdateAllLifecyclePhases();
   EXPECT_EQ(visual_viewport.GetDeviceEmulationTransformNode(), nullptr);
+}
+
+// When a pinch-zoom occurs, the viewport scale and translation nodes can be
+// directly updated without a PaintArtifactCompositor update.
+TEST_P(VisualViewportTest, DirectPinchZoomPropertyUpdate) {
+  // TODO(crbug.com/953322): Implement this optimization for
+  // CompositeAfterPaint.
+  if (!RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled() ||
+      RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    return;
+
+  InitializeWithAndroidSettings();
+
+  RegisterMockedHttpURLLoad("200-by-800-viewport.html");
+  NavigateTo(base_url_ + "200-by-800-viewport.html");
+
+  WebView()->MainFrameWidget()->Resize(IntSize(100, 200));
+
+  // Scroll visual viewport to the right edge of the frame
+  VisualViewport& visual_viewport = GetFrame()->GetPage()->GetVisualViewport();
+  visual_viewport.SetScaleAndLocation(2.f, true, FloatPoint(150, 10));
+
+  EXPECT_FLOAT_SIZE_EQ(FloatSize(150, 10), visual_viewport.GetScrollOffset());
+  EXPECT_EQ(2.f, visual_viewport.Scale());
+  UpdateAllLifecyclePhases();
+  EXPECT_FALSE(paint_artifact_compositor()->NeedsUpdate());
+
+  // Update the scale and location and ensure that a PaintArtifactCompositor
+  // update is not required.
+  visual_viewport.SetScaleAndLocation(3.f, true, FloatPoint(120, 10));
+  UpdateAllLifecyclePhasesExceptPaint();
+  EXPECT_FALSE(paint_artifact_compositor()->NeedsUpdate());
+
+  EXPECT_FLOAT_SIZE_EQ(FloatSize(120, 10), visual_viewport.GetScrollOffset());
+  EXPECT_EQ(3.f, visual_viewport.Scale());
+}
+
+// |TransformPaintPropertyNode::in_subtree_of_page_scale| should be false for
+// the page scale transform node and all ancestors, and should be true for
+// descendants of the page scale transform node.
+TEST_P(VisualViewportTest, InSubtreeOfPageScale) {
+  InitializeWithAndroidSettings();
+  RegisterMockedHttpURLLoad("200-by-800-viewport.html");
+  NavigateTo(base_url_ + "200-by-800-viewport.html");
+
+  UpdateAllLifecyclePhases();
+
+  VisualViewport& visual_viewport = GetFrame()->GetPage()->GetVisualViewport();
+  const auto* page_scale = visual_viewport.GetPageScaleNode();
+  // The page scale is not in its own subtree.
+  EXPECT_FALSE(page_scale->IsInSubtreeOfPageScale());
+  // Ancestors of the page scale are not in the page scale's subtree.
+  for (const auto* ancestor = page_scale->Parent(); ancestor;
+       ancestor = ancestor->Parent()) {
+    EXPECT_FALSE(ancestor->IsInSubtreeOfPageScale());
+  }
+
+  const auto* view = GetFrame()->View()->GetLayoutView();
+  const auto& view_contents_transform =
+      view->FirstFragment().ContentsProperties().Transform();
+  // Descendants of the page scale node should have |IsInSubtreeOfPageScale|.
+  EXPECT_TRUE(view_contents_transform.IsInSubtreeOfPageScale());
+  for (const auto* ancestor = view_contents_transform.Parent();
+       ancestor != page_scale; ancestor = ancestor->Parent()) {
+    EXPECT_TRUE(ancestor->IsInSubtreeOfPageScale());
+  }
 }
 
 }  // namespace

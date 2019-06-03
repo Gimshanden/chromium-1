@@ -31,7 +31,6 @@
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
 #include "ui/base/layout.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
@@ -40,11 +39,6 @@
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
-
-#if defined(USE_AURA)
-#include "base/unguessable_token.h"
-#include "content/common/render_widget_window_tree_client_factory.mojom.h"
-#endif
 
 namespace content {
 
@@ -80,7 +74,7 @@ RenderWidgetHostImpl* RenderWidgetHostViewBase::GetFocusedWidget() const {
              : nullptr;
 }
 
-RenderWidgetHost* RenderWidgetHostViewBase::GetRenderWidgetHost() const {
+RenderWidgetHost* RenderWidgetHostViewBase::GetRenderWidgetHost() {
   return host();
 }
 
@@ -117,8 +111,8 @@ void RenderWidgetHostViewBase::StopFlingingIfNecessary(
   if (!processed &&
       event.GetType() == blink::WebInputEvent::kGestureScrollUpdate &&
       event.data.scroll_update.inertial_phase ==
-          blink::WebGestureEvent::kMomentumPhase &&
-      event.SourceDevice() != blink::kWebGestureDeviceSyntheticAutoscroll) {
+          blink::WebGestureEvent::InertialPhaseState::kMomentum &&
+      event.SourceDevice() != blink::WebGestureDevice::kSyntheticAutoscroll) {
     StopFling();
     view_stopped_flinging_for_test_ = true;
   }
@@ -141,7 +135,7 @@ void RenderWidgetHostViewBase::OnLocalSurfaceIdChanged(
 void RenderWidgetHostViewBase::UpdateIntrinsicSizingInfo(
     const blink::WebIntrinsicSizingInfo& sizing_info) {}
 
-gfx::Size RenderWidgetHostViewBase::GetCompositorViewportPixelSize() const {
+gfx::Size RenderWidgetHostViewBase::GetCompositorViewportPixelSize() {
   return gfx::ScaleToCeiledSize(GetRequestedRendererSize(),
                                 GetDeviceScaleFactor());
 }
@@ -174,7 +168,7 @@ void RenderWidgetHostViewBase::SelectionChanged(const base::string16& text,
     GetTextInputManager()->SelectionChanged(this, text, offset, range);
 }
 
-gfx::Size RenderWidgetHostViewBase::GetRequestedRendererSize() const {
+gfx::Size RenderWidgetHostViewBase::GetRequestedRendererSize() {
   return GetViewBounds().size();
 }
 
@@ -201,7 +195,7 @@ viz::FrameSinkId RenderWidgetHostViewBase::GetRootFrameSinkId() {
   return viz::FrameSinkId();
 }
 
-bool RenderWidgetHostViewBase::IsSurfaceAvailableForCopy() const {
+bool RenderWidgetHostViewBase::IsSurfaceAvailableForCopy() {
   return false;
 }
 
@@ -330,7 +324,7 @@ void RenderWidgetHostViewBase::SetBackgroundColor(SkColor color) {
   }
 }
 
-base::Optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() const {
+base::Optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() {
   if (content_background_color_)
     return content_background_color_;
   return default_background_color_;
@@ -551,7 +545,7 @@ void RenderWidgetHostViewBase::DisableAutoResize(const gfx::Size& new_size) {
   host()->SynchronizeVisualProperties();
 }
 
-bool RenderWidgetHostViewBase::IsScrollOffsetAtTop() const {
+bool RenderWidgetHostViewBase::IsScrollOffsetAtTop() {
   return is_scroll_offset_at_top_;
 }
 
@@ -575,11 +569,11 @@ void RenderWidgetHostViewBase::FocusedNodeTouched(
   DVLOG(1) << "FocusedNodeTouched: " << editable;
 }
 
-void RenderWidgetHostViewBase::GetScreenInfo(ScreenInfo* screen_info) const {
+void RenderWidgetHostViewBase::GetScreenInfo(ScreenInfo* screen_info) {
   DisplayUtil::GetNativeViewScreenInfo(screen_info, GetNativeView());
 }
 
-float RenderWidgetHostViewBase::GetDeviceScaleFactor() const {
+float RenderWidgetHostViewBase::GetDeviceScaleFactor() {
   ScreenInfo screen_info;
   GetScreenInfo(&screen_info);
   return screen_info.device_scale_factor;
@@ -601,7 +595,7 @@ void RenderWidgetHostViewBase::OnAutoscrollStart() {
   GetMouseWheelPhaseHandler()->DispatchPendingWheelEndEvent();
 }
 
-gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() const {
+gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() {
   return GetViewBounds().size();
 }
 
@@ -829,90 +823,25 @@ RenderWidgetHostViewBase::GetTouchSelectionControllerClientManager() {
   return nullptr;
 }
 
-void RenderWidgetHostViewBase::SetLastTabChangeStartTime(
-    base::TimeTicks start_time) {
-  last_tab_switch_start_time_ = start_time;
+void RenderWidgetHostViewBase::SetRecordTabSwitchTimeRequest(
+    base::TimeTicks start_time,
+    bool destination_is_loaded,
+    bool destination_is_frozen) {
+  last_record_tab_switch_time_request_.emplace(
+      start_time, destination_is_loaded, destination_is_frozen);
 }
 
-base::TimeTicks RenderWidgetHostViewBase::GetAndResetLastTabChangeStartTime() {
-  auto stored_time = last_tab_switch_start_time_;
-  last_tab_switch_start_time_ = base::TimeTicks();
-  return stored_time;
+base::Optional<RecordTabSwitchTimeRequest>
+RenderWidgetHostViewBase::TakeRecordTabSwitchTimeRequest() {
+  auto stored_state = std::move(last_record_tab_switch_time_request_);
+  last_record_tab_switch_time_request_.reset();
+  return stored_state;
 }
-
-#if defined(USE_AURA)
-void RenderWidgetHostViewBase::EmbedChildFrameRendererWindowTreeClient(
-    RenderWidgetHostViewBase* root_view,
-    int routing_id,
-    ws::mojom::WindowTreeClientPtr renderer_window_tree_client) {
-  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
-  if (!render_widget_host)
-    return;
-  const int embed_id = ++next_embed_id_;
-  pending_embeds_[routing_id] = embed_id;
-  root_view->ScheduleEmbed(
-      std::move(renderer_window_tree_client),
-      base::BindOnce(&RenderWidgetHostViewBase::OnDidScheduleEmbed,
-                     GetWeakPtr(), routing_id, embed_id));
-}
-
-void RenderWidgetHostViewBase::OnChildFrameDestroyed(int routing_id) {
-  pending_embeds_.erase(routing_id);
-  // Tests may not create |render_widget_window_tree_client_| (tests don't
-  // necessarily create RenderWidgetHostViewAura).
-  if (render_widget_window_tree_client_)
-    render_widget_window_tree_client_->DestroyFrame(routing_id);
-}
-#endif
 
 void RenderWidgetHostViewBase::SynchronizeVisualProperties() {
   if (host())
     host()->SynchronizeVisualProperties();
 }
-
-#if defined(USE_AURA)
-void RenderWidgetHostViewBase::OnDidScheduleEmbed(
-    int routing_id,
-    int embed_id,
-    const base::UnguessableToken& token) {
-  auto iter = pending_embeds_.find(routing_id);
-  if (iter == pending_embeds_.end() || iter->second != embed_id)
-    return;
-  pending_embeds_.erase(iter);
-  // Tests may not create |render_widget_window_tree_client_| (tests don't
-  // necessarily create RenderWidgetHostViewAura).
-  if (render_widget_window_tree_client_)
-    render_widget_window_tree_client_->Embed(routing_id, token);
-}
-
-void RenderWidgetHostViewBase::ScheduleEmbed(
-    ws::mojom::WindowTreeClientPtr client,
-    base::OnceCallback<void(const base::UnguessableToken&)> callback) {
-  NOTREACHED();
-}
-
-ws::mojom::WindowTreeClientPtr
-RenderWidgetHostViewBase::GetWindowTreeClientFromRenderer() {
-  // NOTE: this function may be called multiple times.
-  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
-  mojom::RenderWidgetWindowTreeClientFactoryPtr factory;
-  BindInterface(render_widget_host->GetProcess(), &factory);
-
-  ws::mojom::WindowTreeClientPtr window_tree_client;
-  factory->CreateWindowTreeClientForRenderWidget(
-      render_widget_host->GetRoutingID(),
-      mojo::MakeRequest(&window_tree_client),
-      mojo::MakeRequest(&render_widget_window_tree_client_));
-  return window_tree_client;
-}
-
-#endif
-
-#if defined(OS_MACOSX)
-bool RenderWidgetHostViewBase::ShouldContinueToPauseForFrame() {
-  return false;
-}
-#endif
 
 void RenderWidgetHostViewBase::DidNavigate() {
   if (host())
@@ -940,36 +869,27 @@ bool RenderWidgetHostViewBase::TransformPointToTargetCoordSpace(
   std::vector<viz::FrameSinkId> target_ancestors;
   target_ancestors.push_back(target_view->GetFrameSinkId());
 
-  // Optimization using |target_ancestors| does not work with Window Service
-  // because the top-level window's ClientRoot registers a frame sink id that
-  // could not be derived here. HisTestQuery::TransformLocationForTarget fails
-  // because of the missed chain in |target_ancestors|. Passing only the target
-  // if Window Service used and TransformLocationForTarget would fallback to
-  // use GetTransformToTarget.
-  // TODO(crbug.com/895029): Bring back |target_ancestors| optimization for WS.
-  if (!features::IsUsingWindowService()) {
-    RenderWidgetHostViewBase* cur_view = target_view;
-    while (cur_view->IsRenderWidgetHostViewChildFrame()) {
-      if (cur_view->IsRenderWidgetHostViewGuest()) {
-        cur_view = static_cast<RenderWidgetHostViewGuest*>(cur_view)
-                       ->GetOwnerRenderWidgetHostView();
-      } else {
-        cur_view = static_cast<RenderWidgetHostViewChildFrame*>(cur_view)
-                       ->GetParentView();
-      }
-      if (!cur_view)
-        return false;
-      target_ancestors.push_back(cur_view->GetFrameSinkId());
+  RenderWidgetHostViewBase* cur_view = target_view;
+  while (cur_view->IsRenderWidgetHostViewChildFrame()) {
+    if (cur_view->IsRenderWidgetHostViewGuest()) {
+      cur_view = static_cast<RenderWidgetHostViewGuest*>(cur_view)
+                     ->GetOwnerRenderWidgetHostView();
+    } else {
+      cur_view = static_cast<RenderWidgetHostViewChildFrame*>(cur_view)
+                     ->GetParentView();
     }
-    target_ancestors.push_back(root_frame_sink_id);
+    if (!cur_view)
+      return false;
+    target_ancestors.push_back(cur_view->GetFrameSinkId());
   }
+  target_ancestors.push_back(root_frame_sink_id);
 
   float device_scale_factor = original_view->GetDeviceScaleFactor();
   DCHECK_GT(device_scale_factor, 0.0f);
   gfx::Point3F point_in_pixels(
       gfx::ConvertPointToPixel(device_scale_factor, point));
-  // TODO(riajiang): Optimize so that |point_in_pixels| doesn't need to be in
-  // the coordinate space of the root surface in HitTestQuery.
+  // TODO(crbug.com/966995): Optimize so that |point_in_pixels| doesn't need to
+  // be in the coordinate space of the root surface in HitTestQuery.
   gfx::Transform transform_root_to_original;
   query->GetTransformToTarget(original_view->GetFrameSinkId(),
                               &transform_root_to_original);

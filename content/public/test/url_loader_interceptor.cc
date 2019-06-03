@@ -140,7 +140,8 @@ class URLLoaderInterceptor::IOState
   }
 
   // Callback on IO thread whenever NavigationURLLoaderImpl needs a
-  // URLLoaderFactory with a network::mojom::TrustedURLLoaderHeaderClient.
+  // URLLoaderFactory with a network::mojom::TrustedURLLoaderHeaderClient or
+  // for a non-network-service scheme.
   void InterceptNavigationRequestCallback(
       network::mojom::URLLoaderFactoryRequest* request) {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
@@ -464,8 +465,8 @@ void URLLoaderInterceptor::WriteResponse(
     network::mojom::URLLoaderClient* client,
     base::Optional<net::SSLInfo> ssl_info) {
   net::HttpResponseInfo info;
-  info.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.length()));
+  info.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::ResourceResponseHead response;
   response.headers = info.headers;
   response.headers->GetMimeType(&response.mime_type);

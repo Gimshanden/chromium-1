@@ -17,10 +17,6 @@ ButtonController::ButtonController(
 
 ButtonController::~ButtonController() = default;
 
-MenuButtonController* ButtonController::AsMenuButtonController() {
-  return nullptr;
-}
-
 bool ButtonController::OnMousePressed(const ui::MouseEvent& event) {
   if (button_->state() == Button::STATE_DISABLED)
     return true;
@@ -114,6 +110,25 @@ bool ButtonController::OnKeyReleased(const ui::KeyEvent& event) {
   button_->SetState(Button::STATE_NORMAL);
   button_controller_delegate_->NotifyClick(event);
   return true;
+}
+
+void ButtonController::OnGestureEvent(ui::GestureEvent* event) {
+  if (event->type() == ui::ET_GESTURE_TAP &&
+      button_controller_delegate_->IsTriggerableEvent(*event)) {
+    // A GESTURE_END event is issued immediately after ET_GESTURE_TAP and will
+    // set the state to STATE_NORMAL beginning the fade out animation.
+    button_->SetState(Button::STATE_HOVERED);
+    button_controller_delegate_->NotifyClick(*event);
+    event->SetHandled();
+  } else if (event->type() == ui::ET_GESTURE_TAP_DOWN &&
+             button_controller_delegate_->ShouldEnterPushedState(*event)) {
+    button_->SetState(Button::STATE_PRESSED);
+    button_controller_delegate_->RequestFocusFromEvent();
+    event->SetHandled();
+  } else if (event->type() == ui::ET_GESTURE_TAP_CANCEL ||
+             event->type() == ui::ET_GESTURE_END) {
+    button_->SetState(Button::STATE_NORMAL);
+  }
 }
 
 void ButtonController::UpdateAccessibleNodeData(ui::AXNodeData* node_data) {}

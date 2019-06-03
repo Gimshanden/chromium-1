@@ -140,7 +140,7 @@
 <translation id="2638942478653899953">Google డిస్క్‌ను చేరుకోవడం సాధ్యపడలేదు. దయచేసి <ph name="BEGIN_LINK" />లాగ్ అవుట్<ph name="END_LINK" /> చేసి, తిరిగి లాగిన్ చేయండి.</translation>
 <translation id="2649120831653069427">రెయిన్‌బోఫిష్</translation>
 <translation id="2661146741306740526">16x9</translation>
-<translation id="2672394958563893062">ఎర్రర్ ఏర్పడింది. మొదటి నుండి పునఃప్రారంభించడానికి క్లిక్ చేయండి.</translation>
+<translation id="2672394958563893062">ఎర్ర‌ర్ ఏర్ప‌డింది. మొదటి నుండి పునఃప్రారంభించడానికి క్లిక్ చేయండి.</translation>
 <translation id="2676946222714718093">ఇందులో ప్లే అవుతోంది</translation>
 <translation id="2735698359135166290">రొమేనియన్ ప్రామాణిక కీబోర్డ్</translation>
 <translation id="2771816809568414714">జున్ను</translation>
@@ -190,6 +190,7 @@
 <translation id="3245321423178950146">తెలియని కళాకారుడు</translation>
 <translation id="3252266817569339921">ఫ్రెంచ్</translation>
 <translation id="3254434849914415189"><ph name="FILE_TYPE" /> ఫైల్‌ల కోసం డిఫాల్ట్ యాప్‌ను ఎంచుకోండి:</translation>
+<translation id="3264582393905923483">సందర్భం</translation>
 <translation id="3280431534455935878">సిద్ధం చేస్తోంది</translation>
 <translation id="3280987981688031357">వినైల్ రికార్డ్</translation>
 <translation id="3296763833017966289">జార్జియన్</translation>
@@ -261,6 +262,7 @@
 <translation id="421017592316736757">ఈ ఫైల్‌ను యాక్సెస్ చేయడానికి మీరు తప్పనిసరిగా ఆన్‌లైన్‌లో ఉండాలి.</translation>
 <translation id="4212740939091998969">"<ph name="FOLDER_NAME" />" పేరు గల ఫోల్డర్ ఇప్పటికే ఉంది. దయచేసి వేరే పేరును ఎంచుకోండి.</translation>
 <translation id="4215448920900139318"><ph name="FILE_COUNT" /> వాటిని బ్యాకప్ చేస్తోంది</translation>
+<translation id="4242533952199664413">సెట్టింగ్‌లను తెరువు</translation>
 <translation id="426015154560005552">అరబిక్ కీబోర్డ్</translation>
 <translation id="4261901459838235729">Google ప్రెజెంటేషన్</translation>
 <translation id="4290535918735525311">Linuxతో 1 ఫోల్డర్ షేర్ చేయబడింది</translation>
@@ -310,6 +312,7 @@
 <translation id="4839847978919684242"><ph name="SELCTED_FILES_COUNT" /> అంశాలు ఎంచుకోబడ్డాయి</translation>
 <translation id="4850886885716139402">వీక్షణ</translation>
 <translation id="485316830061041779">జర్మన్</translation>
+<translation id="4867079195717347957">నిలువు వరుసను అవరోహణ క్రమంలో క్రమీకరించడానికి క్లిక్ చేయండి.</translation>
 <translation id="4873265419374180291"><ph name="NUMBER_OF_BYTES" /> బైట్‌లు</translation>
 <translation id="4880214202172289027">వాల్యూమ్ స్లయిడర్</translation>
 <translation id="4880520557730313061">స్వీయ పరిష్కరణ</translation>
@@ -350,6 +353,7 @@
 <translation id="5167131699331641907">నెదర్లాండ్స్ కీబోర్డ్</translation>
 <translation id="5170477580121653719">Google డిస్క్‌లో మిగిలి ఉన్న ఖాళీ: <ph name="SPACE_AVAILABLE" />.</translation>
 <translation id="5177526793333269655">సూక్ష్మచిత్ర వీక్షణ</translation>
+<translation id="5194713942430106590">నిలువు వరుసను ఆరోహణ క్రమంలో క్రమీకరించడానికి క్లిక్ చేయండి.</translation>
 <translation id="5218183485292899140">స్విస్ ఫ్రెంచ్</translation>
 <translation id="5234764350956374838">తొలగించు</translation>
 <translation id="5241298539944515331">వియత్నామీస్ కీబోర్డ్ (VIQR)</translation>
@@ -399,7 +403,7 @@
 <translation id="5691596662111998220">అయ్యో, <ph name="FILE_NAME" /> ఉనికిలో లేదు.</translation>
 <translation id="5700087501958648444">ఆడియో సమాచారం</translation>
 <translation id="5731409020711461763">1 కొత్త ఫోటో</translation>
-<translation id="5752453871435543420">Chrome OS క్లౌడ్ బ్యాకప్</translation>
+<translation id="5752453871435543420">Chrome OS Cloud బ్యాకప్</translation>
 <translation id="5756666464756035725">హంగేరియన్ QWERTY</translation>
 <translation id="5771585441665576801">లిప్యంతరీకరణ (geia → γεια)</translation>
 <translation id="57838592816432529">మ్యూట్ చేయి</translation>
@@ -409,6 +413,7 @@
 <translation id="5818003990515275822">కొరియన్</translation>
 <translation id="5819442873484330149">హాంగుల్ 3 సెట్ (తుది)</translation>
 <translation id="5833610766403489739">ఈ ఫైల్ ఉన్న స్థలం తెలియదు. దయచేసి మీ డౌన్‌లోడ్ స్థానం సెట్టింగ్‌ను తనిఖీ చేసి, మళ్లీ ప్రయత్నించండి.</translation>
+<translation id="5838051104334203064">Play స్టోర్ అప్లికేషన్‌లు ఈ పరికరాన్ని యాక్సెస్ చేయలేవు</translation>
 <translation id="5838825566232597749">US వర్క్‌మాన్ అంతర్జాతీయం</translation>
 <translation id="5850516540536751549">ఈ ఫైల్ రకానికి మద్దతు లేదు. దయచేసి ఈ రకమైన ఫైల్‌ను తెరవగల యాప్‌ను కనుగొనడానికి <ph name="BEGIN_LINK" />Chrome వెబ్ స్టోర్<ph name="END_LINK" />ను సందర్శించండి.
         <ph name="BEGIN_LINK_HELP" />మరింత తెలుసుకోండి<ph name="END_LINK_HELP" /></translation>
@@ -425,7 +430,7 @@
 <translation id="6012987430370760224">మరాఠీ కీబోర్డ్ (ఫొనెటిక్)</translation>
 <translation id="6019169947004469866">కత్తిరించు</translation>
 <translation id="60357267506638014">చెక్ QWERTY</translation>
-<translation id="604001903249547235">క్లౌడ్ బ్యాకప్</translation>
+<translation id="604001903249547235">Cloud బ్యాకప్</translation>
 <translation id="6040143037577758943">మూసివేయి</translation>
 <translation id="6054173164583630569">ఫ్రెంచ్ కీబోర్డ్</translation>
 <translation id="6074825444536523002">Google ఫారమ్</translation>
@@ -504,6 +509,7 @@
 <translation id="6979158407327259162">Google డిస్క్</translation>
 <translation id="6990081529015358884">మీకు ఖాళీ స్థలం లేదు</translation>
 <translation id="6998711733709403587"><ph name="SELCTED_FOLDERS_COUNT" /> ఫోల్డర్‌లు ఎంచుకోబడ్డాయి</translation>
+<translation id="7012943028104619157"><ph name="ROOT_TITLE" /> (<ph name="ROOT_SUMMARY" />)</translation>
 <translation id="7014174261166285193">వ్యవస్థాపన విఫలమైంది.</translation>
 <translation id="7040138676081995583">దీనితో తెరువు...</translation>
 <translation id="7100897339030255923"><ph name="COUNT" /> అంశాలు ఎంచుకోబడ్డాయి</translation>
@@ -611,7 +617,7 @@
 <translation id="8160015581537295331">స్పానిష్ కీబోర్డ్</translation>
 <translation id="8179976553408161302">Enter</translation>
 <translation id="8193175696669055101">పరికరం మోడల్</translation>
-<translation id="8223479393428528563">ఈ ఫైల్‌లను ఆఫ్‌లైన్‌లో ఉపయోగించేందుకు వాటిని సేవ్ చేయడానికి, తిరిగి ఆన్‌లైన్‌లోకి వచ్చి, ఫైల్‌లపై కుడి-క్లిక్ చేసి, <ph name="OFFLINE_CHECKBOX_NAME" /> ఎంపికను ఎంచుకోండి.</translation>
+<translation id="8223479393428528563">ఈ ఫైల్‌లను ఆఫ్‌లైన్‌లో ఉపయోగించేందుకు వాటిని సేవ్ చేయడానికి, తిరిగి ఆన్‌లైన్‌లోకి వచ్చి, ఫైల్‌లపై కుడి-క్లిక్ చేసి, ఆపై <ph name="OFFLINE_CHECKBOX_NAME" /> ఎంపికను ఎంచుకోండి.</translation>
 <translation id="8249296373107784235">రద్దుచేయి</translation>
 <translation id="8261506727792406068">తొలగించు</translation>
 <translation id="8279388322240498158">సొరానీ కుర్డిష్ ఆంగ్ల-ఆధారిత కీబోర్డ్</translation>

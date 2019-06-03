@@ -26,6 +26,9 @@
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_manager.h"
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_metrics.h"
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_store.h"
+#include "components/policy/core/common/configuration_policy_provider.h"
+#include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/common/content_switches.h"
@@ -65,6 +68,24 @@ bool IsMachineLevelUserCloudPolicyEnabled() {
 #endif
 }
 
+// Read the kCloudPolicyOverridesPlatformPolicy from platform provider directly
+// because the local_state is not ready when the
+// MachineLevelUserCloudPolicyManager is created.
+bool DoesCloudPolicyHasPriority(
+    ConfigurationPolicyProvider* platform_provider) {
+  if (!platform_provider)
+    return false;
+  const auto* entry =
+      platform_provider->policies()
+          .Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+          .Get(key::kCloudPolicyOverridesPlatformPolicy);
+  if (!entry || entry->scope == POLICY_SCOPE_USER ||
+      entry->level == POLICY_LEVEL_RECOMMENDED)
+    return false;
+
+  return entry->value->is_bool() && entry->value->GetBool();
+}
+
 }  // namespace
 
 const base::FilePath::CharType
@@ -78,7 +99,8 @@ MachineLevelUserCloudPolicyController::
 
 // static
 std::unique_ptr<MachineLevelUserCloudPolicyManager>
-MachineLevelUserCloudPolicyController::CreatePolicyManager() {
+MachineLevelUserCloudPolicyController::CreatePolicyManager(
+    ConfigurationPolicyProvider* platform_provider) {
   if (!IsMachineLevelUserCloudPolicyEnabled())
     return nullptr;
 
@@ -100,13 +122,23 @@ MachineLevelUserCloudPolicyController::CreatePolicyManager() {
 
   DVLOG(1) << "Creating machine level cloud policy manager";
 
+  bool cloud_policy_has_priority =
+      DoesCloudPolicyHasPriority(platform_provider);
+  if (cloud_policy_has_priority) {
+    DVLOG(1) << "Cloud policies are now overriding platform policies with "
+                "machine scope.";
+  }
+
   base::FilePath policy_dir =
       user_data_dir.Append(MachineLevelUserCloudPolicyController::kPolicyDir);
   std::unique_ptr<MachineLevelUserCloudPolicyStore> policy_store =
       MachineLevelUserCloudPolicyStore::Create(
-          dm_token, client_id, policy_dir,
+          dm_token, client_id, policy_dir, cloud_policy_has_priority,
           base::CreateSequencedTaskRunnerWithTraits(
-              {base::MayBlock(), base::TaskPriority::BEST_EFFORT}));
+              {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+               // Block shutdown to make sure the policy cache update is always
+               // finished.
+               base::TaskShutdownBehavior::BLOCK_SHUTDOWN}));
   return std::make_unique<MachineLevelUserCloudPolicyManager>(
       std::move(policy_store), nullptr, policy_dir,
       base::ThreadTaskRunnerHandle::Get(),

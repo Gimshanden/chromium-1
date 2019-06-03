@@ -6,8 +6,12 @@
 
 #include <utility>
 
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/login_screen_model.h"
+#include "ash/public/cpp/login_types.h"
 #include "ash/public/interfaces/constants.mojom.h"
 #include "base/bind.h"
+#include "chrome/browser/chromeos/child_accounts/parent_access_code/parent_access_service.h"
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
@@ -66,11 +70,6 @@ LoginScreenClient* LoginScreenClient::Get() {
 
 void LoginScreenClient::SetDelegate(Delegate* delegate) {
   delegate_ = delegate;
-}
-
-void LoginScreenClient::SetParentAccessDelegate(
-    ParentAccessDelegate* delegate) {
-  parent_access_delegate_ = delegate;
 }
 
 void LoginScreenClient::AddSystemTrayFocusObserver(
@@ -145,13 +144,9 @@ void LoginScreenClient::ValidateParentAccessCode(
     const AccountId& account_id,
     const std::string& access_code,
     ValidateParentAccessCodeCallback callback) {
-  if (!parent_access_delegate_) {
-    LOG(ERROR) << "Cannot validate parent access code - no delegate";
-    std::move(callback).Run(false);
-    return;
-  }
-  parent_access_delegate_->ValidateParentAccessCode(access_code,
-                                                    std::move(callback));
+  bool result = chromeos::parent_access::ParentAccessService::Get()
+                    .ValidateParentAccessCode(account_id, access_code);
+  std::move(callback).Run(result);
 }
 
 void LoginScreenClient::HardlockPod(const AccountId& account_id) {
@@ -173,8 +168,10 @@ void LoginScreenClient::FocusLockScreenApps(bool reverse) {
   // If delegate is not set, or it fails to handle focus request, call
   // |HandleFocusLeavingLockScreenApps| so the lock screen mojo service can
   // give focus to the next window in the tab order.
-  if (!delegate_ || !delegate_->HandleFocusLockScreenApps(reverse))
-    login_screen_->HandleFocusLeavingLockScreenApps(reverse);
+  if (!delegate_ || !delegate_->HandleFocusLockScreenApps(reverse)) {
+    ash::LoginScreen::Get()->GetModel()->HandleFocusLeavingLockScreenApps(
+        reverse);
+  }
 }
 
 void LoginScreenClient::FocusOobeDialog() {
@@ -226,15 +223,6 @@ void LoginScreenClient::ShowFeedback() {
     chromeos::LoginDisplayHost::default_host()->ShowFeedback();
 }
 
-void LoginScreenClient::LaunchKioskApp(const std::string& app_id) {
-  chromeos::LoginDisplayHost::default_host()->StartAppLaunch(app_id, false,
-                                                             false);
-}
-
-void LoginScreenClient::LaunchArcKioskApp(const AccountId& account_id) {
-  chromeos::LoginDisplayHost::default_host()->StartArcKiosk(account_id);
-}
-
 void LoginScreenClient::ShowResetScreen() {
   chromeos::LoginDisplayHost::default_host()->ShowResetScreen();
 }
@@ -283,30 +271,29 @@ void LoginScreenClient::SetPublicSessionKeyboardLayout(
     const AccountId& account_id,
     const std::string& locale,
     std::unique_ptr<base::ListValue> keyboard_layouts) {
-  std::vector<ash::mojom::InputMethodItemPtr> result;
+  std::vector<ash::InputMethodItem> result;
 
   for (const auto& i : *keyboard_layouts) {
     const base::DictionaryValue* dictionary;
     if (!i.GetAsDictionary(&dictionary))
       continue;
 
-    ash::mojom::InputMethodItemPtr input_method_item =
-        ash::mojom::InputMethodItem::New();
+    ash::InputMethodItem input_method_item;
     std::string ime_id;
     dictionary->GetString("value", &ime_id);
-    input_method_item->ime_id = ime_id;
+    input_method_item.ime_id = ime_id;
 
     std::string title;
     dictionary->GetString("title", &title);
-    input_method_item->title = title;
+    input_method_item.title = title;
 
     bool selected;
     dictionary->GetBoolean("selected", &selected);
-    input_method_item->selected = selected;
+    input_method_item.selected = selected;
     result.push_back(std::move(input_method_item));
   }
-  login_screen_->SetPublicSessionKeyboardLayouts(account_id, locale,
-                                                 std::move(result));
+  ash::LoginScreen::Get()->GetModel()->SetPublicSessionKeyboardLayouts(
+      account_id, locale, result);
 }
 
 void LoginScreenClient::OnUserActivity() {

@@ -6,6 +6,7 @@
 #define UI_ACCESSIBILITY_PLATFORM_TEST_AX_NODE_WRAPPER_H_
 
 #include <set>
+#include <string>
 #include <vector>
 
 #include "build/build_config.h"
@@ -43,7 +44,9 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
 
   AXPlatformNode* ax_platform_node() const { return platform_node_; }
 
+  // Test helpers.
   void BuildAllWrappers(AXTree* tree, AXNode* node);
+  void ResetNativeEventTarget();
 
   // AXPlatformNodeDelegate.
   const AXNodeData& GetData() const override;
@@ -55,11 +58,21 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   gfx::NativeViewAccessible GetParent() override;
   int GetChildCount() override;
   gfx::NativeViewAccessible ChildAtIndex(int index) override;
-  gfx::Rect GetClippedScreenBoundsRect() const override;
-  gfx::Rect GetUnclippedScreenBoundsRect() const override;
-  gfx::Rect GetScreenBoundsForRange(int start,
-                                    int len,
-                                    bool clipped) const override;
+  gfx::Rect GetBoundsRect(const AXCoordinateSystem coordinate_system,
+                          const AXClippingBehavior clipping_behavior,
+                          AXOffscreenResult* offscreen_result) const override;
+  gfx::Rect GetInnerTextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result) const override;
+  gfx::Rect GetHypertextRangeBoundsRect(
+      const int start_offset,
+      const int end_offset,
+      const AXCoordinateSystem coordinate_system,
+      const AXClippingBehavior clipping_behavior,
+      AXOffscreenResult* offscreen_result) const override;
   gfx::NativeViewAccessible HitTestSync(int x, int y) override;
   gfx::NativeViewAccessible GetFocus() override;
   AXPlatformNode* GetFromNodeID(int32_t id) override;
@@ -96,6 +109,7 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   base::string16 GetLocalizedStringForLandmarkType() const override;
   base::string16 GetLocalizedStringForImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus status) const override;
+  base::string16 GetStyleNameAttributeAsLocalizedString() const override;
   bool ShouldIgnoreHoveredStateForTesting() override;
   const ui::AXUniqueId& GetUniqueId() const override;
   std::set<AXPlatformNode*> GetReverseRelations(
@@ -107,8 +121,6 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   int32_t GetPosInSet() const override;
   int32_t GetSetSize() const override;
   const std::vector<gfx::NativeViewAccessible> GetDescendants() const override;
-  void Descendants(const AXNode* node,
-                   std::vector<gfx::NativeViewAccessible>& descendants) const;
 
  private:
   TestAXNodeWrapper(AXTree* tree, AXNode* node);
@@ -119,13 +131,20 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   void ReplaceBoolAttribute(ax::mojom::BoolAttribute attribute, bool value);
   void ReplaceStringAttribute(ax::mojom::StringAttribute attribute,
                               std::string value);
+  void ReplaceTreeDataTextSelection(int32_t anchor_node_id,
+                                    int32_t anchor_offset,
+                                    int32_t focus_node_id,
+                                    int32_t focus_offset);
 
   TestAXNodeWrapper* HitTestSyncInternal(int x, int y);
+  void Descendants(const AXNode* node,
+                   std::vector<gfx::NativeViewAccessible>* descendants) const;
 
   AXTree* tree_;
   AXNode* node_;
   ui::AXUniqueId unique_id_;
   AXPlatformNode* platform_node_;
+  gfx::AcceleratedWidget native_event_target_;
 };
 
 }  // namespace ui

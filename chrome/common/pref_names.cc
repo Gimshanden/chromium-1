@@ -135,6 +135,12 @@ const char kSupervisedUserCustodianEmail[] = "profile.managed.custodian_email";
 // starts a session.
 const char kSupervisedUserCustodianName[] = "profile.managed.custodian_name";
 
+// Stores the obfuscated gaia id associated with the google account of the
+// custodian of the supervised user, updated (if possible) each time the
+// supervised user starts a session.
+const char kSupervisedUserCustodianObfuscatedGaiaId[] =
+    "profile.managed.custodian_obfuscated_gaia_id";
+
 // Stores the URL of the profile image associated with the google account of the
 // custodian of the supervised user.
 const char kSupervisedUserCustodianProfileImageURL[] =
@@ -169,6 +175,12 @@ const char kSupervisedUserSecondCustodianEmail[] =
 // supervised user starts a session.
 const char kSupervisedUserSecondCustodianName[] =
     "profile.managed.second_custodian_name";
+
+// Stores the obfuscated gaia id associated with the google account of the
+// secondary custodian of the supervised user, updated (if possible) each time
+// the supervised user starts a session.
+const char kSupervisedUserSecondCustodianObfuscatedGaiaId[] =
+    "profile.managed.second_custodian_obfuscated_gaia_id";
 
 // Stores the URL of the profile image associated with the google account of the
 // secondary custodian of the supervised user.
@@ -871,6 +883,18 @@ const char kManagedSessionEnabled[] = "managed_session.enabled";
 const char kTPMFirmwareUpdateCleanupDismissed[] =
     "tpm_firmware_update.cleanup_dismissed";
 
+// Int64 pref indicating the time in microseconds since Windows epoch
+// (1601-01-01 00:00:00 UTC) when the notification informing the user about a
+// planned TPM update that will clear all user data was shown. If the
+// notification was not yet shown the pref holds the value Time::Min().
+const char kTPMUpdatePlannedNotificationShownTime[] =
+    "tpm_auto_update.planned_notification_shown_time";
+
+// Boolean pref indicating whether the notification informing the user that an
+// auto-update that will clear all the user data at next reboot was shown.
+const char kTPMUpdateOnNextRebootNotificationShown[] =
+    "tpm_auto_update.update_on_reboot_notification_shown";
+
 // Boolean pref indicating whether the NetBios Name Query Request Protocol is
 // used for discovering shares on the user's network by the Network File
 // Shares for Chrome OS feature.
@@ -908,6 +932,23 @@ const char kMostRecentlyUsedNetworkFileShareURL[] =
 const char kDeviceWallpaperImageFilePath[] =
     "policy.device_wallpaper_image_file_path";
 
+// Boolean whether Kerberos daemon supports remembering passwords.
+const char kKerberosRememberPasswordEnabled[] =
+    "kerberos.remember_password_enabled";
+// Boolean whether users may add new Kerberos accounts.
+const char kKerberosAddAccountsAllowed[] = "kerberos.add_accounts_allowed";
+// Dictionary specifying a pre-set list of Kerberos accounts.
+const char kKerberosAccounts[] = "kerberos.accounts";
+
+// A boolean pref for enabling/disabling App reinstall recommendations in Zero
+// State Launcher by policy.
+const char kAppReinstallRecommendationEnabled[] =
+    "zero_state_app_install_recommendation.enabled";
+
+// A boolean pref that when set to true, prevents the browser window from
+// launching at the start of the session.
+const char kStartupBrowserWindowLaunchSuppressed[] =
+    "startup_browser_window_launch_suppressed";
 #endif  // defined(OS_CHROMEOS)
 
 // A boolean pref set to true if a Home button to open the Home pages should be
@@ -1487,6 +1528,12 @@ const char kRestartLastSessionOnShutdown[] = "restart.last.session.on.shutdown";
 // Pref name for the policy controlling presentation of full-tab promotional
 // and/or educational content.
 const char kPromotionalTabsEnabled[] = "browser.promotional_tabs_enabled";
+
+// Boolean that specifies whether or not to show security warnings for some
+// potentially bad command-line flags. True by default. Controlled by the
+// CommandLineFlagSecurityWarningsEnabled policy setting.
+const char kCommandLineFlagSecurityWarningsEnabled[] =
+    "browser.command_line_flag_security_warnings_enabled";
 #endif  // !defined(OS_CHROMEOS)
 
 // Boolean that specifies whether or not showing the unsupported OS warning is
@@ -1497,7 +1544,6 @@ const char kSuppressUnsupportedOSWarning[] =
 
 // Set before autorestarting Chrome, cleared on clean exit.
 const char kWasRestarted[] = "was.restarted";
-
 #endif  // !defined(OS_ANDROID)
 
 // Whether Extensions are enabled.
@@ -1520,29 +1566,19 @@ const char kNtpCollapsedSnapshotDocument[] = "ntp.collapsed_snapshot_document";
 
 // Keeps track of sync promo collapsed state in the Other Devices menu.
 const char kNtpCollapsedSyncPromo[] = "ntp.collapsed_sync_promo";
-
-// Tracks whether we should show notifications related to content suggestions.
-const char kContentSuggestionsNotificationsEnabled[] =
-    "ntp.content_suggestions.notifications.enabled";
-
-// Tracks how many notifications the user has ignored, so we can tell when we
-// should stop showing them.
-const char kContentSuggestionsConsecutiveIgnoredPrefName[] =
-    "ntp.content_suggestions.notifications.consecutive_ignored";
-
-// Tracks how many notifications have been sent today, and what day "today" is,
-// as an integer YYYYMMDD, in wall time in the local timezone.
-// If sent_day changes, sent_count is reset to 0. Allows limiting per-day
-// notification count.
-const char kContentSuggestionsNotificationsSentDay[] =
-    "ntp.content_suggestions.notifications.sent_day";
-const char kContentSuggestionsNotificationsSentCount[] =
-    "ntp.content_suggestions.notifications.sent_count";
 #else
+// Tracks whether a field trial to hide shortcuts on the NTP has been activated.
+// It is only activated for fresh installs, and remains active for those clients
+// after a browser restart.
+const char kNtpActivateHideShortcutsFieldTrial[] =
+    "ntp.activate_hide_shortcuts_field_trial";
 // Holds info for New Tab Page custom background
 const char kNtpCustomBackgroundDict[] = "ntp.custom_background_dict";
 const char kNtpCustomBackgroundLocalToDevice[] =
     "ntp.custom_background_local_to_device";
+// Tracks whether the user has chosen to use custom links or most visited sites
+// for the shortcut tiles on the NTP.
+const char kNtpUseMostVisitedTiles[] = "ntp.use_most_visited_tiles";
 
 // Data associated with search suggestions that appear on the NTP.
 const char kNtpSearchSuggestionsBlocklist[] =
@@ -1603,16 +1639,6 @@ const char kDevToolsPreferences[] = "devtools.preferences";
 // Tracks the number of times the dice signin promo has been shown in the user
 // menu.
 const char kDiceSigninUserMenuPromoCount[] = "sync_promo.user_menu_show_count";
-
-// Boolean that specifies if the sign in promo is allowed to show on first run.
-// This preference is specified in the master preference file to suppress the
-// sign in promo for some installations.
-const char kSignInPromoShowOnFirstRunAllowed[] =
-    "sync_promo.show_on_first_run_allowed";
-
-// Boolean that specifies if we should show a bubble in the new tab page.
-// The bubble is used to confirm that the user is signed into sync.
-const char kSignInPromoShowNTPBubble[] = "sync_promo.show_ntp_bubble";
 #endif
 
 // Create web application shortcut dialog preferences.
@@ -1626,8 +1652,16 @@ const char kWebAppCreateInQuickLaunchBar[] =
 // will be launched.
 const char kWebAppInstallForceList[] = "profile.web_app.install.forcelist";
 
+// Dictionary that maps web app ids to installation metrics used by UMA.
+const char kWebAppInstallMetrics[] = "web_app_install_metrics";
+
 // Dictionary that maps web app URLs to Chrome extension IDs.
 const char kWebAppsExtensionIDs[] = "web_apps.extension_ids";
+
+// A string representing the last version of Chrome that System Web Apps were
+// updated for.
+const char kSystemWebAppLastUpdateVersion[] =
+    "web_apps.system_web_app_last_update";
 
 // The default audio capture device used by the Media content setting.
 const char kDefaultAudioCaptureDevice[] = "media.default_audio_capture_device";
@@ -1703,6 +1737,11 @@ const char kAuthNegotiateDelegateByKdcPolicy[] =
 const char kNtlmV2Enabled[] = "auth.ntlm_v2_enabled";
 #endif  // defined(OS_POSIX)
 
+#if defined(OS_CHROMEOS)
+// Boolean whether Kerberos functionality is enabled.
+const char kKerberosEnabled[] = "kerberos.enabled";
+#endif
+
 // Boolean that specifies whether to enable revocation checking (best effort)
 // by default.
 const char kCertRevocationCheckingEnabled[] = "ssl.rev_checking.enabled";
@@ -1712,12 +1751,6 @@ const char kCertRevocationCheckingEnabled[] = "ssl.rev_checking.enabled";
 // trusted) trust anchor.
 const char kCertRevocationCheckingRequiredLocalAnchors[] =
     "ssl.rev_checking.required_for_local_anchors";
-
-// Boolean that specifies whether to allow certificates from the Legacy
-// Symantec Infrastructure, disabling the mitigations documented in
-// https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
-const char kCertEnableSymantecLegacyInfrastructure[] =
-    "ssl.enable_symantec_legacy_infrastructure";
 
 // String specifying the minimum TLS version to negotiate. Supported values
 // are "tls1", "tls1.1", "tls1.2", "tls1.3".
@@ -1977,6 +2010,22 @@ const char kAutoScreenBrightnessMetricsSupportedAlsUserAdjustmentCount[] =
     "auto_screen_brightness.metrics.supported_als_user_adjustment_count";
 const char kAutoScreenBrightnessMetricsUnsupportedAlsUserAdjustmentCount[] =
     "auto_screen_brightness.metrics.unsupported_als_user_adjustment_count";
+
+// Dictionary pref containing the configuration used to verify Parent Access
+// Code. The data is sent through the ParentAccessCodeConfig policy, which is
+// set for child users only, and kept on the known user storage.
+const char kKnownUserParentAccessCodeConfig[] =
+    "child_user.parent_access_code.config";
+
+// Enable chrome://password-change page for in-session change of SAML passwords.
+// Also enables SAML password expiry notifications, if we have that information.
+const char kSamlInSessionPasswordChangeEnabled[] =
+    "saml.in_session_password_change_enabled";
+// The number of days in advance to notify the user that their SAML password
+// will expire (works when kSamlInSessionPasswordChangeEnabled is true).
+const char kSamlPasswordExpirationAdvanceWarningDays[] =
+    "saml.password_expiration_advance_warning_days";
+
 #endif  // defined(OS_CHROMEOS)
 
 // Whether there is a Flash version installed that supports clearing LSO data.
@@ -2064,6 +2113,13 @@ const char kRelaunchNotification[] = "browser.relaunch_notification";
 const char kRelaunchNotificationPeriod[] =
     "browser.relaunch_notification_period";
 #endif  // !defined(OS_ANDROID)
+
+#if defined(OS_CHROMEOS)
+// Pref name for the policy controlling the time period between the first user
+// notification about need to relaunch and the end of the
+// RelaunchNotificationPeriod. Values are in milliseconds.
+const char kRelaunchHeadsUpPeriod[] = "browser.relaunch_heads_up_period";
+#endif  // defined(OS_CHROMEOS)
 
 // *************** SERVICE PREFS ***************
 // These are attached to the service process.
@@ -2179,6 +2235,9 @@ const char kMediaGalleriesRememberedGalleries[] =
 
 #if defined(OS_CHROMEOS)
 const char kPolicyPinnedLauncherApps[] = "policy_pinned_launcher_apps";
+// Keeps names of rolled default pin layouts for shelf in order not to apply
+// this twice. Names are separated by comma.
+const char kShelfDefaultPinLayoutRolls[] = "shelf_default_pin_layout_rolls";
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_WIN)
@@ -2244,23 +2303,6 @@ const char kPartnerBookmarkMappings[] = "partnerbookmarks.mappings";
 // rules, or an implicit fallback to DIRECT connections).
 const char kQuickCheckEnabled[] = "proxy.quick_check_enabled";
 
-// Whether PAC scripts are given a stripped https:// URL (enabled), or
-// the full URL for https:// (disabled).
-//
-// This is a security feature which is on by default, and prevents PAC
-// scripts (which may have been sourced in an untrusted manner) from
-// having access to data that is ordinarily protected by a TLS channel
-// (i.e. the path and query components of an https:// URL).
-//
-// This preference is not exposed in the UI, but is overridable using
-// a commandline flag --unsafe-pac-url.
-//
-// The ability to turn off this security feature is not intended to be
-// a long-lived feature, but rather an escape-hatch for enterprises
-// while rolling out the change to PAC.
-const char kPacHttpsUrlStrippingEnabled[] =
-    "proxy.pac_https_url_stripping_enabled";
-
 // Whether Guest Mode is enabled within the browser.
 const char kBrowserGuestModeEnabled[] = "profile.browser_guest_enabled";
 
@@ -2303,7 +2345,7 @@ const char kRecoveryComponentNeedsElevation[] =
 const char kRegisteredSupervisedUserWhitelists[] =
     "supervised_users.whitelists";
 
-#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID)
 // Boolean that indicates whether Chrome enterprise cloud reporting is enabled
 // or not.
 const char kCloudReportingEnabled[] =
@@ -2439,11 +2481,6 @@ const char kIncompatibleApplications[] = "incompatible_applications";
 const char kModuleBlacklistCacheMD5Digest[] =
     "module_blacklist_cache_md5_digest";
 
-// Acts as a cache to remember problematic programs through restarts. Used for
-// the Incompatible Applications Warning feature.
-// Note: Deprecated. Renamed to kIncompatibleApplications.
-const char kProblematicPrograms[] = "problematic_programs";
-
 // A boolean value, controlling whether third party software is allowed to
 // inject into Chrome's processes.
 const char kThirdPartyBlockingEnabled[] = "third_party_blocking_enabled";
@@ -2554,6 +2591,12 @@ const char kIsolateOrigins[] = "site_isolation.isolate_origins";
 
 // Boolean that specifies opting into --site-per-process (full Site Isolation).
 const char kSitePerProcess[] = "site_isolation.site_per_process";
+
+// A list of origins that were heuristically determined to need process
+// isolation. For example, an origin may be placed on this list in response to
+// the user typing a password on it.
+const char kUserTriggeredIsolatedOrigins[] =
+    "site_isolation.user_triggered_isolated_origins";
 
 // Boolean that specifies if the web driver flag is allowed to override policies
 // which prevent it from operating normally. (e.g. SitePerProcess.)

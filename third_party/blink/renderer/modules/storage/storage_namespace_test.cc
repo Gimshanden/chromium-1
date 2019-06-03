@@ -6,7 +6,6 @@
 #include <third_party/blink/renderer/modules/storage/storage_controller.h>
 
 #include "base/task/post_task.h"
-#include "base/test/scoped_feature_list.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
@@ -35,12 +34,8 @@ class StorageNamespaceTest : public testing::Test {
  public:
   const size_t kTestCacheLimit = 100;
 
-  StorageNamespaceTest() {
-    features_.InitAndEnableFeature(features::kOnionSoupDOMStorage);
-  }
+  StorageNamespaceTest() {}
   ~StorageNamespaceTest() override {}
-
-  base::test::ScopedFeatureList features_;
 };
 
 TEST_F(StorageNamespaceTest, BasicStorageAreas) {
@@ -59,7 +54,7 @@ TEST_F(StorageNamespaceTest, BasicStorageAreas) {
   mojom::blink::StoragePartitionServicePtr storage_partition_service_ptr;
   PostCrossThreadTask(
       *base::CreateSequencedTaskRunnerWithTraits({}), FROM_HERE,
-      CrossThreadBind(
+      CrossThreadBindOnce(
           [](mojom::blink::StoragePartitionServiceRequest request) {
             mojo::MakeStrongBinding(
                 std::make_unique<NoopStoragePartitionService>(),

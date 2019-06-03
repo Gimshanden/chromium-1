@@ -15,8 +15,7 @@ namespace blink {
 
 MediaControlsTouchlessTimelineElement::MediaControlsTouchlessTimelineElement(
     MediaControlsTouchlessImpl& media_controls)
-    : HTMLDivElement(media_controls.GetDocument()),
-      MediaControlsTouchlessElement(media_controls) {
+    : MediaControlsTouchlessElement(media_controls) {
   SetShadowPseudoId(
       AtomicString("-internal-media-controls-touchless-timeline"));
 
@@ -31,6 +30,11 @@ void MediaControlsTouchlessTimelineElement::OnLoadingProgress() {
 }
 
 void MediaControlsTouchlessTimelineElement::OnTimeUpdate() {
+  current_time_ = MediaElement().currentTime();
+  UpdateBars();
+}
+
+void MediaControlsTouchlessTimelineElement::OnSeeking() {
   current_time_ = MediaElement().currentTime();
   UpdateBars();
 }
@@ -88,7 +92,6 @@ void MediaControlsTouchlessTimelineElement::SetBarWidth(HTMLDivElement* bar,
 void MediaControlsTouchlessTimelineElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(loaded_bar_);
   visitor->Trace(progress_bar_);
-  HTMLDivElement::Trace(visitor);
   MediaControlsTouchlessElement::Trace(visitor);
 }
 

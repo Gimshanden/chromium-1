@@ -154,6 +154,7 @@
 #include "third_party/blink/public/common/frame/sandbox_flags.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 #include "third_party/blink/public/mojom/loader/pause_subresource_loading_handle.mojom.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "third_party/blink/public/platform/web_security_style.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/accessibility/ax_tree_combiner.h"
@@ -186,10 +187,6 @@ namespace {
 
 const int kMinimumDelayBetweenLoadingUpdatesMS = 100;
 const char kDotGoogleDotCom[] = ".google.com";
-
-#if defined(OS_ANDROID)
-const void* const kWebContentsAndroidKey = &kWebContentsAndroidKey;
-#endif
 
 base::LazyInstance<std::vector<
     WebContentsImpl::FriendWrapper::CreatedCallback>>::DestructorAtExit
@@ -583,7 +580,6 @@ WebContentsImpl::WebContentsImpl(BrowserContext* browser_context)
           GetContentClient()->browser()->GetAXModeForBrowserContext(
               browser_context)),
       audio_stream_monitor_(this),
-      bluetooth_connected_device_count_(0),
       media_web_contents_observer_(
           std::make_unique<MediaWebContentsObserver>(this)),
       media_device_group_id_salt_base_(
@@ -593,6 +589,7 @@ WebContentsImpl::WebContentsImpl(BrowserContext* browser_context)
 #endif  // !defined(OS_ANDROID)
       is_overlay_content_(false),
       showing_context_menu_(false),
+      had_inner_webcontents_(false),
       loading_weak_factory_(this),
       weak_factory_(this) {
   frame_tree_.SetFrameRemoveListener(
@@ -613,6 +610,8 @@ WebContentsImpl::WebContentsImpl(BrowserContext* browser_context)
 
   registry_.AddInterface(base::BindRepeating(
       &WebContentsImpl::OnColorChooserFactoryRequest, base::Unretained(this)));
+
+  dark_mode_observer_.Start();
 }
 
 WebContentsImpl::~WebContentsImpl() {
@@ -688,7 +687,8 @@ WebContentsImpl::~WebContentsImpl() {
   // Do not update state as the WebContents is being destroyed.
   frame_tree_.root()->ResetNavigationRequest(true, true);
   if (root->speculative_frame_host()) {
-    root->speculative_frame_host()->DeleteRenderFrame();
+    root->speculative_frame_host()->DeleteRenderFrame(
+        FrameDeleteIntention::kSpeculativeMainFrameForShutdown);
     root->speculative_frame_host()->SetRenderFrameCreated(false);
     root->speculative_frame_host()->ResetNavigationRequests();
   }
@@ -715,6 +715,12 @@ WebContentsImpl::~WebContentsImpl() {
 
   for (auto& observer : observers_)
     observer.RenderViewDeleted(root->current_host());
+
+#if defined(OS_ANDROID)
+  // For simplicity, destroy the Java WebContents before we notify of the
+  // destruction of the WebContents.
+  ClearWebContentsAndroid();
+#endif
 
   for (auto& observer : observers_)
     observer.WebContentsDestroyed();
@@ -862,9 +868,6 @@ bool WebContentsImpl::OnMessageReceived(RenderViewHostImpl* render_view_host,
 #if BUILDFLAG(ENABLE_PLUGINS)
     IPC_MESSAGE_HANDLER(ViewHostMsg_RequestPpapiBrokerPermission,
                         OnRequestPpapiBrokerPermission)
-#endif
-#if defined(OS_ANDROID)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_OpenDateTimeDialog, OnOpenDateTimeDialog)
 #endif
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
@@ -1542,6 +1545,10 @@ bool WebContentsImpl::IsConnectedToBluetoothDevice() {
   return bluetooth_connected_device_count_ > 0;
 }
 
+bool WebContentsImpl::IsConnectedToSerialPort() const {
+  return serial_active_frame_count_ > 0;
+}
+
 bool WebContentsImpl::HasPictureInPictureVideo() {
   return has_picture_in_picture_video_;
 }
@@ -1931,11 +1938,10 @@ void WebContentsImpl::ReattachToOuterWebContentsFrame() {
 }
 
 void WebContentsImpl::DidChangeVisibleSecurityState() {
-  if (delegate_) {
+  if (delegate_)
     delegate_->VisibleSecurityStateChanged(this);
-    for (auto& observer : observers_)
-      observer.DidChangeVisibleSecurityState();
-  }
+  for (auto& observer : observers_)
+    observer.DidChangeVisibleSecurityState();
 }
 
 void WebContentsImpl::NotifyPreferencesChanged() {
@@ -2100,7 +2106,7 @@ void WebContentsImpl::Init(const WebContents::CreateParams& params) {
   manifest_manager_host_.reset(new ManifestManagerHost(this));
 
 #if defined(OS_ANDROID)
-  date_time_chooser_.reset(new DateTimeChooserAndroid());
+  date_time_chooser_.reset(new DateTimeChooserAndroid(this));
 #endif
 
   // BrowserPluginGuest::Init needs to be called after this WebContents has
@@ -3085,9 +3091,10 @@ void WebContentsImpl::RequestMediaAccessPermission(
   if (delegate_) {
     delegate_->RequestMediaAccessPermission(this, request, std::move(callback));
   } else {
-    std::move(callback).Run(blink::MediaStreamDevices(),
-                            blink::MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN,
-                            std::unique_ptr<MediaStreamUI>());
+    std::move(callback).Run(
+        blink::MediaStreamDevices(),
+        blink::mojom::MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN,
+        std::unique_ptr<MediaStreamUI>());
   }
 }
 
@@ -3206,23 +3213,6 @@ device::mojom::WakeLockContext* WebContentsImpl::GetWakeLockContext() {
   if (!wake_lock_context_host_)
     wake_lock_context_host_.reset(new WakeLockContextHost(this));
   return wake_lock_context_host_->GetWakeLockContext();
-}
-
-device::mojom::WakeLock* WebContentsImpl::GetRendererWakeLock() {
-  // WebContents creates a long-lived connection to one WakeLock.
-  // All the frames' requests will be added into the BindingSet of
-  // WakeLock via this connection.
-  if (!renderer_wake_lock_) {
-    device::mojom::WakeLockContext* wake_lock_context = GetWakeLockContext();
-    if (!wake_lock_context) {
-      return nullptr;
-    }
-    wake_lock_context->GetWakeLock(
-        device::mojom::WakeLockType::kPreventDisplaySleep,
-        device::mojom::WakeLockReason::kOther, "Wake Lock API",
-        mojo::MakeRequest(&renderer_wake_lock_));
-  }
-  return renderer_wake_lock_.get();
 }
 
 #if defined(OS_ANDROID)
@@ -3510,6 +3500,10 @@ void WebContentsImpl::DidProceedOnInterstitial() {
     LoadingStateChanged(true, true, nullptr);
 }
 
+bool WebContentsImpl::HadInnerWebContents() {
+  return had_inner_webcontents_;
+}
+
 void WebContentsImpl::DetachInterstitialPage(bool has_focus) {
   bool interstitial_pausing_throbber =
       ShowingInterstitialPage() && interstitial_page_->pause_throbber();
@@ -3650,6 +3644,8 @@ void WebContentsImpl::Paste() {
     return;
 
   focused_frame->GetFrameInputHandler()->Paste();
+  for (auto& observer : observers_)
+    observer.OnPaste();
   RecordAction(base::UserMetricsAction("Paste"));
 }
 
@@ -3659,6 +3655,8 @@ void WebContentsImpl::PasteAndMatchStyle() {
     return;
 
   focused_frame->GetFrameInputHandler()->PasteAndMatchStyle();
+  for (auto& observer : observers_)
+    observer.OnPaste();
   RecordAction(base::UserMetricsAction("PasteAndMatchStyle"));
 }
 
@@ -4420,6 +4418,9 @@ void WebContentsImpl::DidNavigateMainFramePostCommit(
   if (delegate_)
     delegate_->DidNavigateMainFramePostCommit(this);
   view_->SetOverscrollControllerEnabled(CanOverscrollContent());
+
+  if (!details.is_same_document && GetInnerWebContents().empty())
+    had_inner_webcontents_ = false;
 }
 
 void WebContentsImpl::DidNavigateAnyFramePostCommit(
@@ -4495,7 +4496,7 @@ void WebContentsImpl::OnDidLoadResourceFromMemoryCache(
                                                              top_frame_origin);
     } else {
       scoped_refptr<net::URLRequestContextGetter> request_context(
-          resource_type == RESOURCE_TYPE_MEDIA
+          resource_type == ResourceType::kMedia
               ? partition->GetMediaURLRequestContext()
               : partition->GetURLRequestContext());
       base::PostTaskWithTraits(
@@ -4828,16 +4829,6 @@ void WebContentsImpl::OnUpdatePageImportanceSignals(
   // written to this one field.
   page_importance_signals_ = signals;
 }
-
-#if defined(OS_ANDROID)
-void WebContentsImpl::OnOpenDateTimeDialog(
-    RenderViewHostImpl* source,
-    const ViewHostMsg_DateTimeDialogValue_Params& value) {
-  date_time_chooser_->ShowDialog(
-      GetTopLevelNativeWindow(), source, value.dialog_type, value.dialog_value,
-      value.minimum, value.maximum, value.step, value.suggestions);
-}
-#endif
 
 void WebContentsImpl::OnDomOperationResponse(RenderFrameHostImpl* source,
                                              const std::string& json_string) {
@@ -5570,9 +5561,13 @@ WebContentsImpl* WebContentsImpl::GetOuterWebContents() {
 std::vector<WebContents*> WebContentsImpl::GetInnerWebContents() {
   std::vector<WebContents*> all_inner_contents;
   if (browser_plugin_embedder_) {
-    GetBrowserContext()->GetGuestManager()->ForEachGuest(
-        this,
-        base::BindRepeating(&GetInnerWebContentsHelper, &all_inner_contents));
+    BrowserPluginGuestManager* guest_manager =
+        GetBrowserContext()->GetGuestManager();
+    if (guest_manager) {
+      guest_manager->ForEachGuest(
+          this,
+          base::BindRepeating(&GetInnerWebContentsHelper, &all_inner_contents));
+    }
   }
   const auto& inner_contents = node_.GetInnerWebContents();
   all_inner_contents.insert(all_inner_contents.end(), inner_contents.begin(),
@@ -5623,6 +5618,7 @@ void WebContentsImpl::FocusOuterAttachmentFrameChain() {
 }
 
 void WebContentsImpl::InnerWebContentsCreated(WebContents* inner_web_contents) {
+  had_inner_webcontents_ = true;
   for (auto& observer : observers_)
     observer.InnerWebContentsCreated(inner_web_contents);
 }
@@ -6186,13 +6182,14 @@ void WebContentsImpl::OnFocusedElementChangedInFrame(
       Details<FocusedNodeDetails>(&details));
 }
 
-bool WebContentsImpl::DidAddMessageToConsole(int32_t level,
-                                             const base::string16& message,
-                                             int32_t line_no,
-                                             const base::string16& source_id) {
+bool WebContentsImpl::DidAddMessageToConsole(
+    blink::mojom::ConsoleMessageLevel log_level,
+    const base::string16& message,
+    int32_t line_no,
+    const base::string16& source_id) {
   if (!delegate_)
     return false;
-  return delegate_->DidAddMessageToConsole(this, level, message, line_no,
+  return delegate_->DidAddMessageToConsole(this, log_level, message, line_no,
                                            source_id);
 }
 
@@ -6278,6 +6275,29 @@ void WebContentsImpl::RendererResponsive(
     RenderWidgetHostImpl* render_widget_host) {
   if (delegate_)
     delegate_->RendererResponsive(this, render_widget_host);
+}
+
+void WebContentsImpl::SubframeCrashed(
+    blink::mojom::FrameVisibility visibility) {
+  // If a subframe crashed on a hidden tab, mark the tab for reload to avoid
+  // showing a sad frame to the user if they ever switch back to that tab. Do
+  // this for subframes that are either visible in viewport or visible but
+  // scrolled out of view, but skip subframes that are not rendered (e.g., via
+  // "display:none"), since in that case the user wouldn't see a sad frame
+  // anyway.
+  bool did_mark_for_reload = false;
+  if (IsHidden() && visibility != blink::mojom::FrameVisibility::kNotRendered &&
+      base::FeatureList::IsEnabled(
+          features::kReloadHiddenTabsWithCrashedSubframes)) {
+    controller_.SetNeedsReload(
+        NavigationControllerImpl::NeedsReloadType::kCrashedSubframe);
+    did_mark_for_reload = true;
+    UMA_HISTOGRAM_ENUMERATION(
+        "Stability.ChildFrameCrash.TabMarkedForReload.Visibility", visibility);
+  }
+
+  UMA_HISTOGRAM_BOOLEAN("Stability.ChildFrameCrash.TabMarkedForReload",
+                        did_mark_for_reload);
 }
 
 void WebContentsImpl::BeforeUnloadFiredFromRenderManager(
@@ -6446,13 +6466,15 @@ WebContentsImpl::GetJavaWebContents() {
 }
 
 WebContentsAndroid* WebContentsImpl::GetWebContentsAndroid() {
-  WebContentsAndroid* web_contents_android =
-      static_cast<WebContentsAndroid*>(GetUserData(kWebContentsAndroidKey));
-  if (!web_contents_android) {
-    web_contents_android = new WebContentsAndroid(this);
-    SetUserData(kWebContentsAndroidKey, base::WrapUnique(web_contents_android));
+  if (!web_contents_android_) {
+    web_contents_android_ = std::make_unique<WebContentsAndroid>(this);
   }
-  return web_contents_android;
+  return web_contents_android_.get();
+}
+
+void WebContentsImpl::ClearWebContentsAndroid() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  web_contents_android_.reset();
 }
 
 void WebContentsImpl::ActivateNearestFindResult(float x,
@@ -6713,6 +6735,31 @@ void WebContentsImpl::DecrementBluetoothConnectedDeviceCount() {
   }
 }
 
+void WebContentsImpl::IncrementSerialActiveFrameCount() {
+  // Trying to invalidate the tab state while being destroyed could result in a
+  // use after free.
+  if (IsBeingDestroyed())
+    return;
+
+  // Notify for UI updates if the state changes.
+  serial_active_frame_count_++;
+  if (serial_active_frame_count_ == 1)
+    NotifyNavigationStateChanged(INVALIDATE_TYPE_TAB);
+}
+
+void WebContentsImpl::DecrementSerialActiveFrameCount() {
+  // Trying to invalidate the tab state while being destroyed could result in a
+  // use after free.
+  if (IsBeingDestroyed())
+    return;
+
+  // Notify for UI updates if the state changes.
+  DCHECK_NE(0u, serial_active_frame_count_);
+  serial_active_frame_count_--;
+  if (serial_active_frame_count_ == 0)
+    NotifyNavigationStateChanged(INVALIDATE_TYPE_TAB);
+}
+
 void WebContentsImpl::SetHasPersistentVideo(bool has_persistent_video) {
   if (has_persistent_video_ == has_persistent_video)
     return;
@@ -6864,6 +6911,13 @@ void WebContentsImpl::AudioContextPlaybackStopped(RenderFrameHost* host,
     observer.AudioContextPlaybackStopped(audio_context_id);
 }
 
+RenderFrameHostImpl* WebContentsImpl::GetMainFrameForInnerDelegate(
+    FrameTreeNode* frame_tree_node) {
+  if (auto* web_contents = node_.GetInnerWebContentsInFrame(frame_tree_node))
+    return web_contents->GetMainFrame();
+  return nullptr;
+}
+
 void WebContentsImpl::UpdateWebContentsVisibility(Visibility visibility) {
   // Occlusion is disabled when |features::kWebContentsOcclusion| is disabled
   // (for power and speed impact assessment) or when
@@ -7006,6 +7060,10 @@ void WebContentsImpl::MediaMutedStatusChanged(const MediaPlayerId& id,
 
 void WebContentsImpl::SetVisibilityForChildViews(bool visible) {
   GetMainFrame()->SetVisibilityForChildViews(visible);
+}
+
+void WebContentsImpl::OnDarkModeChanged(bool dark_mode) {
+  NotifyPreferencesChanged();
 }
 
 }  // namespace content

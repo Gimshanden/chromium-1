@@ -18,6 +18,7 @@ class TestCupsPrintersBrowserProxy extends TestBrowserProxy {
       'cancelPrinterSetUp',
       'updateCupsPrinter',
       'reconfigureCupsPrinter',
+      'getEulaUrl',
     ]);
 
     this.printerList = [];
@@ -25,6 +26,13 @@ class TestCupsPrintersBrowserProxy extends TestBrowserProxy {
     this.models = [];
     this.printerInfo = {};
     this.printerPpdMakeModel = {};
+
+    /**
+     * |eulaUrl_| in conjunction with |setEulaUrl| mimics setting the EULA url
+     * for a printer.
+     * @private {string}
+     */
+    this.eulaUrl_ = '';
   }
 
   /** @override */
@@ -78,7 +86,7 @@ class TestCupsPrintersBrowserProxy extends TestBrowserProxy {
 
   /** @override */
   updateCupsPrinter(printerId, printerName) {
-    this.methodCalled('updateCupsPrinter', printerId, printerName);
+    this.methodCalled('updateCupsPrinter', [printerId, printerName]);
   }
 
   /** @override */
@@ -91,6 +99,44 @@ class TestCupsPrintersBrowserProxy extends TestBrowserProxy {
   reconfigureCupsPrinter(printer) {
     this.methodCalled('reconfigureCupsPrinter', printer);
   }
+
+  /** @override */
+  getEulaUrl(ppdManufacturer, ppdModel) {
+    this.methodCalled('getEulaUrl', [ppdManufacturer, ppdModel]);
+    return Promise.resolve(this.eulaUrl_);
+  }
+
+  /** @param {string} eulaUrl */
+  setEulaUrl(eulaUrl) {
+    this.eulaUrl_ = eulaUrl;
+  }
+}
+
+/*
+ * Helper function that waits for |getEulaUrl| to get called and then verifies
+ * its arguments.
+ * @param {!TestCupsPrintersBrowserProxy} cupsPrintersBrowserProxy
+ * @param {string} expectedManufacturer
+ * @param {string} expectedModel
+ * @return {!Promise}
+ */
+function verifyGetEulaUrlWasCalled(
+    cupsPrintersBrowserProxy, expectedManufacturer, expectedModel) {
+  return cupsPrintersBrowserProxy.whenCalled('getEulaUrl').then(function(args) {
+    assertEquals(expectedManufacturer, args[0]);  // ppdManufacturer
+    assertEquals(expectedModel, args[1]);         // ppdModel
+  });
+}
+
+/*
+ * Helper function that resets the resolver for |getEulaUrl| and sets the new
+ * EULA URL.
+ * @param {!TestCupsPrintersBrowserProxy} cupsPrintersBrowserProxy
+ * @param {string} eulaUrl
+ */
+function resetGetEulaUrl(cupsPrintersBrowserProxy, eulaUrl) {
+  cupsPrintersBrowserProxy.resetResolver('getEulaUrl');
+  cupsPrintersBrowserProxy.setEulaUrl(eulaUrl);
 }
 
 suite('CupsAddPrinterDialogTests', function() {
@@ -481,14 +527,100 @@ suite('CupsAddPrinterDialogTests', function() {
       assertFalse(dialog.showConfiguringDialog_);
     });
   });
+
+  /**
+   * Test that we are checking if a printer model has an EULA upon a model
+   * change.
+   */
+  test('getEulaUrlGetsCalledOnModelChange', function() {
+    const discoveryDialog = dialog.$$('add-printer-discovery-dialog');
+    assertTrue(!!discoveryDialog);
+    discoveryDialog.$$('.secondary-button').click();
+    Polymer.dom.flush();
+
+    const addDialog = dialog.$$('add-printer-manually-dialog');
+    assertTrue(!!addDialog);
+    fillAddManuallyDialog(addDialog);
+
+    addDialog.$$('.action-button').click();
+    Polymer.dom.flush();
+
+    const eulaLink = 'google.com';
+    const expectedManufacturer = 'Google';
+    const expectedModel = 'printer';
+    const expectedModel2 = 'newPrinter';
+    const expectedModel3 = 'newPrinter2';
+
+    let modelDialog = null;
+    let urlElement = null;
+    let modelDropdown = null;
+
+    return cupsPrintersBrowserProxy
+        .whenCalled('getCupsPrinterManufacturersList')
+        .then(function() {
+          modelDialog = dialog.$$('add-printer-manufacturer-model-dialog');
+          assertTrue(!!modelDialog);
+
+          urlElement = modelDialog.$$('#eulaUrl');
+          // Check that the EULA text is not shown.
+          assertTrue(urlElement.hidden);
+
+          cupsPrintersBrowserProxy.setEulaUrl(eulaLink);
+
+          modelDialog.$$('#manufacturerDropdown').value = expectedManufacturer;
+          modelDropdown = modelDialog.$$('#modelDropdown');
+          modelDropdown.value = expectedModel;
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel);
+        })
+        .then(function(args) {
+          // Check that the EULA text is shown.
+          assertFalse(urlElement.hidden);
+
+          resetGetEulaUrl(cupsPrintersBrowserProxy, '' /* eulaUrl */);
+
+          // Change ppdModel and expect |getEulaUrl| to be called again.
+          modelDropdown.value = expectedModel2;
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel2);
+        })
+        .then(function(args) {
+          // Check that the EULA text is hidden.
+          assertTrue(urlElement.hidden);
+
+          resetGetEulaUrl(cupsPrintersBrowserProxy, eulaLink);
+
+          // Change ppdModel and expect |getEulaUrl| to be called again.
+          modelDropdown.value = expectedModel3;
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel3);
+        })
+        .then(function(args) {
+          assertFalse(urlElement.hidden);
+        });
+  });
 });
 
 suite('EditPrinterDialog', function() {
   // Sets ppdManufacturer and ppdModel since ppdManufacturer has an observer
   // that erases ppdModel when ppdManufacturer changes.
   function setPpdManufacturerAndPpdModel(manufacturer, model) {
-    dialog.activePrinter.ppdManufacturer = manufacturer;
-    dialog.activePrinter.ppdModel = model;
+    dialog.pendingPrinter_.ppdManufacturer = manufacturer;
+    dialog.pendingPrinter_.ppdModel = model;
+  }
+
+  function clickSaveButton(dialog) {
+    assertTrue(!!dialog, 'Dialog is null for save');
+    const saveButton = dialog.$$('.action-button');
+    assertTrue(!!saveButton, 'Button is null');
+    saveButton.click();
+  }
+
+  function clickCancelButton(dialog) {
+    assertTrue(!!dialog, 'Dialog is null for cancel');
+    const cancelButton = dialog.$$('.cancel-button');
+    assertTrue(!!cancelButton, 'Button is null');
+    cancelButton.click();
   }
 
   /** @type {?settings.TestCupsPrintersBrowserProxy} */
@@ -503,7 +635,7 @@ suite('EditPrinterDialog', function() {
 
     dialog = document.createElement('settings-cups-edit-printer-dialog');
 
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: '',
@@ -537,7 +669,7 @@ suite('EditPrinterDialog', function() {
    * Test that USB printers can be editted.
    */
   test('USBPrinterCanBeEdited', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: '03f0/e414?serial=CD4234',
@@ -559,8 +691,8 @@ suite('EditPrinterDialog', function() {
       printerStatus: '',
     };
 
-    // Set activePrinter.ppdManufactuer and activePrinter.ppdModel to simulate
-    // a printer for which we have a PPD.
+    // Set pendingPrinter_.ppdManufactuer and pendingPrinter_.ppdModel to
+    // simulate a printer for which we have a PPD.
     setPpdManufacturerAndPpdModel('manufacturer', 'model');
 
     // Edit the printer name.
@@ -580,7 +712,7 @@ suite('EditPrinterDialog', function() {
    * invalid.
    */
   test('EditPrinter', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: '192.168.1.13',
@@ -628,8 +760,8 @@ suite('EditPrinterDialog', function() {
     assertTrue(saveButton.disabled);
   });
 
-  test('TestEditNameAndSave', function() {
-    dialog.activePrinter = {
+  test('CloseEditDialogDoesNotModifyActivePrinter', function() {
+    const expectedPrinter = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test123',
@@ -650,6 +782,59 @@ suite('EditPrinterDialog', function() {
       printerQueue: 'moreinfohere',
       printerStatus: '',
     };
+
+    dialog.activePrinter = Object.assign({}, expectedPrinter);
+
+    const nameField = dialog.$$('.printer-name-input');
+    assertTrue(!!nameField);
+    nameField.value = 'edited printer name';
+
+    const addressField = dialog.$$('#printerAddress');
+    assertTrue(!!addressField);
+    addressField.value = '9.9.9.9';
+
+    const queueField = dialog.$$('#printerQueue');
+    assertTrue(!!queueField);
+    queueField.value = 'edited/print';
+
+    const protocolField = dialog.$$('.md-select');
+    assertTrue(!!protocolField);
+    protocolField.value = 'http';
+
+    clickCancelButton(dialog);
+
+    // Assert that activePrinter properties were not changed.
+    assertEquals(expectedPrinter.printerName, dialog.activePrinter.printerName);
+    assertEquals(
+        expectedPrinter.printerAddress, dialog.activePrinter.printerAddress);
+    assertEquals(
+        expectedPrinter.printerQueue, dialog.activePrinter.printerQueue);
+    assertEquals(
+        expectedPrinter.printerProtocol, dialog.activePrinter.printerProtocol);
+  });
+
+  test('TestEditNameAndSave', function() {
+    dialog.pendingPrinter_ = {
+      printerAutoconf: false,
+      printerDescription: '',
+      printerId: 'id_123',
+      printerManufacturer: '',
+      printerModel: '',
+      printerMakeAndModel: '',
+      printerName: 'Test Printer',
+      printerPPDPath: '',
+      printerPpdReference: {
+        userSuppliedPpdUrl: '',
+        effectiveMakeAndModel: '',
+        autoconf: false,
+      },
+      ppdManufacturer: '',
+      ppdModel: '',
+      printerAddress: '03f0/e414?serial=CD4234',
+      printerProtocol: 'usb',
+      printerQueue: 'moreinfohere',
+      printerStatus: '',
+    };
     setPpdManufacturerAndPpdModel('manufacture', 'model');
 
     // Initializing activePrinter will set |needsReconfigured_| to true. Reset
@@ -663,7 +848,6 @@ suite('EditPrinterDialog', function() {
 
     Polymer.dom.flush();
 
-    // Editing only the printer name results in a updateCupsPrinter.
     const saveButton = dialog.$$('.action-button');
     saveButton.click();
 
@@ -674,10 +858,10 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestEditFieldsAndSave', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
-      printerAddress: 'test123',
+      printerAddress: '03f0/e414?serial=CD4234',
       printerAutoconf: false,
       printerDescription: '',
       printerId: 'id_123',
@@ -719,8 +903,7 @@ suite('EditPrinterDialog', function() {
     queueField.value = expectedQueue;
     assertTrue(dialog.needsReconfigured_);
 
-    const saveButton = dialog.$$('.action-button');
-    saveButton.click();
+    clickSaveButton(dialog);
 
     return cupsPrintersBrowserProxy.whenCalled('reconfigureCupsPrinter')
         .then(function() {
@@ -730,7 +913,7 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestChangingNameEnablesSaveButton', function() {
-    dialog.activePrinter_ = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test:123',
@@ -766,7 +949,7 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestChangingAddressEnablesSaveButton', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test:123',
@@ -802,7 +985,7 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestChangingQueueEnablesSaveButton', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test:123',
@@ -838,7 +1021,7 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestChangingProtocolEnablesSaveButton', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test:123',
@@ -874,7 +1057,7 @@ suite('EditPrinterDialog', function() {
   });
 
   test('TestChangingModelEnablesSaveButton', function() {
-    dialog.activePrinter = {
+    dialog.pendingPrinter_ = {
       ppdManufacturer: '',
       ppdModel: '',
       printerAddress: 'test:123',
@@ -915,5 +1098,62 @@ suite('EditPrinterDialog', function() {
     modelDropDown.dispatchEvent(new CustomEvent('change'), {'bubbles': true});
     Polymer.dom.flush();
     assertTrue(!saveButton.disabled);
+  });
+
+  /**
+   * Test that we are checking if a printer model has an EULA upon a model
+   * change.
+   */
+  test('getEulaUrlGetsCalledOnModelChange', function() {
+    const eulaLink = 'google.com';
+    const expectedManufacturer = 'Google';
+    const expectedModel = 'model';
+    const expectedModel2 = 'newModel';
+    const expectedModel3 = 'newModel2';
+
+    let modelDropdown = null;
+    let urlElement = null;
+
+    return PolymerTest.flushTasks()
+        .then(function() {
+          urlElement = dialog.$$('#eulaUrl');
+          // Check that the EULA text is hidden.
+          assertTrue(urlElement.hidden);
+
+          cupsPrintersBrowserProxy.setEulaUrl(eulaLink);
+
+          dialog.$$('#printerPPDManufacturer').value = expectedManufacturer;
+          modelDropdown = dialog.$$('#printerPPDModel');
+          modelDropdown.value = expectedModel;
+
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel);
+        })
+        .then(function() {
+          // Check that the EULA text is shown.
+          assertFalse(urlElement.hidden);
+
+          resetGetEulaUrl(cupsPrintersBrowserProxy, '' /* eulaUrl */);
+
+          // Change ppdModel and expect |getEulaUrl| to be called again.
+          modelDropdown.value = expectedModel2;
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel2);
+        })
+        .then(function() {
+          // Check that the EULA text is hidden.
+          assertTrue(urlElement.hidden);
+
+          resetGetEulaUrl(cupsPrintersBrowserProxy, eulaLink);
+
+          // Change ppdModel and expect |getEulaUrl| to be called again.
+          modelDropdown.value = expectedModel3;
+          return verifyGetEulaUrlWasCalled(
+              cupsPrintersBrowserProxy, expectedManufacturer, expectedModel3);
+        })
+        .then(function() {
+          // Check that the EULA text is shown again.
+          assertFalse(urlElement.hidden);
+        });
   });
 });

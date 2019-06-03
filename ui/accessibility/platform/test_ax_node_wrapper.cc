@@ -5,6 +5,7 @@
 #include "ui/accessibility/platform/test_ax_node_wrapper.h"
 
 #include <unordered_map>
+#include <utility>
 
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -113,40 +114,91 @@ gfx::NativeViewAccessible TestAXNodeWrapper::GetParent() {
 }
 
 int TestAXNodeWrapper::GetChildCount() {
-  return node_->child_count();
+  return int{node_->children().size()};
 }
 
 gfx::NativeViewAccessible TestAXNodeWrapper::ChildAtIndex(int index) {
   CHECK_GE(index, 0);
   CHECK_LT(index, GetChildCount());
   TestAXNodeWrapper* child_wrapper =
-      GetOrCreate(tree_, node_->children()[index]);
+      GetOrCreate(tree_, node_->children()[size_t{index}]);
   return child_wrapper ?
       child_wrapper->ax_platform_node()->GetNativeViewAccessible() :
       nullptr;
 }
 
-gfx::Rect TestAXNodeWrapper::GetClippedScreenBoundsRect() const {
-  // We could add clipping here if needed.
-  gfx::RectF bounds = GetData().relative_bounds.bounds;
-  bounds.Offset(g_offset);
-  return gfx::ToEnclosingRect(bounds);
+gfx::Rect TestAXNodeWrapper::GetBoundsRect(
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
+  switch (coordinate_system) {
+    case AXCoordinateSystem::kScreen: {
+      // We could optionally add clipping here if ever needed.
+      gfx::RectF bounds = GetData().relative_bounds.bounds;
+      bounds.Offset(g_offset);
+      return gfx::ToEnclosingRect(bounds);
+    }
+    case AXCoordinateSystem::kRootFrame:
+    case AXCoordinateSystem::kFrame:
+      NOTIMPLEMENTED();
+      return gfx::Rect();
+  }
 }
 
-gfx::Rect TestAXNodeWrapper::GetUnclippedScreenBoundsRect() const {
-  gfx::RectF bounds = GetData().relative_bounds.bounds;
-  bounds.Offset(g_offset);
-  return gfx::ToEnclosingRect(bounds);
+gfx::Rect TestAXNodeWrapper::GetInnerTextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
+  switch (coordinate_system) {
+    case AXCoordinateSystem::kScreen: {
+      gfx::RectF bounds = GetData().relative_bounds.bounds;
+      bounds.Offset(g_offset);
+      if (GetData().HasIntListAttribute(
+              ax::mojom::IntListAttribute::kCharacterOffsets)) {
+        const std::vector<int32_t>& offsets = GetData().GetIntListAttribute(
+            ax::mojom::IntListAttribute::kCharacterOffsets);
+        int32_t x = bounds.x();
+        int32_t width = 0;
+        for (int i = 0; i < static_cast<int>(offsets.size()); i++) {
+          if (i < start_offset)
+            x += offsets[i];
+          else if (i < end_offset)
+            width += offsets[i];
+          else
+            break;
+        }
+        bounds = gfx::RectF(x, bounds.y(), width, bounds.height());
+      }
+      return gfx::ToEnclosingRect(bounds);
+    }
+    case AXCoordinateSystem::kRootFrame:
+    case AXCoordinateSystem::kFrame:
+      NOTIMPLEMENTED();
+      return gfx::Rect();
+  }
 }
 
-gfx::Rect TestAXNodeWrapper::GetScreenBoundsForRange(int start,
-                                                     int len,
-                                                     bool clipped) const {
-  // Ignoring start, len, and clipped, as there's no clean way to map these
-  // via unit tests.
-  gfx::RectF bounds = GetData().relative_bounds.bounds;
-  bounds.Offset(g_offset);
-  return gfx::ToEnclosingRect(bounds);
+gfx::Rect TestAXNodeWrapper::GetHypertextRangeBoundsRect(
+    const int start_offset,
+    const int end_offset,
+    const AXCoordinateSystem coordinate_system,
+    const AXClippingBehavior clipping_behavior,
+    AXOffscreenResult* offscreen_result) const {
+  switch (coordinate_system) {
+    case AXCoordinateSystem::kScreen: {
+      // Ignoring start, len, and clipped, as there's no clean way to map these
+      // via unit tests.
+      gfx::RectF bounds = GetData().relative_bounds.bounds;
+      bounds.Offset(g_offset);
+      return gfx::ToEnclosingRect(bounds);
+    }
+    case AXCoordinateSystem::kRootFrame:
+    case AXCoordinateSystem::kFrame:
+      NOTIMPLEMENTED();
+      return gfx::Rect();
+  }
 }
 
 TestAXNodeWrapper* TestAXNodeWrapper::HitTestSyncInternal(int x, int y) {
@@ -188,12 +240,14 @@ gfx::NativeViewAccessible TestAXNodeWrapper::GetFocus() {
 
 // Walk the AXTree and ensure that all wrappers are created
 void TestAXNodeWrapper::BuildAllWrappers(AXTree* tree, AXNode* node) {
-  for (int i = 0; i < node->child_count(); i++) {
-    auto* child = node->children()[i];
+  for (auto* child : node->children()) {
     TestAXNodeWrapper::GetOrCreate(tree, child);
-
     BuildAllWrappers(tree, child);
   }
+}
+
+void TestAXNodeWrapper::ResetNativeEventTarget() {
+  native_event_target_ = gfx::kNullAcceleratedWidget;
 }
 
 AXPlatformNode* TestAXNodeWrapper::GetFromNodeID(int32_t id) {
@@ -212,7 +266,7 @@ AXPlatformNode* TestAXNodeWrapper::GetFromNodeID(int32_t id) {
 }
 
 int TestAXNodeWrapper::GetIndexInParent() const {
-  return node_ ? node_->index_in_parent() : -1;
+  return node_ ? int{node_->index_in_parent()} : -1;
 }
 
 void TestAXNodeWrapper::ReplaceIntAttribute(int32_t node_id,
@@ -276,6 +330,22 @@ void TestAXNodeWrapper::ReplaceStringAttribute(
 
   new_data.AddStringAttribute(attribute, value);
   node_->SetData(new_data);
+}
+
+void TestAXNodeWrapper::ReplaceTreeDataTextSelection(int32_t anchor_node_id,
+                                                     int32_t anchor_offset,
+                                                     int32_t focus_node_id,
+                                                     int32_t focus_offset) {
+  if (!tree_)
+    return;
+
+  AXTreeData new_tree_data = GetTreeData();
+  new_tree_data.sel_anchor_object_id = anchor_node_id;
+  new_tree_data.sel_anchor_offset = anchor_offset;
+  new_tree_data.sel_focus_object_id = focus_node_id;
+  new_tree_data.sel_focus_offset = focus_offset;
+
+  tree_->UpdateData(new_tree_data);
 }
 
 bool TestAXNodeWrapper::IsTable() const {
@@ -379,11 +449,7 @@ int32_t TestAXNodeWrapper::GetCellId(int32_t row_index,
 
 gfx::AcceleratedWidget
 TestAXNodeWrapper::GetTargetForNativeAccessibilityEvent() {
-#if defined(OS_WIN)
-  return gfx::kMockAcceleratedWidget;
-#else
-  return AXPlatformNodeDelegateBase::GetTargetForNativeAccessibilityEvent();
-#endif
+  return native_event_target_;
 }
 
 int32_t TestAXNodeWrapper::CellIndexToId(int32_t cell_index) const {
@@ -434,14 +500,17 @@ bool TestAXNodeWrapper::AccessibilityPerformAction(
       }
       return true;
 
-    case ax::mojom::Action::kSetSelection:
+    case ax::mojom::Action::kSetSelection: {
       ReplaceIntAttribute(data.anchor_node_id,
                           ax::mojom::IntAttribute::kTextSelStart,
                           data.anchor_offset);
-      ReplaceIntAttribute(data.anchor_node_id,
+      ReplaceIntAttribute(data.focus_node_id,
                           ax::mojom::IntAttribute::kTextSelEnd,
                           data.focus_offset);
+      ReplaceTreeDataTextSelection(data.anchor_node_id, data.anchor_offset,
+                                   data.focus_node_id, data.focus_offset);
       return true;
+    }
 
     case ax::mojom::Action::kFocus:
       g_focused_node_in_tree[tree_] = node_;
@@ -497,13 +566,27 @@ base::string16 TestAXNodeWrapper::GetLocalizedStringForImageAnnotationStatus(
           "Appears to contain adult content. No description available.");
     case ax::mojom::ImageAnnotationStatus::kAnnotationEmpty:
     case ax::mojom::ImageAnnotationStatus::kAnnotationProcessFailed:
+      return base::ASCIIToUTF16("No description available.");
     case ax::mojom::ImageAnnotationStatus::kNone:
+    case ax::mojom::ImageAnnotationStatus::kWillNotAnnotateDueToScheme:
     case ax::mojom::ImageAnnotationStatus::kIneligibleForAnnotation:
+    case ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation:
     case ax::mojom::ImageAnnotationStatus::kAnnotationSucceeded:
       return base::string16();
   }
 
   NOTREACHED();
+  return base::string16();
+}
+
+base::string16 TestAXNodeWrapper::GetStyleNameAttributeAsLocalizedString()
+    const {
+  AXNode* current_node = node_;
+  while (current_node) {
+    if (current_node->data().role == ax::mojom::Role::kMark)
+      return base::ASCIIToUTF16("mark");
+    current_node = current_node->parent();
+  }
   return base::string16();
 }
 
@@ -531,6 +614,11 @@ TestAXNodeWrapper::TestAXNodeWrapper(AXTree* tree, AXNode* node)
     : tree_(tree),
       node_(node),
       platform_node_(AXPlatformNode::Create(this)) {
+#if defined(OS_WIN)
+  native_event_target_ = gfx::kMockAcceleratedWidget;
+#else
+  native_event_target_ = gfx::kNullAcceleratedWidget;
+#endif
 }
 
 bool TestAXNodeWrapper::IsOrderedSetItem() const {
@@ -553,13 +641,13 @@ int32_t TestAXNodeWrapper::GetSetSize() const {
 // descendants for a given node within the descendants vector.
 void TestAXNodeWrapper::Descendants(
     const AXNode* node,
-    std::vector<gfx::NativeViewAccessible>& descendants) const {
+    std::vector<gfx::NativeViewAccessible>* descendants) const {
   std::vector<AXNode*> child_nodes = node->children();
   for (AXNode* child : child_nodes) {
-    descendants.emplace_back(ax_platform_node()
-                                 ->GetDelegate()
-                                 ->GetFromNodeID(child->id())
-                                 ->GetNativeViewAccessible());
+    descendants->emplace_back(ax_platform_node()
+                                  ->GetDelegate()
+                                  ->GetFromNodeID(child->id())
+                                  ->GetNativeViewAccessible());
     Descendants(child, descendants);
   }
 }
@@ -567,7 +655,7 @@ void TestAXNodeWrapper::Descendants(
 const std::vector<gfx::NativeViewAccessible> TestAXNodeWrapper::GetDescendants()
     const {
   std::vector<gfx::NativeViewAccessible> descendants;
-  Descendants(node_, descendants);
+  Descendants(node_, &descendants);
   return descendants;
 }
 

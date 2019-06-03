@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_RTP_SENDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_RTP_SENDER_H_
 
+#include <memory>
+
 #include "third_party/blink/public/platform/web_rtc_rtp_sender.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
@@ -19,6 +21,7 @@
 
 namespace blink {
 
+class ExceptionState;
 class MediaStreamTrack;
 class RTCDtlsTransport;
 class RTCDTMFSender;
@@ -48,13 +51,14 @@ class RTCRtpSender final : public ScriptWrappable {
 
   MediaStreamTrack* track();
   RTCDtlsTransport* transport();
-  RTCDtlsTransport* rtcp_transport();
+  RTCDtlsTransport* rtcpTransport();
   ScriptPromise replaceTrack(ScriptState*, MediaStreamTrack*);
   RTCDTMFSender* dtmf();
   static RTCRtpCapabilities* getCapabilities(const String& kind);
   RTCRtpSendParameters* getParameters();
   ScriptPromise setParameters(ScriptState*, const RTCRtpSendParameters*);
   ScriptPromise getStats(ScriptState*);
+  void setStreams(HeapVector<Member<MediaStream>> streams, ExceptionState&);
 
   WebRTCRtpSender* web_sender();
   // Sets the track. This must be called when the |WebRTCRtpSender| has its

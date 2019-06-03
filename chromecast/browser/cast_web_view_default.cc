@@ -24,6 +24,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "ipc/ipc_message.h"
 #include "net/base/net_errors.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "url/gurl.h"
@@ -64,9 +65,7 @@ CastWebViewDefault::CastWebViewDefault(
       transparent_(params.transparent),
       allow_media_access_(params.allow_media_access),
       web_contents_(CreateWebContents(browser_context_, site_instance_)),
-      cast_web_contents_(
-          web_contents_.get(),
-          {delegate_, params.enabled_for_dev, params.use_cma_renderer}),
+      cast_web_contents_(web_contents_.get(), params.web_contents_params),
       window_(shell::CastContentWindow::Create(params.window_params)),
       resize_window_when_navigation_starts_(true) {
   DCHECK(delegate_);
@@ -194,11 +193,11 @@ bool CastWebViewDefault::CheckMediaAccessPermission(
 
 bool CastWebViewDefault::DidAddMessageToConsole(
     content::WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
-  return delegate_->OnAddMessageToConsoleReceived(level, message, line_no,
+  return delegate_->OnAddMessageToConsoleReceived(log_level, message, line_no,
                                                   source_id);
 }
 
@@ -227,9 +226,10 @@ void CastWebViewDefault::RequestMediaAccessPermission(
   if (!chromecast::IsFeatureEnabled(kAllowUserMediaAccess) &&
       !allow_media_access_) {
     LOG(WARNING) << __func__ << ": media access is disabled.";
-    std::move(callback).Run(blink::MediaStreamDevices(),
-                            blink::MEDIA_DEVICE_NOT_SUPPORTED,
-                            std::unique_ptr<content::MediaStreamUI>());
+    std::move(callback).Run(
+        blink::MediaStreamDevices(),
+        blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
+        std::unique_ptr<content::MediaStreamUI>());
     return;
   }
 
@@ -237,16 +237,16 @@ void CastWebViewDefault::RequestMediaAccessPermission(
       content::MediaCaptureDevices::GetInstance()->GetAudioCaptureDevices();
   auto video_devices =
       content::MediaCaptureDevices::GetInstance()->GetVideoCaptureDevices();
-  VLOG(2) << __func__ << " audio_devices=" << audio_devices.size()
-          << " video_devices=" << video_devices.size();
+  DVLOG(2) << __func__ << " audio_devices=" << audio_devices.size()
+           << " video_devices=" << video_devices.size();
 
   blink::MediaStreamDevices devices;
   if (request.audio_type == blink::MEDIA_DEVICE_AUDIO_CAPTURE) {
     const blink::MediaStreamDevice* device = GetRequestedDeviceOrDefault(
         audio_devices, request.requested_audio_device_id);
     if (device) {
-      VLOG(1) << __func__ << "Using audio device: id=" << device->id
-              << " name=" << device->name;
+      DVLOG(1) << __func__ << "Using audio device: id=" << device->id
+               << " name=" << device->name;
       devices.push_back(*device);
     }
   }
@@ -255,13 +255,13 @@ void CastWebViewDefault::RequestMediaAccessPermission(
     const blink::MediaStreamDevice* device = GetRequestedDeviceOrDefault(
         video_devices, request.requested_video_device_id);
     if (device) {
-      VLOG(1) << __func__ << "Using video device: id=" << device->id
-              << " name=" << device->name;
+      DVLOG(1) << __func__ << "Using video device: id=" << device->id
+               << " name=" << device->name;
       devices.push_back(*device);
     }
   }
 
-  std::move(callback).Run(devices, blink::MEDIA_DEVICE_OK,
+  std::move(callback).Run(devices, blink::mojom::MediaStreamRequestResult::OK,
                           std::unique_ptr<content::MediaStreamUI>());
 }
 

@@ -7,10 +7,15 @@
 #import <UIKit/UIKit.h>
 
 #include "base/logging.h"
+#include "base/metrics/user_metrics.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/unified_consent/unified_consent_metrics.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/signin/authentication_service.h"
 #import "ios/chrome/browser/signin/authentication_service_factory.h"
+#include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
@@ -25,6 +30,21 @@
 #endif
 
 using l10n_util::GetNSString;
+
+NSString* const kSyncSettingsConfirmButtonId =
+    @"kAdvancedSyncSettingsConfirmButtonId";
+NSString* const kSyncSettingsCancelButtonId =
+    @"kAdvancedSyncSettingsCancelButtonId";
+
+// Advanced sign-in settings result.
+typedef NS_ENUM(NSInteger, AdvancedSigninSettingsCoordinatorResult) {
+  // The user confirmed the advanced sync settings.
+  AdvancedSyncSettingsCoordinatorResultConfirm,
+  // The user canceled the advanced sync settings.
+  AdvancedSigninSettingsCoordinatorResultCancel,
+  // Chrome aborted the advanced sync settings.
+  AdvancedSigninSettingsCoordinatorResultInterrupted,
+};
 
 @interface AdvancedSigninSettingsCoordinator ()
 
@@ -45,12 +65,15 @@ using l10n_util::GetNSString;
 - (void)start {
   self.advancedSigninSettingsNavigationController =
       [[AdvancedSigninSettingsNavigationController alloc] init];
+  self.advancedSigninSettingsNavigationController.modalPresentationStyle =
+      UIModalPresentationFormSheet;
   self.googleServicesSettingsCoordinator = [[GoogleServicesSettingsCoordinator
       alloc]
       initWithBaseViewController:self.advancedSigninSettingsNavigationController
                     browserState:self.browserState
                             mode:
                               GoogleServicesSettingsModeAdvancedSigninSettings];
+  self.googleServicesSettingsCoordinator.dispatcher = self.dispatcher;
   self.googleServicesSettingsCoordinator.navigationController =
       self.advancedSigninSettingsNavigationController;
   [self.googleServicesSettingsCoordinator start];
@@ -64,38 +87,76 @@ using l10n_util::GetNSString;
                  completion:nil];
 }
 
-- (void)cancelWithDismiss:(BOOL)dismiss {
+- (void)abortWithDismiss:(BOOL)dismiss
+                animated:(BOOL)animated
+              completion:(ProceduralBlock)completion {
   if (!self.advancedSigninSettingsNavigationController) {
+    if (completion) {
+      completion();
+    }
     return;
   }
   DCHECK_EQ(self.advancedSigninSettingsNavigationController,
             self.baseViewController.presentedViewController);
-  void (^completion)(void) = ^{
-    [self finishedWithSuccess:NO];
-  };
   if (dismiss) {
-    [self.baseViewController dismissViewControllerAnimated:YES
-                                                completion:completion];
+    [self dismissViewControllerAndFinishWithResult:
+              AdvancedSigninSettingsCoordinatorResultInterrupted
+                                          animated:animated
+                                        completion:completion];
   } else {
-    completion();
+    [self
+        finishedWithResult:AdvancedSigninSettingsCoordinatorResultInterrupted];
+    if (completion) {
+      completion();
+    }
   }
 }
 
 #pragma mark - Private
 
 // Called once the view controller has been removed (if needed).
-// |success|, YES if the user accepts to sync.
-- (void)finishedWithSuccess:(BOOL)success {
+// |result|, YES if the user accepts to sync.
+- (void)finishedWithResult:(AdvancedSigninSettingsCoordinatorResult)result {
   DCHECK(self.advancedSigninSettingsNavigationController);
-  if (success) {
-    SyncSetupServiceFactory::GetForBrowserState(self.browserState)
-        ->CommitChanges();
-  } else {
-    AuthenticationServiceFactory::GetForBrowserState(self.browserState)
-        ->SignOut(signin_metrics::ABORT_SIGNIN, nil);
+  SyncSetupService* syncSetupService =
+      SyncSetupServiceFactory::GetForBrowserState(self.browserState);
+  switch (result) {
+    case AdvancedSyncSettingsCoordinatorResultConfirm: {
+      base::RecordAction(
+          base::UserMetricsAction("Signin_Signin_ConfirmAdvancedSyncSettings"));
+      syncer::SyncService* syncService =
+          ProfileSyncServiceFactory::GetForBrowserState(self.browserState);
+      unified_consent::metrics::RecordSyncSetupDataTypesHistrogam(
+          syncService->GetUserSettings(), self.browserState->GetPrefs());
+      if (syncSetupService->IsSyncEnabled()) {
+        // FirstSetupComplete flag should be only turned on when the user agrees
+        // to start Sync.
+        syncSetupService->PrepareForFirstSyncSetup();
+        syncSetupService->SetFirstSetupComplete();
+      }
+      break;
+    }
+    case AdvancedSigninSettingsCoordinatorResultCancel:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Signin_ConfirmCancelAdvancedSyncSettings"));
+      syncSetupService->CommitSyncChanges();
+      AuthenticationServiceFactory::GetForBrowserState(self.browserState)
+          ->SignOut(signin_metrics::ABORT_SIGNIN, nil);
+      break;
+    case AdvancedSigninSettingsCoordinatorResultInterrupted:
+      base::RecordAction(
+          base::UserMetricsAction("Signin_Signin_AbortAdvancedSyncSettings"));
+      break;
   }
+  [self.googleServicesSettingsCoordinator stop];
+  self.googleServicesSettingsCoordinator.delegate = nil;
+  self.googleServicesSettingsCoordinator = nil;
+  DCHECK(!syncSetupService->HasUncommittedChanges())
+      << "-[GoogleServicesSettingsCoordinator stop] should commit sync "
+         "changes.";
+  BOOL signedin = result != AdvancedSigninSettingsCoordinatorResultCancel;
   [self.delegate advancedSigninSettingsCoordinatorDidClose:self
-                                                   success:success];
+                                                  signedin:signedin];
   self.advancedSigninSettingsNavigationController = nil;
 }
 
@@ -105,6 +166,7 @@ using l10n_util::GetNSString;
       initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
                            target:self
                            action:@selector(navigationCancelButtonAction)];
+  cancelButton.accessibilityIdentifier = kSyncSettingsCancelButtonId;
   return cancelButton;
 }
 
@@ -116,12 +178,15 @@ using l10n_util::GetNSString;
               style:UIBarButtonItemStyleDone
              target:self
              action:@selector(navigationConfirmButtonAction)];
+  confirmButton.accessibilityIdentifier = kSyncSettingsConfirmButtonId;
   return confirmButton;
 }
 
 // Called by the cancel button from the navigation controller. Presents a
 // UIAlert to ask the user if wants to cancel the sign-in.
 - (void)navigationCancelButtonAction {
+  base::RecordAction(
+      base::UserMetricsAction("Signin_Signin_CancelAdvancedSyncSettings"));
   self.cancelConfirmationAlertCoordinator = [[AlertCoordinator alloc]
       initWithBaseViewController:self.advancedSigninSettingsNavigationController
                            title:
@@ -156,11 +221,10 @@ using l10n_util::GetNSString;
 - (void)navigationConfirmButtonAction {
   DCHECK_EQ(self.advancedSigninSettingsNavigationController,
             self.baseViewController.presentedViewController);
-  void (^completion)(void) = ^{
-    [self finishedWithSuccess:YES];
-  };
-  [self.baseViewController dismissViewControllerAnimated:YES
-                                              completion:completion];
+  [self dismissViewControllerAndFinishWithResult:
+            AdvancedSyncSettingsCoordinatorResultConfirm
+                                        animated:YES
+                                      completion:nil];
 }
 
 // Called when a button of |self.cancelConfirmationAlertCoordinator| is pressed.
@@ -169,8 +233,33 @@ using l10n_util::GetNSString;
   [self.cancelConfirmationAlertCoordinator stop];
   self.cancelConfirmationAlertCoordinator = nil;
   if (cancelSync) {
-    [self cancelWithDismiss:YES];
+    [self dismissViewControllerAndFinishWithResult:
+              AdvancedSigninSettingsCoordinatorResultCancel
+                                          animated:YES
+                                        completion:nil];
+  } else {
+    base::RecordAction(base::UserMetricsAction(
+        "Signin_Signin_CancelCancelAdvancedSyncSettings"));
   }
+}
+
+// Dismisses the current view controller with animation, and calls
+// -[self finishedWithResult:] with |result|.
+- (void)dismissViewControllerAndFinishWithResult:
+            (AdvancedSigninSettingsCoordinatorResult)result
+                                        animated:(BOOL)animated
+                                      completion:(ProceduralBlock)completion {
+  DCHECK_EQ(self.advancedSigninSettingsNavigationController,
+            self.baseViewController.presentedViewController);
+  __weak __typeof(self) weakSelf = self;
+  ProceduralBlock dismissCompletion = ^() {
+    [weakSelf finishedWithResult:result];
+    if (completion) {
+      completion();
+    }
+  };
+  [self.baseViewController dismissViewControllerAnimated:animated
+                                              completion:dismissCompletion];
 }
 
 @end

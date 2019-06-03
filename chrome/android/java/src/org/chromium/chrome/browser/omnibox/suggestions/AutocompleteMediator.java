@@ -23,20 +23,19 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.init.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.init.AsyncInitializationActivity;
+import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
 import org.chromium.chrome.browser.omnibox.LocationBarVoiceRecognitionHandler;
 import org.chromium.chrome.browser.omnibox.OmniboxSuggestionType;
 import org.chromium.chrome.browser.omnibox.UrlBarEditingTextStateProvider;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteController.OnSuggestionsReceivedListener;
-import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator.AutocompleteDelegate;
-import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator.SuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.answer.AnswerSuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.BasicSuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.SuggestionHost;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.SuggestionViewDelegate;
 import org.chromium.chrome.browser.omnibox.suggestions.editurl.EditUrlSuggestionProcessor;
+import org.chromium.chrome.browser.omnibox.suggestions.entity.EntitySuggestionProcessor;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
 import org.chromium.components.omnibox.AnswerType;
@@ -93,7 +92,8 @@ class AutocompleteMediator
     private final Handler mHandler;
     private final BasicSuggestionProcessor mBasicSuggestionProcessor;
     private EditUrlSuggestionProcessor mEditUrlProcessor;
-    private final AnswerSuggestionProcessor mAnswerSuggestionProcessor;
+    private AnswerSuggestionProcessor mAnswerSuggestionProcessor;
+    private final EntitySuggestionProcessor mEntitySuggestionProcessor;
 
     private ToolbarDataProvider mDataProvider;
     private boolean mNativeInitialized;
@@ -136,6 +136,7 @@ class AutocompleteMediator
     private float mMaxRequiredWidth;
     private float mMaxMatchContentsWidth;
     private boolean mUseDarkColors = true;
+    private boolean mShowSuggestionFavicons;
     private int mLayoutDirection;
 
     private WindowAndroid mWindowAndroid;
@@ -154,6 +155,12 @@ class AutocompleteMediator
         mAnswerSuggestionProcessor = new AnswerSuggestionProcessor(mContext, this, textProvider);
         mEditUrlProcessor = new EditUrlSuggestionProcessor(
                 delegate, (suggestion) -> onSelection(suggestion, 0));
+        mEntitySuggestionProcessor = new EntitySuggestionProcessor(mContext, this);
+    }
+
+    public void destroy() {
+        mAnswerSuggestionProcessor.destroy();
+        mAnswerSuggestionProcessor = null;
     }
 
     @Override
@@ -266,10 +273,11 @@ class AutocompleteMediator
     /**
      * Specifies the visual state to be used by the suggestions.
      * @param useDarkColors Whether dark colors should be used for fonts and icons.
+     * @param isIncognito Whether the UI is for incognito mode or not.
      */
-    void setUseDarkColors(boolean useDarkColors) {
+    void updateVisualsForState(boolean useDarkColors, boolean isIncognito) {
         mUseDarkColors = useDarkColors;
-        mListPropertyModel.set(SuggestionListProperties.USE_DARK_BACKGROUND, !useDarkColors);
+        mListPropertyModel.set(SuggestionListProperties.IS_INCOGNITO, isIncognito);
         for (int i = 0; i < mCurrentModels.size(); i++) {
             PropertyModel model = mCurrentModels.get(i).model;
             model.set(SuggestionCommonProperties.USE_DARK_COLORS, useDarkColors);
@@ -306,12 +314,16 @@ class AutocompleteMediator
             mEditUrlProcessor = null;
         }
 
+        mShowSuggestionFavicons =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OMNIBOX_SHOW_SUGGESTION_FAVICONS);
+
         for (Runnable deferredRunnable : mDeferredNativeRunnables) {
             mHandler.post(deferredRunnable);
         }
         mDeferredNativeRunnables.clear();
         mAnswerSuggestionProcessor.onNativeInitialized();
         mBasicSuggestionProcessor.onNativeInitialized();
+        mEntitySuggestionProcessor.onNativeInitialized();
         if (mEditUrlProcessor != null) mEditUrlProcessor.onNativeInitialized();
     }
 
@@ -350,6 +362,7 @@ class AutocompleteMediator
         if (mEditUrlProcessor != null) mEditUrlProcessor.onUrlFocusChange(hasFocus);
         mAnswerSuggestionProcessor.onUrlFocusChange(hasFocus);
         mBasicSuggestionProcessor.onUrlFocusChange(hasFocus);
+        mEntitySuggestionProcessor.onUrlFocusChange(hasFocus);
     }
 
     /**
@@ -368,6 +381,7 @@ class AutocompleteMediator
      */
     void setAutocompleteProfile(Profile profile) {
         mAutocomplete.setProfile(profile);
+        mBasicSuggestionProcessor.setProfile(profile);
     }
 
     /**
@@ -679,8 +693,10 @@ class AutocompleteMediator
                     // position.  Hence, there's no need to check for -1 here explicitly.
                     cursorPosition = mUrlBarEditingTextProvider.getSelectionStart();
                 }
-                mAutocomplete.start(profile, mDataProvider.getCurrentUrl(), textWithoutAutocomplete,
-                        cursorPosition, preventAutocomplete, mDelegate.didFocusUrlFromFakebox());
+                int pageClassification =
+                        mDataProvider.getPageClassification(mDelegate.didFocusUrlFromFakebox());
+                mAutocomplete.start(profile, mDataProvider.getCurrentUrl(), pageClassification,
+                        textWithoutAutocomplete, cursorPosition, preventAutocomplete);
             };
             if (mNativeInitialized) {
                 mHandler.postDelayed(mRequestSuggestions, OMNIBOX_SUGGESTION_START_DELAY_MS);
@@ -699,6 +715,8 @@ class AutocompleteMediator
     private SuggestionProcessor getProcessorForSuggestion(OmniboxSuggestion suggestion) {
         if (mAnswerSuggestionProcessor.doesProcessSuggestion(suggestion)) {
             return mAnswerSuggestionProcessor;
+        } else if (mEntitySuggestionProcessor.doesProcessSuggestion(suggestion)) {
+            return mEntitySuggestionProcessor;
         } else if (mEditUrlProcessor != null
                 && mEditUrlProcessor.doesProcessSuggestion(suggestion)) {
             return mEditUrlProcessor;
@@ -753,6 +771,9 @@ class AutocompleteMediator
             PropertyModel model = processor.createModelForSuggestion(suggestion);
             model.set(SuggestionCommonProperties.LAYOUT_DIRECTION, mLayoutDirection);
             model.set(SuggestionCommonProperties.USE_DARK_COLORS, mUseDarkColors);
+            model.set(SuggestionCommonProperties.SHOW_SUGGESTION_ICONS,
+                    mShowSuggestionFavicons
+                            || DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext));
 
             // Before populating the model, add it to the list of current models.  If the suggestion
             // has an image and the image was already cached, it will be updated synchronously and
@@ -841,8 +862,10 @@ class AutocompleteMediator
         if (!shouldSkipNativeLog) {
             int autocompleteLength = mUrlBarEditingTextProvider.getTextWithAutocomplete().length()
                     - mUrlBarEditingTextProvider.getTextWithoutAutocomplete().length();
+            int pageClassification =
+                    mDataProvider.getPageClassification(mDelegate.didFocusUrlFromFakebox());
             mAutocomplete.onSuggestionSelected(matchPosition, suggestion.hashCode(), type,
-                    currentPageUrl, mDelegate.didFocusUrlFromFakebox(), elapsedTimeSinceModified,
+                    currentPageUrl, pageClassification, elapsedTimeSinceModified,
                     autocompleteLength, webContents);
         }
         if (((transition & PageTransition.CORE_MASK) == PageTransition.TYPED)
@@ -881,10 +904,11 @@ class AutocompleteMediator
         mHasStartedNewOmniboxEditSession = false;
         mNewOmniboxEditSessionTimestamp = -1;
         if (mNativeInitialized && mDelegate.isUrlBarFocused() && mDataProvider.hasTab()) {
+            int pageClassification =
+                    mDataProvider.getPageClassification(mDelegate.didFocusUrlFromFakebox());
             mAutocomplete.startZeroSuggest(mDataProvider.getProfile(),
                     mUrlBarEditingTextProvider.getTextWithAutocomplete(),
-                    mDataProvider.getCurrentUrl(), mDataProvider.getTitle(),
-                    mDelegate.didFocusUrlFromFakebox());
+                    mDataProvider.getCurrentUrl(), pageClassification, mDataProvider.getTitle());
         }
     }
 
@@ -950,8 +974,8 @@ class AutocompleteMediator
     void startAutocompleteForQuery(String query) {
         stopAutocomplete(false);
         if (mDataProvider.hasTab()) {
-            mAutocomplete.start(mDataProvider.getProfile(), mDataProvider.getCurrentUrl(), query,
-                    -1, false, false);
+            mAutocomplete.start(mDataProvider.getProfile(), mDataProvider.getCurrentUrl(),
+                    mDataProvider.getPageClassification(false), query, -1, false);
         }
     }
 

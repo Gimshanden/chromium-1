@@ -6,6 +6,7 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_NEW_PASSWORD_FORM_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -29,6 +30,7 @@ namespace password_manager {
 
 class FormSaver;
 class PasswordFormMetricsRecorder;
+class PasswordGenerationState;
 class PasswordManagerClient;
 class PasswordManagerDriver;
 
@@ -55,7 +57,7 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
 
   // Constructor for http authentication (aka basic authentication).
   NewPasswordFormManager(PasswordManagerClient* client,
-                         const autofill::PasswordForm& http_auth_observed_form,
+                         PasswordStore::FormDigest observed_http_auth_digest,
                          FormFetcher* form_fetcher,
                          std::unique_ptr<FormSaver> form_saver);
 
@@ -85,13 +87,16 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
   // |submitted_form| and |driver|) then saves |submitted_form| to
   // |submitted_form_| field, sets |is_submitted| = true and returns true.
   // Otherwise returns false.
+  // |is_gaia_with_skip_save_password_form| is true iff this is Gaia form which
+  // should be skipped on saving.
   bool ProvisionallySave(const autofill::FormData& submitted_form,
-                         const PasswordManagerDriver* driver);
+                         const PasswordManagerDriver* driver,
+                         bool is_gaia_with_skip_save_password_form);
 
   // If |submitted_form| is managed by *this then saves |submitted_form| to
   // |submitted_form_| field, sets |is_submitted| = true and returns true.
   // Otherwise returns false.
-  bool ProvisionallySaveHttpAuthFormIfIsManaged(
+  bool ProvisionallySaveHttpAuthForm(
       const autofill::PasswordForm& submitted_form);
 
   bool is_submitted() { return is_submitted_; }
@@ -150,7 +155,6 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
                                   bool is_manual_generation) override;
   void SetGenerationElement(const base::string16& generation_element) override;
   bool IsPossibleChangePasswordFormWithoutUsername() const override;
-  bool RetryPasswordFormPasswordUpdate() const override;
   bool IsPasswordUpdate() const override;
   std::vector<base::WeakPtr<PasswordManagerDriver>> GetDrivers() const override;
   const autofill::PasswordForm* GetSubmittedForm() const override;
@@ -207,7 +211,7 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
       FormFetcher* form_fetcher,
       std::unique_ptr<FormSaver> form_saver,
       scoped_refptr<PasswordFormMetricsRecorder> metrics_recorder,
-      const PasswordStore::FormDigest& form_digest);
+      PasswordStore::FormDigest form_digest);
 
   // Compares |parsed_form| with |old_parsing_result_| and records UKM metric.
   // TODO(https://crbug.com/831123): Remove it when the old form parsing is
@@ -237,19 +241,6 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
       const autofill::PasswordForm& submitted_password_form,
       const base::string16& password_element);
 
-  // If |best_matches_| contains only one entry, then return this entry.
-  // Otherwise for empty |password| return nullptr and for non-empty |password|
-  // returns the any entry in |best_matches_| with the same password, if it
-  // exists, and nullptr otherwise.
-  const autofill::PasswordForm* FindBestMatchForUpdatePassword(
-      const base::string16& password) const;
-
-  // Try to return a member of |best_matches_| which is most likely to represent
-  // the same credential as |form|. Return null if there is none. This is used
-  // to tell whether the user submitted a credential filled by Chrome.
-  const autofill::PasswordForm* FindBestSavedMatch(
-      const autofill::PasswordForm* form) const;
-
   void SetPasswordOverridden(bool password_overridden) {
     password_overridden_ = password_overridden;
     votes_uploader_.set_password_overridden(password_overridden);
@@ -262,12 +253,6 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
 
   // Sends fill data to the http auth popup.
   void FillHttpAuth();
-
-  // Goes through |not_best_matches_|, updates the password of those which share
-  // the old password and username with |pending_credentials_| to the new
-  // password of |pending_credentials_|, and returns copies of all such modified
-  // credentials.
-  std::vector<autofill::PasswordForm> FindOtherCredentialsToUpdate();
 
   // Helper function for calling form parsing and logging results if logging is
   // active.
@@ -283,6 +268,13 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
   // recorded in case when the successful submission is detected.
   void CalculateFillingAssistanceMetric(
       const autofill::FormData& submitted_form);
+
+  // Returns all the credentials for the origin (essentially, |best_matches_|
+  // and |not_best_matches_|).
+  std::vector<const autofill::PasswordForm*> GetAllMatches() const;
+
+  // Save/update |pending_credentials_| to the password store.
+  void SavePendingToStore(bool update);
 
   // The client which implements embedder-specific PasswordManager operations.
   PasswordManagerClient* client_;
@@ -353,29 +345,18 @@ class NewPasswordFormManager : public PasswordFormManagerInterface,
   // |submitted_form_| and |best_matches_|.
   autofill::PasswordForm pending_credentials_;
 
-  // Whether |pending_credentials_| stores a new login or is an update to an
-  // existing one.
+  // Whether |pending_credentials_| stores a credential that should be added
+  // to the password store. False means it's a pure update to the existing ones.
+  // TODO(crbug/831123): this value only makes sense internally. Remove public
+  // dependencies on it.
   bool is_new_login_ = true;
 
-  // Contains a generated password, empty if no password generation happened or
-  // a generated password removed by the user.
-  base::string16 generated_password_;
+  // Handles the user flows related to the generation.
+  std::unique_ptr<PasswordGenerationState> generation_state_;
 
-#if defined(OS_IOS)
-  // Contains a generated password, empty if no password generation happened or
-  // a generated password removed by the user.
-  base::string16 generation_element_;
-#endif
-
-  // Whether the saved password was overridden.
+  // Whether a saved password was overridden. The flag is true when there is a
+  // credential in the store that will get a new password value.
   bool password_overridden_ = false;
-
-  // A form is considered to be "retry" password if it has only one field which
-  // is a current password field.
-  // This variable is true if the password passed through ProvisionallySave() is
-  // a password that is not part of any password form stored for this origin
-  // and it was entered on a retry password form.
-  bool retry_password_form_password_update_ = false;
 
   // If Chrome has already autofilled a few times, it is probable that autofill
   // is triggered by programmatic changes in the page. We set a maximum number

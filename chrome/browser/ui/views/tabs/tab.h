@@ -12,6 +12,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -47,7 +49,8 @@ class Tab : public gfx::AnimationDelegate,
             public views::ButtonListener,
             public views::ContextMenuController,
             public views::MaskedTargeterDelegate,
-            public views::View {
+            public views::View,
+            public views::ViewObserver {
  public:
   // The Tab's class name.
   static const char kViewClassName[];
@@ -95,7 +98,11 @@ class Tab : public gfx::AnimationDelegate,
   void PaintChildren(const views::PaintInfo& info) override;
   void OnPaint(gfx::Canvas* canvas) override;
   void AddedToWidget() override;
+  void OnFocus() override;
   void OnThemeChanged() override;
+
+  // views::ViewObserver:
+  void OnViewFocused(views::View* observed_view) override;
 
   TabController* controller() const { return controller_; }
 
@@ -111,6 +118,11 @@ class Tab : public gfx::AnimationDelegate,
   // tab should be invisibly closed.  This is irreversible.
   void set_detached() { detached_ = true; }
   bool detached() const { return detached_; }
+
+  void SetGroup(base::Optional<TabGroupId> group);
+
+  // Returns the color for the tab's group, if any.
+  base::Optional<SkColor> GetGroupColor() const;
 
   // Returns the color used for the alert indicator icon.
   SkColor GetAlertIndicatorColor(TabAlertState state) const;
@@ -221,6 +233,9 @@ class Tab : public gfx::AnimationDelegate,
 
   // True if the tab has been detached.
   bool detached_ = false;
+
+  // Defined when the tab is part of a group.
+  base::Optional<TabGroupId> group_;
 
   TabIcon* icon_ = nullptr;
   AlertIndicator* alert_indicator_ = nullptr;

@@ -4,7 +4,6 @@
 
 #import "ios/web/shell/test/earl_grey/web_shell_test_case.h"
 
-#import "ios/testing/earl_grey/coverage_utils.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -32,15 +31,5 @@
   return [super testInvocations];
 }
 #endif
-
-// Set up called once for the class.
-+ (void)setUp {
-  [super setUp];
-}
-
-- (void)setUp {
-  [CoverageUtils configureCoverageReportPath];
-  [super setUp];
-}
 
 @end

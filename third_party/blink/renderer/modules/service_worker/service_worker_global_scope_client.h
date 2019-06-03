@@ -34,113 +34,32 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "third_party/blink/public/common/messaging/transferable_message.h"
-#include "third_party/blink/public/mojom/service_worker/service_worker.mojom-blink.h"
-#include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_stream_handle.h"
-#include "third_party/blink/renderer/core/messaging/message_port.h"
+#include "third_party/blink/public/mojom/service_worker/dispatch_fetch_event_params.mojom-blink.h"
 #include "third_party/blink/renderer/core/workers/worker_clients.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-struct WebPaymentHandlerResponse;
 class ExecutionContext;
 class KURL;
-class ScriptPromiseResolver;
 class WebServiceWorkerContextClient;
-class WebServiceWorkerResponse;
-class WorkerClients;
 
-// See WebServiceWorkerContextClient for documentation for the methods in this
-// class.
 class MODULES_EXPORT ServiceWorkerGlobalScopeClient final
     : public GarbageCollectedFinalized<ServiceWorkerGlobalScopeClient>,
       public Supplement<WorkerClients> {
   USING_GARBAGE_COLLECTED_MIXIN(ServiceWorkerGlobalScopeClient);
 
  public:
-  using ClaimCallback = mojom::blink::ServiceWorkerHost::ClaimClientsCallback;
-  using SkipWaitingCallback =
-      mojom::blink::ServiceWorkerHost::SkipWaitingCallback;
-  using GetClientCallback = mojom::blink::ServiceWorkerHost::GetClientCallback;
-  using GetClientsCallback =
-      mojom::blink::ServiceWorkerHost::GetClientsCallback;
-  using FocusCallback = mojom::blink::ServiceWorkerHost::FocusClientCallback;
-
   static const char kSupplementName[];
 
   explicit ServiceWorkerGlobalScopeClient(WebServiceWorkerContextClient&);
 
-  // Called from ServiceWorkerClients.
-  void GetClient(const String&, GetClientCallback);
-  void GetClients(mojom::blink::ServiceWorkerClientQueryOptionsPtr,
-                  GetClientsCallback);
-  void OpenWindowForClients(const KURL&, ScriptPromiseResolver*);
-  void OpenWindowForPaymentHandler(const KURL&, ScriptPromiseResolver*);
-  void SetCachedMetadata(const KURL&, const uint8_t*, size_t);
-  void ClearCachedMetadata(const KURL&);
-  void PostMessageToClient(const String& client_uuid, BlinkTransferableMessage);
-  void SkipWaiting(SkipWaitingCallback);
-  void Claim(ClaimCallback);
-  void Focus(const String& client_uuid, FocusCallback);
-  void Navigate(const String& client_uuid, const KURL&, ScriptPromiseResolver*);
-
-  void DidHandleActivateEvent(int event_id, mojom::ServiceWorkerEventStatus);
-  void DidHandleBackgroundFetchAbortEvent(int event_id,
-                                          mojom::ServiceWorkerEventStatus);
-  void DidHandleBackgroundFetchClickEvent(int event_id,
-                                          mojom::ServiceWorkerEventStatus);
-  void DidHandleBackgroundFetchFailEvent(int event_id,
-                                         mojom::ServiceWorkerEventStatus);
-  void DidHandleBackgroundFetchSuccessEvent(int event_id,
-                                            mojom::ServiceWorkerEventStatus);
-  void DidHandleCookieChangeEvent(int event_id,
-                                  mojom::ServiceWorkerEventStatus);
-  void DidHandleExtendableMessageEvent(int event_id,
-                                       mojom::ServiceWorkerEventStatus);
-  void RespondToFetchEventWithNoResponse(
+  // Called from ServiceWorkerGlobalScope.
+  void SetupNavigationPreload(
       int fetch_event_id,
-      base::TimeTicks event_dispatch_time,
-      base::TimeTicks respond_with_settled_time);
-  void RespondToFetchEvent(int fetch_event_id,
-                           const WebServiceWorkerResponse&,
-                           base::TimeTicks event_dispatch_time,
-                           base::TimeTicks respond_with_settled_time);
-  void RespondToFetchEventWithResponseStream(
-      int fetch_event_id,
-      const WebServiceWorkerResponse&,
-      WebServiceWorkerStreamHandle*,
-      base::TimeTicks event_dispatch_time,
-      base::TimeTicks respond_with_settled_time);
-  void RespondToAbortPaymentEvent(int event_id, bool abort_payment);
-  void RespondToCanMakePaymentEvent(int event_id, bool can_make_payment);
-  void RespondToPaymentRequestEvent(int event_id,
-                                    const WebPaymentHandlerResponse&);
-  void DidHandleFetchEvent(int fetch_event_id, mojom::ServiceWorkerEventStatus);
-  void DidHandleInstallEvent(int install_event_id,
-                             mojom::ServiceWorkerEventStatus);
-  void DidHandleNotificationClickEvent(int event_id,
-                                       mojom::ServiceWorkerEventStatus);
-  void DidHandleNotificationCloseEvent(int event_id,
-                                       mojom::ServiceWorkerEventStatus);
-  void DidHandlePushEvent(int push_event_id, mojom::ServiceWorkerEventStatus);
-  void DidHandleSyncEvent(int sync_event_id, mojom::ServiceWorkerEventStatus);
-  void DidHandleAbortPaymentEvent(int abort_payment_event_id,
-                                  mojom::ServiceWorkerEventStatus);
-  void DidHandleCanMakePaymentEvent(int payment_request_event_id,
-                                    mojom::ServiceWorkerEventStatus);
-  void DidHandlePaymentRequestEvent(int payment_request_event_id,
-                                    mojom::ServiceWorkerEventStatus);
-
-  void BindServiceWorkerHost(
-      mojom::blink::ServiceWorkerHostAssociatedPtrInfo service_worker_host);
-
-  void WillDestroyWorkerContext();
-
-  int WillStartTask();
-  void DidEndTask(int task_id);
+      const KURL& url,
+      mojom::blink::FetchEventPreloadHandlePtr preload_handle);
+  void RequestTermination(base::OnceCallback<void(bool)> callback);
 
   static ServiceWorkerGlobalScopeClient* From(ExecutionContext*);
 
@@ -148,12 +67,6 @@ class MODULES_EXPORT ServiceWorkerGlobalScopeClient final
 
  private:
   WebServiceWorkerContextClient& client_;
-
-  // Lives on the service worker thread, is bound by BindServiceWorkerHost()
-  // which is triggered by the first Mojo call received on the service worker
-  // thread content::mojom::ServiceWorker::InitializeGlobalScope(), and is
-  // closed by WillDestroyWorkerContext().
-  mojom::blink::ServiceWorkerHostAssociatedPtr service_worker_host_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerGlobalScopeClient);
 };

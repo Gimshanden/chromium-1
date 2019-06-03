@@ -14,17 +14,21 @@
 #include "fuchsia/engine/browser/web_engine_devtools_manager_delegate.h"
 
 WebEngineContentBrowserClient::WebEngineContentBrowserClient(
-    zx::channel context_channel)
-    : context_channel_(std::move(context_channel)) {}
+    fidl::InterfaceRequest<fuchsia::web::Context> request)
+    : request_(std::move(request)) {}
 
 WebEngineContentBrowserClient::~WebEngineContentBrowserClient() = default;
 
-content::BrowserMainParts*
+std::unique_ptr<content::BrowserMainParts>
 WebEngineContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams& parameters) {
-  DCHECK(context_channel_);
-  main_parts_ = new WebEngineBrowserMainParts(std::move(context_channel_));
-  return main_parts_;
+  DCHECK(request_);
+  auto browser_main_parts =
+      std::make_unique<WebEngineBrowserMainParts>(std::move(request_));
+
+  main_parts_ = browser_main_parts.get();
+
+  return browser_main_parts;
 }
 
 content::DevToolsManagerDelegate*

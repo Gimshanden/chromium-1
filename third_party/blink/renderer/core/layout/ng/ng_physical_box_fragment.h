@@ -25,12 +25,8 @@ class CORE_EXPORT NGPhysicalBoxFragment final
       WritingMode block_or_line_writing_mode);
 
   ~NGPhysicalBoxFragment() {
-    for (const NGLinkStorage& child : Children())
+    for (const NGLink& child : Children())
       child.fragment->Release();
-  }
-
-  ChildLinkList Children() const final {
-    return ChildLinkList(num_children_, &children_[0]);
   }
 
   base::Optional<LayoutUnit> Baseline(const NGBaselineRequest& request) const {
@@ -48,36 +44,36 @@ class CORE_EXPORT NGPhysicalBoxFragment final
   bool HasSelfPaintingLayer() const;
   bool ChildrenInline() const { return children_inline_; }
 
-  bool HasControlClip() const;
-
-  NGPhysicalOffsetRect ScrollableOverflow() const;
+  PhysicalRect ScrollableOverflow() const;
 
   // TODO(layout-dev): These three methods delegate to legacy layout for now,
   // update them to use LayoutNG based overflow information from the fragment
   // and change them to use NG geometry types once LayoutNG supports overflow.
-  LayoutRect OverflowClipRect(
-      const LayoutPoint& location,
+  PhysicalRect OverflowClipRect(
+      const PhysicalOffset& location,
       OverlayScrollbarClipBehavior = kIgnorePlatformOverlayScrollbarSize) const;
   IntSize ScrolledContentOffset() const;
-  LayoutSize ScrollSize() const;
+  PhysicalSize ScrollSize() const;
 
   // Compute visual overflow of this box in the local coordinate.
-  NGPhysicalOffsetRect ComputeSelfInkOverflow() const;
+  PhysicalRect ComputeSelfInkOverflow() const;
 
   // Fragment offset is this fragment's offset from parent.
   // Needed to compensate for LayoutInline Legacy code offsets.
-  void AddSelfOutlineRects(Vector<LayoutRect>* outline_rects,
-                           const LayoutPoint& additional_offset,
+  void AddSelfOutlineRects(Vector<PhysicalRect>* outline_rects,
+                           const PhysicalOffset& additional_offset,
                            NGOutlineType include_block_overflows) const;
 
   UBiDiLevel BidiLevel() const;
 
-  scoped_refptr<const NGPhysicalFragment> CloneWithoutOffset() const;
+  // Bitmask for border edges, see NGBorderEdges::Physical.
+  unsigned BorderEdges() const { return border_edge_; }
+  NGPixelSnappedPhysicalBoxStrut BorderWidths() const;
 
-  LayoutBoxModelObject& GetLayoutBoxModelObject() const {
-    SECURITY_DCHECK(GetLayoutObject() && GetLayoutObject()->IsBoxModelObject());
-    return *static_cast<LayoutBoxModelObject*>(GetLayoutObject());
-  }
+#if DCHECK_IS_ON()
+  void CheckSameForSimplifiedLayout(const NGPhysicalBoxFragment&,
+                                    bool check_same_block_size) const;
+#endif
 
  private:
   NGPhysicalBoxFragment(NGBoxFragmentBuilder* builder,
@@ -86,7 +82,7 @@ class CORE_EXPORT NGPhysicalBoxFragment final
   NGBaselineList baselines_;
   NGPhysicalBoxStrut borders_;
   NGPhysicalBoxStrut padding_;
-  NGLinkStorage children_[];
+  NGLink children_[];
 };
 
 template <>

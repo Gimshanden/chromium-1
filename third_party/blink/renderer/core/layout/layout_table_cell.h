@@ -263,7 +263,7 @@ class CORE_EXPORT LayoutTableCell : public LayoutBlockFlow {
 
   const char* GetName() const override { return "LayoutTableCell"; }
 
-  bool BackgroundIsKnownToBeOpaqueInRect(const LayoutRect&) const override;
+  bool BackgroundIsKnownToBeOpaqueInRect(const PhysicalRect&) const override;
 
   const CollapsedBorderValues* GetCollapsedBorderValues() const {
     UpdateCollapsedBorderValues();
@@ -272,10 +272,6 @@ class CORE_EXPORT LayoutTableCell : public LayoutBlockFlow {
   void InvalidateCollapsedBorderValues() {
     collapsed_border_values_valid_ = false;
   }
-
-  LayoutRect DebugRect() const override;
-
-  void AdjustChildDebugRect(LayoutRect&) const override;
 
   // A table cell's location is relative to its containing section.
   LayoutBox* LocationContainer() const override { return Section(); }
@@ -350,7 +346,7 @@ class CORE_EXPORT LayoutTableCell : public LayoutBlockFlow {
 
   void InvalidatePaint(const PaintInvalidatorContext&) const override;
 
-  LayoutSize OffsetFromContainerInternal(
+  PhysicalOffset OffsetFromContainerInternal(
       const LayoutObject*,
       bool ignore_scroll_offset) const override;
 
@@ -370,9 +366,9 @@ class CORE_EXPORT LayoutTableCell : public LayoutBlockFlow {
 
   void PaintBoxDecorationBackground(
       const PaintInfo&,
-      const LayoutPoint& paint_offset) const override;
+      const PhysicalOffset& paint_offset) const override;
   void PaintMask(const PaintInfo&,
-                 const LayoutPoint& paint_offset) const override;
+                 const PhysicalOffset& paint_offset) const override;
 
   bool ComputeShouldClipOverflow() const override;
 

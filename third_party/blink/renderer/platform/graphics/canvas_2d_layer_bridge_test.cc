@@ -86,8 +86,11 @@ class MockGLES2InterfaceWithImageSupport : public FakeGLES2Interface {
   MOCK_METHOD2(DeleteTextures, void(GLsizei, const GLuint*));
   // Fake
   void ProduceTextureDirectCHROMIUM(GLuint texture, GLbyte* mailbox) override {
-    mailbox[0] = 1;  // Make non-zero mailbox names
+    mailbox[0] = mailbox_count_++;  // Make non-zero mailbox names
   }
+
+ private:
+  int mailbox_count_ = 1;
 };
 
 class ImageTrackingDecodeCache : public cc::StubDecodeCache {
@@ -157,17 +160,34 @@ class Canvas2DLayerBridgeTest : public Test {
   }
 
   void SetUp() override {
-    auto factory = [](FakeGLES2Interface* gl, ImageTrackingDecodeCache* cache,
+    auto factory = [](gpu::gles2::GLES2Interface* gl,
+                      ImageTrackingDecodeCache* cache, GrContext* context,
                       bool* gpu_compositing_disabled)
         -> std::unique_ptr<WebGraphicsContext3DProvider> {
       *gpu_compositing_disabled = false;
-      return std::make_unique<FakeWebGraphicsContext3DProvider>(gl, cache);
+      return std::make_unique<FakeWebGraphicsContext3DProvider>(gl, cache,
+                                                                context);
     };
+
+    gpu::gles2::GLES2Interface* gl = &gl_;
+    GrContext* context = nullptr;
+    if (!NeedsMockGL()) {
+      test_context_provider_ = viz::TestContextProvider::Create();
+      test_context_provider_->BindToCurrentThread();
+      gl = test_context_provider_->ContextGL();
+      context = test_context_provider_->GrContext();
+    }
     SharedGpuContext::SetContextProviderFactoryForTesting(WTF::BindRepeating(
-        factory, WTF::Unretained(&gl_), WTF::Unretained(&image_decode_cache_)));
+        factory, WTF::Unretained(gl), WTF::Unretained(&image_decode_cache_),
+        WTF::Unretained(context)));
   }
 
-  void TearDown() override { SharedGpuContext::ResetForTesting(); }
+  virtual bool NeedsMockGL() { return true; }
+
+  void TearDown() override {
+    SharedGpuContext::ResetForTesting();
+    test_context_provider_.reset();
+  }
 
   MockCanvasResourceHost* Host() {
     DCHECK(host_);
@@ -175,6 +195,7 @@ class Canvas2DLayerBridgeTest : public Test {
   }
 
  protected:
+  scoped_refptr<viz::TestContextProvider> test_context_provider_;
   MockGLES2InterfaceWithImageSupport gl_;
   ImageTrackingDecodeCache image_decode_cache_;
   std::unique_ptr<MockCanvasResourceHost> host_;
@@ -1035,7 +1056,8 @@ TEST_F(Canvas2DLayerBridgeTest, GpuMemoryBufferRecycling) {
     EXPECT_CALL(gl_, DestroyImageCHROMIUM(image_2d_id_for_copy));
   }
   DrawSomething(bridge.get());
-  bridge->PrepareTransferableResource(nullptr, &resource1, &release_callback1);
+  ASSERT_TRUE(bridge->PrepareTransferableResource(nullptr, &resource1,
+                                                  &release_callback1));
 
   testing::Mock::VerifyAndClearExpectations(&gl_);
 
@@ -1050,7 +1072,8 @@ TEST_F(Canvas2DLayerBridgeTest, GpuMemoryBufferRecycling) {
     EXPECT_CALL(gl_, DestroyImageCHROMIUM(image_2d_id_for_copy));
   }
   DrawSomething(bridge.get());
-  bridge->PrepareTransferableResource(nullptr, &resource2, &release_callback2);
+  ASSERT_TRUE(bridge->PrepareTransferableResource(nullptr, &resource2,
+                                                  &release_callback2));
 
   testing::Mock::VerifyAndClearExpectations(&gl_);
 
@@ -1212,13 +1235,14 @@ TEST_F(Canvas2DLayerBridgeTest, EnsureCCImageCacheUse) {
   std::unique_ptr<Canvas2DLayerBridge> bridge =
       MakeBridge(IntSize(300, 300), Canvas2DLayerBridge::kEnableAcceleration,
                  color_params);
+  gfx::ColorSpace expected_color_space = gfx::ColorSpace::CreateSRGB();
   std::vector<cc::DrawImage> images = {
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
                     SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
-                    SkMatrix::I(), 0u),
+                    SkMatrix::I(), 0u, expected_color_space),
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(20, 20)),
                     SkIRect::MakeWH(5, 5), kNone_SkFilterQuality, SkMatrix::I(),
-                    0u)};
+                    0u, expected_color_space)};
 
   bridge->Canvas()->drawImage(images[0].paint_image(), 0u, 0u, nullptr);
   bridge->Canvas()->drawImageRect(
@@ -1238,10 +1262,10 @@ TEST_F(Canvas2DLayerBridgeTest, EnsureCCImageCacheUseWithColorConversion) {
   std::vector<cc::DrawImage> images = {
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
                     SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
-                    SkMatrix::I(), 0u),
+                    SkMatrix::I(), 0u, color_params.GetStorageGfxColorSpace()),
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(20, 20)),
                     SkIRect::MakeWH(5, 5), kNone_SkFilterQuality, SkMatrix::I(),
-                    0u)};
+                    0u, color_params.GetStorageGfxColorSpace())};
 
   bridge->Canvas()->drawImage(images[0].paint_image(), 0u, 0u, nullptr);
   bridge->Canvas()->drawImageRect(
@@ -1264,13 +1288,13 @@ TEST_F(Canvas2DLayerBridgeTest, ImagesLockedUntilCacheLimit) {
   std::vector<cc::DrawImage> images = {
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
                     SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
-                    SkMatrix::I(), 0u),
+                    SkMatrix::I(), 0u, color_params.GetStorageGfxColorSpace()),
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(20, 20)),
                     SkIRect::MakeWH(5, 5), kNone_SkFilterQuality, SkMatrix::I(),
-                    0u),
+                    0u, color_params.GetStorageGfxColorSpace()),
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(20, 20)),
                     SkIRect::MakeWH(5, 5), kNone_SkFilterQuality, SkMatrix::I(),
-                    0u)};
+                    0u, color_params.GetStorageGfxColorSpace())};
 
   // First 2 images are budgeted, they should remain locked after the op.
   bridge->Canvas()->drawImage(images[0].paint_image(), 0u, 0u, nullptr);
@@ -1297,9 +1321,10 @@ TEST_F(Canvas2DLayerBridgeTest, QueuesCleanupTaskForLockedImages) {
                  color_params);
   bridge->DisableDeferral(DisableDeferralReason::kDisableDeferralReasonUnknown);
 
-  auto image = cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
-                             SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
-                             SkMatrix::I(), 0u);
+  auto image =
+      cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
+                    SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
+                    SkMatrix::I(), 0u, color_params.GetStorageGfxColorSpace());
   bridge->Canvas()->drawImage(image.paint_image(), 0u, 0u, nullptr);
   EXPECT_EQ(image_decode_cache_.num_locked_images(), 1);
 
@@ -1320,10 +1345,10 @@ TEST_F(Canvas2DLayerBridgeTest, ImageCacheOnContextLost) {
   std::vector<cc::DrawImage> images = {
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(10, 10)),
                     SkIRect::MakeWH(10, 10), kNone_SkFilterQuality,
-                    SkMatrix::I(), 0u),
+                    SkMatrix::I(), 0u, color_params.GetStorageGfxColorSpace()),
       cc::DrawImage(cc::CreateDiscardablePaintImage(gfx::Size(20, 20)),
                     SkIRect::MakeWH(5, 5), kNone_SkFilterQuality, SkMatrix::I(),
-                    0u)};
+                    0u, color_params.GetStorageGfxColorSpace())};
   bridge->Canvas()->drawImage(images[0].paint_image(), 0u, 0u, nullptr);
 
   // Lose the context and ensure that the image provider is not used.
@@ -1332,6 +1357,33 @@ TEST_F(Canvas2DLayerBridgeTest, ImageCacheOnContextLost) {
   EXPECT_EQ(image_decode_cache_.num_locked_images(), 0);
   image_decode_cache_.set_disallow_cache_use(true);
   bridge->Canvas()->drawImage(images[1].paint_image(), 0u, 0u, &flags);
+}
+
+class Canvas2DLayerBridgeTestNoMockGL : public Canvas2DLayerBridgeTest {
+  bool NeedsMockGL() override { return false; }
+};
+
+TEST_F(Canvas2DLayerBridgeTestNoMockGL,
+       PrepareTransferableResourceTracksCanvasChanges) {
+  IntSize size = IntSize(300, 300);
+  std::unique_ptr<Canvas2DLayerBridge> bridge = MakeBridge(
+      size, Canvas2DLayerBridge::kEnableAcceleration, CanvasColorParams());
+  host_->set_provider_type(CanvasResourceProvider::kSharedImage);
+
+  bridge->Canvas()->clear(SK_ColorRED);
+  DrawSomething(bridge.get());
+
+  viz::TransferableResource resource;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback;
+  EXPECT_TRUE(bridge->PrepareTransferableResource(nullptr, &resource,
+                                                  &release_callback));
+
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback2;
+  EXPECT_FALSE(bridge->PrepareTransferableResource(nullptr, &resource,
+                                                   &release_callback2));
+
+  release_callback->Run(gpu::SyncToken(), false);
+  EXPECT_EQ(release_callback2, nullptr);
 }
 
 }  // namespace blink

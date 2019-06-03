@@ -39,12 +39,13 @@ namespace chromeos {
 
 class ArcKioskAppManager;
 class CrosUsbDetector;
+class CupsProxyServiceManager;
 class DemoModeResourcesRemover;
-class DiagnosticsdManager;
 class DiscoverManager;
 class EventRewriterDelegateImpl;
 class FastTransitionObserver;
 class IdleActionWarningObserver;
+class KerberosCredentialsManager;
 class LowDiskNotification;
 class NetworkChangeManagerClient;
 class NetworkPrefStateObserver;
@@ -52,8 +53,11 @@ class NetworkThrottlingObserver;
 class PowerMetricsReporter;
 class RendererFreezer;
 class SchedulerConfigurationManager;
+class SessionTerminationManager;
 class ShutdownPolicyForwarder;
 class WakeOnWifiManager;
+class WilcoDtcSupportdManager;
+class GnubbyNotification;
 
 namespace default_app_order {
 class ExternalLoader;
@@ -85,9 +89,8 @@ class DarkResumeController;
 // src/ash or chrome/browser/ui/ash.
 class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
  public:
-  ChromeBrowserMainPartsChromeos(
-      const content::MainFunctionParams& parameters,
-      ChromeFeatureListCreator* chrome_feature_list_creator);
+  ChromeBrowserMainPartsChromeos(const content::MainFunctionParams& parameters,
+                                 StartupData* startup_data);
   ~ChromeBrowserMainPartsChromeos() override;
 
   // ChromeBrowserMainParts overrides.
@@ -165,12 +168,18 @@ class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
       scheduler_configuration_manager_;
 
   std::unique_ptr<CrosUsbDetector> cros_usb_detector_;
-  std::unique_ptr<DiagnosticsdManager> diagnosticsd_manager_;
 
   std::unique_ptr<chromeos::system::DarkResumeController>
       dark_resume_controller_;
 
+  std::unique_ptr<SessionTerminationManager> session_termination_manager_;
   std::unique_ptr<policy::LockToSingleUserManager> lock_to_single_user_manager_;
+  std::unique_ptr<WilcoDtcSupportdManager> wilco_dtc_supportd_manager_;
+  std::unique_ptr<KerberosCredentialsManager> kerberos_credentials_manager_;
+
+  std::unique_ptr<GnubbyNotification> gnubby_notification_;
+  std::unique_ptr<chromeos::CupsProxyServiceManager>
+      cups_proxy_service_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsChromeos);
 };

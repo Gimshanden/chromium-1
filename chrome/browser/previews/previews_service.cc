@@ -11,6 +11,7 @@
 #include "base/time/default_clock.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/previews/previews_lite_page_decider.h"
+#include "chrome/browser/previews/previews_offline_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
 #include "components/blacklist/opt_out_blacklist/opt_out_store.h"
@@ -45,13 +46,15 @@ bool IsPreviewsTypeEnabled(previews::PreviewsType type) {
       return server_previews_enabled;
     case previews::PreviewsType::NOSCRIPT:
       return previews::params::IsNoScriptPreviewsEnabled();
+    case previews::PreviewsType::RESOURCE_LOADING_HINTS:
+      return previews::params::IsResourceLoadingHintsEnabled();
+    case previews::PreviewsType::DEFER_ALL_SCRIPT:
+      return previews::params::IsDeferAllScriptPreviewsEnabled();
     case previews::PreviewsType::DEPRECATED_AMP_REDIRECTION:
       return false;
     case previews::PreviewsType::UNSPECIFIED:
       // Not a real previews type so treat as false.
       return false;
-    case previews::PreviewsType::RESOURCE_LOADING_HINTS:
-      return previews::params::IsResourceLoadingHintsEnabled();
     case previews::PreviewsType::NONE:
     case previews::PreviewsType::LAST:
       break;
@@ -76,6 +79,8 @@ int GetPreviewsTypeVersion(previews::PreviewsType type) {
       return previews::params::NoScriptPreviewsVersion();
     case previews::PreviewsType::RESOURCE_LOADING_HINTS:
       return previews::params::ResourceLoadingHintsVersion();
+    case previews::PreviewsType::DEFER_ALL_SCRIPT:
+      return previews::params::DeferAllScriptPreviewsVersion();
     case previews::PreviewsType::NONE:
     case previews::PreviewsType::UNSPECIFIED:
     case previews::PreviewsType::LAST:
@@ -109,6 +114,9 @@ PreviewsService::PreviewsService(content::BrowserContext* browser_context)
               browser_context)),
       previews_lite_page_decider_(
           std::make_unique<PreviewsLitePageDecider>(browser_context)),
+      previews_offline_helper_(
+          std::make_unique<PreviewsOfflineHelper>(browser_context)),
+      browser_context_(browser_context),
       previews_url_loader_factory_(
           content::BrowserContext::GetDefaultStoragePartition(
               Profile::FromBrowserContext(browser_context))
@@ -122,6 +130,7 @@ PreviewsService::~PreviewsService() {
 
 void PreviewsService::Initialize(
     optimization_guide::OptimizationGuideService* optimization_guide_service,
+    leveldb_proto::ProtoDatabaseProvider* database_provider,
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner,
     const base::FilePath& profile_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -142,8 +151,11 @@ void PreviewsService::Initialize(
           profile_path.Append(chrome::kPreviewsOptOutDBFilename)),
       optimization_guide_service
           ? std::make_unique<previews::PreviewsOptimizationGuide>(
-                optimization_guide_service, ui_task_runner, profile_path,
-                previews_top_host_provider_.get(), previews_url_loader_factory_)
+                optimization_guide_service, ui_task_runner,
+                background_task_runner, profile_path,
+                Profile::FromBrowserContext(browser_context_)->GetPrefs(),
+                database_provider, previews_top_host_provider_.get(),
+                previews_url_loader_factory_)
           : nullptr,
       base::Bind(&IsPreviewsTypeEnabled),
       std::make_unique<previews::PreviewsLogger>(), GetAllowedPreviews(),
@@ -151,7 +163,11 @@ void PreviewsService::Initialize(
 }
 
 void PreviewsService::Shutdown() {
-  previews_lite_page_decider_->Shutdown();
+  if (previews_lite_page_decider_)
+    previews_lite_page_decider_->Shutdown();
+
+  if (previews_offline_helper_)
+    previews_offline_helper_->Shutdown();
 }
 
 void PreviewsService::ClearBlackList(base::Time begin_time,

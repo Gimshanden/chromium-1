@@ -23,9 +23,9 @@
 
 #include "third_party/blink/renderer/platform/graphics/filters/fe_flood.h"
 
-#include "SkColorFilter.h"
-#include "SkColorFilterImageFilter.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_stream.h"
+#include "third_party/skia/include/core/SkColorFilter.h"
+#include "third_party/skia/include/effects/SkColorFilterImageFilter.h"
 
 namespace blink {
 
@@ -62,8 +62,7 @@ sk_sp<PaintFilter> FEFlood::CreateImageFilter() {
   Color color = FloodColor().CombineWithAlpha(FloodOpacity());
   PaintFilter::CropRect rect = GetCropRect();
   return sk_make_sp<ColorFilterPaintFilter>(
-      SkColorFilter::MakeModeFilter(color.Rgb(), SkBlendMode::kSrc), nullptr,
-      &rect);
+      SkColorFilters::Blend(color.Rgb(), SkBlendMode::kSrc), nullptr, &rect);
 }
 
 WTF::TextStream& FEFlood::ExternalRepresentation(WTF::TextStream& ts,

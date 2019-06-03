@@ -26,11 +26,8 @@
 
 namespace blink {
 
-inline SVGGElement::SVGGElement(Document& document,
-                                ConstructionType construction_type)
+SVGGElement::SVGGElement(Document& document, ConstructionType construction_type)
     : SVGGraphicsElement(svg_names::kGTag, document, construction_type) {}
-
-DEFINE_NODE_FACTORY(SVGGElement)
 
 LayoutObject* SVGGElement::CreateLayoutObject(const ComputedStyle& style,
                                               LegacyLayout) {

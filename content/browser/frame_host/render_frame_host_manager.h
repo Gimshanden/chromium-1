@@ -203,18 +203,13 @@ class CONTENT_EXPORT RenderFrameHostManager
   // there is no current one.
   RenderWidgetHostView* GetRenderWidgetHostView() const;
 
-  // Returns whether this manager belongs to a FrameTreeNode that belongs to an
-  // inner WebContents.
-  bool ForInnerDelegate();
+  // Returns whether this manager is a main frame and belongs to a FrameTreeNode
+  // that belongs to an inner WebContents.
+  bool IsMainFrameForInnerDelegate();
 
-  // Returns the RenderWidgetHost of the outer WebContents (if any) that can be
-  // used to fetch the last keyboard event.
-  // TODO(lazyboy): This can be removed once input events are sent directly to
-  // remote frames.
-  RenderWidgetHostImpl* GetOuterRenderWidgetHostForKeyboardInput();
-
-  // Return the FrameTreeNode for the frame in the outer WebContents (if any)
-  // that contains the inner WebContents.
+  // If this is a RenderFrameHostManager for a main frame, this method returns
+  // the FrameTreeNode for the frame in the outer WebContents (if any) that
+  // contains the inner WebContents.
   FrameTreeNode* GetOuterDelegateNode();
 
   // Return a proxy for this frame in the parent frame's SiteInstance.  Returns
@@ -222,13 +217,13 @@ class CONTENT_EXPORT RenderFrameHostManager
   // example, if this frame is same-site with its parent).
   RenderFrameProxyHost* GetProxyToParent();
 
-  // Returns the proxy to inner WebContents in the outer WebContents's
-  // SiteInstance. Returns nullptr if this WebContents isn't part of inner/outer
-  // relationship.
+  // If this is a RenderFrameHostManager for a main frame, returns the proxy to
+  // inner WebContents in the outer WebContents's SiteInstance. Returns nullptr
+  // if this WebContents isn't part of inner/outer relationship.
   RenderFrameProxyHost* GetProxyToOuterDelegate();
 
-  // Removes the FrameTreeNode in the outer WebContents that represents this
-  // FrameTreeNode.
+  // If this is a RenderFrameHostManager for a main frame, removes the
+  // FrameTreeNode in the outer WebContents that represents this FrameTreeNode.
   // TODO(lazyboy): This does not belong to RenderFrameHostManager, move it to
   // somehwere else.
   void RemoveOuterDelegateFrame();
@@ -296,9 +291,8 @@ class CONTENT_EXPORT RenderFrameHostManager
   std::unique_ptr<RenderFrameHostImpl> CreateRenderFrame(SiteInstance* instance,
                                                          bool hidden);
 
-  // Helper method to create and initialize a RenderFrameProxyHost and return
-  // its routing id.
-  int CreateRenderFrameProxy(SiteInstance* instance);
+  // Helper method to create and initialize a RenderFrameProxyHost.
+  void CreateRenderFrameProxy(SiteInstance* instance);
 
   // Creates proxies for a new child frame at FrameTreeNode |child| in all
   // SiteInstances for which the current frame has proxies.  This method is
@@ -480,6 +474,14 @@ class CONTENT_EXPORT RenderFrameHostManager
   // Updates the user activation state in all proxies of this frame.  For
   // more details, see the comment on FrameTreeNode::user_activation_state_.
   void UpdateUserActivationState(blink::UserActivationUpdateType update_type);
+
+  // When a frame transfers user activation to another frame via postMessage,
+  // this is used to inform proxies of the target frame (via IPC) about the
+  // transfer, namely that |source_rfh| is transferring user activation to this
+  // frame.  Note that the IPC isn't sent to |source_rfh|'s process, since it
+  // already knows about the transfer, and it also isn't sent to this frame's
+  // RenderFrame, since that will be handled as part of postMessage.
+  void TransferUserActivationFrom(RenderFrameHostImpl* source_rfh);
 
   void OnSetHasReceivedUserGestureBeforeNavigation(bool value);
 

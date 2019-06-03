@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -57,6 +58,7 @@ void PopulateAllPaperDisplayNames(PrinterSemanticCapsAndDefaults* info) {
 base::Value GetPrinterCapabilitiesOnBlockingPoolThread(
     const std::string& device_name,
     const PrinterSemanticCapsAndDefaults::Papers& additional_papers,
+    bool has_secure_protocol,
     scoped_refptr<PrintBackend> print_backend) {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
@@ -85,8 +87,15 @@ base::Value GetPrinterCapabilitiesOnBlockingPoolThread(
 #endif
   info.papers.insert(info.papers.end(), additional_papers.begin(),
                      additional_papers.end());
+#if defined(CHROMEOS)
+  if (!has_secure_protocol)
+    info.pin_supported = false;
+#endif  // defined(CHROMEOS)
+
   return cloud_print::PrinterSemanticCapsAndDefaultsToCdd(info);
 }
+
+}  // namespace
 
 #if defined(OS_WIN)
 std::string GetUserFriendlyName(const std::string& printer_name) {
@@ -109,45 +118,22 @@ std::string GetUserFriendlyName(const std::string& printer_name) {
 }
 #endif
 
-}  // namespace
-
-std::pair<std::string, std::string> GetPrinterNameAndDescription(
-    const PrinterBasicInfo& printer) {
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
-  // On Mac, |printer.printer_description| specifies the printer name and
-  // |printer.printer_name| specifies the device name / printer queue name.
-  // Chrome OS emulates the Mac behavior.
-  const std::string& real_name = printer.printer_description;
-  std::string real_description;
-  const auto it = printer.options.find(kDriverNameTagName);
-  if (it != printer.options.end())
-    real_description = it->second;
-  return std::make_pair(real_name, real_description);
-#elif defined(OS_WIN)
-  return std::make_pair(GetUserFriendlyName(printer.printer_name),
-                        printer.printer_description);
-#else
-  return std::make_pair(printer.printer_name, printer.printer_description);
-#endif
-}
-
 base::Value GetSettingsOnBlockingPool(
     const std::string& device_name,
     const PrinterBasicInfo& basic_info,
     const PrinterSemanticCapsAndDefaults::Papers& additional_papers,
+    bool has_secure_protocol,
     scoped_refptr<PrintBackend> print_backend) {
+  SCOPED_UMA_HISTOGRAM_TIMER("Printing.PrinterCapabilities");
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
-
-  const auto printer_name_description =
-      GetPrinterNameAndDescription(basic_info);
 
   base::Value printer_info(base::Value::Type::DICTIONARY);
   printer_info.SetKey(kSettingDeviceName, base::Value(device_name));
   printer_info.SetKey(kSettingPrinterName,
-                      base::Value(printer_name_description.first));
+                      base::Value(basic_info.display_name));
   printer_info.SetKey(kSettingPrinterDescription,
-                      base::Value(printer_name_description.second));
+                      base::Value(basic_info.printer_description));
   printer_info.SetKey(
       kCUPSEnterprisePrinter,
       base::Value(
@@ -157,8 +143,9 @@ base::Value GetSettingsOnBlockingPool(
   base::Value printer_info_capabilities(base::Value::Type::DICTIONARY);
   printer_info_capabilities.SetKey(kPrinter, std::move(printer_info));
   printer_info_capabilities.SetKey(
-      kSettingCapabilities, GetPrinterCapabilitiesOnBlockingPoolThread(
-                                device_name, additional_papers, print_backend));
+      kSettingCapabilities,
+      GetPrinterCapabilitiesOnBlockingPoolThread(
+          device_name, additional_papers, has_secure_protocol, print_backend));
   return printer_info_capabilities;
 }
 

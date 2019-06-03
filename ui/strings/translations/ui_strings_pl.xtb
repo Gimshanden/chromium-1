@@ -21,7 +21,6 @@
 <translation id="169515659049020177">Shift</translation>
 <translation id="1710340000377843106">teraz</translation>
 <translation id="1752946267035950200">{MINUTES,plural, =1{1 minuta}few{# minuty}many{# minut}other{# minuty}}</translation>
-<translation id="1756116796893109054">Wysyłam kartę…</translation>
 <translation id="1761785978543082658"><ph name="QUANTITY" /> B</translation>
 <translation id="1801827354178857021">Kropka</translation>
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 miesiąc}few{# miesiące}many{# miesięcy}other{# miesiąca}}</translation>
@@ -72,6 +71,7 @@
 <translation id="3234408098842461169">Strzałka w dół</translation>
 <translation id="3291688615589870984">{DAYS,plural, =1{1 dzień}few{# dni}many{# dni}other{# dnia}}</translation>
 <translation id="335581015389089642">Mowa</translation>
+<translation id="3443810440409579745">Odebrano kartę.</translation>
 <translation id="3479552764303398839">Nie teraz</translation>
 <translation id="348799646910989694">Półka ukryta automatycznie</translation>
 <translation id="3600566671520689681">{DAYS,plural, =1{Pozostał 1 dzień}few{Pozostały # dni}many{Pozostało # dni}other{Pozostało # dnia}}</translation>
@@ -101,6 +101,7 @@
 <translation id="4730374152663651037">CZĘSTO UŻYWANE</translation>
 <translation id="4788285488841504513">{MONTHS,plural, =1{Pozostał miesiąc}few{Pozostały # miesiące}many{Pozostało # miesięcy}other{Pozostało # miesiąca}}</translation>
 <translation id="4841881773802181781">Wstawienie</translation>
+<translation id="4881695831933465202">Otwórz</translation>
 <translation id="4968171027979920686">{SECONDS,plural, =1{1 sekunda}few{# sekundy}many{# sekund}other{# sekundy}}</translation>
 <translation id="4971687151119236543">Poprzedni utwór multimedialny</translation>
 <translation id="5046499563572181734">Kliknij tutaj</translation>
@@ -108,7 +109,8 @@
 <translation id="5137751499640340777">Uruchom Asystenta Google</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> PB</translation>
 <translation id="5266161281976477809">Trójkąt rozwinięcia</translation>
-<translation id="528468243742722775">End</translation>
+<translation id="5278860589123563674">Nie udało się wysłać</translation>
+<translation id="528468243742722775">Zakończ</translation>
 <translation id="5329858601952122676">&amp;Usuń</translation>
 <translation id="5395308026110844773">Aplikacja <ph name="DRAGGED_APP_NAME" /> jest nad aplikacją <ph name="IN_PLACE_APP" /> – puść, by utworzyć folder.</translation>
 <translation id="5463830097259460683">Emotikony i symbole</translation>
@@ -132,6 +134,7 @@
 <translation id="6135826906199951471">Del</translation>
 <translation id="6142413573757616983"><ph name="QUANTITY" /> B/s</translation>
 <translation id="6156262341071374681">Rozwiń, by wyświetlić wszystkie aplikacje</translation>
+<translation id="6165508094623778733">Więcej informacji</translation>
 <translation id="6264365405983206840">Wybierz &amp;wszystko</translation>
 <translation id="6351032674660237738">SUGEROWANE APLIKACJE</translation>
 <translation id="6364916375976753737">Przewiń w lewo</translation>
@@ -163,6 +166,7 @@
 <translation id="7222373446505536781">F11</translation>
 <translation id="7238427729722629793">{MINUTES,plural, =1{Pozostała 1 min}few{Pozostały # min}many{Pozostało # min}other{Pozostało # min}}</translation>
 <translation id="7319740667687257810">Menu z aplikacjami, widok częściowy</translation>
+<translation id="732374792807444530">Przesyłam do: <ph name="DEVICE_NAME" /></translation>
 <translation id="7365057348334984696">{MINUTES,plural, =1{1 min temu}few{# min temu}many{# min temu}other{# min temu}}</translation>
 <translation id="7389409599945284130">– <ph name="MESSAGE" /></translation>
 <translation id="7410957453383678442">{MINUTES,plural, =1{Pozostała 1 minuta}few{Pozostały # minuty}many{Pozostały # minut}other{Pozostało # minuty}}</translation>
@@ -177,8 +181,10 @@
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{Więcej niż 1 nieprzeczytane powiadomienie}few{Więcej niż # nieprzeczytane powiadomienia}many{Więcej niż # nieprzeczytanych powiadomień}other{Więcej niż # nieprzeczytanego powiadomienia}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{za 1 min}few{za # min}many{za # min}other{za # min}}</translation>
 <translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" />+<ph name="KEY_COMBO_NAME" /></translation>
+<translation id="8098075892845277643">Rozpocznij zapytanie głosowe za pomocą Asystenta Google</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{1 godzinę temu}few{# godziny temu}many{# godzin temu}other{# godziny temu}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{Pozostała 1 s}few{Pozostały # s}many{Pozostało # s}other{Pozostało # s}}</translation>
+<translation id="8144660977431427332">Twoje wyszukiwania obsługuje Asystent Google. <ph name="LEARN_MORE" /></translation>
 <translation id="8152264887680882389"><ph name="TEXT" />, autouzupełnianie</translation>
 <translation id="815598010540052116">Przewiń w dół</translation>
 <translation id="8170087467028567933">Usunięcie tej sugestii ukryje ją na Twoim koncie na wszystkich Twoich urządzeniach.</translation>

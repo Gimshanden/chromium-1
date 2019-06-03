@@ -15,7 +15,7 @@ const char* const kFeatureEngagementName = "FeatureEngagement";
 
 // The enum values are used to index into the shared database. Do not rearrange
 // or reuse the integer values. Add new database types at the end of the enum,
-// and update the string mapping in client_list.cc file.
+// and update the string mapping in ProtoDbTypeToString().
 enum class ProtoDbType {
   TEST_DATABASE0 = 0,
   TEST_DATABASE1 = 1,
@@ -27,6 +27,17 @@ enum class ProtoDbType {
   USAGE_STATS_TOKEN_MAPPING = 7,
   DOM_DISTILLER_STORE = 8,
   DOWNLOAD_STORE = 9,
+  CACHED_IMAGE_METADATA_STORE = 10,
+  FEED_CONTENT_DATABASE = 11,
+  FEED_JOURNAL_DATABASE = 12,
+  REMOTE_SUGGESTIONS_DATABASE = 13,
+  REMOTE_SUGGESTIONS_IMAGE_DATABASE = 14,
+  NOTIFICATION_SCHEDULER_ICON_STORE = 15,
+  NOTIFICATION_SCHEDULER_IMPRESSION_STORE = 16,
+  NOTIFICATION_SCHEDULER_NOTIFICATION_STORE = 17,
+  BUDGET_DATABASE = 18,
+  STRIKE_DATABASE = 19,
+  HINT_CACHE_STORE = 20,
 
   LAST,
 };
@@ -34,6 +45,9 @@ enum class ProtoDbType {
 // List of databases that were introduced after shared db implementation was
 // created. These will be forced to use shared database implementation.
 constexpr ProtoDbType kWhitelistedDbForSharedImpl[]{
+    ProtoDbType::NOTIFICATION_SCHEDULER_ICON_STORE,
+    ProtoDbType::NOTIFICATION_SCHEDULER_IMPRESSION_STORE,
+    ProtoDbType::NOTIFICATION_SCHEDULER_NOTIFICATION_STORE,
     ProtoDbType::LAST,  // Marks the end of list.
 };
 
@@ -49,7 +63,7 @@ class SharedProtoDatabaseClientList {
   static bool ShouldUseSharedDB(ProtoDbType db_type);
 
   // Converts a ProtoDbType to a string, which is used for UMA metrics and field
-  // trials. The strings returned should match the strings on histograms.xml
+  // trials.
   static std::string ProtoDbTypeToString(ProtoDbType db_type);
 };
 

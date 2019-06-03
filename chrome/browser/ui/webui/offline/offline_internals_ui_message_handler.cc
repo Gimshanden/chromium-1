@@ -93,10 +93,10 @@ void OfflineInternalsUIMessageHandler::HandleDeleteSelectedPages(
   std::string callback_id;
   CHECK(args->GetString(0, &callback_id));
 
-  std::vector<int64_t> offline_ids;
   const base::ListValue* offline_ids_from_arg;
   args->GetList(1, &offline_ids_from_arg);
 
+  std::vector<int64_t> offline_ids;
   for (size_t i = 0; i < offline_ids_from_arg->GetSize(); i++) {
     std::string value;
     offline_ids_from_arg->GetString(i, &value);
@@ -105,8 +105,10 @@ void OfflineInternalsUIMessageHandler::HandleDeleteSelectedPages(
     offline_ids.push_back(int_value);
   }
 
-  offline_page_model_->DeletePagesByOfflineId(
-      offline_ids,
+  offline_pages::PageCriteria criteria;
+  criteria.offline_ids = std::move(offline_ids);
+  offline_page_model_->DeletePagesWithCriteria(
+      criteria,
       base::Bind(&OfflineInternalsUIMessageHandler::HandleDeletedPagesCallback,
                  weak_ptr_factory_.GetWeakPtr(), callback_id));
 }
@@ -259,25 +261,26 @@ void OfflineInternalsUIMessageHandler::HandleGetNetworkStatus(
 void OfflineInternalsUIMessageHandler::HandleScheduleNwake(
     const base::ListValue* args) {
   AllowJavascript();
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
+  CHECK(!args->GetList().empty());
+  base::Value callback_id = args->GetList()[0].Clone();
 
   if (prefetch_service_) {
     prefetch_service_->GetGCMToken(base::BindOnce(
         &OfflineInternalsUIMessageHandler::ScheduleNwakeWithGCMToken,
-        weak_ptr_factory_.GetWeakPtr(), callback_id));
+        weak_ptr_factory_.GetWeakPtr(), std::move(callback_id)));
   } else {
-    RejectJavascriptCallback(*callback_id,
+    RejectJavascriptCallback(callback_id,
                              base::Value("No prefetch service available."));
   }
 }
 
 void OfflineInternalsUIMessageHandler::ScheduleNwakeWithGCMToken(
-    const base::Value* callback_id,
+    base::Value callback_id,
     const std::string& gcm_token) {
+  prefetch_service_->ForceRefreshSuggestions();
   prefetch_service_->GetPrefetchBackgroundTaskHandler()->EnsureTaskScheduled(
       gcm_token);
-  ResolveJavascriptCallback(*callback_id, base::Value("Scheduled."));
+  ResolveJavascriptCallback(callback_id, base::Value("Scheduled."));
 }
 
 void OfflineInternalsUIMessageHandler::HandleCancelNwake(
@@ -455,7 +458,8 @@ void OfflineInternalsUIMessageHandler::HandleSetPrefetchTestingHeader(
   offline_pages::prefetch_prefs::SetPrefetchTestingHeader(
       prefs, args->GetList()[0].GetString());
 
-  offline_pages::prefetch_prefs::SetEnabledByServer(prefs, true);
+  if (prefetch_service_)
+    prefetch_service_->SetEnabledByServer(prefs, true);
 }
 
 void OfflineInternalsUIMessageHandler::HandleGetPrefetchTestingHeader(
@@ -670,8 +674,8 @@ void OfflineInternalsUIMessageHandler::RegisterMessages() {
       offline_pages::OfflinePageModelFactory::GetForBrowserContext(profile);
   request_coordinator_ =
       offline_pages::RequestCoordinatorFactory::GetForBrowserContext(profile);
-  prefetch_service_ =
-      offline_pages::PrefetchServiceFactory::GetForBrowserContext(profile);
+  prefetch_service_ = offline_pages::PrefetchServiceFactory::GetForKey(
+      profile->GetProfileKey());
 }
 
 void OfflineInternalsUIMessageHandler::OnJavascriptDisallowed() {

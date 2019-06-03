@@ -12,10 +12,13 @@ import org.chromium.chrome.browser.compositor.layouts.EmptyOverviewModeObserver;
 import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
+import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.browser.toolbar.bottom.BottomControlsCoordinator;
@@ -63,6 +66,10 @@ public class TabGroupUiMediator {
     private final ThemeColorProvider mThemeColorProvider;
     private final ThemeColorProvider.ThemeColorObserver mThemeColorObserver;
     private final ThemeColorProvider.TintObserver mTintObserver;
+    private final TabModelSelectorTabObserver mTabModelSelectorTabObserver;
+    private final TabModelSelectorObserver mTabModelSelectorObserver;
+    private boolean mIsTabGroupUiVisible;
+    private boolean mIsClosingAGroup;
 
     TabGroupUiMediator(
             BottomControlsCoordinator.BottomControlsVisibilityController visibilityController,
@@ -81,10 +88,20 @@ public class TabGroupUiMediator {
         mTabModelObserver = new EmptyTabModelObserver() {
             @Override
             public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
-                if (type == TabSelectionType.FROM_CLOSE
-                        || getRelatedTabsForId(lastId).contains(tab))
-                    return;
+                if (!mIsTabGroupUiVisible) return;
+                if (type == TabSelectionType.FROM_CLOSE && !mIsClosingAGroup) return;
+                if (getRelatedTabsForId(lastId).contains(tab)) return;
                 resetTabStripWithRelatedTabsForId(tab.getId());
+            }
+
+            @Override
+            public void willCloseTab(Tab tab, boolean animate) {
+                if (!mIsTabGroupUiVisible) return;
+                List<Tab> group = mTabModelSelector.getTabModelFilterProvider()
+                                          .getCurrentTabModelFilter()
+                                          .getRelatedTabList(tab.getId());
+
+                mIsClosingAGroup = group.size() == 0;
             }
 
             @Override
@@ -114,7 +131,7 @@ public class TabGroupUiMediator {
             }
         };
 
-        new TabModelSelectorTabObserver(mTabModelSelector) {
+        mTabModelSelectorTabObserver = new TabModelSelectorTabObserver(mTabModelSelector) {
             @Override
             public void onPageLoadStarted(Tab tab, String url) {
                 List<Tab> listOfTabs = mTabModelSelector.getTabModelFilterProvider()
@@ -122,9 +139,17 @@ public class TabGroupUiMediator {
                                                .getRelatedTabList(tab.getId());
                 int numTabs = listOfTabs.size();
                 // This is set to zero because the UI is hidden.
-                if (numTabs < 2) numTabs = 0;
-
+                if (!mIsTabGroupUiVisible) numTabs = 0;
                 RecordHistogram.recordCountHistogram("TabStrip.TabCountOnPageLoad", numTabs);
+            }
+        };
+
+        mTabModelSelectorObserver = new EmptyTabModelSelectorObserver() {
+            @Override
+            public void onTabModelSelected(TabModel newModel, TabModel oldModel) {
+                if (newModel.isIncognito() && newModel.getCount() == 1) {
+                    resetTabStripWithRelatedTabsForId(newModel.getTabAt(0).getId());
+                }
             }
         };
 
@@ -134,6 +159,7 @@ public class TabGroupUiMediator {
                 useLight) -> mToolbarPropertyModel.set(TabStripToolbarViewProperties.TINT, tint);
 
         mTabModelSelector.getTabModelFilterProvider().addTabModelFilterObserver(mTabModelObserver);
+        mTabModelSelector.addObserver(mTabModelSelectorObserver);
         mOverviewModeBehavior.addOverviewModeObserver(mOverviewModeObserver);
         mThemeColorProvider.addThemeColorObserver(mThemeColorObserver);
         mThemeColorProvider.addTintObserver(mTintObserver);
@@ -175,11 +201,12 @@ public class TabGroupUiMediator {
                                        .getRelatedTabList(id);
         if (listOfTabs.size() < 2) {
             mResetHandler.resetStripWithListOfTabs(null);
-            mVisibilityController.setBottomControlsVisible(false);
+            mIsTabGroupUiVisible = false;
         } else {
             mResetHandler.resetStripWithListOfTabs(listOfTabs);
-            mVisibilityController.setBottomControlsVisible(true);
+            mIsTabGroupUiVisible = true;
         }
+        mVisibilityController.setBottomControlsVisible(mIsTabGroupUiVisible);
     }
 
     private List<Tab> getRelatedTabsForId(int id) {
@@ -196,5 +223,7 @@ public class TabGroupUiMediator {
         mOverviewModeBehavior.removeOverviewModeObserver(mOverviewModeObserver);
         mThemeColorProvider.removeThemeColorObserver(mThemeColorObserver);
         mThemeColorProvider.removeTintObserver(mTintObserver);
+        mTabModelSelector.removeObserver(mTabModelSelectorObserver);
+        mTabModelSelectorTabObserver.destroy();
     }
 }

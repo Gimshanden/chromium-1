@@ -27,6 +27,7 @@
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/security_events/security_event_recorder_factory.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
@@ -41,6 +42,8 @@
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "chrome/common/buildflags.h"
+#include "chrome/common/channel_info.h"
+#include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/impl/profile_identity_provider.h"
@@ -141,6 +144,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(invalidation::ProfileInvalidationProviderFactory::GetInstance());
   DependsOn(ModelTypeStoreServiceFactory::GetInstance());
   DependsOn(PasswordStoreFactory::GetInstance());
+  DependsOn(SecurityEventRecorderFactory::GetInstance());
   DependsOn(SendTabToSelfSyncServiceFactory::GetInstance());
   DependsOn(SpellcheckServiceFactory::GetInstance());
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
@@ -183,6 +187,7 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
           ->GetURLLoaderFactoryForBrowserProcess();
   init_params.network_connection_tracker =
       content::GetNetworkConnectionTracker();
+  init_params.channel = chrome::GetChannel();
   init_params.debug_identifier = profile->GetDebugName();
   init_params.autofill_enable_account_wallet_storage =
       base::FeatureList::IsEnabled(
@@ -261,6 +266,12 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
   auto pss =
       std::make_unique<syncer::ProfileSyncService>(std::move(init_params));
   pss->Initialize();
+
+  // Hook PSS into PersonalDataManager (a circular dependency).
+  autofill::PersonalDataManager* pdm =
+      autofill::PersonalDataManagerFactory::GetForProfile(profile);
+  pdm->OnSyncServiceInitialized(pss.get());
+
   return pss.release();
 }
 

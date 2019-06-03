@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/rail_mode_observer.h"
 #include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace base {
 namespace trace_event {
@@ -119,6 +120,10 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
     // (crbug.com/860545).
     bool use_resource_fetch_priority;
     bool use_resource_priorities_only_during_loading;
+
+    // Compositor priority experiment (crbug.com/966177).
+    bool compositor_very_high_priority_always;
+    bool compositor_very_high_priority_when_fast;
 
     // Contains a mapping from net::RequestPriority to TaskQueue::QueuePriority
     // when use_resource_fetch_priority is enabled.
@@ -368,9 +373,10 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
       const base::sequence_manager::TaskQueue::TaskTiming& task_timing);
 
   void OnTaskCompleted(
-      MainThreadTaskQueue* queue,
+      base::WeakPtr<MainThreadTaskQueue> queue,
       const base::sequence_manager::Task& task,
-      const base::sequence_manager::TaskQueue::TaskTiming& task_timing);
+      base::sequence_manager::TaskQueue::TaskTiming* task_timing,
+      base::sequence_manager::LazyNow* lazy_now);
 
   bool IsAudioPlaying() const;
 
@@ -383,6 +389,11 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
   const SchedulingSettings& scheduling_settings() const;
 
   void SetShouldPrioritizeCompositing(bool should_prioritize_compositing);
+
+  // Allow places in the scheduler to do some work after the current task.
+  // The primary use case here is batching – to allow updates to be processed
+  // only once per task.
+  void ExecuteAfterCurrentTask(base::OnceClosure on_completion_task);
 
   base::WeakPtr<MainThreadSchedulerImpl> GetWeakPtr();
 
@@ -403,6 +414,8 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
   }
 
   void SetHaveSeenABlockingGestureForTesting(bool status);
+
+  virtual void PerformMicrotaskCheckpoint();
 
  private:
   friend class WebRenderWidgetSchedulingState;
@@ -571,6 +584,7 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
   void OnIdlePeriodStarted() override;
   void OnIdlePeriodEnded() override;
   void OnPendingTasksChanged(bool has_tasks) override;
+  void SetHasSafepoint() override;
 
   void DispatchRequestBeginMainFrameNotExpected(bool has_tasks);
 
@@ -707,6 +721,10 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
 
   void ShutdownAllQueues();
 
+  // Dispatch the callbacks which requested to be executed after the current
+  // task.
+  void DispatchOnTaskCompletionCallbacks();
+
   // Indicates that scheduler has been shutdown.
   // It should be accessed only on the main thread, but couldn't be a member
   // of MainThreadOnly struct because last might be destructed before we
@@ -725,6 +743,7 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
   // initialized first and can be used everywhere.
   const SchedulingSettings scheduling_settings_;
 
+  std::unique_ptr<base::sequence_manager::SequenceManager> sequence_manager_;
   MainThreadSchedulerHelper helper_;
   IdleHelper idle_helper_;
   std::unique_ptr<TaskQueueThrottler> task_queue_throttler_;
@@ -865,6 +884,12 @@ class PLATFORM_EXPORT MainThreadSchedulerImpl
     // High-priority for compositing events after input experiment.
     PrioritizeCompositingAfterInputExperiment compositing_experiment;
     bool should_prioritize_compositing;
+
+    // True if a task has a safepoint.
+    bool has_safepoint;
+
+    // List of callbacks to execute after the current task.
+    WTF::Vector<base::OnceClosure> on_task_completion_callbacks;
   };
 
   struct AnyThread {

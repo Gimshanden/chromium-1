@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/core/svg/properties/svg_property_info.h"
 #include "third_party/blink/renderer/core/svg/properties/svg_property_tear_off.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 
 namespace blink {
@@ -234,14 +235,16 @@ template <typename Property, typename TearOffType>
 class SVGAnimatedProperty<Property, TearOffType, void>
     : public SVGAnimatedPropertyCommon<Property> {
  public:
-  static SVGAnimatedProperty<Property>* Create(
-      SVGElement* context_element,
-      const QualifiedName& attribute_name,
-      Property* initial_value,
-      CSSPropertyID css_property_id = CSSPropertyID::kInvalid) {
-    return new SVGAnimatedProperty<Property>(context_element, attribute_name,
-                                             initial_value, css_property_id);
-  }
+  SVGAnimatedProperty(SVGElement* context_element,
+                      const QualifiedName& attribute_name,
+                      Property* initial_value,
+                      CSSPropertyID css_property_id = CSSPropertyID::kInvalid,
+                      unsigned initial_value_bits = 0)
+      : SVGAnimatedPropertyCommon<Property>(context_element,
+                                            attribute_name,
+                                            initial_value,
+                                            css_property_id,
+                                            initial_value_bits) {}
 
   void SetAnimatedValue(SVGPropertyBase* value) override {
     SVGAnimatedPropertyCommon<Property>::SetAnimatedValue(value);
@@ -259,16 +262,16 @@ class SVGAnimatedProperty<Property, TearOffType, void>
   // Use currentValue() from C++ code.
   virtual TearOffType* baseVal() {
     if (!base_val_tear_off_) {
-      base_val_tear_off_ =
-          TearOffType::Create(this->BaseValue(), this, kPropertyIsNotAnimVal);
+      base_val_tear_off_ = MakeGarbageCollected<TearOffType>(
+          this->BaseValue(), this, kPropertyIsNotAnimVal);
     }
     return base_val_tear_off_;
   }
 
   TearOffType* animVal() {
     if (!anim_val_tear_off_) {
-      anim_val_tear_off_ =
-          TearOffType::Create(this->CurrentValue(), this, kPropertyIsAnimVal);
+      anim_val_tear_off_ = MakeGarbageCollected<TearOffType>(
+          this->CurrentValue(), this, kPropertyIsAnimVal);
     }
     return anim_val_tear_off_;
   }
@@ -278,18 +281,6 @@ class SVGAnimatedProperty<Property, TearOffType, void>
     visitor->Trace(anim_val_tear_off_);
     SVGAnimatedPropertyCommon<Property>::Trace(visitor);
   }
-
- protected:
-  SVGAnimatedProperty(SVGElement* context_element,
-                      const QualifiedName& attribute_name,
-                      Property* initial_value,
-                      CSSPropertyID css_property_id = CSSPropertyID::kInvalid,
-                      unsigned initial_value_bits = 0)
-      : SVGAnimatedPropertyCommon<Property>(context_element,
-                                            attribute_name,
-                                            initial_value,
-                                            css_property_id,
-                                            initial_value_bits) {}
 
  private:
   void UpdateAnimValTearOffIfNeeded() {
@@ -313,16 +304,6 @@ template <typename Property>
 class SVGAnimatedProperty<Property, void, void>
     : public SVGAnimatedPropertyCommon<Property> {
  public:
-  static SVGAnimatedProperty<Property>* Create(
-      SVGElement* context_element,
-      const QualifiedName& attribute_name,
-      Property* initial_value,
-      CSSPropertyID css_property_id = CSSPropertyID::kInvalid) {
-    return new SVGAnimatedProperty<Property>(context_element, attribute_name,
-                                             initial_value, css_property_id);
-  }
-
- protected:
   SVGAnimatedProperty(SVGElement* context_element,
                       const QualifiedName& attribute_name,
                       Property* initial_value,

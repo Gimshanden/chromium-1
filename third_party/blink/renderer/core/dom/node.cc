@@ -99,7 +99,6 @@
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/page/context_menu_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/scrolling/root_scroller_util.h"
@@ -225,9 +224,9 @@ void Node::DumpStatistics() {
     for (Node* node : liveNodeSet()) {
       if (node->hasRareData()) {
         ++nodesWithRareData;
-        if (node->isElementNode()) {
+        if (auto* element = DynamicTo<Element>(node)) {
           ++elementsWithRareData;
-          if (toElement(node)->hasNamedNodeMap())
+          if (element->hasNamedNodeMap())
             ++elementsWithNamedNodeMap;
         }
       }
@@ -237,7 +236,7 @@ void Node::DumpStatistics() {
           ++elementNodes;
 
           // Tag stats
-          Element* element = toElement(node);
+          auto* element = To<Element>(node);
           HashMap<String, size_t>::AddResult result =
               perTagCount.add(element->tagName(), 1);
           if (!result.isNewEntry)
@@ -395,9 +394,9 @@ ContainerNode* Node::ParentNodeWithCounting() const {
 
 NodeList* Node::childNodes() {
   ThreadState::MainThreadGCForbiddenScope gc_forbidden;
-  if (IsContainerNode())
-    return EnsureRareData().EnsureNodeLists().EnsureChildNodeList(
-        ToContainerNode(*this));
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  if (this_node)
+    return EnsureRareData().EnsureNodeLists().EnsureChildNodeList(*this_node);
   return EnsureRareData().EnsureNodeLists().EnsureEmptyChildNodeList(*this);
 }
 
@@ -424,8 +423,7 @@ Node* Node::PseudoAwareNextSibling() const {
 }
 
 Node* Node::PseudoAwareFirstChild() const {
-  if (IsElementNode()) {
-    const Element* current_element = ToElement(this);
+  if (const auto* current_element = DynamicTo<Element>(this)) {
     Node* first = current_element->GetPseudoElement(kPseudoIdBefore);
     if (first)
       return first;
@@ -439,8 +437,7 @@ Node* Node::PseudoAwareFirstChild() const {
 }
 
 Node* Node::PseudoAwareLastChild() const {
-  if (IsElementNode()) {
-    const Element* current_element = ToElement(this);
+  if (const auto* current_element = DynamicTo<Element>(this)) {
     Node* last = current_element->GetPseudoElement(kPseudoIdAfter);
     if (last)
       return last;
@@ -544,7 +541,7 @@ void Node::NativeApplyScroll(ScrollState& scroll_state) {
 
   ScrollResult result = scrollable_area->UserScroll(
       ScrollGranularity(static_cast<int>(scroll_state.deltaGranularity())),
-      delta);
+      delta, ScrollableArea::ScrollCallback());
 
   if (!result.DidScroll())
     return;
@@ -667,9 +664,9 @@ void Node::DidEndCustomizedScrollPhase() {
 Node* Node::insertBefore(Node* new_child,
                          Node* ref_child,
                          ExceptionState& exception_state) {
-  if (IsContainerNode())
-    return ToContainerNode(this)->InsertBefore(new_child, ref_child,
-                                               exception_state);
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  if (this_node)
+    return this_node->InsertBefore(new_child, ref_child, exception_state);
 
   exception_state.ThrowDOMException(
       DOMExceptionCode::kHierarchyRequestError,
@@ -684,9 +681,9 @@ Node* Node::insertBefore(Node* new_child, Node* ref_child) {
 Node* Node::replaceChild(Node* new_child,
                          Node* old_child,
                          ExceptionState& exception_state) {
-  if (IsContainerNode())
-    return ToContainerNode(this)->ReplaceChild(new_child, old_child,
-                                               exception_state);
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  if (this_node)
+    return this_node->ReplaceChild(new_child, old_child, exception_state);
 
   exception_state.ThrowDOMException(
       DOMExceptionCode::kHierarchyRequestError,
@@ -699,8 +696,9 @@ Node* Node::replaceChild(Node* new_child, Node* old_child) {
 }
 
 Node* Node::removeChild(Node* old_child, ExceptionState& exception_state) {
-  if (IsContainerNode())
-    return ToContainerNode(this)->RemoveChild(old_child, exception_state);
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  if (this_node)
+    return this_node->RemoveChild(old_child, exception_state);
 
   exception_state.ThrowDOMException(
       DOMExceptionCode::kNotFoundError,
@@ -713,8 +711,9 @@ Node* Node::removeChild(Node* old_child) {
 }
 
 Node* Node::appendChild(Node* new_child, ExceptionState& exception_state) {
-  if (IsContainerNode())
-    return ToContainerNode(this)->AppendChild(new_child, exception_state);
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  if (this_node)
+    return this_node->AppendChild(new_child, exception_state);
 
   exception_state.ThrowDOMException(
       DOMExceptionCode::kHierarchyRequestError,
@@ -875,7 +874,7 @@ void Node::normalize() {
       break;
 
     if (node->getNodeType() == kTextNode)
-      node = ToText(node)->MergeNextSiblingNodesIfPossible();
+      node = To<Text>(node)->MergeNextSiblingNodesIfPossible();
     else
       node = NodeTraversal::NextPostOrder(*node);
   }
@@ -960,8 +959,9 @@ LayoutRect Node::BoundingBox() const {
 
 LayoutRect Node::BoundingBoxForScrollIntoView() const {
   if (GetLayoutObject()) {
-    return LayoutRect(
-        GetLayoutObject()->AbsoluteBoundingBoxRectForScrollIntoView());
+    return GetLayoutObject()
+        ->AbsoluteBoundingBoxRectForScrollIntoView()
+        .ToLayoutRect();
   }
 
   return LayoutRect();
@@ -1056,7 +1056,7 @@ void Node::RecalcDistribution() {
 }
 
 void Node::SetIsLink(bool is_link) {
-  SetFlag(is_link && !SVGImage::IsInSVGImage(ToElement(this)), kIsLinkFlag);
+  SetFlag(is_link && !SVGImage::IsInSVGImage(To<Element>(this)), kIsLinkFlag);
 }
 
 void Node::SetNeedsStyleInvalidation() {
@@ -1109,9 +1109,9 @@ void Node::MarkAncestorsWithChildNeedsStyleRecalc() {
     // If we reach a locked ancestor, we should abort since the ancestor marking
     // will be done when the lock is committed.
     if (RuntimeEnabledFeatures::DisplayLockingEnabled()) {
-      if (ancestor->IsElementNode() &&
-          ToElement(ancestor)->StyleRecalcBlockedByDisplayLock(
-              DisplayLockContext::kChildren)) {
+      auto* ancestor_element = DynamicTo<Element>(ancestor);
+      if (ancestor_element && ancestor_element->StyleRecalcBlockedByDisplayLock(
+                                  DisplayLockContext::kChildren)) {
         break;
       }
     }
@@ -1131,10 +1131,10 @@ void Node::MarkAncestorsWithChildNeedsStyleRecalc() {
       GetDocument().LockedDisplayLockCount() > 0) {
     for (auto* ancestor_copy = ancestor; ancestor_copy;
          ancestor_copy = ancestor_copy->ParentOrShadowHostNode()) {
-      if (ancestor_copy->IsElementNode() &&
-          ToElement(ancestor_copy)
-              ->StyleRecalcBlockedByDisplayLock(
-                  DisplayLockContext::kChildren)) {
+      auto* ancestor_copy_element = DynamicTo<Element>(ancestor_copy);
+      if (ancestor_copy_element &&
+          ancestor_copy_element->StyleRecalcBlockedByDisplayLock(
+              DisplayLockContext::kChildren)) {
         return;
       }
     }
@@ -1206,24 +1206,26 @@ void Node::SetNeedsStyleRecalc(StyleChangeType change_type,
   if (change_type > existing_change_type)
     SetStyleChange(change_type);
 
+  auto* this_element = DynamicTo<Element>(this);
   if (existing_change_type == kNoStyleChange &&
-      (!IsElementNode() || !ToElement(this)->StyleRecalcBlockedByDisplayLock(
-                               DisplayLockContext::kSelf)))
+      (!this_element || !this_element->StyleRecalcBlockedByDisplayLock(
+                            DisplayLockContext::kSelf)))
     MarkAncestorsWithChildNeedsStyleRecalc();
 
-  if (IsElementNode() && HasRareData())
-    ToElement(*this).SetAnimationStyleChange(false);
+  if (this_element && HasRareData())
+    this_element->SetAnimationStyleChange(false);
 
-  if (IsSVGElement())
-    ToSVGElement(this)->SetNeedsStyleRecalcForInstances(change_type, reason);
+  if (auto* svg_element = DynamicTo<SVGElement>(this))
+    svg_element->SetNeedsStyleRecalcForInstances(change_type, reason);
 }
 
 void Node::ClearNeedsStyleRecalc() {
   node_flags_ &= ~kStyleChangeMask;
   ClearFlag(kForceReattachLayoutTree);
 
-  if (IsElementNode() && HasRareData())
-    ToElement(*this).SetAnimationStyleChange(false);
+  auto* element = DynamicTo<Element>(this);
+  if (element && HasRareData())
+    element->SetAnimationStyleChange(false);
 }
 
 bool Node::InActiveDocument() const {
@@ -1256,9 +1258,10 @@ bool Node::IsInert() const {
   }
 
   if (RuntimeEnabledFeatures::InertAttributeEnabled()) {
-    const Element* element = IsElementNode()
-                                 ? ToElement(this)
-                                 : FlatTreeTraversal::ParentElement(*this);
+    const auto* element = DynamicTo<Element>(this);
+    if (!element)
+      element = FlatTreeTraversal::ParentElement(*this);
+
     while (element) {
       if (element->hasAttribute(html_names::kInertAttr))
         return true;
@@ -1320,27 +1323,30 @@ bool Node::contains(const Node* node) const {
   return this == node || node->IsDescendantOf(this);
 }
 
-bool Node::IsShadowIncludingInclusiveAncestorOf(const Node* node) const {
-  if (!node)
+bool Node::IsShadowIncludingInclusiveAncestorOf(const Node& node) const {
+  return this == &node || IsShadowIncludingAncestorOf(node);
+}
+
+bool Node::IsShadowIncludingAncestorOf(const Node& node) const {
+  // In the following case, contains(host) below returns true.
+  if (this == &node)
     return false;
 
-  if (this == node)
-    return true;
-
-  if (GetDocument() != node->GetDocument())
+  if (GetDocument() != node.GetDocument())
     return false;
 
-  if (isConnected() != node->isConnected())
+  if (isConnected() != node.isConnected())
     return false;
 
-  bool has_children = IsContainerNode() && ToContainerNode(this)->HasChildren();
+  auto* this_node = DynamicTo<ContainerNode>(this);
+  bool has_children = this_node ? this_node->HasChildren() : false;
   bool has_shadow = IsShadowHost(this);
   if (!has_children && !has_shadow)
     return false;
 
-  for (; node; node = node->OwnerShadowHost()) {
-    if (GetTreeScope() == node->GetTreeScope())
-      return contains(node);
+  for (const Node* host = &node; host; host = host->OwnerShadowHost()) {
+    if (GetTreeScope() == host->GetTreeScope())
+      return contains(host);
   }
 
   return false;
@@ -1351,8 +1357,8 @@ bool Node::ContainsIncludingHostElements(const Node& node) const {
   do {
     if (current == this)
       return true;
-    if (current->IsDocumentFragment() &&
-        ToDocumentFragment(current)->IsTemplateContent())
+    auto* curr_fragment = DynamicTo<DocumentFragment>(current);
+    if (curr_fragment && curr_fragment->IsTemplateContent())
       current =
           static_cast<const TemplateContentDocumentFragment*>(current)->Host();
     else
@@ -1409,6 +1415,8 @@ void Node::ReattachLayoutTree(AttachContext& context) {
 void Node::AttachLayoutTree(AttachContext& context) {
   DCHECK(GetDocument().InStyleRecalc() || IsDocumentNode());
   DCHECK(!GetDocument().Lifecycle().InDetach());
+  DCHECK(!context.performing_reattach ||
+         GetDocument().GetStyleEngine().InRebuildLayoutTree());
 
   LayoutObject* layout_object = GetLayoutObject();
   DCHECK(!layout_object ||
@@ -1423,6 +1431,8 @@ void Node::AttachLayoutTree(AttachContext& context) {
 
 void Node::DetachLayoutTree(const AttachContext& context) {
   DCHECK(GetDocument().Lifecycle().StateAllowsDetach());
+  DCHECK(!context.performing_reattach ||
+         GetDocument().GetStyleEngine().InRebuildLayoutTree());
   DocumentLifecycle::DetachScope will_detach(GetDocument().Lifecycle());
   if (GetLayoutObject())
     GetLayoutObject()->DestroyAndCleanupAnonymousWrappers();
@@ -1435,25 +1445,6 @@ const ComputedStyle* Node::VirtualEnsureComputedStyle(
              ? ParentOrShadowHostNode()->EnsureComputedStyle(
                    pseudo_element_specifier)
              : nullptr;
-}
-
-void Node::LazyReattachIfAttached() {
-  if (!InActiveDocument())
-    return;
-  if (!IsContainerNode() && !IsTextNode())
-    return;
-
-  AttachContext context;
-  context.performing_reattach = true;
-  DetachLayoutTree(context);
-
-  if (GetDocument().GetStyleEngine().InRebuildLayoutTree())
-    return;
-
-  SetFlag(kForceReattachLayoutTree);
-  SetNeedsStyleRecalc(
-      kSubtreeStyleChange,
-      StyleChangeReasonForTracing::Create(style_change_reason::kLazyReattach));
 }
 
 void Node::SetForceReattachLayoutTree() {
@@ -1502,9 +1493,10 @@ bool Node::CanStartSelection() const {
 // eliminate all the checks since those elements will never have class names,
 // inline style, or other things that this apparently guards against.
 bool Node::IsStyledElement() const {
+  auto* this_element = DynamicTo<Element>(this);
   return IsHTMLElement() || IsSVGElement() ||
-         (IsElementNode() &&
-          ToElement(this)->namespaceURI() == mathml_names::kNamespaceURI);
+         (this_element &&
+          this_element->namespaceURI() == mathml_names::kNamespaceURI);
 }
 
 bool Node::CanParticipateInFlatTree() const {
@@ -1521,7 +1513,7 @@ AtomicString Node::SlotName() const {
   DCHECK(IsSlotable());
   if (IsElementNode()) {
     return HTMLSlotElement::NormalizeSlotName(
-        ToElement(*this).FastGetAttribute(html_names::kSlotAttr));
+        To<Element>(*this).FastGetAttribute(html_names::kSlotAttr));
   }
   DCHECK(IsTextNode());
   return g_empty_atom;
@@ -1596,14 +1588,12 @@ Element* Node::ParentOrShadowHostElement() const {
   if (auto* shadow_root = DynamicTo<ShadowRoot>(parent))
     return &shadow_root->host();
 
-  if (!parent->IsElementNode())
-    return nullptr;
-
-  return ToElement(parent);
+  return DynamicTo<Element>(parent);
 }
 
 ContainerNode* Node::ParentOrShadowHostOrTemplateHostNode() const {
-  if (IsDocumentFragment() && ToDocumentFragment(this)->IsTemplateContent())
+  auto* this_fragment = DynamicTo<DocumentFragment>(this);
+  if (this_fragment && this_fragment->IsTemplateContent())
     return static_cast<const TemplateContentDocumentFragment*>(this)->Host();
   return ParentOrShadowHostNode();
 }
@@ -1628,17 +1618,19 @@ bool Node::isEqualNode(Node* other) const {
   if (nodeValue() != other->nodeValue())
     return false;
 
-  if (IsAttributeNode()) {
-    if (ToAttr(this)->localName() != ToAttr(other)->localName())
+  if (auto* this_attr = DynamicTo<Attr>(this)) {
+    auto* other_attr = To<Attr>(other);
+    if (this_attr->localName() != other_attr->localName())
       return false;
 
-    if (ToAttr(this)->namespaceURI() != ToAttr(other)->namespaceURI())
+    if (this_attr->namespaceURI() != other_attr->namespaceURI())
       return false;
-  } else if (IsElementNode()) {
-    if (ToElement(this)->TagQName() != ToElement(other)->TagQName())
+  } else if (auto* this_element = DynamicTo<Element>(this)) {
+    auto* other_element = DynamicTo<Element>(other);
+    if (this_element->TagQName() != other_element->TagQName())
       return false;
 
-    if (!ToElement(this)->HasEquivalentAttributes(ToElement(*other)))
+    if (!this_element->HasEquivalentAttributes(*other_element))
       return false;
   } else if (nodeName() != other->nodeName()) {
     return false;
@@ -1658,9 +1650,8 @@ bool Node::isEqualNode(Node* other) const {
   if (other_child)
     return false;
 
-  if (IsDocumentTypeNode()) {
-    const DocumentType* document_type_this = ToDocumentType(this);
-    const DocumentType* document_type_other = ToDocumentType(other);
+  if (const auto* document_type_this = DynamicTo<DocumentType>(this)) {
+    const auto* document_type_other = To<DocumentType>(other);
 
     if (document_type_this->publicId() != document_type_other->publicId())
       return false;
@@ -1702,7 +1693,7 @@ const AtomicString& Node::lookupPrefix(
 
   switch (getNodeType()) {
     case kElementNode:
-      context = ToElement(this);
+      context = To<Element>(this);
       break;
     case kDocumentNode:
       context = To<Document>(this)->documentElement();
@@ -1712,7 +1703,7 @@ const AtomicString& Node::lookupPrefix(
       context = nullptr;
       break;
     case kAttributeNode:
-      context = ToAttr(this)->ownerElement();
+      context = To<Attr>(this)->ownerElement();
       break;
     default:
       context = parentElement();
@@ -1741,7 +1732,7 @@ const AtomicString& Node::lookupNamespaceURI(
   // https://dom.spec.whatwg.org/#locate-a-namespace
   switch (getNodeType()) {
     case kElementNode: {
-      const Element& element = ToElement(*this);
+      const auto& element = To<Element>(*this);
 
       // 1. If its namespace is not null and its namespace prefix is prefix,
       // then return namespace.
@@ -1782,7 +1773,7 @@ const AtomicString& Node::lookupNamespaceURI(
     case kDocumentFragmentNode:
       return g_null_atom;
     case kAttributeNode: {
-      const Attr* attr = ToAttr(this);
+      const auto* attr = To<Attr>(this);
       if (attr->ownerElement())
         return attr->ownerElement()->lookupNamespaceURI(prefix);
       return g_null_atom;
@@ -1798,12 +1789,12 @@ String Node::textContent(bool convert_brs_to_newlines) const {
   // This covers ProcessingInstruction and Comment that should return their
   // value when .textContent is accessed on them, but should be ignored when
   // iterated over as a descendant of a ContainerNode.
-  if (IsCharacterDataNode())
-    return ToCharacterData(this)->data();
+  if (auto* character_data = DynamicTo<CharacterData>(this))
+    return character_data->data();
 
   // Attribute nodes have their attribute values as textContent.
-  if (IsAttributeNode())
-    return ToAttr(this)->value();
+  if (auto* attr = DynamicTo<Attr>(this))
+    return attr->value();
 
   // Documents and non-container nodes (that are not CharacterData)
   // have null textContent.
@@ -1814,8 +1805,8 @@ String Node::textContent(bool convert_brs_to_newlines) const {
   for (const Node& node : NodeTraversal::InclusiveDescendantsOf(*this)) {
     if (IsHTMLBRElement(node) && convert_brs_to_newlines) {
       content.Append('\n');
-    } else if (node.IsTextNode()) {
-      content.Append(ToText(node).data());
+    } else if (auto* text_node = DynamicTo<Text>(node)) {
+      content.Append(text_node->data());
     }
   }
   return content.ToString();
@@ -1850,13 +1841,13 @@ void Node::setTextContent(const String& text) {
     case kElementNode:
     case kDocumentFragmentNode: {
       // FIXME: Merge this logic into replaceChildrenWithText.
-      ContainerNode* container = ToContainerNode(this);
+      auto* container = To<ContainerNode>(this);
 
       // Note: This is an intentional optimization.
       // See crbug.com/352836 also.
       // No need to do anything if the text is identical.
       if (container->HasOneTextChild() &&
-          ToText(container->firstChild())->data() == text && !text.IsEmpty())
+          To<Text>(container->firstChild())->data() == text && !text.IsEmpty())
         return;
 
       ChildListMutationScope mutation(*this);
@@ -1884,10 +1875,8 @@ uint16_t Node::compareDocumentPosition(const Node* other_node,
   if (other_node == this)
     return kDocumentPositionEquivalent;
 
-  const Attr* attr1 = getNodeType() == kAttributeNode ? ToAttr(this) : nullptr;
-  const Attr* attr2 = other_node->getNodeType() == kAttributeNode
-                          ? ToAttr(other_node)
-                          : nullptr;
+  const auto* attr1 = DynamicTo<Attr>(this);
+  const Attr* attr2 = DynamicTo<Attr>(other_node);
 
   const Node* start1 = attr1 ? attr1->ownerElement() : this;
   const Node* start2 = attr2 ? attr2->ownerElement() : other_node;
@@ -2019,20 +2008,19 @@ uint16_t Node::compareDocumentPosition(const Node* other_node,
 String Node::DebugName() const {
   StringBuilder name;
   AppendUnsafe(name, DebugNodeName());
-  if (IsElementNode()) {
-    const Element& this_element = ToElement(*this);
-    if (this_element.HasID()) {
+  if (const auto* this_element = DynamicTo<Element>(this)) {
+    if (this_element->HasID()) {
       name.Append(" id=\'");
-      AppendUnsafe(name, this_element.GetIdAttribute());
+      AppendUnsafe(name, this_element->GetIdAttribute());
       name.Append('\'');
     }
 
-    if (this_element.HasClass()) {
+    if (this_element->HasClass()) {
       name.Append(" class=\'");
-      for (wtf_size_t i = 0; i < this_element.ClassNames().size(); ++i) {
+      for (wtf_size_t i = 0; i < this_element->ClassNames().size(); ++i) {
         if (i > 0)
           name.Append(' ');
-        AppendUnsafe(name, this_element.ClassNames()[i]);
+        AppendUnsafe(name, this_element->ClassNames()[i]);
       }
       name.Append('\'');
     }
@@ -2047,9 +2035,10 @@ String Node::DebugNodeName() const {
 static void DumpAttributeDesc(const Node& node,
                               const QualifiedName& name,
                               StringBuilder& builder) {
-  if (!node.IsElementNode())
+  auto* element = DynamicTo<Element>(node);
+  if (!element)
     return;
-  const AtomicString& value = ToElement(node).getAttribute(name);
+  const AtomicString& value = element->getAttribute(name);
   if (value.IsEmpty())
     return;
   builder.Append(' ');
@@ -2099,7 +2088,7 @@ String Node::ToString() const {
   return builder.ToString();
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 String Node::ToTreeStringForThis() const {
   return ToMarkedTreeString(this, "*");
@@ -2127,7 +2116,7 @@ void Node::PrintNodePathTo(std::ostream& stream) const {
       case kElementNode: {
         stream << "/" << node->nodeName().Utf8().data();
 
-        const Element* element = ToElement(node);
+        const auto* element = To<Element>(node);
         const AtomicString& idattr = element->GetIdAttribute();
         bool has_id_attr = !idattr.IsNull() && !idattr.IsEmpty();
         if (node->previousSibling() || node->nextSibling()) {
@@ -2182,18 +2171,17 @@ static void AppendMarkedTree(const String& base_indent,
     builder.Append("\n");
     indent.Append('\t');
 
-    if (node.IsElementNode()) {
-      const Element& element = ToElement(node);
-      if (Element* pseudo = element.GetPseudoElement(kPseudoIdBefore))
+    if (const auto* element = DynamicTo<Element>(node)) {
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdBefore))
         AppendMarkedTree(indent.ToString(), pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
-      if (Element* pseudo = element.GetPseudoElement(kPseudoIdAfter))
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdAfter))
         AppendMarkedTree(indent.ToString(), pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
-      if (Element* pseudo = element.GetPseudoElement(kPseudoIdFirstLetter))
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdFirstLetter))
         AppendMarkedTree(indent.ToString(), pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
-      if (Element* pseudo = element.GetPseudoElement(kPseudoIdBackdrop))
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdBackdrop))
         AppendMarkedTree(indent.ToString(), pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
     }
@@ -2314,7 +2302,7 @@ Element* Node::EnclosingLinkEventParentOrSelf() const {
     if (node->IsLink() && !IsHTMLImageElement(*node)) {
       // Casting to Element is safe because only HTMLAnchorElement,
       // HTMLImageElement and SVGAElement can return true for isLink().
-      return ToElement(const_cast<Node*>(node));
+      return To<Element>(const_cast<Node*>(node));
     }
   }
 
@@ -2337,11 +2325,11 @@ void Node::WillMoveToNewDocument(Document& old_document,
 
   old_document.GetFrame()->GetEventHandlerRegistry().DidMoveOutOfPage(*this);
 
-  if (IsElementNode()) {
+  if (auto* this_element = DynamicTo<Element>(this)) {
     StylePropertyMapReadOnly* computed_style_map_item =
-        old_document.RemoveComputedStyleMapItem(ToElement(this));
+        old_document.RemoveComputedStyleMapItem(this_element);
     if (computed_style_map_item) {
-      new_document.AddComputedStyleMapItem(ToElement(this),
+      new_document.AddComputedStyleMapItem(this_element,
                                            computed_style_map_item);
     }
   }
@@ -2358,8 +2346,8 @@ void Node::DidMoveToNewDocument(Document& old_document) {
         GetDocument().AddListenerTypeIfNeeded(type, *this);
     }
   }
-  if (IsTextNode())
-    old_document.Markers().RemoveMarkersForNode(*ToText(this));
+  if (auto* text_node = DynamicTo<Text>(this))
+    old_document.Markers().RemoveMarkersForNode(*text_node);
   if (GetDocument().GetPage() &&
       GetDocument().GetPage() != old_document.GetPage()) {
     GetDocument().GetFrame()->GetEventHandlerRegistry().DidMoveIntoPage(*this);
@@ -2762,8 +2750,9 @@ void Node::WillCallDefaultEventHandler(const Event& event) {
   if (GetLayoutObject()) {
     GetLayoutObject()->InvalidateIfControlStateChanged(kFocusControlState);
 
-    if (RuntimeEnabledFeatures::CSSFocusVisibleEnabled() && IsContainerNode())
-      ToContainerNode(*this).FocusVisibleStateChanged();
+    auto* this_node = DynamicTo<ContainerNode>(this);
+    if (RuntimeEnabledFeatures::CSSFocusVisibleEnabled() && this_node)
+      this_node->FocusVisibleStateChanged();
   }
 }
 
@@ -2788,15 +2777,6 @@ bool Node::WillRespondToMouseClickEvents() {
          HasEventListeners(event_type_names::kMousedown) ||
          HasEventListeners(event_type_names::kClick) ||
          HasEventListeners(event_type_names::kDOMActivate);
-}
-
-bool Node::WillRespondToTouchEvents() {
-  if (IsDisabledFormControl(this))
-    return false;
-  return HasEventListeners(event_type_names::kTouchstart) ||
-         HasEventListeners(event_type_names::kTouchmove) ||
-         HasEventListeners(event_type_names::kTouchcancel) ||
-         HasEventListeners(event_type_names::kTouchend);
 }
 
 unsigned Node::ConnectedSubframeCount() const {
@@ -2952,7 +2932,7 @@ void Node::SetCustomElementState(CustomElementState new_state) {
   DCHECK(IsHTMLElement());
   DCHECK_NE(kV0Upgraded, GetV0CustomElementState());
 
-  Element* element = ToElement(this);
+  auto* element = To<Element>(this);
   bool was_defined = element->IsDefined();
 
   node_flags_ = (node_flags_ & ~kCustomElementStateMask) |
@@ -2961,13 +2941,13 @@ void Node::SetCustomElementState(CustomElementState new_state) {
 
   if (element->IsDefined() != was_defined) {
     element->PseudoStateChanged(CSSSelector::kPseudoDefined);
-    if (origin_trials::CustomElementsV0Enabled(&GetDocument()))
+    if (RuntimeEnabledFeatures::CustomElementsV0Enabled(&GetDocument()))
       element->PseudoStateChanged(CSSSelector::kPseudoUnresolved);
   }
 }
 
 void Node::SetV0CustomElementState(V0CustomElementState new_state) {
-  DCHECK(origin_trials::CustomElementsV0Enabled(&GetDocument()));
+  DCHECK(RuntimeEnabledFeatures::CustomElementsV0Enabled(&GetDocument()));
   V0CustomElementState old_state = GetV0CustomElementState();
 
   switch (new_state) {
@@ -2990,8 +2970,8 @@ void Node::SetV0CustomElementState(V0CustomElementState new_state) {
   SetFlag(new_state == kV0Upgraded, kV0CustomElementUpgradedFlag);
 
   if (old_state == kV0NotCustomElement || new_state == kV0Upgraded) {
-    ToElement(this)->PseudoStateChanged(CSSSelector::kPseudoUnresolved);
-    ToElement(this)->PseudoStateChanged(CSSSelector::kPseudoDefined);
+    To<Element>(this)->PseudoStateChanged(CSSSelector::kPseudoUnresolved);
+    To<Element>(this)->PseudoStateChanged(CSSSelector::kPseudoDefined);
   }
 }
 
@@ -3093,7 +3073,7 @@ void Node::Trace(Visitor* visitor) {
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 void showNode(const blink::Node* node) {
   if (node)

@@ -1,3 +1,4 @@
+//
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -8,9 +9,11 @@
 
 #include <memory>
 
+#include "base/stl_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/win/atl.h"
 #include "base/win/scoped_bstr.h"
+#include "base/win/scoped_safearray.h"
 #include "base/win/scoped_variant.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -134,38 +137,46 @@ ScopedVariant SELF(CHILDID_SELF);
     EXPECT_EQ(expectedVariant.ptr()->intVal, actual.ptr()->intVal); \
   }
 
-#define EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(node, array_property_id,           \
-                                         element_test_property_id,          \
-                                         expected_property_values)          \
+#define EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(array, element_test_property_id,     \
+                                         expected_property_values)            \
+  {                                                                           \
+    ASSERT_EQ(1u, SafeArrayGetDim(array));                                    \
+    LONG array_lower_bound;                                                   \
+    ASSERT_HRESULT_SUCCEEDED(                                                 \
+        SafeArrayGetLBound(array, 1, &array_lower_bound));                    \
+    LONG array_upper_bound;                                                   \
+    ASSERT_HRESULT_SUCCEEDED(                                                 \
+        SafeArrayGetUBound(array, 1, &array_upper_bound));                    \
+    IUnknown** array_data;                                                    \
+    ASSERT_HRESULT_SUCCEEDED(                                                 \
+        ::SafeArrayAccessData(array, reinterpret_cast<void**>(&array_data))); \
+    size_t count = array_upper_bound - array_lower_bound + 1;                 \
+    ASSERT_EQ(expected_property_values.size(), count);                        \
+    for (size_t i = 0; i < count; ++i) {                                      \
+      CComPtr<IRawElementProviderSimple> element;                             \
+      ASSERT_HRESULT_SUCCEEDED(array_data[i]->QueryInterface(&element));      \
+      EXPECT_UIA_BSTR_EQ(element, element_test_property_id,                   \
+                         expected_property_values[i].c_str());                \
+    }                                                                         \
+    ASSERT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(array));                 \
+  }
+
+#define EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(node, array_property_id,  \
+                                                  element_test_property_id, \
+                                                  expected_property_values) \
   {                                                                         \
     ScopedVariant array;                                                    \
     ASSERT_HRESULT_SUCCEEDED(                                               \
         node->GetPropertyValue(array_property_id, array.Receive()));        \
     ASSERT_EQ(VT_ARRAY | VT_UNKNOWN, array.type());                         \
-    ASSERT_EQ(1u, SafeArrayGetDim(array.ptr()->parray));                    \
-    LONG array_lower_bound;                                                 \
-    ASSERT_HRESULT_SUCCEEDED(                                               \
-        SafeArrayGetLBound(array.ptr()->parray, 1, &array_lower_bound));    \
-    LONG array_upper_bound;                                                 \
-    ASSERT_HRESULT_SUCCEEDED(                                               \
-        SafeArrayGetUBound(array.ptr()->parray, 1, &array_upper_bound));    \
-    IUnknown** array_data;                                                  \
-    ASSERT_HRESULT_SUCCEEDED(::SafeArrayAccessData(                         \
-        array.ptr()->parray, reinterpret_cast<void**>(&array_data)));       \
-    size_t count = array_upper_bound - array_lower_bound + 1;               \
-    ASSERT_EQ(expected_property_values.size(), count);                      \
-    for (size_t i = 0; i < count; ++i) {                                    \
-      CComPtr<IRawElementProviderSimple> element;                           \
-      ASSERT_HRESULT_SUCCEEDED(array_data[i]->QueryInterface(&element));    \
-      EXPECT_UIA_BSTR_EQ(element, element_test_property_id,                 \
-                         expected_property_values[i].c_str());              \
-    }                                                                       \
-    ASSERT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(array.ptr()->parray)); \
+    EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(array.ptr()->parray,                   \
+                                     element_test_property_id,              \
+                                     expected_property_values);             \
   }
 
-#define EXPECT_UIA_UNORDERED_ELEMENT_ARRAY_BSTR_EQ(node, array_property_id,    \
-                                                   element_test_property_id,   \
-                                                   expected_property_values)   \
+#define EXPECT_UIA_PROPERTY_UNORDERED_ELEMENT_ARRAY_BSTR_EQ(                   \
+    node, array_property_id, element_test_property_id,                         \
+    expected_property_values)                                                  \
   {                                                                            \
     ScopedVariant array;                                                       \
     ASSERT_HRESULT_SUCCEEDED(                                                  \
@@ -253,12 +264,13 @@ AXPlatformNodeWinTest::GetRootIRawElementProviderSimple() {
 ComPtr<IRawElementProviderSimple>
 AXPlatformNodeWinTest::GetIRawElementProviderSimpleFromChildIndex(
     int child_index) {
-  if (!GetRootNode() || child_index >= GetRootNode()->child_count()) {
+  if (!GetRootNode() || child_index < 0 ||
+      size_t{child_index} >= GetRootNode()->children().size()) {
     return ComPtr<IRawElementProviderSimple>();
   }
 
   return QueryInterfaceFromNode<IRawElementProviderSimple>(
-      GetRootNode()->ChildAtIndex(child_index));
+      GetRootNode()->children()[size_t{child_index}]);
 }
 
 ComPtr<IRawElementProviderFragment>
@@ -307,7 +319,7 @@ ComPtr<IAccessible2_2> AXPlatformNodeWinTest::ToIAccessible2_2(
   return result;
 }
 
-void AXPlatformNodeWinTest::CheckVariantHasName(ScopedVariant& variant,
+void AXPlatformNodeWinTest::CheckVariantHasName(const ScopedVariant& variant,
                                                 const wchar_t* expected_name) {
   ASSERT_NE(nullptr, variant.ptr());
   ComPtr<IAccessible> accessible;
@@ -1125,23 +1137,32 @@ TEST_F(AXPlatformNodeWinTest, TestAccNavigate) {
 
   // Logical directions should be supported.
   EXPECT_EQ(S_OK, ia_root->accNavigate(NAVDIR_FIRSTCHILD, SELF, end.AsInput()));
-  EXPECT_EQ(0, var_child1.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child1.ptr()), V_DISPATCH(end.ptr()));
+
   EXPECT_EQ(S_OK, ia_root->accNavigate(NAVDIR_LASTCHILD, SELF, end.AsInput()));
-  EXPECT_EQ(0, var_child2.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child2.ptr()), V_DISPATCH(end.ptr()));
 
   EXPECT_EQ(S_OK, ia_child1->accNavigate(NAVDIR_NEXT, SELF, end.AsInput()));
-  EXPECT_EQ(0, var_child2.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child2.ptr()), V_DISPATCH(end.ptr()));
+
   EXPECT_EQ(S_OK, ia_child2->accNavigate(NAVDIR_PREVIOUS, SELF, end.AsInput()));
-  EXPECT_EQ(0, var_child1.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child1.ptr()), V_DISPATCH(end.ptr()));
 
   // Child indices can also be passed by variant.
   // Indices are one-based.
   EXPECT_EQ(S_OK,
             ia_root->accNavigate(NAVDIR_NEXT, ScopedVariant(1), end.AsInput()));
-  EXPECT_EQ(0, var_child2.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child2.ptr()), V_DISPATCH(end.ptr()));
+
   EXPECT_EQ(S_OK, ia_root->accNavigate(NAVDIR_PREVIOUS, ScopedVariant(2),
                                        end.AsInput()));
-  EXPECT_EQ(0, var_child1.Compare(end));
+  EXPECT_EQ(VT_DISPATCH, end.type());
+  EXPECT_EQ(V_DISPATCH(var_child1.ptr()), V_DISPATCH(end.ptr()));
 
   // Test out-of-bounds.
   EXPECT_EQ(S_FALSE,
@@ -1796,7 +1817,7 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessible2GetNRelations) {
   // TODO(dougt): Try adding one more relation.
 }
 
-TEST_F(AXPlatformNodeWinTest, TestRelationTargetsOfType) {
+TEST_F(AXPlatformNodeWinTest, DISABLED_TestRelationTargetsOfType) {
   AXNodeData root;
   root.id = 1;
   root.role = ax::mojom::Role::kRootWebArea;
@@ -2555,42 +2576,75 @@ TEST_F(AXPlatformNodeWinTest, TestIAccessible2GetLocalizedExtendedRole) {
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUnlabeledImageRoleDescription) {
-  AXNodeData root;
-  root.id = 1;
-  root.SetImageAnnotationStatus(
-      ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation);
-  Init(root);
+  AXTreeUpdate tree;
+  tree.root_id = 1;
+  tree.nodes.resize(3);
+  tree.nodes[0].id = 1;
+  tree.nodes[0].child_ids = {2, 3};
 
+  tree.nodes[1].id = 2;
+  tree.nodes[1].SetImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation);
+
+  tree.nodes[2].id = 3;
+  tree.nodes[2].SetImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation);
+
+  Init(tree);
   ComPtr<IAccessible> root_obj(GetRootIAccessible());
-  ComPtr<IAccessible2> iaccessible2 = ToIAccessible2(root_obj);
-  ScopedBstr role_description;
-  EXPECT_EQ(S_OK, iaccessible2->get_localizedExtendedRole(
-                      role_description.Receive()));
-  EXPECT_STREQ(L"Unlabeled image", role_description);
+
+  for (int child_index = 0; child_index < int{tree.nodes[0].child_ids.size()};
+       ++child_index) {
+    ComPtr<IDispatch> child_dispatch;
+    ASSERT_HRESULT_SUCCEEDED(root_obj->get_accChild(
+        ScopedVariant(child_index + 1), &child_dispatch));
+    ComPtr<IAccessible> child;
+    ASSERT_HRESULT_SUCCEEDED(child_dispatch.As(&child));
+    ComPtr<IAccessible2> ia2_child = ToIAccessible2(child);
+
+    ScopedBstr role_description;
+    ASSERT_EQ(S_OK,
+              ia2_child->get_localizedExtendedRole(role_description.Receive()));
+    EXPECT_STREQ(L"Unlabeled image", role_description);
+  }
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUnlabeledImageAttributes) {
-  AXNodeData root;
-  root.id = 1;
-  root.SetImageAnnotationStatus(
+  AXTreeUpdate tree;
+  tree.root_id = 1;
+  tree.nodes.resize(3);
+  tree.nodes[0].id = 1;
+  tree.nodes[0].child_ids = {2, 3};
+
+  tree.nodes[1].id = 2;
+  tree.nodes[1].SetImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus::kEligibleForAnnotation);
-  Init(root);
 
+  tree.nodes[2].id = 3;
+  tree.nodes[2].SetImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation);
+
+  Init(tree);
   ComPtr<IAccessible> root_obj(GetRootIAccessible());
-  ComPtr<IAccessible2> iaccessible2 = ToIAccessible2(root_obj);
 
-  ScopedBstr attributes_bstr;
-  EXPECT_EQ(S_OK, iaccessible2->get_attributes(attributes_bstr.Receive()));
-  base::string16 attributes(attributes_bstr);
+  for (int child_index = 0; child_index < int{tree.nodes[0].child_ids.size()};
+       ++child_index) {
+    ComPtr<IDispatch> child_dispatch;
+    ASSERT_HRESULT_SUCCEEDED(root_obj->get_accChild(
+        ScopedVariant(child_index + 1), &child_dispatch));
+    ComPtr<IAccessible> child;
+    ASSERT_HRESULT_SUCCEEDED(child_dispatch.As(&child));
+    ComPtr<IAccessible2> ia2_child = ToIAccessible2(child);
 
-  std::vector<base::string16> attribute_vector = base::SplitString(
-      attributes, L";", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-  bool found = false;
-  for (base::string16 attribute : attribute_vector) {
-    if (attribute == L"roledescription:Unlabeled image")
-      found = true;
+    ScopedBstr attributes_bstr;
+    ASSERT_EQ(S_OK, ia2_child->get_attributes(attributes_bstr.Receive()));
+    base::string16 attributes(attributes_bstr);
+
+    std::vector<base::string16> attribute_vector = base::SplitString(
+        attributes, L";", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+    EXPECT_TRUE(base::ContainsValue(attribute_vector,
+                                    L"roledescription:Unlabeled image"));
   }
-  EXPECT_TRUE(found);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestAnnotatedImageName) {
@@ -2598,9 +2652,9 @@ TEST_F(AXPlatformNodeWinTest, TestAnnotatedImageName) {
 
   AXTreeUpdate tree;
   tree.root_id = 1;
-  tree.nodes.resize(10);
+  tree.nodes.resize(11);
   tree.nodes[0].id = 1;
-  tree.nodes[0].child_ids = {2, 3, 4, 5, 6, 7, 8, 9, 10};
+  tree.nodes[0].child_ids = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
   // If the status is EligibleForAnnotation and there's no existing label,
   // the name should be the discoverability string.
@@ -2626,72 +2680,70 @@ TEST_F(AXPlatformNodeWinTest, TestAnnotatedImageName) {
       L"ExistingLabel. To get missing image descriptions, open the context "
       L"menu.");
 
-  // If the status is IneligibleForAnnotation, nothing should be appended.
+  // If the status is SilentlyEligibleForAnnotation, the discoverability string
+  // should not be appended to the existing name.
   tree.nodes[3].id = 4;
   tree.nodes[3].role = ax::mojom::Role::kImage;
   tree.nodes[3].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
                                    "Annotation");
   tree.nodes[3].SetName("ExistingLabel");
   tree.nodes[3].SetImageAnnotationStatus(
-      ax::mojom::ImageAnnotationStatus::kIneligibleForAnnotation);
+      ax::mojom::ImageAnnotationStatus::kSilentlyEligibleForAnnotation);
   expected_names.push_back(L"ExistingLabel");
 
-  // If the status is AnnotationPending, pending text should be appended
-  // to the name.
+  // If the status is IneligibleForAnnotation, nothing should be appended.
   tree.nodes[4].id = 5;
   tree.nodes[4].role = ax::mojom::Role::kImage;
   tree.nodes[4].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
                                    "Annotation");
   tree.nodes[4].SetName("ExistingLabel");
   tree.nodes[4].SetImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus::kIneligibleForAnnotation);
+  expected_names.push_back(L"ExistingLabel");
+
+  // If the status is AnnotationPending, pending text should be appended
+  // to the name.
+  tree.nodes[5].id = 6;
+  tree.nodes[5].role = ax::mojom::Role::kImage;
+  tree.nodes[5].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
+                                   "Annotation");
+  tree.nodes[5].SetName("ExistingLabel");
+  tree.nodes[5].SetImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus::kAnnotationPending);
   expected_names.push_back(L"ExistingLabel. Getting description...");
 
   // If the status is AnnotationSucceeded, and there's no annotation,
   // nothing should be appended. (Ideally this shouldn't happen.)
-  tree.nodes[5].id = 6;
-  tree.nodes[5].role = ax::mojom::Role::kImage;
-  tree.nodes[5].SetName("ExistingLabel");
-  tree.nodes[5].SetImageAnnotationStatus(
+  tree.nodes[6].id = 7;
+  tree.nodes[6].role = ax::mojom::Role::kImage;
+  tree.nodes[6].SetName("ExistingLabel");
+  tree.nodes[6].SetImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus::kAnnotationSucceeded);
   expected_names.push_back(L"ExistingLabel");
 
   // If the status is AnnotationSucceeded, the annotation should be appended
   // to the existing label.
-  tree.nodes[6].id = 7;
-  tree.nodes[6].role = ax::mojom::Role::kImage;
-  tree.nodes[6].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
-                                   "Annotation");
-  tree.nodes[6].SetName("ExistingLabel");
-  tree.nodes[6].SetImageAnnotationStatus(
-      ax::mojom::ImageAnnotationStatus::kAnnotationSucceeded);
-  expected_names.push_back(L"ExistingLabel. Annotation");
-
-  // If the status is AnnotationEmpty, no failure text should be added to the
-  // name.
   tree.nodes[7].id = 8;
   tree.nodes[7].role = ax::mojom::Role::kImage;
   tree.nodes[7].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
                                    "Annotation");
   tree.nodes[7].SetName("ExistingLabel");
   tree.nodes[7].SetImageAnnotationStatus(
-      ax::mojom::ImageAnnotationStatus::kAnnotationEmpty);
-  expected_names.push_back(L"ExistingLabel");
+      ax::mojom::ImageAnnotationStatus::kAnnotationSucceeded);
+  expected_names.push_back(L"ExistingLabel. Annotation");
 
-  // If the status is AnnotationAdult, appropriate text should be appended
-  // to the name.
+  // If the status is AnnotationEmpty, failure text should be added to the
+  // name.
   tree.nodes[8].id = 9;
   tree.nodes[8].role = ax::mojom::Role::kImage;
   tree.nodes[8].AddStringAttribute(ax::mojom::StringAttribute::kImageAnnotation,
                                    "Annotation");
   tree.nodes[8].SetName("ExistingLabel");
   tree.nodes[8].SetImageAnnotationStatus(
-      ax::mojom::ImageAnnotationStatus::kAnnotationAdult);
-  expected_names.push_back(
-      L"ExistingLabel. Appears to contain adult content. No description "
-      L"available.");
+      ax::mojom::ImageAnnotationStatus::kAnnotationEmpty);
+  expected_names.push_back(L"ExistingLabel. No description available.");
 
-  // If the status is AnnotationProcessFailed, no failure text should be added
+  // If the status is AnnotationAdult, appropriate text should be appended
   // to the name.
   tree.nodes[9].id = 10;
   tree.nodes[9].role = ax::mojom::Role::kImage;
@@ -2699,8 +2751,21 @@ TEST_F(AXPlatformNodeWinTest, TestAnnotatedImageName) {
                                    "Annotation");
   tree.nodes[9].SetName("ExistingLabel");
   tree.nodes[9].SetImageAnnotationStatus(
+      ax::mojom::ImageAnnotationStatus::kAnnotationAdult);
+  expected_names.push_back(
+      L"ExistingLabel. Appears to contain adult content. No description "
+      L"available.");
+
+  // If the status is AnnotationProcessFailed, failure text should be added
+  // to the name.
+  tree.nodes[10].id = 11;
+  tree.nodes[10].role = ax::mojom::Role::kImage;
+  tree.nodes[10].AddStringAttribute(
+      ax::mojom::StringAttribute::kImageAnnotation, "Annotation");
+  tree.nodes[10].SetName("ExistingLabel");
+  tree.nodes[10].SetImageAnnotationStatus(
       ax::mojom::ImageAnnotationStatus::kAnnotationProcessFailed);
-  expected_names.push_back(L"ExistingLabel");
+  expected_names.push_back(L"ExistingLabel. No description available.");
 
   // We should have one expected name per child of the root.
   ASSERT_EQ(expected_names.size(), tree.nodes[0].child_ids.size());
@@ -3117,11 +3182,13 @@ TEST_F(AXPlatformNodeWinTest, TestITableProviderGetColumnHeaders) {
   AXNodeData column_header;
   column_header.id = 3;
   column_header.role = ax::mojom::Role::kColumnHeader;
+  column_header.SetName(L"column_header");
   row1.child_ids.push_back(column_header.id);
 
   AXNodeData row_header;
   row_header.id = 4;
   row_header.role = ax::mojom::Role::kRowHeader;
+  row_header.SetName(L"row_header");
   row1.child_ids.push_back(row_header.id);
 
   Init(root, row1, column_header, row_header);
@@ -3129,31 +3196,25 @@ TEST_F(AXPlatformNodeWinTest, TestITableProviderGetColumnHeaders) {
   ComPtr<ITableProvider> root_itableprovider(
       QueryInterfaceFromNode<ITableProvider>(GetRootNode()));
 
-  ComPtr<IRawElementProviderSimple> column_header_irawelementprovidersimple(
-      QueryInterfaceFromNode<IRawElementProviderSimple>(
-          GetRootNode()->children()[0]->children()[0]));
-
-  SAFEARRAY* safearray = nullptr;
-  EXPECT_HRESULT_SUCCEEDED(root_itableprovider->GetColumnHeaders(&safearray));
-  EXPECT_NE(nullptr, safearray);
-  EXPECT_EQ(1U, ::SafeArrayGetDim(safearray));
-  EXPECT_EQ(sizeof(IRawElementProviderSimple*),
-            ::SafeArrayGetElemsize(safearray));
-
-  LONG array_lbound;
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayGetLBound(safearray, 1, &array_lbound));
-  EXPECT_EQ(0, array_lbound);
-
-  LONG array_ubound;
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayGetUBound(safearray, 1, &array_ubound));
-  EXPECT_EQ(0, array_ubound);
-
-  LONG index = 0;
-  CComPtr<IRawElementProviderSimple> array_element;
+  base::win::ScopedSafearray safearray;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetElement(safearray, &index, &array_element));
-  EXPECT_NE(nullptr, array_element);
-  EXPECT_EQ(array_element, column_header_irawelementprovidersimple.Get());
+      root_itableprovider->GetColumnHeaders(safearray.Receive()));
+  EXPECT_NE(nullptr, safearray.Get());
+
+  std::vector<std::wstring> expected_names = {L"column_header"};
+  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(safearray.Get(), UIA_NamePropertyId,
+                                   expected_names);
+
+  // Remove column_header's native event target and verify it's no longer
+  // returned.
+  TestAXNodeWrapper* column_header_wrapper = TestAXNodeWrapper::GetOrCreate(
+      tree_.get(), GetRootNode()->children()[0]->children()[0]);
+  column_header_wrapper->ResetNativeEventTarget();
+
+  safearray.Release();
+  EXPECT_HRESULT_SUCCEEDED(
+      root_itableprovider->GetColumnHeaders(safearray.Receive()));
+  EXPECT_EQ(nullptr, safearray.Get());
 }
 
 TEST_F(AXPlatformNodeWinTest, TestITableProviderGetRowHeaders) {
@@ -3169,11 +3230,13 @@ TEST_F(AXPlatformNodeWinTest, TestITableProviderGetRowHeaders) {
   AXNodeData column_header;
   column_header.id = 3;
   column_header.role = ax::mojom::Role::kColumnHeader;
+  column_header.SetName(L"column_header");
   row1.child_ids.push_back(column_header.id);
 
   AXNodeData row_header;
   row_header.id = 4;
   row_header.role = ax::mojom::Role::kRowHeader;
+  row_header.SetName(L"row_header");
   row1.child_ids.push_back(row_header.id);
 
   Init(root, row1, column_header, row_header);
@@ -3181,31 +3244,23 @@ TEST_F(AXPlatformNodeWinTest, TestITableProviderGetRowHeaders) {
   ComPtr<ITableProvider> root_itableprovider(
       QueryInterfaceFromNode<ITableProvider>(GetRootNode()));
 
-  ComPtr<IRawElementProviderSimple> row_header_irawelementprovidersimple(
-      QueryInterfaceFromNode<IRawElementProviderSimple>(
-          GetRootNode()->children()[0]->children()[1]));
-
-  SAFEARRAY* safearray = nullptr;
-  EXPECT_HRESULT_SUCCEEDED(root_itableprovider->GetRowHeaders(&safearray));
-  EXPECT_NE(nullptr, safearray);
-  EXPECT_EQ(1U, ::SafeArrayGetDim(safearray));
-  EXPECT_EQ(sizeof(IRawElementProviderSimple*),
-            ::SafeArrayGetElemsize(safearray));
-
-  LONG array_lbound;
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayGetLBound(safearray, 1, &array_lbound));
-  EXPECT_EQ(0, array_lbound);
-
-  LONG array_ubound;
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayGetUBound(safearray, 1, &array_ubound));
-  EXPECT_EQ(0, array_ubound);
-
-  LONG index = 0;
-  CComPtr<IRawElementProviderSimple> array_element;
+  base::win::ScopedSafearray safearray;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetElement(safearray, &index, &array_element));
-  EXPECT_NE(nullptr, array_element);
-  EXPECT_EQ(array_element, row_header_irawelementprovidersimple.Get());
+      root_itableprovider->GetRowHeaders(safearray.Receive()));
+  EXPECT_NE(nullptr, safearray.Get());
+  std::vector<std::wstring> expected_names = {L"row_header"};
+  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(safearray.Get(), UIA_NamePropertyId,
+                                   expected_names);
+
+  // Remove row_header's native event target and verify it's no longer returned.
+  TestAXNodeWrapper* row_header_wrapper = TestAXNodeWrapper::GetOrCreate(
+      tree_.get(), GetRootNode()->children()[0]->children()[1]);
+  row_header_wrapper->ResetNativeEventTarget();
+
+  safearray.Release();
+  EXPECT_HRESULT_SUCCEEDED(
+      root_itableprovider->GetRowHeaders(safearray.Receive()));
+  EXPECT_EQ(nullptr, safearray.Get());
 }
 
 TEST_F(AXPlatformNodeWinTest, TestITableProviderGetRowOrColumnMajor) {
@@ -3222,6 +3277,158 @@ TEST_F(AXPlatformNodeWinTest, TestITableProviderGetRowOrColumnMajor) {
   EXPECT_HRESULT_SUCCEEDED(
       root_itableprovider->get_RowOrColumnMajor(&row_or_column_major));
   EXPECT_EQ(row_or_column_major, RowOrColumnMajor_RowMajor);
+}
+
+TEST_F(AXPlatformNodeWinTest, TestITableItemProviderGetColumnHeaderItems) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kTable;
+
+  AXNodeData row1;
+  row1.id = 2;
+  row1.role = ax::mojom::Role::kRow;
+  root.child_ids.push_back(row1.id);
+
+  AXNodeData column_header_1;
+  column_header_1.id = 3;
+  column_header_1.role = ax::mojom::Role::kColumnHeader;
+  column_header_1.SetName(L"column_header_1");
+  row1.child_ids.push_back(column_header_1.id);
+
+  AXNodeData column_header_2;
+  column_header_2.id = 4;
+  column_header_2.role = ax::mojom::Role::kColumnHeader;
+  column_header_2.SetName(L"column_header_2");
+  row1.child_ids.push_back(column_header_2.id);
+
+  AXNodeData row2;
+  row2.id = 5;
+  row2.role = ax::mojom::Role::kRow;
+  root.child_ids.push_back(row2.id);
+
+  AXNodeData cell;
+  cell.id = 6;
+  cell.role = ax::mojom::Role::kCell;
+  row2.child_ids.push_back(cell.id);
+
+  Init(root, row1, column_header_1, column_header_2, row2, cell);
+
+  TestAXNodeWrapper* root_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode());
+  root_wrapper->BuildAllWrappers(tree_.get(), GetRootNode());
+
+  ComPtr<ITableItemProvider> cell_itableitemprovider(
+      QueryInterfaceFromNode<ITableItemProvider>(
+          GetRootNode()->children()[1]->children()[0]));
+
+  base::win::ScopedSafearray safearray;
+  EXPECT_HRESULT_SUCCEEDED(
+      cell_itableitemprovider->GetColumnHeaderItems(safearray.Receive()));
+  EXPECT_NE(nullptr, safearray.Get());
+
+  std::vector<std::wstring> expected_names = {L"column_header_1"};
+  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(safearray.Get(), UIA_NamePropertyId,
+                                   expected_names);
+
+  // Remove column_header_1's native event target and verify it's no longer
+  // returned.
+  TestAXNodeWrapper* column_header_wrapper = TestAXNodeWrapper::GetOrCreate(
+      tree_.get(), GetRootNode()->children()[0]->children()[0]);
+  column_header_wrapper->ResetNativeEventTarget();
+
+  safearray.Release();
+  EXPECT_HRESULT_SUCCEEDED(
+      cell_itableitemprovider->GetColumnHeaderItems(safearray.Receive()));
+  EXPECT_EQ(nullptr, safearray.Get());
+}
+
+TEST_F(AXPlatformNodeWinTest, TestITableItemProviderGetRowHeaderItems) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kTable;
+
+  AXNodeData row1;
+  row1.id = 2;
+  row1.role = ax::mojom::Role::kRow;
+  root.child_ids.push_back(row1.id);
+
+  AXNodeData row_header_1;
+  row_header_1.id = 3;
+  row_header_1.role = ax::mojom::Role::kRowHeader;
+  row_header_1.SetName(L"row_header_1");
+  row1.child_ids.push_back(row_header_1.id);
+
+  AXNodeData cell;
+  cell.id = 4;
+  cell.role = ax::mojom::Role::kCell;
+  row1.child_ids.push_back(cell.id);
+
+  AXNodeData row2;
+  row2.id = 5;
+  row2.role = ax::mojom::Role::kRow;
+  root.child_ids.push_back(row2.id);
+
+  AXNodeData row_header_2;
+  row_header_2.id = 6;
+  row_header_2.role = ax::mojom::Role::kRowHeader;
+  row_header_2.SetName(L"row_header_2");
+  row2.child_ids.push_back(row_header_2.id);
+
+  Init(root, row1, row_header_1, cell, row2, row_header_2);
+
+  TestAXNodeWrapper* root_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode());
+  root_wrapper->BuildAllWrappers(tree_.get(), GetRootNode());
+
+  ComPtr<ITableItemProvider> cell_itableitemprovider(
+      QueryInterfaceFromNode<ITableItemProvider>(
+          GetRootNode()->children()[0]->children()[1]));
+
+  base::win::ScopedSafearray safearray;
+  EXPECT_HRESULT_SUCCEEDED(
+      cell_itableitemprovider->GetRowHeaderItems(safearray.Receive()));
+  EXPECT_NE(nullptr, safearray.Get());
+  std::vector<std::wstring> expected_names = {L"row_header_1"};
+  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(safearray.Get(), UIA_NamePropertyId,
+                                   expected_names);
+
+  // Remove row_header_1's native event target and verify it's no longer
+  // returned.
+  TestAXNodeWrapper* row_header_wrapper = TestAXNodeWrapper::GetOrCreate(
+      tree_.get(), GetRootNode()->children()[0]->children()[0]);
+  row_header_wrapper->ResetNativeEventTarget();
+
+  safearray.Release();
+  EXPECT_HRESULT_SUCCEEDED(
+      cell_itableitemprovider->GetRowHeaderItems(safearray.Receive()));
+  EXPECT_EQ(nullptr, safearray.Get());
+}
+
+TEST_F(AXPlatformNodeWinTest, TestIA2GetAttribute) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kButton;
+  root.AddStringAttribute(ax::mojom::StringAttribute::kRoleDescription,
+                          "Potato");
+  Init(root);
+
+  ComPtr<IAccessible> root_obj(GetRootIAccessible());
+  ComPtr<IAccessible2_2> iaccessible2 = ToIAccessible2_2(root_obj);
+
+  ScopedBstr roledescription(L"roledescription");
+  ScopedVariant result;
+  ASSERT_EQ(S_OK,
+            iaccessible2->get_attribute(roledescription, result.Receive()));
+  ScopedBstr expected_bstr(L"Potato");
+  ASSERT_EQ(VT_BSTR, result.type());
+  EXPECT_STREQ(expected_bstr, result.ptr()->bstrVal);
+
+  ScopedBstr smoothness(L"smoothness");
+  ScopedVariant result2;
+  EXPECT_EQ(S_FALSE,
+            iaccessible2->get_attribute(smoothness, result2.Receive()));
+
+  EXPECT_EQ(E_INVALIDARG, iaccessible2->get_attribute(nullptr, nullptr));
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertySimple) {
@@ -3330,6 +3537,54 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValue_Histogram) {
   }
 }
 
+TEST_F(AXPlatformNodeWinTest, TestUIAGetControllerForPropertyId) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+  root.child_ids = {2, 3, 4};
+
+  AXNodeData tab;
+  tab.id = 2;
+  tab.role = ax::mojom::Role::kTab;
+  tab.SetName("tab");
+  std::vector<int32_t> controller_ids = {3, 4};
+  tab.AddIntListAttribute(ax::mojom::IntListAttribute::kControlsIds,
+                          controller_ids);
+
+  AXNodeData panel1;
+  panel1.id = 3;
+  panel1.role = ax::mojom::Role::kTabPanel;
+  panel1.SetName("panel1");
+
+  AXNodeData panel2;
+  panel2.id = 4;
+  panel2.role = ax::mojom::Role::kTabPanel;
+  panel2.SetName("panel2");
+
+  Init(root, tab, panel1, panel2);
+  TestAXNodeWrapper* root_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode());
+  root_wrapper->BuildAllWrappers(tree_.get(), GetRootNode());
+
+  ComPtr<IRawElementProviderSimple> tab_node =
+      QueryInterfaceFromNode<IRawElementProviderSimple>(
+          GetRootNode()->children()[0]);
+
+  std::vector<std::wstring> expected_names_1 = {L"panel1", L"panel2"};
+  EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(
+      tab_node, UIA_ControllerForPropertyId, UIA_NamePropertyId,
+      expected_names_1);
+
+  // Remove panel1's native event target and verify it's no longer returned.
+  TestAXNodeWrapper* panel1_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode()->children()[1]);
+  panel1_wrapper->ResetNativeEventTarget();
+  std::vector<std::wstring> expected_names_2 = {L"panel2"};
+  EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(
+      tab_node, UIA_ControllerForPropertyId, UIA_NamePropertyId,
+      expected_names_2);
+}
+
 TEST_F(AXPlatformNodeWinTest, TestUIAGetDescribedByPropertyId) {
   AXNodeData root;
   std::vector<int32_t> describedby_ids = {1, 2, 3};
@@ -3359,8 +3614,8 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetDescribedByPropertyId) {
       GetRootIRawElementProviderSimple();
 
   std::vector<std::wstring> expected_names = {L"child1", L"child2"};
-  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(root_node, UIA_DescribedByPropertyId,
-                                   UIA_NamePropertyId, expected_names);
+  EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(
+      root_node, UIA_DescribedByPropertyId, UIA_NamePropertyId, expected_names);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAItemStatusPropertyId) {
@@ -3458,8 +3713,8 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetFlowsToPropertyId) {
   ComPtr<IRawElementProviderSimple> root_node =
       GetRootIRawElementProviderSimple();
   std::vector<std::wstring> expected_names = {L"child1", L"child2"};
-  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(root_node, UIA_FlowsToPropertyId,
-                                   UIA_NamePropertyId, expected_names);
+  EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(root_node, UIA_FlowsToPropertyId,
+                                            UIA_NamePropertyId, expected_names);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromNone) {
@@ -3472,9 +3727,12 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromNone) {
 
   ComPtr<IRawElementProviderSimple> root_node =
       GetRootIRawElementProviderSimple();
-  std::vector<std::wstring> expected_names = {};
-  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(root_node, UIA_FlowsFromPropertyId,
-                                   UIA_NamePropertyId, expected_names);
+
+  ScopedVariant property_value;
+  EXPECT_HRESULT_SUCCEEDED(root_node->GetPropertyValue(
+      UIA_FlowsFromPropertyId, property_value.Receive()));
+  EXPECT_EQ(VT_ARRAY | VT_UNKNOWN, property_value.type());
+  EXPECT_EQ(nullptr, V_ARRAY(property_value.ptr()));
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromSingle) {
@@ -3498,8 +3756,8 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromSingle) {
       QueryInterfaceFromNode<IRawElementProviderSimple>(
           GetRootNode()->children()[0]);
   std::vector<std::wstring> expected_names = {L"root"};
-  EXPECT_UIA_ELEMENT_ARRAY_BSTR_EQ(child_node1, UIA_FlowsFromPropertyId,
-                                   UIA_NamePropertyId, expected_names);
+  EXPECT_UIA_PROPERTY_ELEMENT_ARRAY_BSTR_EQ(
+      child_node1, UIA_FlowsFromPropertyId, UIA_NamePropertyId, expected_names);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromMultiple) {
@@ -3531,9 +3789,19 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFlowsFromMultiple) {
   ComPtr<IRawElementProviderSimple> child_node2 =
       QueryInterfaceFromNode<IRawElementProviderSimple>(
           GetRootNode()->children()[1]);
-  std::vector<std::wstring> expected_names = {L"root", L"child1"};
-  EXPECT_UIA_UNORDERED_ELEMENT_ARRAY_BSTR_EQ(
-      child_node2, UIA_FlowsFromPropertyId, UIA_NamePropertyId, expected_names);
+  std::vector<std::wstring> expected_names_1 = {L"root", L"child1"};
+  EXPECT_UIA_PROPERTY_UNORDERED_ELEMENT_ARRAY_BSTR_EQ(
+      child_node2, UIA_FlowsFromPropertyId, UIA_NamePropertyId,
+      expected_names_1);
+
+  // Remove child1's native event target and verify it's no longer returned.
+  TestAXNodeWrapper* child1_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode()->children()[0]);
+  child1_wrapper->ResetNativeEventTarget();
+  std::vector<std::wstring> expected_names_2 = {L"root"};
+  EXPECT_UIA_PROPERTY_UNORDERED_ELEMENT_ARRAY_BSTR_EQ(
+      child_node2, UIA_FlowsFromPropertyId, UIA_NamePropertyId,
+      expected_names_2);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetPropertyValueFrameworkId) {
@@ -3574,6 +3842,17 @@ TEST_F(AXPlatformNodeWinTest, TestGetPropertyValue_LabeledByTest) {
   EXPECT_EQ(S_OK, propertyValue.ptr()->punkVal->QueryInterface(
                       IID_PPV_ARGS(&referenced_element)));
   EXPECT_UIA_BSTR_EQ(referenced_element, UIA_NamePropertyId, L"Name");
+
+  // Remove referenced_node's native event target and verify it's no longer
+  // returned.
+  TestAXNodeWrapper* referenced_node_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode()->children()[0]);
+  referenced_node_wrapper->ResetNativeEventTarget();
+
+  propertyValue.Reset();
+  EXPECT_EQ(S_OK, root_node->GetPropertyValue(UIA_LabeledByPropertyId,
+                                              propertyValue.Receive()));
+  EXPECT_EQ(propertyValue.type(), VT_EMPTY);
 }
 
 TEST_F(AXPlatformNodeWinTest, TestGetPropertyValue_HelpText) {
@@ -3720,6 +3999,19 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetFragmentRoot) {
   EXPECT_HRESULT_SUCCEEDED(
       element1_provider->get_FragmentRoot(&actual_fragment_root));
   EXPECT_EQ(expected_fragment_root.Get(), actual_fragment_root.Get());
+
+  // Test the case where the fragment root has gone away.
+  ax_fragment_root_.reset();
+  actual_fragment_root.Reset();
+  EXPECT_UIA_ELEMENTNOTAVAILABLE(
+      element1_provider->get_FragmentRoot(&actual_fragment_root));
+
+  // Test the case where the widget has gone away.
+  TestAXNodeWrapper* element1_wrapper =
+      TestAXNodeWrapper::GetOrCreate(tree_.get(), element1_node);
+  element1_wrapper->ResetNativeEventTarget();
+  EXPECT_UIA_ELEMENTNOTAVAILABLE(
+      element1_provider->get_FragmentRoot(&actual_fragment_root));
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetEmbeddedFragmentRoots) {
@@ -3730,10 +4022,10 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetEmbeddedFragmentRoots) {
   ComPtr<IRawElementProviderFragment> root_provider =
       GetRootIRawElementProviderFragment();
 
-  SAFEARRAY* embedded_fragment_roots;
-  EXPECT_HRESULT_SUCCEEDED(
-      root_provider->GetEmbeddedFragmentRoots(&embedded_fragment_roots));
-  EXPECT_EQ(nullptr, embedded_fragment_roots);
+  base::win::ScopedSafearray embedded_fragment_roots;
+  EXPECT_HRESULT_SUCCEEDED(root_provider->GetEmbeddedFragmentRoots(
+      embedded_fragment_roots.Receive()));
+  EXPECT_EQ(nullptr, embedded_fragment_roots.Get());
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAGetRuntimeId) {
@@ -3744,27 +4036,26 @@ TEST_F(AXPlatformNodeWinTest, TestUIAGetRuntimeId) {
   ComPtr<IRawElementProviderFragment> root_provider =
       GetRootIRawElementProviderFragment();
 
-  SAFEARRAY* runtime_id;
-  EXPECT_HRESULT_SUCCEEDED(root_provider->GetRuntimeId(&runtime_id));
+  base::win::ScopedSafearray runtime_id;
+  EXPECT_HRESULT_SUCCEEDED(root_provider->GetRuntimeId(runtime_id.Receive()));
 
   LONG array_lower_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetLBound(runtime_id, 1, &array_lower_bound));
+      ::SafeArrayGetLBound(runtime_id.Get(), 1, &array_lower_bound));
   EXPECT_EQ(0, array_lower_bound);
 
   LONG array_upper_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetUBound(runtime_id, 1, &array_upper_bound));
+      ::SafeArrayGetUBound(runtime_id.Get(), 1, &array_upper_bound));
   EXPECT_EQ(1, array_upper_bound);
 
   int* array_data;
-  EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayAccessData(runtime_id, reinterpret_cast<void**>(&array_data)));
+  EXPECT_HRESULT_SUCCEEDED(::SafeArrayAccessData(
+      runtime_id.Get(), reinterpret_cast<void**>(&array_data)));
   EXPECT_EQ(UiaAppendRuntimeId, array_data[0]);
   EXPECT_NE(-1, array_data[1]);
 
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(runtime_id));
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayDestroy(runtime_id));
+  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(runtime_id.Get()));
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIAIWindowProviderGetIsModalUnset) {
@@ -4011,21 +4302,20 @@ TEST_F(AXPlatformNodeWinTest, TestISelectionProviderGetSelectionNoneSelected) {
   ComPtr<ISelectionProvider> selection_provider(
       QueryInterfaceFromNode<ISelectionProvider>(GetRootNode()));
 
-  SAFEARRAY* selected_items;
-  EXPECT_HRESULT_SUCCEEDED(selection_provider->GetSelection(&selected_items));
-  EXPECT_NE(nullptr, selected_items);
+  base::win::ScopedSafearray selected_items;
+  EXPECT_HRESULT_SUCCEEDED(
+      selection_provider->GetSelection(selected_items.Receive()));
+  EXPECT_NE(nullptr, selected_items.Get());
 
   LONG array_lower_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetLBound(selected_items, 1, &array_lower_bound));
+      ::SafeArrayGetLBound(selected_items.Get(), 1, &array_lower_bound));
   EXPECT_EQ(0, array_lower_bound);
 
   LONG array_upper_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetUBound(selected_items, 1, &array_upper_bound));
+      ::SafeArrayGetUBound(selected_items.Get(), 1, &array_upper_bound));
   EXPECT_EQ(-1, array_upper_bound);
-
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayDestroy(selected_items));
 }
 
 TEST_F(AXPlatformNodeWinTest,
@@ -4040,27 +4330,26 @@ TEST_F(AXPlatformNodeWinTest,
       QueryInterfaceFromNode<IRawElementProviderSimple>(
           GetRootNode()->children()[1]));
 
-  SAFEARRAY* selected_items;
-  EXPECT_HRESULT_SUCCEEDED(selection_provider->GetSelection(&selected_items));
-  EXPECT_NE(nullptr, selected_items);
+  base::win::ScopedSafearray selected_items;
+  EXPECT_HRESULT_SUCCEEDED(
+      selection_provider->GetSelection(selected_items.Receive()));
+  EXPECT_NE(nullptr, selected_items.Get());
 
   LONG array_lower_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetLBound(selected_items, 1, &array_lower_bound));
+      ::SafeArrayGetLBound(selected_items.Get(), 1, &array_lower_bound));
   EXPECT_EQ(0, array_lower_bound);
 
   LONG array_upper_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetUBound(selected_items, 1, &array_upper_bound));
+      ::SafeArrayGetUBound(selected_items.Get(), 1, &array_upper_bound));
   EXPECT_EQ(0, array_upper_bound);
 
   IRawElementProviderSimple** array_data;
   EXPECT_HRESULT_SUCCEEDED(::SafeArrayAccessData(
-      selected_items, reinterpret_cast<void**>(&array_data)));
+      selected_items.Get(), reinterpret_cast<void**>(&array_data)));
   EXPECT_EQ(option2_provider.Get(), array_data[0]);
-
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(selected_items));
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayDestroy(selected_items));
+  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(selected_items.Get()));
 }
 
 TEST_F(AXPlatformNodeWinTest,
@@ -4081,29 +4370,29 @@ TEST_F(AXPlatformNodeWinTest,
       QueryInterfaceFromNode<IRawElementProviderSimple>(
           GetRootNode()->children()[2]));
 
-  SAFEARRAY* selected_items;
-  EXPECT_HRESULT_SUCCEEDED(selection_provider->GetSelection(&selected_items));
-  EXPECT_NE(nullptr, selected_items);
+  base::win::ScopedSafearray selected_items;
+  EXPECT_HRESULT_SUCCEEDED(
+      selection_provider->GetSelection(selected_items.Receive()));
+  EXPECT_NE(nullptr, selected_items.Get());
 
   LONG array_lower_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetLBound(selected_items, 1, &array_lower_bound));
+      ::SafeArrayGetLBound(selected_items.Get(), 1, &array_lower_bound));
   EXPECT_EQ(0, array_lower_bound);
 
   LONG array_upper_bound;
   EXPECT_HRESULT_SUCCEEDED(
-      ::SafeArrayGetUBound(selected_items, 1, &array_upper_bound));
+      ::SafeArrayGetUBound(selected_items.Get(), 1, &array_upper_bound));
   EXPECT_EQ(2, array_upper_bound);
 
   IRawElementProviderSimple** array_data;
   EXPECT_HRESULT_SUCCEEDED(::SafeArrayAccessData(
-      selected_items, reinterpret_cast<void**>(&array_data)));
+      selected_items.Get(), reinterpret_cast<void**>(&array_data)));
   EXPECT_EQ(option1_provider.Get(), array_data[0]);
   EXPECT_EQ(option2_provider.Get(), array_data[1]);
   EXPECT_EQ(option3_provider.Get(), array_data[2]);
 
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(selected_items));
-  EXPECT_HRESULT_SUCCEEDED(::SafeArrayDestroy(selected_items));
+  EXPECT_HRESULT_SUCCEEDED(::SafeArrayUnaccessData(selected_items.Get()));
 }
 
 TEST_F(AXPlatformNodeWinTest, TestComputeUIAControlType) {
@@ -4123,7 +4412,19 @@ TEST_F(AXPlatformNodeWinTest, TestComputeUIAControlType) {
   child2.role = ax::mojom::Role::kLayoutTable;
   root.child_ids.push_back(child2_id);
 
-  Init(root, child1, child2);
+  AXNodeData child3;
+  int32_t child3_id = 3;
+  child3.id = child3_id;
+  child3.role = ax::mojom::Role::kTextField;
+  root.child_ids.push_back(child3_id);
+
+  AXNodeData child4;
+  int32_t child4_id = 4;
+  child4.id = child4_id;
+  child4.role = ax::mojom::Role::kSearchBox;
+  root.child_ids.push_back(child4_id);
+
+  Init(root, child1, child2, child3, child4);
 
   EXPECT_UIA_INT_EQ(
       QueryInterfaceFromNodeId<IRawElementProviderSimple>(child1_id),
@@ -4131,6 +4432,12 @@ TEST_F(AXPlatformNodeWinTest, TestComputeUIAControlType) {
   EXPECT_UIA_INT_EQ(
       QueryInterfaceFromNodeId<IRawElementProviderSimple>(child2_id),
       UIA_ControlTypePropertyId, int{UIA_TableControlTypeId});
+  EXPECT_UIA_INT_EQ(
+      QueryInterfaceFromNodeId<IRawElementProviderSimple>(child3_id),
+      UIA_ControlTypePropertyId, int{UIA_EditControlTypeId});
+  EXPECT_UIA_INT_EQ(
+      QueryInterfaceFromNodeId<IRawElementProviderSimple>(child4_id),
+      UIA_ControlTypePropertyId, int{UIA_EditControlTypeId});
 }
 
 TEST_F(AXPlatformNodeWinTest, TestUIALandmarkType) {
@@ -4354,9 +4661,9 @@ TEST_F(AXPlatformNodeWinTest, TestUIAErrorHandling) {
                 simple_provider.GetAddressOf()));
 
   // ISelectionProvider
-  SAFEARRAY* array_result = nullptr;
+  base::win::ScopedSafearray array_result;
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            selection_provider->GetSelection(&array_result));
+            selection_provider->GetSelection(array_result.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
             selection_provider->get_CanSelectMultiple(&bool_result));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
@@ -4365,15 +4672,15 @@ TEST_F(AXPlatformNodeWinTest, TestUIAErrorHandling) {
   // ITableItemProvider
   RowOrColumnMajor row_or_column_major_result;
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            table_item_provider->GetColumnHeaderItems(&array_result));
+            table_item_provider->GetColumnHeaderItems(array_result.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            table_item_provider->GetRowHeaderItems(&array_result));
+            table_item_provider->GetRowHeaderItems(array_result.Receive()));
 
   // ITableProvider
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            table_provider->GetColumnHeaders(&array_result));
+            table_provider->GetColumnHeaders(array_result.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            table_provider->GetRowHeaders(&array_result));
+            table_provider->GetRowHeaders(array_result.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
             table_provider->get_RowOrColumnMajor(&row_or_column_major_result));
 
@@ -4399,18 +4706,18 @@ TEST_F(AXPlatformNodeWinTest, TestUIAErrorHandling) {
 
   // IRawElementProviderFragment
   ComPtr<IRawElementProviderFragment> navigated_to_fragment;
-  SAFEARRAY* safearray = nullptr;
+  base::win::ScopedSafearray safearray;
   UiaRect bounding_rectangle;
   ComPtr<IRawElementProviderFragmentRoot> fragment_root;
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
             fragment_provider->Navigate(NavigateDirection_Parent,
                                         &navigated_to_fragment));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            fragment_provider->GetRuntimeId(&safearray));
+            fragment_provider->GetRuntimeId(safearray.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
             fragment_provider->get_BoundingRectangle(&bounding_rectangle));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-            fragment_provider->GetEmbeddedFragmentRoots(&safearray));
+            fragment_provider->GetEmbeddedFragmentRoots(safearray.Receive()));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
             fragment_provider->get_FragmentRoot(&fragment_root));
   EXPECT_EQ(static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),

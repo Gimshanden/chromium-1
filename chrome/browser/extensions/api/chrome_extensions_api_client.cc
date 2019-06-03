@@ -13,6 +13,7 @@
 #include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/data_use_measurement/data_use_web_contents_observer.h"
+#include "chrome/browser/extensions/api/automation_internal/chrome_automation_internal_api_delegate.h"
 #include "chrome/browser/extensions/api/chrome_device_permissions_prompt.h"
 #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
 #include "chrome/browser/extensions/api/declarative_content/default_content_predicate_evaluators.h"
@@ -131,7 +132,7 @@ bool ChromeExtensionsAPIClient::ShouldHideBrowserNetworkRequest(
   // requests.
   // Exclude main frame navigation requests.
   bool is_browser_request = request.render_process_id == -1 &&
-                            request.type != content::RESOURCE_TYPE_MAIN_FRAME;
+                            request.type != content::ResourceType::kMainFrame;
 
   // Hide requests made by the Devtools frontend.
   bool is_sensitive_request =
@@ -354,5 +355,14 @@ void ChromeExtensionsAPIClient::SaveImageDataToClipboard(
       error_callback);
 }
 #endif
+
+AutomationInternalApiDelegate*
+ChromeExtensionsAPIClient::GetAutomationInternalApiDelegate() {
+  if (!extensions_automation_api_delegate_) {
+    extensions_automation_api_delegate_ =
+        std::make_unique<ChromeAutomationInternalApiDelegate>();
+  }
+  return extensions_automation_api_delegate_.get();
+}
 
 }  // namespace extensions

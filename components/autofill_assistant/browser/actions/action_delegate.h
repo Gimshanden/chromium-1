@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "components/autofill_assistant/browser/actions/click_action.h"
 #include "components/autofill_assistant/browser/batch_element_checker.h"
 #include "components/autofill_assistant/browser/details.h"
 #include "components/autofill_assistant/browser/info_box.h"
@@ -33,6 +34,7 @@ class WebContents;
 namespace autofill_assistant {
 class ClientMemory;
 class ClientStatus;
+struct ClientSettings;
 
 // Action delegate called when processing actions.
 class ActionDelegate {
@@ -47,8 +49,7 @@ class ActionDelegate {
   virtual std::string GetStatusMessage() = 0;
 
   // Checks one or more elements.
-  virtual void RunElementChecks(BatchElementChecker* checker,
-                                base::OnceCallback<void()> all_done) = 0;
+  virtual void RunElementChecks(BatchElementChecker* checker) = 0;
 
   // Wait for a short time for a given selector to appear.
   //
@@ -60,24 +61,26 @@ class ActionDelegate {
   //
   // TODO(crbug.com/806868): Consider embedding that wait right into
   // WebController and eliminate double-lookup.
-  virtual void ShortWaitForElement(ElementCheckType check_type,
-                                   const Selector& selector,
+  virtual void ShortWaitForElement(const Selector& selector,
                                    base::OnceCallback<void(bool)> callback) = 0;
 
-  // Wait for up to |max_wait_time| for the element |selectors| to be visible on
-  // the page, then call |callback| with true if the element was visible, false
-  // otherwise.
+  // Wait for up to |max_wait_time| for element conditions to match on the page,
+  // then call |callback| with a successful status if at least an element
+  // matched, an error status otherwise.
   //
   // If |allow_interrupt| interrupts can run while waiting.
-  virtual void WaitForElementVisible(
+  virtual void WaitForDom(
       base::TimeDelta max_wait_time,
       bool allow_interrupt,
-      const Selector& selector,
+      base::RepeatingCallback<void(BatchElementChecker*,
+                                   base::OnceCallback<void(bool)>)>
+          check_elements,
       base::OnceCallback<void(ProcessedActionStatusProto)> callback) = 0;
 
   // Click or tap the element given by |selector| on the web page.
   virtual void ClickOrTapElement(
       const Selector& selector,
+      ClickAction::ClickType click_type,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Ask user to select one of the given suggestions.
@@ -86,12 +89,7 @@ class ActionDelegate {
   // scripts, even though we're in the middle of a script. This includes
   // allowing access to the touchable elements set previously, in the same
   // script.
-  //
-  // |on_terminate| is called if the prompt is terminated, by Autofill Assistant
-  // shutting down. The action should return immediately with client error
-  // USER_ABORTED_ACTION.
-  virtual void Prompt(std::unique_ptr<std::vector<Chip>> chips,
-                      base::OnceCallback<void()> on_terminate) = 0;
+  virtual void Prompt(std::unique_ptr<std::vector<Chip>> chips) = 0;
 
   // Remove all chips from the UI.
   virtual void CancelPrompt() = 0;
@@ -163,6 +161,7 @@ class ActionDelegate {
       const Selector& selector,
       const std::string& value,
       bool simulate_key_presses,
+      int key_press_delay_in_millisecond,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Set the |value| of the |attribute| of the element given by |selector|.
@@ -177,6 +176,7 @@ class ActionDelegate {
   virtual void SendKeyboardInput(
       const Selector& selector,
       const std::vector<UChar32>& codepoints,
+      int key_press_delay_in_millisecond,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Return the outerHTML of an element given by |selector|.
@@ -184,6 +184,25 @@ class ActionDelegate {
       const Selector& selector,
       base::OnceCallback<void(const ClientStatus&, const std::string&)>
           callback) = 0;
+
+  // Make the next call to WaitForNavigation to expect a navigation event that
+  // started after this call.
+  virtual void ExpectNavigation() = 0;
+
+  // Returns true if the expected navigation, on which WaitForNavigation() might
+  // be waiting, has started and maybe even ended.
+  virtual bool ExpectedNavigationHasStarted() = 0;
+
+  // Wait for a navigation event to end that started after the last call to
+  // ExpectNavigation().
+  //
+  // If ExpectNavigation() was never called in the script, the function returns
+  // false and never calls the callback.
+  //
+  // The callback is passed true if navigation succeeded. The callback might be
+  // called immediately if navigation has already succeeded.
+  virtual bool WaitForNavigation(
+      base::OnceCallback<void(bool)> on_navigation_done) = 0;
 
   // Load |url| in the current tab. Returns immediately, before the new page has
   // been loaded.
@@ -223,6 +242,24 @@ class ActionDelegate {
 
   // Shows the progress bar when |visible| is true. Hides it when false.
   virtual void SetProgressVisible(bool visible) = 0;
+
+  // Set whether the viewport should be resized.
+  virtual void SetResizeViewport(bool resize_viewport) = 0;
+
+  // Set the peek mode.
+  virtual void SetPeekMode(ConfigureBottomSheetProto::PeekMode peek_mode) = 0;
+
+  // Returns the current client settings.
+  virtual const ClientSettings& GetSettings() = 0;
+
+  // Show a form to the user and call |callback| with its values whenever there
+  // is a change. |callback| will be called directly with the initial values of
+  // the form directly after this call. Returns true if the form was correctly
+  // set, false otherwise. The latter can happen if the form contains
+  // unsupported or invalid inputs.
+  virtual bool SetForm(
+      std::unique_ptr<FormProto> form,
+      base::RepeatingCallback<void(const FormProto::Result*)> callback) = 0;
 
  protected:
   ActionDelegate() = default;

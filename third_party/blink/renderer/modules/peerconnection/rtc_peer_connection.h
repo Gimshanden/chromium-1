@@ -83,6 +83,8 @@ class V8RTCSessionDescriptionCallback;
 class V8RTCStatsCallback;
 class V8VoidFunction;
 
+extern const char kOnlySupportedInUnifiedPlanMessage[];
+
 // This enum is used to track usage of SDP during the transition of the default
 // "sdpSemantics" value from "Plan B" to "Unified Plan". Usage refers to
 // operations such as createOffer(), createAnswer(), setLocalDescription() and
@@ -204,15 +206,14 @@ class MODULES_EXPORT RTCPeerConnection final
 
   void removeStream(MediaStream*, ExceptionState&);
 
-  // Calls one of the below versions (or rejects with an exception) depending on
-  // type, see RTCPeerConnection.idl.
-  ScriptPromise getStats(ScriptState*, blink::ScriptValue callback_or_selector);
-  // Calls LegacyCallbackBasedGetStats().
-  ScriptPromise getStats(ScriptState*,
-                         V8RTCStatsCallback* success_callback,
-                         MediaStreamTrack* selector = nullptr);
-  // Calls PromiseBasedGetStats().
-  ScriptPromise getStats(ScriptState*, MediaStreamTrack* selector = nullptr);
+  // Calls LegacyCallbackBasedGetStats() or PromiseBasedGetStats() (or rejects
+  // with an exception) depending on type, see rtc_peer_connection.idl.
+  ScriptPromise getStats(ScriptState* script_state);
+  ScriptPromise getStats(ScriptState* script_state,
+                         ScriptValue callback_or_selector);
+  ScriptPromise getStats(ScriptState* script_state,
+                         ScriptValue callback_or_selector,
+                         ScriptValue legacy_selector);
   ScriptPromise LegacyCallbackBasedGetStats(
       ScriptState*,
       V8RTCStatsCallback* success_callback,
@@ -339,8 +340,12 @@ class MODULES_EXPORT RTCPeerConnection final
   // getUserMedia().
   bool HasDocumentMedia() const;
 
-  // Look up, and potentially create, a DTLSTransport object.
-  RTCDtlsTransport* LookupDtlsTransportByMid(String mid);
+  // Called by RTCIceTransport::OnStateChange to update the ice connection
+  // state.
+  void UpdateIceConnectionState();
+
+  webrtc::SdpSemantics sdp_semantics() { return sdp_semantics_; }
+
   void Trace(blink::Visitor*) override;
 
  private:
@@ -461,8 +466,14 @@ class MODULES_EXPORT RTCPeerConnection final
 
   void ChangeIceConnectionState(
       webrtc::PeerConnectionInterface::IceConnectionState);
-  bool SetIceConnectionState(
-      webrtc::PeerConnectionInterface::IceConnectionState);
+  webrtc::PeerConnectionInterface::IceConnectionState
+  ComputeIceConnectionState();
+  bool HasAnyFailedIceTransport() const;
+  bool HasAnyDisconnectedIceTransport() const;
+  bool HasAllNewOrClosedIceTransports() const;
+  bool HasAnyNewOrCheckingIceTransport() const;
+  bool HasAllCompletedOrClosedIceTransports() const;
+  bool HasAllConnectedCompletedOrClosedIceTransports() const;
 
   void ChangePeerConnectionState(
       webrtc::PeerConnectionInterface::PeerConnectionState);
@@ -478,6 +489,8 @@ class MODULES_EXPORT RTCPeerConnection final
                                        String* sdp);
   void MaybeWarnAboutUnsafeSdp(
       const RTCSessionDescriptionInit* session_description_init) const;
+
+  std::set<RTCIceTransport*> ActiveIceTransports() const;
 
   webrtc::PeerConnectionInterface::SignalingState signaling_state_;
   webrtc::PeerConnectionInterface::IceGatheringState ice_gathering_state_;
@@ -502,6 +515,8 @@ class MODULES_EXPORT RTCPeerConnection final
   // A map of all webrtc::DtlsTransports that have a corresponding
   // RTCDtlsTransport object. Garbage collection will remove map entries
   // when they are no longer in use.
+  // Note: Transports may exist in the map even if they are not currently
+  // in use, since garbage collection only happens when needed.
   HeapHashMap<webrtc::DtlsTransportInterface*, WeakMember<RTCDtlsTransport>>
       dtls_transports_by_native_transport_;
   // The same kind of map for webrtc::IceTransports.

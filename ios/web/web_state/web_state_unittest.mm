@@ -14,14 +14,14 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/navigation/wk_based_navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#import "ios/web/public/crw_navigation_item_storage.h"
-#import "ios/web/public/crw_session_storage.h"
-#include "ios/web/public/features.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
 #import "ios/web/public/test/fakes/test_web_client.h"
 #import "ios/web/public/test/fakes/test_web_state_delegate.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
@@ -45,6 +45,9 @@ using base::test::ios::kWaitForPageLoadTimeout;
 
 namespace web {
 namespace {
+
+// Error when loading an app specific page.
+const char kUnsupportedUrlErrorPage[] = "NSURLErrorDomain error -1002.";
 
 // A text string from the test HTML page in the session storage returned  by
 // GetTestSessionStorage().
@@ -449,6 +452,7 @@ TEST_P(WebStateTest, CallStopDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -492,6 +496,7 @@ TEST_P(WebStateTest, CallLoadURLWithParamsDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -542,6 +547,7 @@ TEST_P(WebStateTest, CallReloadDuringSessionRestore) {
   CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
   session_storage.itemStorages = item_storages;
   auto web_state = WebState::CreateWithStorageSession(params, session_storage);
+  web_state->SetKeepRenderProcessAlive(true);
   WebState* web_state_ptr = web_state.get();
   NavigationManager* navigation_manager = web_state->GetNavigationManager();
   // TODO(crbug.com/873729): The session will not be restored until
@@ -647,13 +653,8 @@ TEST_P(WebStateTest, LoadChromeThenHTML) {
     return !web_state()->IsLoading();
   }));
   // Wait for the error loading.
-  std::string error;
-  if (features::WebUISchemeHandlingEnabled()) {
-    error = "NSURLErrorDomain error -1002.";
-  } else {
-    error = "unsupported URL";
-  }
-  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(), error));
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(),
+                                                 kUnsupportedUrlErrorPage));
   NSString* data_html = @(kTestPageHTML);
   web_state()->LoadData([data_html dataUsingEncoding:NSUTF8StringEncoding],
                         @"text/html", GURL("https://www.chromium.org"));
@@ -676,13 +677,8 @@ TEST_P(WebStateTest, LoadChromeThenWaitThenHTMLThenReload) {
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
     return !web_state()->IsLoading();
   }));
-  std::string error;
-  if (features::WebUISchemeHandlingEnabled()) {
-    error = "NSURLErrorDomain error -1002.";
-  } else {
-    error = "unsupported URL";
-  }
-  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(), error));
+  EXPECT_TRUE(test::WaitForWebViewContainingText(web_state(),
+                                                 kUnsupportedUrlErrorPage));
   NSString* data_html = @(kTestPageHTML);
   web_state()->LoadData([data_html dataUsingEncoding:NSUTF8StringEncoding],
                         @"text/html", echo_url);

@@ -46,11 +46,8 @@ test("services_unittests") {
 
   if (use_aura) {
     deps += [
-      "//services/ws:tests",
-      "//services/ws/ime:tests",
       "//services/ws/input_devices:tests",
       "//services/ws/public/cpp/tests",
-      "//services/ws/public/mojom:tests",
     ]
   }
 
@@ -78,6 +75,11 @@ test("services_unittests") {
     # or iOS, so any tests which use the ServiceTest framework to connect to
     # standalone services must be added here.
     deps += [ "//services/video_capture:tests" ]
+  }
+
+  if (is_fuchsia) {
+    # Enable the test HTTP server for use by NetworkServiceTestWithService.*
+    use_test_server = true
   }
 }
 

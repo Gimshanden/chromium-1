@@ -76,24 +76,6 @@ void BrowserProcessSubThread::AllowBlockingForTesting() {
   is_blocking_allowed_for_testing_ = true;
 }
 
-// static
-std::unique_ptr<BrowserProcessSubThread>
-BrowserProcessSubThread::CreateIOThread() {
-  TRACE_EVENT0("startup", "BrowserProcessSubThread::CreateIOThread");
-  base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(USE_OZONE)
-  // Up the priority of the |io_thread_| as some of its IPCs relate to
-  // display tasks.
-  options.priority = base::ThreadPriority::DISPLAY;
-#endif
-  std::unique_ptr<BrowserProcessSubThread> io_thread(
-      new BrowserProcessSubThread(BrowserThread::IO));
-  if (!io_thread->StartWithOptions(options))
-    LOG(FATAL) << "Failed to start BrowserThread:IO";
-  return io_thread;
-}
-
 void BrowserProcessSubThread::Init() {
   DCHECK_CALLED_ON_VALID_THREAD(browser_thread_checker_);
 
@@ -197,6 +179,10 @@ void BrowserProcessSubThread::IOThreadCleanUp() {
 #if BUILDFLAG(CLANG_COVERAGE)
       // On coverage build, browser_tests runs 10x slower.
       const int kMaxSecondsToWaitForNetworkProcess = 100;
+#elif defined(OS_CHROMEOS)
+      // ChromeOS will kill the browser process if it doesn't shut down within
+      // 3 seconds, so make sure we wait for less than that.
+      const int kMaxSecondsToWaitForNetworkProcess = 1;
 #else
       const int kMaxSecondsToWaitForNetworkProcess = 10;
 #endif

@@ -16,8 +16,9 @@
 #import "ios/chrome/browser/metrics/new_tab_page_uma.h"
 #import "ios/chrome/browser/ntp/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/search_engines/search_engine_observer_bridge.h"
+#import "ios/chrome/browser/signin/authentication_service.h"
+#include "ios/chrome/browser/signin/feature_flags.h"
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
-#import "ios/chrome/browser/ui/chrome_load_params.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
@@ -32,14 +33,15 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_metrics_recorder.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller_audience.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_consumer.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_metrics.h"
+#import "ios/chrome/browser/ui/content_suggestions/user_account_image_update_delegate.h"
 #import "ios/chrome/browser/ui/location_bar/location_bar_notification_names.h"
 #include "ios/chrome/browser/ui/ntp/metrics.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_header_constants.h"
 #import "ios/chrome/browser/ui/ntp/notification_promo_whats_new.h"
 #import "ios/chrome/browser/ui/toolbar/public/omnibox_focuser.h"
-#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/url_loading/url_loading_params.h"
 #import "ios/chrome/browser/url_loading/url_loading_service.h"
@@ -47,12 +49,15 @@
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/common/favicon/favicon_attributes.h"
 #include "ios/chrome/grit/ios_strings.h"
+#import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/signin/signin_resources_provider.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/referrer.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
+#import "services/identity/public/objc/identity_manager_observer_bridge.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -66,15 +71,19 @@ const char kNTPHelpURL[] =
     "https://support.google.com/chrome/?p=ios_new_tab&ios=1";
 }  // namespace
 
-@interface NTPHomeMediator ()<CRWWebStateObserver,
-                              SearchEngineObserving,
-                              WebStateListObserving> {
+@interface NTPHomeMediator () <CRWWebStateObserver,
+                               IdentityManagerObserverBridgeDelegate,
+                               SearchEngineObserving,
+                               WebStateListObserving> {
   std::unique_ptr<web::WebStateObserverBridge> _webStateObserver;
   // Observes the WebStateList so that this mediator can update the UI when the
   // active WebState changes.
   std::unique_ptr<WebStateListObserverBridge> _webStateListObserver;
   // Listen for default search engine changes.
   std::unique_ptr<SearchEngineObserverBridge> _searchEngineObserver;
+  // Observes changes in identity and updates the Identity Disc.
+  std::unique_ptr<identity::IdentityManagerObserverBridge>
+      _identityObserverBridge;
   // Used to load URLs.
   UrlLoadingService* _urlLoadingService;
 }
@@ -84,31 +93,24 @@ const char kNTPHelpURL[] =
 @property(nonatomic, assign, readonly) WebStateList* webStateList;
 // TemplateURL used to get the search engine.
 @property(nonatomic, assign) TemplateURLService* templateURLService;
+// Authentication Service to get the current user's avatar.
+@property(nonatomic, assign) AuthenticationService* authService;
 // Logo vendor to display the doodle on the NTP.
 @property(nonatomic, strong) id<LogoVendor> logoVendor;
 // The web state associated with this NTP.
 @property(nonatomic, assign) web::WebState* webState;
+// This is the object that knows how to update the Identity Disc UI.
+@property(nonatomic, weak) id<UserAccountImageUpdateDelegate> imageUpdater;
 
 @end
 
 @implementation NTPHomeMediator
 
-@synthesize webState = _webState;
-@synthesize consumer = _consumer;
-@synthesize dispatcher = _dispatcher;
-@synthesize suggestionsService = _suggestionsService;
-@synthesize NTPMetrics = _NTPMetrics;
-@synthesize suggestionsViewController = _suggestionsViewController;
-@synthesize suggestionsMediator = _suggestionsMediator;
-@synthesize alertCoordinator = _alertCoordinator;
-@synthesize metricsRecorder = _metricsRecorder;
-@synthesize logoVendor = _logoVendor;
-@synthesize templateURLService = _templateURLService;
-@synthesize webStateList = _webStateList;
-
 - (instancetype)initWithWebStateList:(WebStateList*)webStateList
                   templateURLService:(TemplateURLService*)templateURLService
                    urlLoadingService:(UrlLoadingService*)urlLoadingService
+                         authService:(AuthenticationService*)authService
+                     identityManager:(identity::IdentityManager*)identityManager
                           logoVendor:(id<LogoVendor>)logoVendor {
   self = [super init];
   if (self) {
@@ -117,6 +119,9 @@ const char kNTPHelpURL[] =
     _webStateList->AddObserver(_webStateListObserver.get());
     _templateURLService = templateURLService;
     _urlLoadingService = urlLoadingService;
+    _authService = authService;
+    _identityObserverBridge.reset(
+        new identity::IdentityManagerObserverBridge(identityManager, self));
     // Listen for default search engine changes.
     _searchEngineObserver = std::make_unique<SearchEngineObserverBridge>(
         self, self.templateURLService);
@@ -230,14 +235,14 @@ const char kNTPHelpURL[] =
   self.suggestionsService->user_classifier()->OnEvent(
       ntp_snippets::UserClassifier::Metric::SUGGESTIONS_USED);
 
-  web::NavigationManager::WebLoadParams params(suggestionItem.URL);
   // Use a referrer with a specific URL to mark this entry as coming from
   // ContentSuggestions.
-  params.referrer =
+  UrlLoadParams params = UrlLoadParams::InCurrentTab(suggestionItem.URL);
+  params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+  params.web_params.referrer =
       web::Referrer(GURL(ntp_snippets::GetContentSuggestionsReferrerURL()),
                     web::ReferrerPolicyDefault);
-  params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-  _urlLoadingService->Load(UrlLoadParams::InCurrentTab(params));
+  _urlLoadingService->Load(params);
   [self.NTPMetrics recordAction:new_tab_page_uma::ACTION_OPENED_SUGGESTION];
 }
 
@@ -281,9 +286,9 @@ const char kNTPHelpURL[] =
 
   [self logMostVisitedOpening:mostVisitedItem atIndex:mostVisitedIndex];
 
-  web::NavigationManager::WebLoadParams params(mostVisitedItem.URL);
-  params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-  _urlLoadingService->Load(UrlLoadParams::InCurrentTab(params));
+  UrlLoadParams params = UrlLoadParams::InCurrentTab(mostVisitedItem.URL);
+  params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+  _urlLoadingService->Load(params);
 }
 
 - (void)displayContextMenuForSuggestion:(CollectionViewItem*)item
@@ -353,10 +358,8 @@ const char kNTPHelpURL[] =
   [self.NTPMetrics recordAction:new_tab_page_uma::ACTION_OPENED_PROMO];
 
   if (notificationPromo->IsURLPromo()) {
-    UrlLoadParams* params =
-        UrlLoadParams::InNewTab(notificationPromo->url(),
-                                /* in_incognito */ NO,
-                                /* in_background */ NO, kCurrentTab);
+    UrlLoadParams params = UrlLoadParams::InNewTab(notificationPromo->url());
+    params.append_to = kCurrentTab;
     _urlLoadingService->Load(params);
     return;
   }
@@ -376,8 +379,7 @@ const char kNTPHelpURL[] =
       NewTabPageTabHelper::FromWebState(self.webState);
   if (NTPHelper && NTPHelper->IgnoreLoadRequests())
     return;
-  GURL URL(kNTPHelpURL);
-  _urlLoadingService->Load(UrlLoadParams::InCurrentTab(URL));
+  _urlLoadingService->Load(UrlLoadParams::InCurrentTab(GURL(kNTPHelpURL)));
   [self.NTPMetrics recordAction:new_tab_page_uma::ACTION_OPENED_LEARN_MORE];
 }
 
@@ -474,6 +476,11 @@ const char kNTPHelpURL[] =
   return self.suggestionsViewController.scrolledToTop;
 }
 
+- (void)registerImageUpdater:(id<UserAccountImageUpdateDelegate>)imageUpdater {
+  self.imageUpdater = imageUpdater;
+  [self updateAccountImage];
+}
+
 - (BOOL)ignoreLoadRequests {
   NewTabPageTabHelper* NTPHelper =
       NewTabPageTabHelper::FromWebState(self.webState);
@@ -530,6 +537,17 @@ const char kNTPHelpURL[] =
   [self.consumer setLogoIsShowing:showLogo];
 }
 
+#pragma mark - IdentityManagerObserverBridgeDelegate
+
+- (void)onPrimaryAccountSet:(const CoreAccountInfo&)primaryAccountInfo {
+  [self updateAccountImage];
+}
+
+- (void)onPrimaryAccountCleared:
+    (const CoreAccountInfo&)previousPrimaryAccountInfo {
+  [self updateAccountImage];
+}
+
 #pragma mark - Private
 
 // Returns the center of the cell associated with |item| in the window
@@ -552,11 +570,11 @@ const char kNTPHelpURL[] =
                 incognito:(BOOL)incognito
               originPoint:(CGPoint)originPoint {
   // Open the tab in background if it is non-incognito only.
-  UrlLoadParams* params =
-      UrlLoadParams::InNewTab(URL,
-                              /* in_incognito */ incognito,
-                              /* in_background */ !incognito, kCurrentTab);
-  params->origin_point = originPoint;
+  UrlLoadParams params = UrlLoadParams::InNewTab(URL);
+  params.SetInBackground(!incognito);
+  params.in_incognito = incognito;
+  params.append_to = kCurrentTab;
+  params.origin_point = originPoint;
   _urlLoadingService->Load(params);
 }
 
@@ -603,9 +621,6 @@ const char kNTPHelpURL[] =
   if (webState->GetLastCommittedURL().GetOrigin() != kChromeUINewTabURL)
     return;
 
-  if (!base::FeatureList::IsEnabled(kBrowserContainerContainsNTP))
-    return;
-
   web::NavigationManager* manager = webState->GetNavigationManager();
   web::NavigationItem* item = manager->GetLastCommittedItem();
   web::PageDisplayState displayState;
@@ -631,6 +646,50 @@ const char kNTPHelpURL[] =
       item ? item->GetPageDisplayState().scroll_state().content_offset().y : 0;
   if (offset > 0)
     [self.suggestionsViewController setContentOffset:offset];
+}
+
+// Fetches and update user's avatar on NTP, or use default avatar if user is
+// not signed in.
+- (void)updateAccountImage {
+  // Early return here to avoid doing all that work to fetch an image that
+  // won't be used.
+  if (!IsIdentityDiscFeatureEnabled())
+    return;
+  UIImage* image;
+  // Fetches user's identity from Authentication Service.
+  ChromeIdentity* identity = self.authService->GetAuthenticatedIdentity();
+  if (identity) {
+    // Fetches user's avatar from Authentication Service. Use cached version if
+    // one is available. If not, use the default avatar and initiate a fetch
+    // in the background. When background fetch completes, all observers will
+    // be notified to refresh the user's avatar.
+    ios::ChromeIdentityService* identityService =
+        ios::GetChromeBrowserProvider()->GetChromeIdentityService();
+    image = identityService->GetCachedAvatarForIdentity(identity);
+    if (!image) {
+      image = [self defaultAvatar];
+      identityService->GetAvatarForIdentity(identity, nil);
+    }
+  } else {
+    // User is not signed in, show default avatar.
+    image = [self defaultAvatar];
+  }
+  // TODO(crbug.com/965962): Use ResizedAvatarCache when it accepts the
+  // specification of different image sizes.
+  CGFloat dimension = ntp_home::kIdentityAvatarDimension;
+  if (image.size.width != dimension || image.size.height != dimension) {
+    image = ResizeImage(image, CGSizeMake(dimension, dimension),
+                        ProjectionMode::kAspectFit);
+  }
+  [self.imageUpdater updateAccountImage:image];
+}
+
+// Returns the default avatar image for users who are not signed in or signed
+// in but avatar image is not available yet.
+- (UIImage*)defaultAvatar {
+  return ios::GetChromeBrowserProvider()
+      ->GetSigninResourcesProvider()
+      ->GetDefaultAvatar();
 }
 
 @end

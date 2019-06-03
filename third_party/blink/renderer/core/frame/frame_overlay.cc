@@ -71,6 +71,7 @@ void FrameOverlay::UpdatePrePaint() {
   if (!layer_) {
     layer_ = std::make_unique<GraphicsLayer>(*this);
     layer_->SetDrawsContent(true);
+    layer_->SetHitTestable(false);
 
     if (!RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled()) {
       // This is required for contents of overlay to stay in sync with the page
@@ -98,8 +99,8 @@ IntSize FrameOverlay::Size() const {
       frame_->View()->Size());
 }
 
-LayoutRect FrameOverlay::VisualRect() const {
-  return LayoutRect(IntPoint(), Size());
+IntRect FrameOverlay::VisualRect() const {
+  return IntRect(IntPoint(), Size());
 }
 
 IntRect FrameOverlay::ComputeInterestRect(const GraphicsLayer* graphics_layer,

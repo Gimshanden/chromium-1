@@ -4,8 +4,11 @@
 
 #include "gpu/command_buffer/client/webgpu_implementation.h"
 
+#include <algorithm>
 #include <vector>
 
+#include "base/numerics/checked_math.h"
+#include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/client/gpu_control.h"
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 
@@ -42,12 +45,8 @@ gpu::ContextResult WebGPUImplementation::Initialize(
     return result;
   }
 
-  // TODO(enga): Keep track of how much command space the application is using
-  // and adjust c2s_buffer_size_ accordingly.
-  c2s_buffer_size_ = limits.start_transfer_buffer_size;
-  DCHECK_GT(c2s_buffer_size_, 0u);
-  DCHECK(
-      base::CheckAdd(c2s_buffer_size_, c2s_buffer_size_).IsValid<uint32_t>());
+  c2s_buffer_default_size_ = limits.start_transfer_buffer_size;
+  DCHECK_GT(c2s_buffer_default_size_, 0u);
 
   return gpu::ContextResult::kSuccess;
 }
@@ -145,8 +144,32 @@ bool WebGPUImplementation::CanDecodeWithHardwareAcceleration(
   return false;
 }
 
+// InterfaceBase implementation.
+void WebGPUImplementation::GenSyncTokenCHROMIUM(GLbyte* sync_token) {
+  ImplementationBase::GenSyncToken(sync_token);
+}
+void WebGPUImplementation::GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) {
+  ImplementationBase::GenUnverifiedSyncToken(sync_token);
+}
+void WebGPUImplementation::VerifySyncTokensCHROMIUM(GLbyte** sync_tokens,
+                                                    GLsizei count) {
+  ImplementationBase::VerifySyncTokens(sync_tokens, count);
+}
+void WebGPUImplementation::WaitSyncTokenCHROMIUM(const GLbyte* sync_token) {
+  ImplementationBase::WaitSyncToken(sync_token);
+}
+
 // ImplementationBase implementation.
 void WebGPUImplementation::IssueShallowFlush() {
+  NOTIMPLEMENTED();
+}
+
+void WebGPUImplementation::SetGLError(GLenum error,
+                                      const char* function_name,
+                                      const char* msg) {
+  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] Client Synthesized Error: "
+                     << gles2::GLES2Util::GetStringError(error) << ": "
+                     << function_name << ": " << msg);
   NOTIMPLEMENTED();
 }
 
@@ -173,6 +196,14 @@ void WebGPUImplementation::OnSwapBufferPresented(
 void WebGPUImplementation::OnGpuControlReturnData(
     base::span<const uint8_t> data) {
 #if BUILDFLAG(USE_DAWN)
+
+  static uint32_t return_trace_id = 0;
+  TRACE_EVENT_FLOW_END0(TRACE_DISABLED_BY_DEFAULT("gpu.dawn"),
+                        "DawnReturnCommands", return_trace_id++);
+
+  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("gpu.dawn"),
+               "WebGPUImplementation::OnGpuControlReturnData", "bytes",
+               data.size());
   if (!wire_client_->HandleCommands(
       reinterpret_cast<const char*>(data.data()), data.size())) {
     // TODO(enga): Lose the context.
@@ -181,45 +212,41 @@ void WebGPUImplementation::OnGpuControlReturnData(
 #endif
 }
 
-void WebGPUImplementation::Dummy() {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] wgDummy()");
-  helper_->Dummy();
-  helper_->Flush();
-}
-
 void* WebGPUImplementation::GetCmdSpace(size_t size) {
   // The buffer size must be initialized before any commands are serialized.
-  if (c2s_buffer_size_ == 0u) {
+  if (c2s_buffer_default_size_ == 0u) {
     NOTREACHED();
     return nullptr;
   }
 
-  // TODO(enga): Handle chunking commands if size > c2s_buffer_size_.
-  if (size > c2s_buffer_size_) {
-    NOTREACHED();
-    return nullptr;
-  }
+  base::CheckedNumeric<uint32_t> checked_next_offset(c2s_put_offset_);
+  checked_next_offset += size;
 
-  // This should never be more than 2 * c2s_buffer_size_ which is checked in
-  // WebGPUImplementation::Initialize.
-  DCHECK_LE(c2s_put_offset_, c2s_buffer_size_);
-  DCHECK_LE(size, c2s_buffer_size_);
-  uint32_t next_offset = c2s_put_offset_ + static_cast<uint32_t>(size);
+  uint32_t next_offset;
+  bool next_offset_valid = checked_next_offset.AssignIfValid(&next_offset);
 
   // If the buffer does not have enough space, or if the buffer is not
   // initialized, flush and reset the command stream.
-  if (next_offset > c2s_buffer_.size() || !c2s_buffer_.valid()) {
+  if (!next_offset_valid || next_offset > c2s_buffer_.size() ||
+      !c2s_buffer_.valid()) {
     Flush();
 
-    c2s_buffer_.Reset(c2s_buffer_size_);
+    uint32_t max_allocation = transfer_buffer_->GetMaxSize();
+    // TODO(crbug.com/951558): Handle command chunking or ensure commands aren't
+    // this large.
+    CHECK_LE(size, max_allocation);
+
+    uint32_t allocation_size =
+        std::max(c2s_buffer_default_size_, static_cast<uint32_t>(size));
+    TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("gpu.dawn"),
+                 "WebGPUImplementation::GetCmdSpace", "bytes", allocation_size);
+    c2s_buffer_.Reset(allocation_size);
     c2s_put_offset_ = 0;
     next_offset = size;
 
-    if (size > c2s_buffer_.size() || !c2s_buffer_.valid()) {
-      // TODO(enga): Handle OOM.
-      return nullptr;
-    }
+    // TODO(crbug.com/951558): Handle OOM.
+    CHECK(c2s_buffer_.valid());
+    CHECK_LE(size, c2s_buffer_.size());
   }
 
   DCHECK(c2s_buffer_.valid());
@@ -232,6 +259,15 @@ void* WebGPUImplementation::GetCmdSpace(size_t size) {
 
 bool WebGPUImplementation::Flush() {
   if (c2s_buffer_.valid()) {
+    TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("gpu.dawn"),
+                 "WebGPUImplementation::Flush", "bytes", c2s_put_offset_);
+
+    TRACE_EVENT_FLOW_BEGIN0(
+        TRACE_DISABLED_BY_DEFAULT("gpu.dawn"), "DawnCommands",
+        (static_cast<uint64_t>(c2s_buffer_.shm_id()) << 32) +
+            c2s_buffer_.offset());
+
+    c2s_buffer_.Shrink(c2s_put_offset_);
     helper_->DawnCommands(c2s_buffer_.shm_id(), c2s_buffer_.offset(),
                           c2s_put_offset_);
     c2s_put_offset_ = 0;
@@ -255,6 +291,16 @@ void WebGPUImplementation::FlushCommands() {
 DawnDevice WebGPUImplementation::GetDefaultDevice() {
 #if BUILDFLAG(USE_DAWN)
   return wire_client_->GetDevice();
+#else
+  NOTREACHED();
+  return {};
+#endif
+}
+
+ReservedTexture WebGPUImplementation::ReserveTexture(DawnDevice device) {
+#if BUILDFLAG(USE_DAWN)
+  dawn_wire::ReservedTexture reservation = wire_client_->ReserveTexture(device);
+  return {reservation.texture, reservation.id, reservation.generation};
 #else
   NOTREACHED();
   return {};

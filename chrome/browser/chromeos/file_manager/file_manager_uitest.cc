@@ -87,6 +87,14 @@ IN_PROC_BROWSER_TEST_F(FileManagerUITest, Menu) {
   RunTest("menu");
 }
 
+IN_PROC_BROWSER_TEST_F(FileManagerUITest, PluginVm) {
+  RunTest("pluginVm");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerUITest, PluginVmShare) {
+  RunTest("pluginVmShare");
+}
+
 IN_PROC_BROWSER_TEST_F(FileManagerUITest, ProgressCenter) {
   RunTest("progressCenter");
 }

@@ -32,7 +32,7 @@
 #include "media/base/subsample_entry.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
 #include "media/base/video_types.h"
 #include "media/base/waiting.h"
 #include "media/base/watch_time_keys.h"
@@ -40,6 +40,7 @@
 // move CdmProxy related code into #if BUILDFLAG(ENABLE_LIBRARY_CDMS).
 #include "media/cdm/cdm_proxy.h"
 #include "media/media_buildflags.h"
+#include "media/video/supported_video_decoder_config.h"
 #include "ui/gfx/ipc/color/gfx_param_traits_macros.h"
 
 #if defined(OS_ANDROID)
@@ -132,6 +133,9 @@ IPC_ENUM_TRAITS_MAX_VALUE(media::WatchTimeKey,
 IPC_ENUM_TRAITS_MIN_MAX_VALUE(media::VideoCodecProfile,
                               media::VIDEO_CODEC_PROFILE_MIN,
                               media::VIDEO_CODEC_PROFILE_MAX)
+
+IPC_ENUM_TRAITS_MAX_VALUE(media::VideoDecoderImplementation,
+                          media::VideoDecoderImplementation::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::VideoPixelFormat, media::PIXEL_FORMAT_MAX)
 

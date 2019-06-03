@@ -7,6 +7,7 @@
 
 #include <iosfwd>
 
+#include "chrome/browser/web_applications/components/web_app_constants.h"
 #include "url/gurl.h"
 
 namespace web_app {
@@ -15,6 +16,7 @@ enum class InstallSource;
 enum class LaunchContainer;
 
 struct InstallOptions {
+  InstallOptions();
   InstallOptions(const GURL& url,
                  LaunchContainer launch_container,
                  InstallSource install_source);
@@ -26,8 +28,8 @@ struct InstallOptions {
   bool operator==(const InstallOptions& other) const;
 
   GURL url;
-  LaunchContainer launch_container;
-  InstallSource install_source;
+  LaunchContainer launch_container = LaunchContainer::kTab;
+  InstallSource install_source = InstallSource::kInternal;
 
   // If true, a shortcut is added to the Applications folder on macOS, and Start
   // Menu on Linux and Windows. On Chrome OS, all installed apps show up in the
@@ -63,12 +65,20 @@ struct InstallOptions {
   // Whether the app should be reinstalled even if it is already installed.
   bool always_update = false;
 
+  // Whether we should wait for all app windows being closed before reinstalling
+  // the placeholder.
+  bool wait_for_windows_closed = false;
+
   // Whether a placeholder app should be installed if we fail to retrieve the
   // metadata for the app. A placeholder app uses:
   //  - The default Chrome App icon for the icon
   //  - |url| as the start_url
   //  - |url| as the app name
   bool install_placeholder = false;
+
+  // Whether we should try to reinstall the app if there is a placeholder for
+  // it.
+  bool reinstall_placeholder = false;
 };
 
 std::ostream& operator<<(std::ostream& out,

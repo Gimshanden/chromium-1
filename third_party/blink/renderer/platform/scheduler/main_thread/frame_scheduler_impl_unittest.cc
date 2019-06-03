@@ -35,6 +35,8 @@ namespace scheduler {
 // To avoid symbol collisions in jumbo builds.
 namespace frame_scheduler_impl_unittest {
 
+using FeatureHandle = FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle;
+
 class FrameSchedulerDelegateForTesting : public FrameScheduler::Delegate {
  public:
   FrameSchedulerDelegateForTesting() {}
@@ -49,6 +51,8 @@ class FrameSchedulerDelegateForTesting : public FrameScheduler::Delegate {
     update_task_time_calls_++;
   }
 
+  MOCK_METHOD1(UpdateActiveSchedulerTrackedFeatures, void(uint64_t));
+
   int update_task_time_calls_ = 0;
 };
 
@@ -57,7 +61,8 @@ class FrameSchedulerImplTest : public testing::Test {
   FrameSchedulerImplTest()
       : task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME,
-            base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED) {
+            base::test::ScopedTaskEnvironment::ThreadPoolExecutionMode::
+                QUEUED) {
     // Null clock might trigger some assertions.
     task_environment_.FastForwardBy(base::TimeDelta::FromMilliseconds(5));
   }
@@ -77,16 +82,16 @@ class FrameSchedulerImplTest : public testing::Test {
             task_environment_.GetMockTickClock()),
         base::nullopt));
     page_scheduler_.reset(new PageSchedulerImpl(nullptr, scheduler_.get()));
-    frame_scheduler_delegate_ =
-        std::make_unique<FrameSchedulerDelegateForTesting>();
+    frame_scheduler_delegate_ = std::make_unique<
+        testing::StrictMock<FrameSchedulerDelegateForTesting>>();
     frame_scheduler_ = FrameSchedulerImpl::Create(
         page_scheduler_.get(), frame_scheduler_delegate_.get(), nullptr,
         FrameScheduler::FrameType::kSubframe);
   }
 
   void ResetFrameScheduler(FrameScheduler::FrameType frame_type) {
-    frame_scheduler_delegate_ =
-        std::make_unique<FrameSchedulerDelegateForTesting>();
+    frame_scheduler_delegate_ = std::make_unique<
+        testing::StrictMock<FrameSchedulerDelegateForTesting>>();
     frame_scheduler_ = FrameSchedulerImpl::Create(
         page_scheduler_.get(), frame_scheduler_delegate_.get(), nullptr,
         frame_type);
@@ -98,6 +103,11 @@ class FrameSchedulerImplTest : public testing::Test {
     page_scheduler_.reset();
     scheduler_->Shutdown();
     scheduler_.reset();
+    frame_scheduler_delegate_.reset();
+  }
+
+  static void ResetForNavigation(FrameSchedulerImpl* frame_scheduler) {
+    frame_scheduler->ResetForNavigation();
   }
 
   base::TimeDelta GetTaskTime() { return frame_scheduler_->task_time_; }
@@ -108,6 +118,12 @@ class FrameSchedulerImplTest : public testing::Test {
 
   void ResetTotalUpdateTaskTimeCalls() {
     frame_scheduler_delegate_->update_task_time_calls_ = 0;
+  }
+
+  static uint64_t GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+      FrameSchedulerImpl* frame_scheduler) {
+    return frame_scheduler
+        ->GetActiveFeaturesTrackedForBackForwardCacheMetricsMask();
   }
 
  protected:
@@ -199,7 +215,8 @@ class FrameSchedulerImplTest : public testing::Test {
   std::unique_ptr<MainThreadSchedulerImpl> scheduler_;
   std::unique_ptr<PageSchedulerImpl> page_scheduler_;
   std::unique_ptr<FrameSchedulerImpl> frame_scheduler_;
-  std::unique_ptr<FrameSchedulerDelegateForTesting> frame_scheduler_delegate_;
+  std::unique_ptr<testing::StrictMock<FrameSchedulerDelegateForTesting>>
+      frame_scheduler_delegate_;
   scoped_refptr<TaskQueue> throttleable_task_queue_;
 };
 
@@ -1515,9 +1532,9 @@ class ResourceFetchPriorityExperimentTest : public FrameSchedulerImplTest {
  public:
   ResourceFetchPriorityExperimentTest()
       : FrameSchedulerImplTest({kUseResourceFetchPriority}, {}) {
-    std::map<std::string, std::string> params{
-        {"HIGHEST", "HIGH"}, {"MEDIUM", "NORMAL"}, {"LOW", "NORMAL"},
-        {"LOWEST", "LOW"},   {"IDLE", "LOW"},      {"THROTTLED", "LOW"}};
+    base::FieldTrialParams params{{"HIGHEST", "HIGH"}, {"MEDIUM", "NORMAL"},
+                                  {"LOW", "NORMAL"},   {"LOWEST", "LOW"},
+                                  {"IDLE", "LOW"},     {"THROTTLED", "LOW"}};
 
     const char kStudyName[] = "ResourceFetchPriorityExperiment";
     const char kGroupName[] = "GroupName1";
@@ -1550,9 +1567,9 @@ class ResourceFetchPriorityExperimentOnlyWhenLoadingTest
  public:
   ResourceFetchPriorityExperimentOnlyWhenLoadingTest()
       : FrameSchedulerImplTest({kUseResourceFetchPriorityOnlyWhenLoading}, {}) {
-    std::map<std::string, std::string> params{
-        {"HIGHEST", "HIGH"}, {"MEDIUM", "NORMAL"}, {"LOW", "NORMAL"},
-        {"LOWEST", "LOW"},   {"IDLE", "LOW"},      {"THROTTLED", "LOW"}};
+    base::FieldTrialParams params{{"HIGHEST", "HIGH"}, {"MEDIUM", "NORMAL"},
+                                  {"LOW", "NORMAL"},   {"LOWEST", "LOW"},
+                                  {"IDLE", "LOW"},     {"THROTTLED", "LOW"}};
 
     const char kStudyName[] = "ResourceFetchPriorityExperiment";
     const char kGroupName[] = "GroupName2";
@@ -1729,9 +1746,8 @@ TEST_F(FrameSchedulerImplTest, TaskTypeToTaskQueueMapping) {
 
 class ThrottleAndFreezeTaskTypesExperimentTest : public FrameSchedulerImplTest {
  public:
-  ThrottleAndFreezeTaskTypesExperimentTest(
-      std::map<std::string, std::string> params,
-      const char* group_name) {
+  ThrottleAndFreezeTaskTypesExperimentTest(const base::FieldTrialParams& params,
+                                           const char* group_name) {
     const char kStudyName[] = "ThrottleAndFreezeTaskTypes";
 
     field_trial_list_ = std::make_unique<base::FieldTrialList>(nullptr);
@@ -1755,7 +1771,7 @@ class ThrottleableAndFreezableTaskTypesTest
  public:
   ThrottleableAndFreezableTaskTypesTest()
       : ThrottleAndFreezeTaskTypesExperimentTest(
-            std::map<std::string, std::string>{
+            base::FieldTrialParams{
                 // Leading spaces are allowed.
                 {kThrottleableTaskTypesListParam, "PostedMessage"},
                 {kFreezableTaskTypesListParam,
@@ -1809,7 +1825,7 @@ class FreezableOnlyTaskTypesTest
  public:
   FreezableOnlyTaskTypesTest()
       : ThrottleAndFreezeTaskTypesExperimentTest(
-            std::map<std::string, std::string>{
+            base::FieldTrialParams{
                 {kThrottleableTaskTypesListParam, ""},
                 {kFreezableTaskTypesListParam,
                  "PostedMessage,MediaElementEvent,DOMManipulation"}},
@@ -1863,7 +1879,7 @@ class ThrottleableOnlyTaskTypesTest
  public:
   ThrottleableOnlyTaskTypesTest()
       : ThrottleAndFreezeTaskTypesExperimentTest(
-            std::map<std::string, std::string>{
+            base::FieldTrialParams{
                 {kFreezableTaskTypesListParam, ""},
                 {kThrottleableTaskTypesListParam, "PostedMessage"}},
             "Group3") {}
@@ -1922,6 +1938,224 @@ TEST_F(FrameSchedulerImplTest, ComputePriorityForDetachedFrame) {
   // Just check that it does not crash.
   page_scheduler_.reset();
   frame_scheduler_->ComputePriority(task_queue.get());
+}
+
+namespace {
+
+// Mask is a preferred way of plumbing the list of features, but a list
+// is more convenient to read in the tests.
+// Here we ensure that these two methods are equivalent.
+uint64_t ComputeMaskFromFeatures(FrameSchedulerImpl* frame_scheduler) {
+  uint64_t result = 0;
+  for (SchedulingPolicy::Feature feature :
+       frame_scheduler->GetActiveFeaturesTrackedForBackForwardCacheMetrics()) {
+    result |= (1 << static_cast<size_t>(feature));
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST_F(FrameSchedulerImplTest, BackForwardCacheOptOut) {
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre());
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  auto feature_handle1 = frame_scheduler_->RegisterFeature(
+      SchedulingPolicy::Feature::kWebSocket,
+      {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  auto feature_handle2 = frame_scheduler_->RegisterFeature(
+      SchedulingPolicy::Feature::kWebRTC,
+      {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket,
+                                    SchedulingPolicy::Feature::kWebRTC));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  feature_handle1.reset();
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebRTC));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  feature_handle2.reset();
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre());
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+}
+
+TEST_F(FrameSchedulerImplTest, BackForwardCacheOptOut_FrameNavigated) {
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre());
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  auto feature_handle = frame_scheduler_->RegisterFeature(
+      SchedulingPolicy::Feature::kWebSocket,
+      {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  frame_scheduler_->RegisterStickyFeature(
+      SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore,
+      {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(
+          SchedulingPolicy::Feature::kWebSocket,
+          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  // Same document navigations don't affect anything.
+  frame_scheduler_->DidCommitProvisionalLoad(
+      false, FrameScheduler::NavigationType::kSameDocument);
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre(
+          SchedulingPolicy::Feature::kWebSocket,
+          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  // Regular navigations reset all features.
+  frame_scheduler_->DidCommitProvisionalLoad(
+      false, FrameScheduler::NavigationType::kOther);
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre());
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+
+  // Resetting a feature handle after navigation shouldn't do anything.
+  feature_handle.reset();
+
+  EXPECT_THAT(
+      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
+      testing::UnorderedElementsAre());
+  EXPECT_EQ(ComputeMaskFromFeatures(frame_scheduler_.get()),
+            GetActiveFeaturesTrackedForBackForwardCacheMetricsMask(
+                frame_scheduler_.get()));
+}
+
+TEST_F(FrameSchedulerImplTest, FeatureUpload) {
+  ResetFrameScheduler(FrameScheduler::FrameType::kMainFrame);
+
+  frame_scheduler_->GetTaskRunner(TaskType::kJavascriptTimer)
+      ->PostTask(
+          FROM_HERE,
+          base::BindOnce(
+              [](FrameSchedulerImpl* frame_scheduler,
+                 testing::StrictMock<FrameSchedulerDelegateForTesting>*
+                     delegate) {
+                frame_scheduler->RegisterStickyFeature(
+                    SchedulingPolicy::Feature::
+                        kMainResourceHasCacheControlNoStore,
+                    {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+                frame_scheduler->RegisterStickyFeature(
+                    SchedulingPolicy::Feature::
+                        kMainResourceHasCacheControlNoCache,
+                    {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+                // Ensure that the feature upload is delayed.
+                testing::Mock::VerifyAndClearExpectations(delegate);
+                EXPECT_CALL(
+                    *delegate,
+                    UpdateActiveSchedulerTrackedFeatures(
+                        (1 << static_cast<size_t>(
+                             SchedulingPolicy::Feature::
+                                 kMainResourceHasCacheControlNoStore)) |
+                        (1 << static_cast<size_t>(
+                             SchedulingPolicy::Feature::
+                                 kMainResourceHasCacheControlNoCache))));
+              },
+              frame_scheduler_.get(), frame_scheduler_delegate_.get()));
+
+  base::RunLoop().RunUntilIdle();
+
+  testing::Mock::VerifyAndClearExpectations(frame_scheduler_delegate_.get());
+}
+
+TEST_F(FrameSchedulerImplTest, FeatureUpload_FrameDestruction) {
+  ResetFrameScheduler(FrameScheduler::FrameType::kMainFrame);
+
+  FeatureHandle feature_handle;
+
+  frame_scheduler_->GetTaskRunner(TaskType::kJavascriptTimer)
+      ->PostTask(
+          FROM_HERE,
+          base::BindOnce(
+              [](FrameSchedulerImpl* frame_scheduler,
+                 testing::StrictMock<FrameSchedulerDelegateForTesting>*
+                     delegate,
+                 FeatureHandle* feature_handle) {
+                *feature_handle = frame_scheduler->RegisterFeature(
+                    SchedulingPolicy::Feature::kWebSocket,
+                    {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+                // Ensure that the feature upload is delayed.
+                testing::Mock::VerifyAndClearExpectations(delegate);
+                EXPECT_CALL(*delegate,
+                            UpdateActiveSchedulerTrackedFeatures(
+                                (1 << static_cast<size_t>(
+                                     SchedulingPolicy::Feature::kWebSocket))));
+              },
+              frame_scheduler_.get(), frame_scheduler_delegate_.get(),
+              &feature_handle));
+  frame_scheduler_->GetTaskRunner(TaskType::kJavascriptTimer)
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(
+                     [](FrameSchedulerImpl* frame_scheduler,
+                        testing::StrictMock<FrameSchedulerDelegateForTesting>*
+                            delegate,
+                        FeatureHandle* feature_handle) {
+                       feature_handle->reset();
+                       ResetForNavigation(frame_scheduler);
+                       // Ensure that we don't upload the features for frame
+                       // destruction.
+                       testing::Mock::VerifyAndClearExpectations(delegate);
+                       EXPECT_CALL(
+                           *delegate,
+                           UpdateActiveSchedulerTrackedFeatures(testing::_))
+                           .Times(0);
+                     },
+                     frame_scheduler_.get(), frame_scheduler_delegate_.get(),
+                     &feature_handle));
+
+  base::RunLoop().RunUntilIdle();
+
+  testing::Mock::VerifyAndClearExpectations(frame_scheduler_delegate_.get());
 }
 
 }  // namespace frame_scheduler_impl_unittest

@@ -73,7 +73,8 @@ public class BottomSheetControllerTest {
             ScrimView scrim = new ScrimView(mActivityTestRule.getActivity(), null, coordinator);
 
             mSheetController = new BottomSheetController(activity,
-                    activity.getActivityTabProvider(), scrim, mBottomSheet,
+                    activity.getLifecycleDispatcher(), activity.getActivityTabProvider(), scrim,
+                    mBottomSheet,
                     activity.getCompositorViewHolder().getLayoutManager().getOverlayPanelManager(),
                     true);
 
@@ -252,6 +253,29 @@ public class BottomSheetControllerTest {
 
         ThreadUtils.runOnUiThreadBlocking(mBottomSheet::endAnimations);
         assertEquals(customLifecycleContent, mBottomSheet.getCurrentSheetContent());
+    }
+
+    @Test
+    @MediumTest
+    public void testCloseEvent() throws TimeoutException, InterruptedException {
+        requestContentInSheet(mHighPriorityContent, true);
+        expandSheet();
+
+        CallbackHelper contentChangedHelper = new CallbackHelper();
+        mBottomSheet.addObserver(new EmptyBottomSheetObserver() {
+            @Override
+            public void onSheetContentChanged(BottomSheetContent content) {
+                contentChangedHelper.notifyCalled();
+            }
+        });
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mBottomSheet.setSheetState(BottomSheet.SheetState.HIDDEN, false));
+
+        contentChangedHelper.waitForCallback(0, 1);
+
+        assertEquals("The sheet's content should be null!", null,
+                mSheetController.getBottomSheet().getCurrentSheetContent());
     }
 
     /**

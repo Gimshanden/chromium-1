@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "chrome/browser/ui/autofill/payments/save_card_ui.h"
 #include "components/autofill/core/browser/autofill_client.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/sync_utils.h"
 #include "components/autofill/core/browser/ui/payments/save_card_bubble_controller.h"
 #include "components/security_state/core/security_state.h"
@@ -48,6 +48,8 @@ class SaveCardBubbleControllerImpl
   // bubble; otherwise, only the omnibox icon is displayed.
   // If |options.has_non_focusable_field| is true, the save is triggered by a
   // form that has non_focusable fields.
+  // If |options.from_dynamic_change_form| is true, the save is triggered by a
+  // dynamic change form.
   void OfferLocalSave(
       const CreditCard& card,
       AutofillClient::SaveCreditCardOptions options,
@@ -65,6 +67,8 @@ class SaveCardBubbleControllerImpl
   // offer-to-save bubble; otherwise, only the omnibox icon is displayed.
   // If |options.has_non_focusable_field| is true, the save is triggered by a
   // form that has non-focusable fields.
+  // If |options.from_dynamic_change_form| is true, the save is triggered by a
+  // dynamic change form.
   void OfferUploadSave(
       const CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
@@ -81,6 +85,10 @@ class SaveCardBubbleControllerImpl
   // just saved and links the user to manage their other cards.
   void ShowBubbleForManageCardsForTesting(const CreditCard& card);
 
+  // For testing. Sets up the controller for showing the
+  // save card failure bubble.
+  void ShowBubbleForSaveCardFailureForTesting();
+
   void HideBubble();
   void ReshowBubble();
 
@@ -93,6 +101,8 @@ class SaveCardBubbleControllerImpl
   // SaveCardBubbleController:
   base::string16 GetWindowTitle() const override;
   base::string16 GetExplanatoryMessage() const override;
+  base::string16 GetAcceptButtonText() const override;
+  base::string16 GetDeclineButtonText() const override;
   const AccountInfo& GetAccountInfo() const override;
   Profile* GetProfile() const override;
   const CreditCard& GetCard() const override;
@@ -108,7 +118,7 @@ class SaveCardBubbleControllerImpl
   //    to the server -- this should change.
   // TODO(crbug.com/864702): Don't show promo if user is a butter user.
   bool ShouldShowSignInPromo() const override;
-  bool CanAnimate() const override;
+  bool ShouldShowCardSavedAnimation() const override;
   void OnSyncPromoAccepted(const AccountInfo& account,
                            signin_metrics::AccessPoint access_point,
                            bool is_default_promo_account) override;
@@ -166,8 +176,8 @@ class SaveCardBubbleControllerImpl
   // Should outlive this object.
   PersonalDataManager* personal_data_manager_;
 
-  // Is true only if the card saved animation can be shown.
-  bool can_animate_ = false;
+  // Is true only if the card saved animation should be shown.
+  bool should_show_card_saved_animation_ = false;
 
   // Weak reference. Will be nullptr if no bubble is currently shown.
   SaveCardBubbleView* save_card_bubble_view_ = nullptr;

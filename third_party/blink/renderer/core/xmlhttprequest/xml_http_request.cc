@@ -24,6 +24,7 @@
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/auto_reset.h"
 #include "base/feature_list.h"
@@ -71,6 +72,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
@@ -87,6 +89,7 @@
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/cstring.h"
@@ -100,6 +103,8 @@ namespace {
 // via hasPendingActivity method which returns true if
 // m_eventDispatchRecursionLevel is positive.
 class ScopedEventDispatchProtect final {
+  STACK_ALLOCATED();
+
  public:
   explicit ScopedEventDispatchProtect(int* level) : level_(level) { ++*level_; }
   ~ScopedEventDispatchProtect() {
@@ -356,9 +361,9 @@ void XMLHttpRequest::InitResponseDocument() {
                           .WithContextDocument(GetDocument()->ContextDocument())
                           .WithURL(response_.ResponseUrl());
   if (is_html)
-    response_document_ = HTMLDocument::Create(init);
+    response_document_ = MakeGarbageCollected<HTMLDocument>(init);
   else
-    response_document_ = XMLDocument::Create(init);
+    response_document_ = MakeGarbageCollected<XMLDocument>(init);
 
   // FIXME: Set Last-Modified.
   response_document_->SetSecurityOrigin(GetMutableSecurityOrigin());
@@ -1040,23 +1045,16 @@ void XMLHttpRequest::CreateRequest(scoped_refptr<EncodedFormData> http_body,
     }
   }
 
-  same_origin_request_ = GetSecurityOrigin()->CanRequest(url_);
-
-  if (!same_origin_request_ && with_credentials_) {
-    UseCounter::Count(&execution_context,
-                      WebFeature::kXMLHttpRequestCrossOriginWithCredentials);
-  }
-
   // We also remember whether upload events should be allowed for this request
   // in case the upload listeners are added after the request is started.
   upload_events_allowed_ =
-      same_origin_request_ || upload_events ||
+      GetSecurityOrigin()->CanRequest(url_) || upload_events ||
       !cors::IsCorsSafelistedMethod(method_) ||
       !cors::ContainsOnlyCorsSafelistedHeaders(request_headers_);
 
   ResourceRequest request(url_);
   request.SetRequestorOrigin(GetSecurityOrigin());
-  request.SetHTTPMethod(method_);
+  request.SetHttpMethod(method_);
   request.SetRequestContext(mojom::RequestContextType::XML_HTTP_REQUEST);
   request.SetFetchRequestMode(
       upload_events ? network::mojom::FetchRequestMode::kCorsWithForcedPreflight
@@ -1486,11 +1484,12 @@ String XMLHttpRequest::getAllResponseHeaders() const {
         !GetSecurityOrigin()->CanLoadLocalResources())
       continue;
 
-    if (!same_origin_request_ &&
-        !cors::IsOnAccessControlResponseHeaderWhitelist(it->key) &&
+    if (response_.GetType() == network::mojom::FetchResponseType::kCors &&
+        !cors::IsCorsSafelistedResponseHeader(it->key) &&
         access_control_expose_header_set.find(it->key.Ascii().data()) ==
-            access_control_expose_header_set.end())
+            access_control_expose_header_set.end()) {
       continue;
+    }
 
     string_builder.Append(it->key.LowerASCII());
     string_builder.Append(':');
@@ -1522,8 +1521,8 @@ const AtomicString& XMLHttpRequest::getResponseHeader(
                             : network::mojom::FetchCredentialsMode::kSameOrigin,
           response_);
 
-  if (!same_origin_request_ &&
-      !cors::IsOnAccessControlResponseHeaderWhitelist(name) &&
+  if (response_.GetType() == network::mojom::FetchResponseType::kCors &&
+      !cors::IsCorsSafelistedResponseHeader(name) &&
       access_control_expose_header_set.find(name.Ascii().data()) ==
           access_control_expose_header_set.end()) {
     LogConsoleError(GetExecutionContext(),

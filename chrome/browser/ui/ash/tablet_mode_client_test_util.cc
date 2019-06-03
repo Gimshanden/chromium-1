@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/public/interfaces/shell_test_api.test-mojom.h"
+#include "ash/public/cpp/test/shell_test_api.h"
 #include "base/run_loop.h"
 #include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/ash/tablet_mode_client_observer.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/aura/test/mus/change_completion_waiter.h"
 
 namespace test {
 
@@ -50,15 +48,10 @@ class TestTabletModeClientObserver : public TabletModeClientObserver {
 void SetAndWaitForTabletMode(bool enabled) {
   ASSERT_NE(enabled, TabletModeClient::Get()->tablet_mode_enabled());
 
-  ash::mojom::ShellTestApiPtr shell_test_api;
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(ash::mojom::kServiceName, &shell_test_api);
-  shell_test_api->EnableTabletModeWindowManager(enabled);
+  ash::ShellTestApi().EnableTabletModeWindowManager(enabled);
 
   TestTabletModeClientObserver observer(enabled);
   observer.run_loop()->Run();
-  aura::test::WaitForAllChangesToComplete();
 
   ASSERT_EQ(enabled, TabletModeClient::Get()->tablet_mode_enabled());
 }

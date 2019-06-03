@@ -4,11 +4,16 @@
 
 #include "services/network/cors/cors_url_loader_factory.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+#include "mojo/public/cpp/bindings/message.h"
 #include "net/base/load_flags.h"
 #include "services/network/cors/cors_url_loader.h"
 #include "services/network/cors/preflight_controller.h"
+#include "services/network/initiator_lock_compatibility.h"
 #include "services/network/network_context.h"
 #include "services/network/public/cpp/cors/cors.h"
 #include "services/network/public/cpp/features.h"
@@ -31,9 +36,11 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
     : context_(context),
       disable_web_security_(params->disable_web_security),
       process_id_(params->process_id),
+      request_initiator_site_lock_(params->request_initiator_site_lock),
       origin_access_list_(origin_access_list) {
   DCHECK(context_);
   DCHECK(origin_access_list_);
+  DCHECK_NE(mojom::kInvalidProcessId, process_id_);
   factory_bound_origin_access_list_ = std::make_unique<OriginAccessList>();
   if (params->factory_bound_allow_patterns.size()) {
     DCHECK(params->request_initiator_site_lock);
@@ -80,7 +87,7 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
     const ResourceRequest& resource_request,
     mojom::URLLoaderClientPtr client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-  if (!IsSane(resource_request)) {
+  if (!IsSane(context_, resource_request)) {
     client->OnComplete(URLLoaderCompletionStatus(net::ERR_INVALID_ARGUMENT));
     return;
   }
@@ -120,7 +127,8 @@ void CorsURLLoaderFactory::DeleteIfNeeded() {
     context_->DestroyURLLoaderFactory(this);
 }
 
-bool CorsURLLoaderFactory::IsSane(const ResourceRequest& request) {
+bool CorsURLLoaderFactory::IsSane(const NetworkContext* context,
+                                  const ResourceRequest& request) {
   // CORS needs a proper origin (including a unique opaque origin). If the
   // request doesn't have one, CORS cannot work.
   if (!request.request_initiator &&
@@ -128,17 +136,89 @@ bool CorsURLLoaderFactory::IsSane(const ResourceRequest& request) {
       request.fetch_request_mode != mojom::FetchRequestMode::kNoCors) {
     LOG(WARNING) << "|fetch_request_mode| is " << request.fetch_request_mode
                  << ", but |request_initiator| is not set.";
+    mojo::ReportBadMessage("CorsURLLoaderFactory: cors without initiator");
     return false;
   }
 
   const auto load_flags_pattern = net::LOAD_DO_NOT_SAVE_COOKIES |
                                   net::LOAD_DO_NOT_SEND_COOKIES |
                                   net::LOAD_DO_NOT_SEND_AUTH_DATA;
-  // The credentials mode and load_flags should match.
+  // The Fetch credential mode and lower-level options should match. If the
+  // Fetch mode is kOmit, then either |allow_credentials| must be false or
+  // all three load flags must be set. https://crbug.com/799935 tracks
+  // unifying |LOAD_DO_NOT_*| into |allow_credentials|.
   if (request.fetch_credentials_mode == mojom::FetchCredentialsMode::kOmit &&
+      request.allow_credentials &&
       (request.load_flags & load_flags_pattern) != load_flags_pattern) {
-    LOG(WARNING) << "|fetch_credentials_mode| and |load_flags| contradict each "
+    LOG(WARNING) << "|fetch_credentials_mode| and |allow_credentials| or "
+                    "|load_flags| contradict each "
                     "other.";
+    mojo::ReportBadMessage(
+        "CorsURLLoaderFactory: omit-credentials vs load_flags");
+    return false;
+  }
+
+  // Ensure that renderer requests are covered either by CORS or CORB.
+  if (process_id_ != mojom::kBrowserProcessId) {
+    switch (request.fetch_request_mode) {
+      case mojom::FetchRequestMode::kNavigate:
+        // Only the browser process can initiate navigations.  This helps ensure
+        // that a malicious/compromised renderer cannot bypass CORB by issuing
+        // kNavigate, rather than kNoCors requests.  (CORB should apply only to
+        // no-cors requests as tracked in https://crbug.com/953315 and as
+        // captured in https://fetch.spec.whatwg.org/#main-fetch).
+        mojo::ReportBadMessage(
+            "CorsURLLoaderFactory: navigate from non-browser-process");
+        return false;
+
+      case mojom::FetchRequestMode::kSameOrigin:
+      case mojom::FetchRequestMode::kCors:
+      case mojom::FetchRequestMode::kCorsWithForcedPreflight:
+        // SOP enforced by CORS.
+        break;
+
+      case mojom::FetchRequestMode::kNoCors:
+        // SOP enforced by CORB.
+        break;
+    }
+  }
+
+  InitiatorLockCompatibility initiator_lock_compatibility =
+      process_id_ == mojom::kBrowserProcessId
+          ? InitiatorLockCompatibility::kBrowserProcess
+          : VerifyRequestInitiatorLock(request_initiator_site_lock_,
+                                       request.request_initiator);
+  UMA_HISTOGRAM_ENUMERATION(
+      "NetworkService.URLLoader.RequestInitiatorOriginLockCompatibility",
+      initiator_lock_compatibility);
+  // TODO(lukasza): Enforce the origin lock.
+  // - https://crbug.com/766694: In the long-term kIncorrectLock should trigger
+  //   a renderer kill, but this can't be done until HTML Imports are gone.
+  // - https://crbug.com/515309: The lock should apply to Origin header (and
+  //   SameSite cookies) in addition to CORB (which was taken care of in
+  //   https://crbug.com/871827).  Here enforcement most likely would mean
+  //   setting |url_request_|'s initiator to something other than
+  //   |request.request_initiator| (opaque origin?  lock origin?).
+
+  if (context) {
+    net::HttpRequestHeaders::Iterator header_iterator(
+        request.cors_exempt_headers);
+    const auto& allowed_exempt_headers = context->cors_exempt_header_list();
+    while (header_iterator.GetNext()) {
+      if (allowed_exempt_headers.find(header_iterator.name()) !=
+          allowed_exempt_headers.end()) {
+        continue;
+      }
+      LOG(WARNING) << "|cors_exempt_headers| contains unexpected key: "
+                   << header_iterator.name();
+      return false;
+    }
+  }
+
+  // Disallow setting the Host header over mojo::URLLoaderFactory interface
+  // because it can conflict with specified URL and make servers confused.
+  if (request.headers.HasHeader(net::HttpRequestHeaders::kHost)) {
+    LOG(WARNING) << "Host header should be set inside the network service";
     return false;
   }
 

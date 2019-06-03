@@ -5,7 +5,18 @@
 #ifndef NET_QUIC_PLATFORM_IMPL_QUIC_IP_ADDRESS_IMPL_H_
 #define NET_QUIC_PLATFORM_IMPL_QUIC_IP_ADDRESS_IMPL_H_
 
+#include "build/build_config.h"
+
 #include <string>
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#endif
 
 #include "net/base/ip_address.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_export.h"
@@ -27,6 +38,8 @@ class QUIC_EXPORT_PRIVATE QuicIpAddressImpl {
   QuicIpAddressImpl() = default;
   QuicIpAddressImpl(const QuicIpAddressImpl& other) = default;
   explicit QuicIpAddressImpl(const net::IPAddress& addr);
+  explicit QuicIpAddressImpl(const in_addr& ipv4_address);
+  explicit QuicIpAddressImpl(const in6_addr& ipv6_address);
   QuicIpAddressImpl& operator=(const QuicIpAddressImpl& other) = default;
   QuicIpAddressImpl& operator=(QuicIpAddressImpl&& other) = default;
   friend bool operator==(QuicIpAddressImpl lhs, QuicIpAddressImpl rhs);
@@ -43,8 +56,10 @@ class QUIC_EXPORT_PRIVATE QuicIpAddressImpl {
   bool FromString(std::string str);
   bool IsIPv4() const;
   bool IsIPv6() const;
-
   bool InSameSubnet(const QuicIpAddressImpl& other, int subnet_length);
+
+  in_addr GetIPv4() const;
+  in6_addr GetIPv6() const;
   const net::IPAddress& ip_address() const { return ip_address_; }
 
  private:

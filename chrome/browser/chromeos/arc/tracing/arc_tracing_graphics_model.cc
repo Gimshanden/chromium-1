@@ -10,12 +10,14 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/no_destructor.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_graphics_jank_detector.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_event.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_event_matcher.h"
 #include "chrome/browser/chromeos/arc/tracing/arc_tracing_model.h"
+#include "components/arc/arc_util.h"
 
 namespace arc {
 
@@ -24,6 +26,8 @@ namespace {
 using BufferEvent = ArcTracingGraphicsModel::BufferEvent;
 using BufferEvents = ArcTracingGraphicsModel::BufferEvents;
 using BufferEventType = ArcTracingGraphicsModel::BufferEventType;
+
+constexpr char kCustomTracePrefix[] = "customTrace";
 
 constexpr char kUnknownActivity[] = "unknown";
 
@@ -35,10 +39,10 @@ constexpr char kKeyActivity[] = "activity";
 constexpr char kKeyAndroid[] = "android";
 constexpr char kKeyBuffers[] = "buffers";
 constexpr char kKeyChrome[] = "chrome";
-constexpr char kKeyCpu[] = "cpu";
 constexpr char kKeyDuration[] = "duration";
 constexpr char kKeyGlobalEvents[] = "global_events";
 constexpr char kKeyViews[] = "views";
+constexpr char kKeySystem[] = "system";
 constexpr char kKeyTaskId[] = "task_id";
 
 constexpr char kAcquireBufferQuery[] =
@@ -289,42 +293,97 @@ std::string GetActivityFromBufferName(const std::string& android_buffer_name) {
 
 // Processes surface flinger events. It selects events using |query| from the
 // model. Buffer id is extracted for the each returned event and new events are
-// grouped by its buffer id.
-void ProcessSurfaceFlingerEvents(const ArcTracingModel& common_model,
-                                 const std::string& query,
-                                 BufferToEvents* buffer_to_events) {
+// grouped by its buffer id. If |surface_flinger_pid| is set to the positive
+// value than this activates filtering events by process id to avoid the case
+// when android:queueBuffer/dequeueBuffer events may appear in context of child
+// process and could be processed as surface flinger event. Returns positive
+// process id in case surface flinger events are found and belong to the same
+// process. In case of error -1 is returned.
+int ProcessSurfaceFlingerEvents(const ArcTracingModel& common_model,
+                                const std::string& query,
+                                BufferToEvents* buffer_to_events,
+                                int surface_flinger_pid) {
+  int detected_pid = -1;
   const ArcTracingModel::TracingEventPtrs surface_flinger_events =
       common_model.Select(query);
   std::string buffer_id;
   for (const ArcTracingEvent* event : surface_flinger_events) {
+    if (surface_flinger_pid > 0 && event->GetPid() != surface_flinger_pid)
+      continue;
     if (!ExtractBufferIdFromSurfaceFlingerEvent(*event, &buffer_id)) {
       LOG(ERROR) << "Failed to get buffer id from surface flinger event";
       continue;
+    }
+    if (detected_pid < 0) {
+      DCHECK_GE(event->GetPid(), 0);
+      detected_pid = event->GetPid();
+    } else if (detected_pid != event->GetPid()) {
+      LOG(ERROR) << "Found multiple surface flinger process ids "
+                 << detected_pid << "/" << event->GetPid();
+      return -1;
     }
     ArcTracingGraphicsModel::BufferEvents& graphics_events =
         (*buffer_to_events)[buffer_id];
     GetEventMapper().Produce(*event, &graphics_events);
   }
+  return detected_pid;
 }
 
 // Processes Android events acquireBuffer, releaseBuffer, dequeueBuffer and
 // queueBuffer. It returns map buffer id to the list of sorted by timestamp
 // events.
-BufferToEvents GetSurfaceFlingerEvents(const ArcTracingModel& common_model) {
-  BufferToEvents per_buffer_surface_flinger_events;
-  ProcessSurfaceFlingerEvents(common_model, kAcquireBufferQuery,
-                              &per_buffer_surface_flinger_events);
-  ProcessSurfaceFlingerEvents(common_model, kReleaseBufferQueryP,
-                              &per_buffer_surface_flinger_events);
-  ProcessSurfaceFlingerEvents(common_model, kReleaseBufferQueryN,
-                              &per_buffer_surface_flinger_events);
-  ProcessSurfaceFlingerEvents(common_model, kQueueBufferQuery,
-                              &per_buffer_surface_flinger_events);
-  ProcessSurfaceFlingerEvents(common_model, kDequeueBufferQuery,
-                              &per_buffer_surface_flinger_events);
-  for (auto& buffer : per_buffer_surface_flinger_events)
+bool GetSurfaceFlingerEvents(const ArcTracingModel& common_model,
+                             BufferToEvents* out_events) {
+  // Detect surface_flinger_pid using |kAcquireBufferQuery| that has unique
+  // hierarchy.
+  const int surface_flinger_pid =
+      ProcessSurfaceFlingerEvents(common_model, kAcquireBufferQuery, out_events,
+                                  -1 /* surface_flinger_pid */);
+  if (surface_flinger_pid <= 0) {
+    LOG(ERROR) << "Failed to detect acquireBuffer events.";
+    return false;
+  }
+
+  const int surface_flinger_pid_p =
+      ProcessSurfaceFlingerEvents(common_model, kReleaseBufferQueryP,
+                                  out_events, -1 /* surface_flinger_pid */);
+  const int surface_flinger_pid_n =
+      ProcessSurfaceFlingerEvents(common_model, kReleaseBufferQueryN,
+                                  out_events, -1 /* surface_flinger_pid */);
+  if (surface_flinger_pid_p <= 0 && surface_flinger_pid_n <= 0) {
+    LOG(ERROR) << "Failed to detect releaseBuffer events.";
+    return false;
+  }
+
+  if (surface_flinger_pid_p > 0 && surface_flinger_pid_n > 0) {
+    LOG(ERROR) << "Detected releaseBuffer events from both NYC and PI.";
+    return false;
+  }
+
+  if (surface_flinger_pid_p != surface_flinger_pid &&
+      surface_flinger_pid_n != surface_flinger_pid) {
+    LOG(ERROR) << "Detected acquireBuffer and releaseBuffer from"
+                  " different processes.";
+    return false;
+  }
+
+  // queueBuffer and dequeueBuffer may appear in context of client task.
+  // Use detected |surface_flinger_pid| to filter out such events.
+  if (ProcessSurfaceFlingerEvents(common_model, kQueueBufferQuery, out_events,
+                                  surface_flinger_pid) < 0) {
+    LOG(ERROR) << "Failed to detect queueBuffer events.";
+    return false;
+  }
+
+  if (ProcessSurfaceFlingerEvents(common_model, kDequeueBufferQuery, out_events,
+                                  surface_flinger_pid) < 0) {
+    LOG(ERROR) << "Failed to detect dequeueBuffer events.";
+    return false;
+  }
+
+  for (auto& buffer : *out_events)
     SortBufferEventsByTimestamp(&buffer.second);
-  return per_buffer_surface_flinger_events;
+  return true;
 }
 
 // Processes exo events Surface::Attach and Buffer::ReleaseContents. Each event
@@ -351,9 +410,8 @@ void ProcessChromeEvents(const ArcTracingModel& common_model,
         LOG(ERROR) << "Failed to get app id from event: " << event->ToString();
         continue;
       }
-      int task_id = -1;
-      if (sscanf(app_id.c_str(), "org.chromium.arc.%d", &task_id) != 1 ||
-          task_id < 0) {
+      int task_id = GetTaskIdFromWindowAppId(app_id);
+      if (task_id == kNoTaskId) {
         LOG(ERROR) << "Failed to parse app id from event: "
                    << event->ToString();
         continue;
@@ -532,6 +590,30 @@ BufferToEvents GetChromeEvents(
   return per_buffer_chrome_events;
 }
 
+void ScanForCustomEvents(
+    const ArcTracingEvent* event,
+    ArcTracingGraphicsModel::BufferEvents* out_custom_events) {
+  if (base::StartsWith(event->GetName(), kCustomTracePrefix,
+                       base::CompareCase::SENSITIVE)) {
+    DCHECK(!event->GetArgs() || event->GetArgs()->empty());
+    out_custom_events->emplace_back(
+        ArcTracingGraphicsModel::BufferEventType::kCustomEvent,
+        event->GetTimestamp(),
+        event->GetName().substr(base::size(kCustomTracePrefix) - 1));
+  }
+  for (const auto& child : event->children())
+    ScanForCustomEvents(child.get(), out_custom_events);
+}
+
+// Extracts custom events from the model. Custom events start from customTrace
+ArcTracingGraphicsModel::BufferEvents GetCustomEvents(
+    const ArcTracingModel& common_model) {
+  ArcTracingGraphicsModel::BufferEvents custom_events;
+  for (const ArcTracingEvent* root : common_model.GetRoots())
+    ScanForCustomEvents(root, &custom_events);
+  return custom_events;
+}
+
 // Helper that finds a event of particular type in the list of events |events|
 // starting from the index |start_index|. Returns |kInvalidBufferIndex| if event
 // cannot be found.
@@ -577,7 +659,7 @@ ssize_t FindAcquireReleasePair(
 // |timestamp|. Returns |kInvalidBufferIndex| in case event is not found.
 ssize_t FindNotLaterThan(const ArcTracingGraphicsModel::BufferEvents& events,
                          BufferEventType type,
-                         int64_t timestamp) {
+                         uint64_t timestamp) {
   if (events.empty() || events[0].timestamp > timestamp)
     return kInvalidBufferIndex;
 
@@ -764,6 +846,12 @@ base::ListValue SerializeEvents(
     event_value.GetList().push_back(base::Value(static_cast<int>(event.type)));
     event_value.GetList().push_back(
         base::Value(static_cast<double>(event.timestamp)));
+    if (event.type == BufferEventType::kCustomEvent) {
+      DCHECK(!event.content.empty());
+      event_value.GetList().push_back(base::Value(event.content));
+    } else {
+      DCHECK(event.content.empty());
+    }
     list.GetList().emplace_back(std::move(event_value));
   }
   return list;
@@ -799,7 +887,7 @@ bool LoadEvents(const base::Value* value,
     return false;
   int64_t previous_timestamp = 0;
   for (const auto& entry : value->GetList()) {
-    if (!entry.is_list() || entry.GetList().size() != 2)
+    if (!entry.is_list() || entry.GetList().size() < 2)
       return false;
     if (!entry.GetList()[0].is_int())
       return false;
@@ -817,7 +905,9 @@ bool LoadEvents(const base::Value* value,
         !IsInRange(type, BufferEventType::kVsync,
                    BufferEventType::kSurfaceFlingerCompositionJank) &&
         !IsInRange(type, BufferEventType::kChromeOSDraw,
-                   BufferEventType::kChromeOSJank)) {
+                   BufferEventType::kChromeOSJank) &&
+        !IsInRange(type, BufferEventType::kCustomEvent,
+                   BufferEventType::kCustomEvent)) {
       return false;
     }
 
@@ -826,8 +916,15 @@ bool LoadEvents(const base::Value* value,
     const int64_t timestamp = entry.GetList()[1].GetDouble();
     if (timestamp < previous_timestamp)
       return false;
-    out_events->emplace_back(
-        ArcTracingGraphicsModel::BufferEvent(type, timestamp));
+    if (type == BufferEventType::kCustomEvent) {
+      if (entry.GetList().size() != 3 || !entry.GetList()[2].is_string())
+        return false;
+      out_events->emplace_back(type, timestamp, entry.GetList()[2].GetString());
+    } else {
+      if (entry.GetList().size() != 2)
+        return false;
+      out_events->emplace_back(type, timestamp);
+    }
     previous_timestamp = timestamp;
   }
   return true;
@@ -871,9 +968,15 @@ ArcTracingGraphicsModel::BufferEvent::BufferEvent(BufferEventType type,
                                                   int64_t timestamp)
     : type(type), timestamp(timestamp) {}
 
+ArcTracingGraphicsModel::BufferEvent::BufferEvent(BufferEventType type,
+                                                  int64_t timestamp,
+                                                  const std::string& content)
+    : type(type), timestamp(timestamp), content(content) {}
+
 bool ArcTracingGraphicsModel::BufferEvent::operator==(
     const BufferEvent& other) const {
-  return type == other.type && timestamp == other.timestamp;
+  return type == other.type && timestamp == other.timestamp &&
+         content == other.content;
 }
 
 ArcTracingGraphicsModel::ViewId::ViewId(int task_id,
@@ -894,11 +997,42 @@ ArcTracingGraphicsModel::ArcTracingGraphicsModel() = default;
 
 ArcTracingGraphicsModel::~ArcTracingGraphicsModel() = default;
 
+// static
+void ArcTracingGraphicsModel::TrimEventsContainer(
+    ArcTracingGraphicsModel::EventsContainer* container,
+    int64_t trim_timestamp,
+    const std::set<ArcTracingGraphicsModel::BufferEventType>& start_types) {
+  const ArcTracingGraphicsModel::BufferEvent trim_point(
+      ArcTracingGraphicsModel::BufferEventType::kCustomEvent, trim_timestamp);
+
+  // Global events are trimmed by timestamp only.
+  auto global_cut_pos = std::lower_bound(container->global_events().begin(),
+                                         container->global_events().end(),
+                                         trim_point, SortByTimestampPred);
+  container->global_events() = ArcTracingGraphicsModel::BufferEvents(
+      global_cut_pos, container->global_events().end());
+
+  for (auto& buffer : container->buffer_events()) {
+    auto cut_pos = std::lower_bound(buffer.begin(), buffer.end(), trim_point,
+                                    SortByTimestampPred);
+    while (cut_pos != buffer.end()) {
+      if (start_types.count(cut_pos->type))
+        break;
+      ++cut_pos;
+    }
+
+    buffer = ArcTracingGraphicsModel::BufferEvents(cut_pos, buffer.end());
+  }
+}
+
 bool ArcTracingGraphicsModel::Build(const ArcTracingModel& common_model) {
   Reset();
 
-  BufferToEvents per_buffer_surface_flinger_events =
-      GetSurfaceFlingerEvents(common_model);
+  BufferToEvents per_buffer_surface_flinger_events;
+  if (!GetSurfaceFlingerEvents(common_model,
+                               &per_buffer_surface_flinger_events)) {
+    return false;
+  }
   BufferToEvents per_buffer_chrome_events =
       GetChromeEvents(common_model, &chrome_buffer_id_to_task_id_);
 
@@ -960,11 +1094,18 @@ bool ArcTracingGraphicsModel::Build(const ArcTracingModel& common_model) {
     return false;
   }
 
+  // TODO(khmel): Add more information to resolve owner of custom events. At
+  // this moment add custom events to each view.
+  const ArcTracingGraphicsModel::BufferEvents custom_events =
+      GetCustomEvents(common_model);
   for (auto& it : view_buffers_) {
     AddJanks(&it.second, BufferEventType::kBufferQueueDequeueStart,
              BufferEventType::kBufferFillJank);
     AddJanks(&it.second, BufferEventType::kExoSurfaceAttach,
              BufferEventType::kExoJank);
+    it.second.global_events().insert(it.second.global_events().end(),
+                                     custom_events.begin(),
+                                     custom_events.end());
     SortBufferEventsByTimestamp(&it.second.global_events());
   }
 
@@ -980,7 +1121,9 @@ bool ArcTracingGraphicsModel::Build(const ArcTracingModel& common_model) {
     return false;
   }
 
-  cpu_model_.CopyFrom(common_model.cpu_model());
+  system_model_.CopyFrom(common_model.system_model());
+
+  VsyncTrim();
 
   NormalizeTimestamps();
 
@@ -1003,8 +1146,8 @@ void ArcTracingGraphicsModel::NormalizeTimestamps() {
     all_buffers.emplace_back(&buffer);
   all_buffers.emplace_back(&chrome_top_level_.global_events());
 
-  int64_t min = std::numeric_limits<int64_t>::max();
-  int64_t max = std::numeric_limits<int64_t>::min();
+  uint64_t min = std::numeric_limits<uint64_t>::max();
+  uint64_t max = std::numeric_limits<uint64_t>::min();
   for (const BufferEvents* buffer : all_buffers) {
     if (!buffer->empty()) {
       min = std::min(min, buffer->front().timestamp);
@@ -1012,11 +1155,16 @@ void ArcTracingGraphicsModel::NormalizeTimestamps() {
     }
   }
 
-  for (const auto& cpu_events : cpu_model_.all_cpu_events()) {
+  for (const auto& cpu_events : system_model_.all_cpu_events()) {
     if (!cpu_events.empty()) {
       min = std::min(min, cpu_events.front().timestamp);
       max = std::max(max, cpu_events.back().timestamp);
     }
+  }
+
+  if (!system_model_.memory_events().empty()) {
+    min = std::min(min, system_model_.memory_events().front().timestamp);
+    max = std::max(max, system_model_.memory_events().back().timestamp);
   }
 
   duration_ = max - min + 1;
@@ -1026,10 +1174,13 @@ void ArcTracingGraphicsModel::NormalizeTimestamps() {
       event.timestamp -= min;
   }
 
-  for (auto& cpu_events : cpu_model_.all_cpu_events()) {
+  for (auto& cpu_events : system_model_.all_cpu_events()) {
     for (auto& cpu_event : cpu_events)
       cpu_event.timestamp -= min;
   }
+
+  for (auto& memory_event : system_model_.memory_events())
+    memory_event.timestamp -= min;
 }
 
 void ArcTracingGraphicsModel::Reset() {
@@ -1037,8 +1188,37 @@ void ArcTracingGraphicsModel::Reset() {
   android_top_level_.Reset();
   view_buffers_.clear();
   chrome_buffer_id_to_task_id_.clear();
-  cpu_model_.Reset();
+  system_model_.Reset();
   duration_ = 0;
+}
+
+void ArcTracingGraphicsModel::VsyncTrim() {
+  int64_t trim_timestamp = -1;
+
+  for (const auto& it : android_top_level_.global_events()) {
+    if (it.type == BufferEventType::kVsync) {
+      trim_timestamp = it.timestamp;
+      break;
+    }
+  }
+
+  if (trim_timestamp < 0) {
+    LOG(ERROR) << "VSYNC event was not found, could not trim.";
+    return;
+  }
+
+  TrimEventsContainer(&chrome_top_level_, trim_timestamp,
+                      {BufferEventType::kChromeOSDraw});
+  TrimEventsContainer(&android_top_level_, trim_timestamp,
+                      {BufferEventType::kSurfaceFlingerInvalidationStart,
+                       BufferEventType::kSurfaceFlingerCompositionStart});
+  for (auto& view_buffer : view_buffers_) {
+    TrimEventsContainer(&view_buffer.second, trim_timestamp,
+                        {BufferEventType::kBufferQueueDequeueStart,
+                         BufferEventType::kExoSurfaceAttach,
+                         BufferEventType::kChromeBarrierOrder});
+  }
+  system_model_.Trim(trim_timestamp);
 }
 
 int ArcTracingGraphicsModel::GetTaskIdFromBufferName(
@@ -1070,8 +1250,8 @@ std::unique_ptr<base::DictionaryValue> ArcTracingGraphicsModel::Serialize()
   // Chrome top events
   root->SetKey(kKeyChrome, SerializeEventsContainer(chrome_top_level_));
 
-  // CPU.
-  root->SetKey(kKeyCpu, cpu_model_.Serialize());
+  // System.
+  root->SetKey(kKeySystem, system_model_.Serialize());
 
   // Duration.
   root->SetKey(kKeyDuration, base::Value(static_cast<double>(duration_)));
@@ -1130,7 +1310,7 @@ bool ArcTracingGraphicsModel::LoadFromValue(const base::DictionaryValue& root) {
   if (!LoadEventsContainer(root.FindKey(kKeyChrome), &chrome_top_level_))
     return false;
 
-  if (!cpu_model_.Load(root.FindKey(kKeyCpu)))
+  if (!system_model_.Load(root.FindKey(kKeySystem)))
     return false;
 
   const base::Value* duration = root.FindKey(kKeyDuration);

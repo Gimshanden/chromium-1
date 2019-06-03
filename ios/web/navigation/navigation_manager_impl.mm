@@ -31,6 +31,7 @@ NavigationManager::WebLoadParams::~WebLoadParams() {}
 
 NavigationManager::WebLoadParams::WebLoadParams(const WebLoadParams& other)
     : url(other.url),
+      virtual_url(other.virtual_url),
       referrer(other.referrer),
       transition_type(other.transition_type),
       user_agent_override_option(other.user_agent_override_option),
@@ -41,6 +42,7 @@ NavigationManager::WebLoadParams::WebLoadParams(const WebLoadParams& other)
 NavigationManager::WebLoadParams& NavigationManager::WebLoadParams::operator=(
     const WebLoadParams& other) {
   url = other.url;
+  virtual_url = other.virtual_url;
   referrer = other.referrer;
   is_renderer_initiated = other.is_renderer_initiated;
   transition_type = other.transition_type;
@@ -238,6 +240,15 @@ void NavigationManagerImpl::GoToIndex(int index,
 }
 
 void NavigationManagerImpl::GoToIndex(int index) {
+  // Silently return if still on a restore URL.  This state should only last a
+  // few moments, but may be triggered when a user mashes the back or forward
+  // button quickly.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    NavigationItemImpl* item = GetLastCommittedItemInCurrentOrRestoredSession();
+    if (item && wk_navigation_util::IsRestoreSessionUrl(item->GetURL())) {
+      return;
+    }
+  }
   GoToIndex(index, NavigationInitiationType::BROWSER_INITIATED,
             /*has_user_gesture=*/true);
 }

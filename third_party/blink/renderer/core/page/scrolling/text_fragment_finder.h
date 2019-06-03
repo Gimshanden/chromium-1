@@ -22,6 +22,7 @@ class CORE_EXPORT TextFragmentFinder final {
   class Client {
    public:
     virtual void DidFindMatch(const EphemeralRangeInFlatTree& range) = 0;
+    virtual void DidFindAmbiguousMatch() = 0;
   };
 
   // Client must outlive the finder.
@@ -35,7 +36,9 @@ class CORE_EXPORT TextFragmentFinder final {
   Client& client_;
   const TextFragmentSelector selector_;
 
-  String search_text_;
+  EphemeralRangeInFlatTree FindMatchFromPosition(
+      Document& document,
+      PositionInFlatTree search_start);
 };
 
 }  // namespace blink

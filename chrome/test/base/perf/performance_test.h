@@ -27,7 +27,16 @@ class PerformanceTest : public InProcessBrowserTest {
   void TearDownOnMainThread() override;
 
  private:
+  // Returns the mean of the histogram |name|.
+  float GetHistogramMean(const std::string& name);
+
+  bool HasHistogram(const std::string& name);
+
   const bool should_start_trace_;
+
+  // Tracks whether SetUpOnMainThread was called. Ensures subclasses remember to
+  // call the base classes SetupOnMainThread.
+  bool setup_called_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PerformanceTest);
 };
@@ -38,6 +47,9 @@ class UIPerformanceTest : public PerformanceTest {
  public:
   UIPerformanceTest() = default;
   ~UIPerformanceTest() override = default;
+
+  // PerformanceTest:
+  void SetUpOnMainThread() override;
 
   const std::string GetTracingCategories() const override;
 

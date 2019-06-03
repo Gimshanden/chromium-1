@@ -16,9 +16,9 @@
 #include "chrome/browser/image_fetcher/image_fetcher_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
-#include "components/image_fetcher/core/cache/cached_image_fetcher_metrics_reporter.h"
 #include "components/image_fetcher/core/cache/image_cache.h"
 #include "components/image_fetcher/core/image_fetcher.h"
+#include "components/image_fetcher/core/image_fetcher_metrics_reporter.h"
 #include "components/image_fetcher/core/image_fetcher_service.h"
 #include "jni/ImageFetcherBridge_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
@@ -64,13 +64,13 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
 jlong JNI_ImageFetcherBridge_Init(JNIEnv* j_env,
                                   const JavaParamRef<jobject>& j_profile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(j_profile);
-  SimpleFactoryKey* simple_factory_key = profile->GetSimpleFactoryKey();
+  SimpleFactoryKey* simple_factory_key = profile->GetProfileKey();
   base::FilePath file_path =
       ImageFetcherServiceFactory::GetCachePath(simple_factory_key)
           .Append(kPathPostfix);
 
-  ImageFetcherService* if_service = ImageFetcherServiceFactory::GetForKey(
-      simple_factory_key, profile->GetPrefs());
+  ImageFetcherService* if_service =
+      ImageFetcherServiceFactory::GetForKey(simple_factory_key);
 
   ImageFetcherBridge* native_if_bridge =
       new ImageFetcherBridge(if_service, file_path);
@@ -103,10 +103,13 @@ ScopedJavaLocalRef<jstring> ImageFetcherBridge::GetFilePath(
 
 void ImageFetcherBridge::FetchImageData(JNIEnv* j_env,
                                         const JavaRef<jobject>& j_this,
+                                        const jint j_image_fetcher_config,
                                         const JavaRef<jstring>& j_url,
                                         const JavaRef<jstring>& j_client_name,
                                         const JavaRef<jobject>& j_callback) {
   ScopedJavaGlobalRef<jobject> callback(j_callback);
+  ImageFetcherConfig config =
+      static_cast<ImageFetcherConfig>(j_image_fetcher_config);
   std::string url = base::android::ConvertJavaStringToUTF8(j_url);
   std::string client_name =
       base::android::ConvertJavaStringToUTF8(j_client_name);
@@ -118,12 +121,11 @@ void ImageFetcherBridge::FetchImageData(JNIEnv* j_env,
   params.set_skip_transcoding(true);
   // We checked disk in Java, so we can skip it for native.
   params.set_skip_disk_cache_read(true);
-  image_fetcher_service_
-      ->GetImageFetcher(image_fetcher::ImageFetcherConfig::kDiskCacheOnly)
-      ->FetchImageData(GURL(url),
-                       base::BindOnce(&ImageFetcherBridge::OnImageDataFetched,
-                                      weak_ptr_factory_.GetWeakPtr(), callback),
-                       std::move(params));
+  image_fetcher_service_->GetImageFetcher(config)->FetchImageData(
+      GURL(url),
+      base::BindOnce(&ImageFetcherBridge::OnImageDataFetched,
+                     weak_ptr_factory_.GetWeakPtr(), callback),
+      std::move(params));
 }
 
 void ImageFetcherBridge::FetchImage(JNIEnv* j_env,
@@ -156,9 +158,8 @@ void ImageFetcherBridge::ReportEvent(
     const jint j_event_id) {
   std::string client_name =
       base::android::ConvertJavaStringToUTF8(j_client_name);
-  CachedImageFetcherEvent event =
-      static_cast<CachedImageFetcherEvent>(j_event_id);
-  CachedImageFetcherMetricsReporter::ReportEvent(client_name, event);
+  ImageFetcherEvent event = static_cast<ImageFetcherEvent>(j_event_id);
+  ImageFetcherMetricsReporter::ReportEvent(client_name, event);
 }
 
 void ImageFetcherBridge::ReportCacheHitTime(
@@ -169,8 +170,8 @@ void ImageFetcherBridge::ReportCacheHitTime(
   std::string client_name =
       base::android::ConvertJavaStringToUTF8(j_client_name);
   base::Time start_time = base::Time::FromJavaTime(start_time_millis);
-  CachedImageFetcherMetricsReporter::ReportImageLoadFromCacheTimeJava(
-      client_name, start_time);
+  ImageFetcherMetricsReporter::ReportImageLoadFromCacheTimeJava(client_name,
+                                                                start_time);
 }
 
 void ImageFetcherBridge::ReportTotalFetchTimeFromNative(
@@ -181,8 +182,8 @@ void ImageFetcherBridge::ReportTotalFetchTimeFromNative(
   std::string client_name =
       base::android::ConvertJavaStringToUTF8(j_client_name);
   base::Time start_time = base::Time::FromJavaTime(start_time_millis);
-  CachedImageFetcherMetricsReporter::ReportTotalFetchFromNativeTimeJava(
-      client_name, start_time);
+  ImageFetcherMetricsReporter::ReportTotalFetchFromNativeTimeJava(client_name,
+                                                                  start_time);
 }
 
 void ImageFetcherBridge::OnImageDataFetched(

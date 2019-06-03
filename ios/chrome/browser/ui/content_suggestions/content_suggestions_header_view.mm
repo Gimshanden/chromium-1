@@ -6,9 +6,12 @@
 
 #import <UIKit/UIKit.h>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/signin/feature_flags.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_header_constants.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_constants.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_container_view.h"
@@ -49,11 +52,19 @@ CGFloat ToolbarHeight() {
       [UIApplication sharedApplication].preferredContentSizeCategory);
 }
 
+// Returns the amount of vertical space to allow for the existence of a top
+// toolbar when iPhone is in landscape orientation.
+CGFloat IdentityDiscToolbarOffset(id<UITraitEnvironment> environment) {
+  return IsCompactHeight(environment) ? ToolbarHeight() : 0;
+}
+
 }  // namespace
 
 @interface ContentSuggestionsHeaderView ()
 
 @property(nonatomic, strong, readwrite) UIButton* voiceSearchButton;
+
+@property(nonatomic, strong) UIView* separator;
 
 // Layout constraints for fake omnibox background image and blur.
 @property(nonatomic, strong) NSLayoutConstraint* fakeLocationBarTopConstraint;
@@ -62,6 +73,9 @@ CGFloat ToolbarHeight() {
 @property(nonatomic, strong) NSLayoutConstraint* fakeToolbarTopConstraint;
 @property(nonatomic, strong) NSLayoutConstraint* hintLabelLeadingConstraint;
 @property(nonatomic, strong) NSLayoutConstraint* voiceSearchTrailingConstraint;
+// Layout constraints for Identity Disc that need to be adjusted based on
+// device size class changes.
+@property(nonatomic, strong) NSLayoutConstraint* identityDiscTopConstraint;
 
 @end
 
@@ -86,6 +100,29 @@ CGFloat ToolbarHeight() {
     [toolbarView.topAnchor constraintEqualToAnchor:layoutGuide.topAnchor],
     [toolbarView.heightAnchor constraintEqualToConstant:ToolbarHeight()],
     [toolbarView.trailingAnchor constraintEqualToAnchor:self.trailingAnchor]
+  ]];
+}
+
+- (void)setIdentityDiscView:(UIView*)identityDiscView {
+  DCHECK(identityDiscView);
+  _identityDiscView = identityDiscView;
+  [self addSubview:_identityDiscView];
+
+  // Sets the layout constraints for size of Identity Disc and the placement
+  // based on whether there is a top toolbar or not.
+  self.identityDiscView.translatesAutoresizingMaskIntoConstraints = NO;
+  id<LayoutGuideProvider> layoutGuide = self.safeAreaLayoutGuide;
+  self.identityDiscTopConstraint = [self.identityDiscView.topAnchor
+      constraintEqualToAnchor:layoutGuide.topAnchor
+                     constant:IdentityDiscToolbarOffset(self)];
+  CGFloat dimension =
+      ntp_home::kIdentityAvatarDimension + 2 * ntp_home::kIdentityAvatarMargin;
+  [NSLayoutConstraint activateConstraints:@[
+    [self.identityDiscView.heightAnchor constraintEqualToConstant:dimension],
+    [self.identityDiscView.widthAnchor constraintEqualToConstant:dimension],
+    [self.identityDiscView.trailingAnchor
+        constraintEqualToAnchor:layoutGuide.trailingAnchor],
+    self.identityDiscTopConstraint
   ]];
 }
 
@@ -219,6 +256,25 @@ CGFloat ToolbarHeight() {
   ]];
 }
 
+- (void)addSeparatorToSearchField:(UIView*)searchField {
+  DCHECK(searchField.superview == self);
+
+  self.separator = [[UIView alloc] init];
+  self.separator.backgroundColor =
+      [UIColor colorWithWhite:0 alpha:kToolbarSeparatorAlpha];
+  self.separator.alpha = 0;
+  self.separator.translatesAutoresizingMaskIntoConstraints = NO;
+  [searchField addSubview:self.separator];
+  [NSLayoutConstraint activateConstraints:@[
+    [self.separator.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+    [self.separator.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+    [self.separator.topAnchor constraintEqualToAnchor:searchField.bottomAnchor],
+    [self.separator.heightAnchor
+        constraintEqualToConstant:ui::AlignValueToUpperPixel(
+                                      kToolbarSeparatorHeight)],
+  ]];
+}
+
 - (CGFloat)searchFieldProgressForOffset:(CGFloat)offset
                          safeAreaInsets:(UIEdgeInsets)safeAreaInsets {
   // The scroll offset at which point searchField's frame should stop growing.
@@ -271,9 +327,12 @@ CGFloat ToolbarHeight() {
     self.fakeLocationBarTrailingConstraint.constant = 0;
     self.fakeLocationBarTopConstraint.constant = 0;
 
+    self.separator.alpha = 0;
+
     return;
   } else {
     self.alpha = 1;
+    self.separator.alpha = percent;
   }
 
   // Grow the blur to cover the safeArea top.
@@ -335,6 +394,27 @@ CGFloat ToolbarHeight() {
                          [UIColor colorWithWhite:0 alpha:alpha];
                    }
                    completion:nil];
+}
+
+#pragma mark - UITraitEnvironment
+
+// Adjusts the autolayout constraints for |identityDiscView| when view changes
+// size. When an iPhone is rotated from portrait (no top toolbar) to landscape
+// (with top toolbar), the placement of Identity Disc has to be shifted down
+// below the top toolbar. Otherwise, the Identity Disc may be obscured by the
+// top toolbar in landscape mode.
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  // identityDiscView may not be set if feature is not enabled.
+  if (!self.identityDiscView)
+    return;
+  DCHECK(IsIdentityDiscFeatureEnabled());
+  if ((self.traitCollection.verticalSizeClass !=
+       previousTraitCollection.verticalSizeClass) ||
+      (self.traitCollection.horizontalSizeClass !=
+       previousTraitCollection.horizontalSizeClass)) {
+    self.identityDiscTopConstraint.constant = IdentityDiscToolbarOffset(self);
+  }
 }
 
 #pragma mark - Property accessors

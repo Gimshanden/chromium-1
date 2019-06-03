@@ -17,6 +17,7 @@
 #include "net/base/auth.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_isolation_key.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/multi_log_ct_verifier.h"
@@ -31,8 +32,8 @@
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
-#include "net/socket/client_socket_handle.h"
 #include "net/socket/connect_job_test_util.h"
+#include "net/socket/connection_attempts.h"
 #include "net/socket/next_proto.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/socket_test_util.h"
@@ -107,7 +108,8 @@ class SSLConnectJobTest : public WithScopedTaskEnvironment,
                                       HostPortPair("host", 80),
                                       /*is_trusted_proxy=*/false,
                                       /*tunnel=*/true,
-                                      TRAFFIC_ANNOTATION_FOR_TESTS)),
+                                      TRAFFIC_ANNOTATION_FOR_TESTS,
+                                      NetworkIsolationKey())),
         common_connect_job_params_(session_->CreateCommonConnectJobParams()) {
     ssl_config_service_->GetSSLConfig(&ssl_config_);
 
@@ -199,11 +201,11 @@ TEST_F(SSLConnectJobTest, TCPFail) {
     test_delegate.StartJobExpectingResult(
         ssl_connect_job.get(), ERR_CONNECTION_FAILED, io_mode == SYNCHRONOUS);
     EXPECT_FALSE(test_delegate.socket());
-    ClientSocketHandle handle;
-    ssl_connect_job->GetAdditionalErrorState(&handle);
-    EXPECT_FALSE(handle.is_ssl_error());
-    ASSERT_EQ(1u, handle.connection_attempts().size());
-    EXPECT_THAT(handle.connection_attempts()[0].result,
+    EXPECT_FALSE(ssl_connect_job->IsSSLError());
+    ConnectionAttempts connection_attempts =
+        ssl_connect_job->GetConnectionAttempts();
+    ASSERT_EQ(1u, connection_attempts.size());
+    EXPECT_THAT(connection_attempts[0].result,
                 test::IsError(ERR_CONNECTION_FAILED));
   }
 }
@@ -314,9 +316,9 @@ TEST_F(SSLConnectJobTest, BasicDirectSync) {
                                         true /* expect_sync_result */);
   EXPECT_EQ(MEDIUM, host_resolver_.last_request_priority());
 
-  ClientSocketHandle handle;
-  ssl_connect_job->GetAdditionalErrorState(&handle);
-  EXPECT_EQ(0u, handle.connection_attempts().size());
+  ConnectionAttempts connection_attempts =
+      ssl_connect_job->GetConnectionAttempts();
+  EXPECT_EQ(0u, connection_attempts.size());
   CheckConnectTimesSet(ssl_connect_job->connect_timing());
 }
 
@@ -341,9 +343,9 @@ TEST_F(SSLConnectJobTest, BasicDirectAsync) {
   host_resolver_.ResolveAllPending();
   EXPECT_THAT(test_delegate.WaitForResult(), test::IsOk());
 
-  ClientSocketHandle handle;
-  ssl_connect_job->GetAdditionalErrorState(&handle);
-  EXPECT_EQ(0u, handle.connection_attempts().size());
+  ConnectionAttempts connection_attempts =
+      ssl_connect_job->GetConnectionAttempts();
+  EXPECT_EQ(0u, connection_attempts.size());
 
   // Check times. Since time is mocked out, all times will be the same, except
   // |dns_start|, which is the only one recorded before the FastForwardBy()
@@ -437,11 +439,11 @@ TEST_F(SSLConnectJobTest, DirectCertError) {
   test_delegate.StartJobExpectingResult(ssl_connect_job.get(),
                                         ERR_CERT_COMMON_NAME_INVALID,
                                         false /* expect_sync_result */);
-  ClientSocketHandle handle;
-  ssl_connect_job->GetAdditionalErrorState(&handle);
-  EXPECT_TRUE(handle.is_ssl_error());
-  ASSERT_EQ(1u, handle.connection_attempts().size());
-  EXPECT_THAT(handle.connection_attempts()[0].result,
+  EXPECT_TRUE(ssl_connect_job->IsSSLError());
+  ConnectionAttempts connection_attempts =
+      ssl_connect_job->GetConnectionAttempts();
+  ASSERT_EQ(1u, connection_attempts.size());
+  EXPECT_THAT(connection_attempts[0].result,
               test::IsError(ERR_CERT_COMMON_NAME_INVALID));
   CheckConnectTimesSet(ssl_connect_job->connect_timing());
 }
@@ -459,11 +461,10 @@ TEST_F(SSLConnectJobTest, DirectSSLError) {
   test_delegate.StartJobExpectingResult(ssl_connect_job.get(),
                                         ERR_SSL_PROTOCOL_ERROR,
                                         false /* expect_sync_result */);
-  ClientSocketHandle handle;
-  ssl_connect_job->GetAdditionalErrorState(&handle);
-  EXPECT_TRUE(handle.is_ssl_error());
-  ASSERT_EQ(1u, handle.connection_attempts().size());
-  EXPECT_THAT(handle.connection_attempts()[0].result,
+  ConnectionAttempts connection_attempts =
+      ssl_connect_job->GetConnectionAttempts();
+  ASSERT_EQ(1u, connection_attempts.size());
+  EXPECT_THAT(connection_attempts[0].result,
               test::IsError(ERR_SSL_PROTOCOL_ERROR));
 }
 
@@ -516,11 +517,11 @@ TEST_F(SSLConnectJobTest, SOCKSFail) {
     test_delegate.StartJobExpectingResult(ssl_connect_job.get(),
                                           ERR_PROXY_CONNECTION_FAILED,
                                           io_mode == SYNCHRONOUS);
+    EXPECT_FALSE(ssl_connect_job->IsSSLError());
 
-    ClientSocketHandle handle;
-    ssl_connect_job->GetAdditionalErrorState(&handle);
-    EXPECT_FALSE(handle.is_ssl_error());
-    EXPECT_EQ(0u, handle.connection_attempts().size());
+    ConnectionAttempts connection_attempts =
+        ssl_connect_job->GetConnectionAttempts();
+    EXPECT_EQ(0u, connection_attempts.size());
   }
 }
 
@@ -660,10 +661,10 @@ TEST_F(SSLConnectJobTest, HttpProxyFail) {
                                           ERR_PROXY_CONNECTION_FAILED,
                                           io_mode == SYNCHRONOUS);
 
-    ClientSocketHandle handle;
-    ssl_connect_job->GetAdditionalErrorState(&handle);
-    EXPECT_FALSE(handle.is_ssl_error());
-    EXPECT_EQ(0u, handle.connection_attempts().size());
+    EXPECT_FALSE(ssl_connect_job->IsSSLError());
+    ConnectionAttempts connection_attempts =
+        ssl_connect_job->GetConnectionAttempts();
+    EXPECT_EQ(0u, connection_attempts.size());
   }
 }
 
@@ -690,9 +691,6 @@ TEST_F(SSLConnectJobTest, HttpProxyAuthChallenge) {
   socket_factory_.AddSocketDataProvider(&data);
   SSLSocketDataProvider ssl(ASYNC, OK);
   socket_factory_.AddSSLSocketDataProvider(&ssl);
-
-  ClientSocketHandle handle;
-  TestCompletionCallback callback;
 
   TestConnectJobDelegate test_delegate;
   std::unique_ptr<ConnectJob> ssl_connect_job =
@@ -809,9 +807,6 @@ TEST_F(SSLConnectJobTest, HttpProxyAuthHasEstablishedConnection) {
   SSLSocketDataProvider ssl(ASYNC, OK);
   socket_factory_.AddSSLSocketDataProvider(&ssl);
 
-  ClientSocketHandle handle;
-  TestCompletionCallback callback;
-
   TestConnectJobDelegate test_delegate;
   std::unique_ptr<ConnectJob> ssl_connect_job =
       CreateConnectJob(&test_delegate, ProxyServer::SCHEME_HTTP);
@@ -904,9 +899,6 @@ TEST_F(SSLConnectJobTest,
   socket_factory_.AddSocketDataProvider(&data2);
   SSLSocketDataProvider ssl(ASYNC, OK);
   socket_factory_.AddSSLSocketDataProvider(&ssl);
-
-  ClientSocketHandle handle;
-  TestCompletionCallback callback;
 
   TestConnectJobDelegate test_delegate;
   std::unique_ptr<ConnectJob> ssl_connect_job =

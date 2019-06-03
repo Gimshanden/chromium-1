@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gpu/vulkan/vulkan_command_pool.h"
+#include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 
 namespace gpu {
@@ -25,7 +26,8 @@ VulkanDeviceQueue::~VulkanDeviceQueue() {
 bool VulkanDeviceQueue::Initialize(
     uint32_t options,
     const std::vector<const char*>& required_extensions,
-    const GetPresentationSupportCallback& get_presentation_support) {
+    const GetPresentationSupportCallback& get_presentation_support,
+    bool use_swiftshader) {
   DCHECK_EQ(static_cast<VkPhysicalDevice>(VK_NULL_HANDLE), vk_physical_device_);
   DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), owned_vk_device_);
   DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), vk_device_);
@@ -87,6 +89,9 @@ bool VulkanDeviceQueue::Initialize(
     return false;
 
   vk_physical_device_ = devices[device_index];
+  vkGetPhysicalDeviceProperties(vk_physical_device_,
+                                &vk_physical_device_properties_);
+
   vk_queue_index_ = queue_index;
 
   float queue_priority = 0.0f;
@@ -147,12 +152,15 @@ bool VulkanDeviceQueue::Initialize(
   enabled_extensions_ = gfx::ExtensionSet(std::begin(enabled_extensions),
                                           std::end(enabled_extensions));
 
-  gpu::GetVulkanFunctionPointers()->BindDeviceFunctionPointers(vk_device_);
+  gpu::GetVulkanFunctionPointers()->BindDeviceFunctionPointers(vk_device_,
+                                                               use_swiftshader);
 
   if (gfx::HasExtension(enabled_extensions_, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
     gpu::GetVulkanFunctionPointers()->BindSwapchainFunctionPointers(vk_device_);
 
   vkGetDeviceQueue(vk_device_, queue_index, 0, &vk_queue_);
+
+  cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
 
   return true;
 }
@@ -173,10 +181,15 @@ bool VulkanDeviceQueue::InitializeForWevbView(
   vk_queue_ = vk_queue;
   vk_queue_index_ = vk_queue_index;
   enabled_extensions_ = std::move(enabled_extensions);
+
+  cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
   return true;
 }
 
 void VulkanDeviceQueue::Destroy() {
+  cleanup_helper_->Destroy();
+  cleanup_helper_.reset();
+
   if (VK_NULL_HANDLE != owned_vk_device_) {
     vkDestroyDevice(owned_vk_device_, nullptr);
     owned_vk_device_ = VK_NULL_HANDLE;

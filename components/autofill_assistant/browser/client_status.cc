@@ -15,12 +15,27 @@ ClientStatus::~ClientStatus() = default;
 
 void ClientStatus::FillProto(ProcessedActionProto* proto) const {
   proto->set_status(status_);
-  // TODO(b/129387787): Fill extra debugging information collected in the
-  // ClientStatus.
+  if (has_details_)
+    proto->mutable_status_details()->MergeFrom(details_);
 }
 
 std::ostream& operator<<(std::ostream& out, const ClientStatus& status) {
-  return out << status.status_;
+  out << status.status_;
+#ifndef NDEBUG
+  if (status.details_.original_status() != UNKNOWN_ACTION_STATUS) {
+    out << " was: " << status.details_.original_status();
+  }
+  if (status.details_.has_unexpected_error_info()) {
+    auto& error_info = status.details_.unexpected_error_info();
+    out << error_info.source_file() << ":" << error_info.source_line_number();
+    if (!error_info.js_exception_classname().empty()) {
+      out << " JS error " << error_info.js_exception_classname() << " at "
+          << error_info.js_exception_line_number() << ":"
+          << error_info.js_exception_column_number();
+    }
+  }
+#endif
+  return out;
 }
 
 const ClientStatus& OkClientStatus() {
@@ -85,6 +100,26 @@ std::ostream& operator<<(std::ostream& out,
 
     case ProcessedActionStatusProto::ELEMENT_UNSTABLE:
       out << "ELEMENT_UNSTABLE";
+      break;
+
+    case ProcessedActionStatusProto::INVALID_SELECTOR:
+      out << "INVALID_SELECTOR";
+      break;
+
+    case ProcessedActionStatusProto::OPTION_VALUE_NOT_FOUND:
+      out << "OPTION_VALUE_NOT_FOUND";
+      break;
+
+    case ProcessedActionStatusProto::UNEXPECTED_JS_ERROR:
+      out << "UNEXPECTED_JS_ERROR";
+      break;
+
+    case ProcessedActionStatusProto::TOO_MANY_ELEMENTS:
+      out << "TOO_MANY_ELEMENTS";
+      break;
+
+    case ProcessedActionStatusProto::NAVIGATION_ERROR:
+      out << "NAVIGATION_ERROR";
       break;
 
       // Intentionally no default case to make compilation fail if a new value

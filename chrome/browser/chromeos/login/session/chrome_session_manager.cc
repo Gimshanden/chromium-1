@@ -31,12 +31,14 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/app_install_event_log_manager_wrapper.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/browser/chromeos/policy/tpm_auto_update_mode_policy_handler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/tether/tether_service.h"
 #include "chrome/browser/chromeos/tpm_firmware_update_notification.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/app_list/app_list_client_impl.h"
+#include "chrome/browser/ui/webui/chromeos/login/app_launch_splash_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/constants/chromeos_switches.h"
@@ -62,7 +64,6 @@ namespace {
 bool ShouldAutoLaunchKioskApp(const base::CommandLine& command_line) {
   KioskAppManager* app_manager = KioskAppManager::Get();
   return command_line.HasSwitch(switches::kLoginManager) &&
-         !command_line.HasSwitch(switches::kForceLoginManagerInTests) &&
          app_manager->IsAutoLaunchEnabled() &&
          KioskAppLaunchError::Get() == KioskAppLaunchError::NONE &&
          // IsOobeCompleted() is needed to prevent kiosk session start in case
@@ -77,7 +78,7 @@ void StartKioskSession() {
   session_manager::SessionManager::Get()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
 
-  ShowLoginWizard(chromeos::OobeScreen::SCREEN_APP_LAUNCH_SPLASH);
+  ShowLoginWizard(chromeos::AppLaunchSplashScreenView::kScreenId);
 
   // Login screen is skipped but 'login-prompt-visible' signal is still needed.
   VLOG(1) << "Kiosk app auto launch >> login-prompt-visible";
@@ -156,8 +157,8 @@ void StartUserSession(Profile* user_profile, const std::string& login_user_id) {
       crostini_manager->MaybeUpgradeCrostini();
 
     if (user->GetType() == user_manager::USER_TYPE_CHILD) {
-      ScreenTimeControllerFactory::GetForBrowserContext(user_profile);
       ConsumerStatusReportingServiceFactory::GetForBrowserContext(user_profile);
+      ScreenTimeControllerFactory::GetForBrowserContext(user_profile);
     }
 
     // Send the PROFILE_PREPARED notification and call SessionStarted()
@@ -194,6 +195,11 @@ void StartUserSession(Profile* user_profile, const std::string& login_user_id) {
 
   UserSessionManager::GetInstance()->CheckEolStatus(user_profile);
   tpm_firmware_update::ShowNotificationIfNeeded(user_profile);
+  g_browser_process->platform_part()
+      ->browser_policy_connector_chromeos()
+      ->GetTPMAutoUpdateModePolicyHandler()
+      ->ShowTPMAutoUpdateNotificationIfNeeded();
+
   ArcTermsOfServiceScreen::MaybeLaunchArcSettings(user_profile);
   SyncConsentScreen::MaybeLaunchSyncConsentSettings(user_profile);
   UserSessionManager::GetInstance()->StartAccountManagerMigration(user_profile);

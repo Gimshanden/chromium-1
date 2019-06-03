@@ -7,17 +7,20 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "build/build_config.h"
+#include "chrome/browser/performance_manager/decorators/frozen_frame_aggregator.h"
 #include "chrome/browser/performance_manager/decorators/page_almost_idle_decorator.h"
 #include "chrome/browser/performance_manager/graph/page_node_impl.h"
 #include "chrome/browser/performance_manager/graph/system_node_impl.h"
+#include "chrome/browser/performance_manager/observers/isolation_context_metrics.h"
 #include "chrome/browser/performance_manager/observers/metrics_collector.h"
-#include "chrome/browser/performance_manager/observers/page_signal_generator_impl.h"
 #include "chrome/browser/performance_manager/observers/working_set_trimmer_win.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/resource_coordinator/public/cpp/resource_coordinator_features.h"
@@ -39,8 +42,7 @@ PerformanceManager* PerformanceManager::GetInstance() {
   return g_performance_manager;
 }
 
-PerformanceManager::PerformanceManager()
-    : task_runner_(CreateTaskRunner()), introspector_(&graph_) {
+PerformanceManager::PerformanceManager() : task_runner_(CreateTaskRunner()) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -71,32 +73,53 @@ void PerformanceManager::Destroy(std::unique_ptr<PerformanceManager> instance) {
   instance->task_runner_->DeleteSoon(FROM_HERE, instance.release());
 }
 
-void PerformanceManager::DistributeMeasurementBatch(
-    std::unique_ptr<ProcessResourceMeasurementBatch> batch) {
+void PerformanceManager::CallOnGraph(const base::Location& from_here,
+                                     GraphCallback callback) {
+  DCHECK(!callback.is_null());
   task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&PerformanceManager::DistributeMeasurementBatchImpl,
-                     base::Unretained(this), std::move(batch)));
+      FROM_HERE, base::BindOnce(&PerformanceManager::CallOnGraphImpl,
+                                base::Unretained(this), std::move(callback)));
 }
 
 std::unique_ptr<FrameNodeImpl> PerformanceManager::CreateFrameNode(
+    ProcessNodeImpl* process_node,
     PageNodeImpl* page_node,
-    FrameNodeImpl* parent_frame_node) {
-  std::unique_ptr<FrameNodeImpl> new_node =
-      std::make_unique<FrameNodeImpl>(&graph_, page_node, parent_frame_node);
-  task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&Graph::AddNewNode, base::Unretained(&graph_),
-                                base::Unretained(new_node.get())));
-
-  return new_node;
+    FrameNodeImpl* parent_frame_node,
+    int frame_tree_node_id,
+    const base::UnguessableToken& dev_tools_token,
+    int32_t browsing_instance_id,
+    int32_t site_instance_id) {
+  return CreateNodeImpl<FrameNodeImpl>(
+      FrameNodeCreationCallback(), process_node, page_node, parent_frame_node,
+      frame_tree_node_id, dev_tools_token, browsing_instance_id,
+      site_instance_id);
 }
 
-std::unique_ptr<PageNodeImpl> PerformanceManager::CreatePageNode() {
-  return CreateNodeImpl<PageNodeImpl>();
+std::unique_ptr<FrameNodeImpl> PerformanceManager::CreateFrameNode(
+    ProcessNodeImpl* process_node,
+    PageNodeImpl* page_node,
+    FrameNodeImpl* parent_frame_node,
+    int frame_tree_node_id,
+    const base::UnguessableToken& dev_tools_token,
+    int32_t browsing_instance_id,
+    int32_t site_instance_id,
+    FrameNodeCreationCallback creation_callback) {
+  return CreateNodeImpl<FrameNodeImpl>(
+      std::move(creation_callback), process_node, page_node, parent_frame_node,
+      frame_tree_node_id, dev_tools_token, browsing_instance_id,
+      site_instance_id);
+}
+
+std::unique_ptr<PageNodeImpl> PerformanceManager::CreatePageNode(
+    const WebContentsProxy& contents_proxy,
+    bool is_visible) {
+  return CreateNodeImpl<PageNodeImpl>(base::OnceCallback<void(PageNodeImpl*)>(),
+                                      contents_proxy, is_visible);
 }
 
 std::unique_ptr<ProcessNodeImpl> PerformanceManager::CreateProcessNode() {
-  return CreateNodeImpl<ProcessNodeImpl>();
+  return CreateNodeImpl<ProcessNodeImpl>(
+      base::OnceCallback<void(ProcessNodeImpl*)>());
 }
 
 void PerformanceManager::BatchDeleteNodes(
@@ -108,6 +131,7 @@ void PerformanceManager::BatchDeleteNodes(
 
 void PerformanceManager::RegisterObserver(
     std::unique_ptr<GraphObserver> observer) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   graph_.RegisterObserver(observer.get());
   observers_.push_back(std::move(observer));
 }
@@ -121,13 +145,33 @@ void PerformanceManager::PostBindInterface(
                                         std::move(message_pipe)));
 }
 
-template <typename NodeType>
-std::unique_ptr<NodeType> PerformanceManager::CreateNodeImpl() {
-  std::unique_ptr<NodeType> new_node = std::make_unique<NodeType>(&graph_);
-  task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&Graph::AddNewNode, base::Unretained(&graph_),
-                                base::Unretained(new_node.get())));
+namespace {
 
+// Helper function for adding a node to a graph, and invoking a post-creation
+// callback immediately afterwards.
+template <typename NodeType>
+void AddNodeAndInvokeCreationCallback(
+    base::OnceCallback<void(NodeType*)> callback,
+    NodeType* node,
+    GraphImpl* graph) {
+  graph->AddNewNode(node);
+  if (!callback.is_null())
+    std::move(callback).Run(node);
+}
+
+}  // namespace
+
+template <typename NodeType, typename... Args>
+std::unique_ptr<NodeType> PerformanceManager::CreateNodeImpl(
+    base::OnceCallback<void(NodeType*)> creation_callback,
+    Args&&... constructor_args) {
+  std::unique_ptr<NodeType> new_node = std::make_unique<NodeType>(
+      &graph_, std::forward<Args>(constructor_args)...);
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&AddNodeAndInvokeCreationCallback<NodeType>,
+                                std::move(creation_callback),
+                                base::Unretained(new_node.get()),
+                                base::Unretained(&graph_)));
   return new_node;
 }
 
@@ -160,18 +204,43 @@ void PerformanceManager::BatchDeleteNodesImpl(
     std::vector<std::unique_ptr<NodeBase>> nodes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  base::flat_set<ProcessNodeImpl*> process_nodes;
+
   for (auto it = nodes.begin(); it != nodes.end(); ++it) {
-    if ((*it)->id().type == resource_coordinator::CoordinationUnitType::kPage) {
-      auto* page_node = PageNodeImpl::FromNodeBase(it->get());
+    switch ((*it)->type()) {
+      case PageNodeImpl::Type(): {
+        auto* page_node = PageNodeImpl::FromNodeBase(it->get());
 
-      // Delete the main frame nodes until no more exist.
-      while (!page_node->main_frame_nodes().empty())
-        RemoveFrameAndChildrenFromGraph(
-            *(page_node->main_frame_nodes().begin()));
+        // Delete the main frame nodes until no more exist.
+        while (!page_node->main_frame_nodes().empty())
+          RemoveFrameAndChildrenFromGraph(
+              *(page_node->main_frame_nodes().begin()));
 
-      graph_.RemoveNode(page_node);
+        graph_.RemoveNode(page_node);
+        break;
+      }
+      case ProcessNodeImpl::Type(): {
+        // Keep track of the process nodes for removing once all frames nodes
+        // are removed.
+        auto* process_node = ProcessNodeImpl::FromNodeBase(it->get());
+        process_nodes.insert(process_node);
+        break;
+      }
+      case FrameNodeImpl::Type():
+        break;
+      case SystemNodeImpl::Type():
+      case NodeTypeEnum::kInvalidType:
+      default: {
+        NOTREACHED();
+        break;
+      }
     }
   }
+
+  // Remove the process nodes from the graph.
+  for (auto* process_node : process_nodes)
+    graph_.RemoveNode(process_node);
+
   // When |nodes| goes out of scope, all nodes are deleted.
 }
 
@@ -186,23 +255,19 @@ void PerformanceManager::OnStart() {
           connection ? connection->GetConnector()->Clone() : nullptr));
 }
 
+void PerformanceManager::CallOnGraphImpl(GraphCallback graph_callback) {
+  std::move(graph_callback).Run(&graph_);
+}
+
 void PerformanceManager::OnStartImpl(
     std::unique_ptr<service_manager::Connector> connector) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  interface_registry_.AddInterface(
-      base::BindRepeating(&CoordinationUnitIntrospectorImpl::BindToInterface,
-                          base::Unretained(&introspector_)));
-
   // Register new |GraphObserver| implementations here.
-  auto page_signal_generator_impl = std::make_unique<PageSignalGeneratorImpl>();
-  interface_registry_.AddInterface(
-      base::BindRepeating(&PageSignalGeneratorImpl::BindToInterface,
-                          base::Unretained(page_signal_generator_impl.get())));
-  RegisterObserver(std::move(page_signal_generator_impl));
-
   RegisterObserver(std::make_unique<MetricsCollector>());
   RegisterObserver(std::make_unique<PageAlmostIdleDecorator>());
+  RegisterObserver(std::make_unique<FrozenFrameAggregator>());
+  RegisterObserver(std::make_unique<IsolationContextMetrics>());
 
 #if defined(OS_WIN)
   if (base::FeatureList::IsEnabled(features::kEmptyWorkingSet))
@@ -226,16 +291,8 @@ void PerformanceManager::BindInterfaceImpl(
                                     service_manager::BindSourceInfo());
 }
 
-void PerformanceManager::DistributeMeasurementBatchImpl(
-    std::unique_ptr<ProcessResourceMeasurementBatch> batch) {
-  SystemNodeImpl* system_node = graph_.FindOrCreateSystemNode();
-  DCHECK(system_node);
-
-  system_node->DistributeMeasurementBatch(std::move(batch));
-}
-
 void PerformanceManager::BindWebUIGraphDump(
-    resource_coordinator::mojom::WebUIGraphDumpRequest request,
+    mojom::WebUIGraphDumpRequest request,
     const service_manager::BindSourceInfo& source_info) {
   std::unique_ptr<WebUIGraphDumpImpl> graph_dump =
       std::make_unique<WebUIGraphDumpImpl>(&graph_);

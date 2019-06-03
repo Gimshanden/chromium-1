@@ -8,9 +8,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/accessibility/accessibility_state_utils.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -19,6 +16,12 @@
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/common/content_features.h"
 #include "ui/accessibility/ax_action_data.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_list.h"
+#endif
 
 AccessibilityLabelsService::~AccessibilityLabelsService() {}
 
@@ -55,14 +58,12 @@ void AccessibilityLabelsService::Init() {
           &AccessibilityLabelsService::OnImageLabelsEnabledChanged,
           weak_factory_.GetWeakPtr()));
 
-  // Log whether the feature is enabled after startup.
-  // TODO(dmazzoni) re-enable. http://crbug.com/940805
-#if 0
-  content::BrowserAccessibilityState::GetInstance()->AddHistogramCallback(
-      base::BindRepeating(
+  // Log whether the feature is enabled after startup. This must be run on the
+  // UI thread because it accesses prefs.
+  content::BrowserAccessibilityState::GetInstance()
+      ->AddUIThreadHistogramCallback(base::BindRepeating(
           &AccessibilityLabelsService::UpdateAccessibilityLabelsHistograms,
           weak_factory_.GetWeakPtr()));
-#endif
 }
 
 AccessibilityLabelsService::AccessibilityLabelsService(Profile* profile)

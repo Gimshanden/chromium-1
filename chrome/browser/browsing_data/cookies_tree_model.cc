@@ -1383,11 +1383,11 @@ CookiesTreeModel::~CookiesTreeModel() {
 // static
 int CookiesTreeModel::GetSendForMessageID(const net::CanonicalCookie& cookie) {
   if (cookie.IsSecure()) {
-    if (cookie.SameSite() != net::CookieSameSite::NO_RESTRICTION)
+    if (cookie.GetEffectiveSameSite() != net::CookieSameSite::NO_RESTRICTION)
       return IDS_COOKIES_COOKIE_SENDFOR_SECURE_SAME_SITE;
     return IDS_COOKIES_COOKIE_SENDFOR_SECURE;
   }
-  if (cookie.SameSite() != net::CookieSameSite::NO_RESTRICTION)
+  if (cookie.GetEffectiveSameSite() != net::CookieSameSite::NO_RESTRICTION)
     return IDS_COOKIES_COOKIE_SENDFOR_SAME_SITE;
   return IDS_COOKIES_COOKIE_SENDFOR_ANY;
 }
@@ -1451,7 +1451,7 @@ void CookiesTreeModel::DeleteCookieNode(CookieTreeNode* cookie_node) {
   cookie_node->DeleteStoredObjects();
   CookieTreeNode* parent_node = cookie_node->parent();
   Remove(parent_node, cookie_node);
-  if (parent_node->empty())
+  if (parent_node->children().empty())
     DeleteCookieNode(parent_node);
 }
 

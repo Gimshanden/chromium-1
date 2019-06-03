@@ -7,6 +7,18 @@
  * Closure compiler type definitions used by display_manager.js .
  */
 
+/**
+ * @typedef {{
+ *   commonScreenSize: (boolean|undefined),
+ *   enableDebuggingAllowed: (boolean|undefined),
+ *   enterDemoModeAllowed: (boolean|undefined),
+ *   noAnimatedTransition: (boolean|undefined),
+ *   postponeEnrollmentAllowed: (boolean|undefined),
+ *   resetAllowed: (boolean|undefined),
+ *   startEnrollmentAllowed: (boolean|undefined),
+ *   toggleKioskAllowed: (boolean|undefined),
+ * }}
+ */
 var DisplayManagerScreenAttributes = {};
 
 /**
@@ -58,3 +70,18 @@ DisplayManagerScreenAttributes.startEnrollmentAllowed;
  */
 DisplayManagerScreenAttributes.toggleKioskAllowed;
 
+/**
+ * Possible types of UI.
+ * @enum {string}
+ */
+var DISPLAY_TYPE = {
+  UNKNOWN: 'unknown',
+  OOBE: 'oobe',
+  LOGIN: 'login',
+  LOCK: 'lock',
+  USER_ADDING: 'user-adding',
+  APP_LAUNCH_SPLASH: 'app-launch-splash',
+  ARC_KIOSK_SPLASH: 'arc-kiosk-splash',
+  DESKTOP_USER_MANAGER: 'login-add-user',
+  GAIA_SIGNIN: 'gaia-signin'
+};

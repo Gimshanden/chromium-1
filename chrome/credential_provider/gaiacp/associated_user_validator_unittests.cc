@@ -254,6 +254,47 @@ TEST_F(AssociatedUserValidatorTest, TokenHandleValidityStillFresh) {
   EXPECT_EQ(1u, fake_http_url_fetcher_factory()->requests_created());
 }
 
+TEST_F(AssociatedUserValidatorTest, BlockDenyUserAccess) {
+  FakeAssociatedUserValidator validator;
+
+  ASSERT_EQ(S_OK, SetGlobalFlagForTesting(kRegMdmUrl, L"https://mdm.com"));
+
+  CComBSTR sid;
+  ASSERT_EQ(S_OK, fake_os_user_manager()->CreateTestOSUser(
+                      L"username", L"password", L"fullname", L"comment",
+                      L"gaia-id", base::string16(), &sid));
+
+  // Invalid token fetch result.
+  fake_http_url_fetcher_factory()->SetFakeResponse(
+      GURL(AssociatedUserValidator::kTokenInfoUrl),
+      FakeWinHttpUrlFetcher::Headers(), "{}");
+
+  validator.StartRefreshingTokenHandleValidity();
+
+  // Apply two levels blocks to deny access. This should prevent users from
+  // being blocked from accessing the system.
+  {
+    AssociatedUserValidator::ScopedBlockDenyAccessUpdate deny_blocker_outer(
+        &validator);
+    {
+      AssociatedUserValidator::ScopedBlockDenyAccessUpdate deny_blocker_inner(
+          &validator);
+      EXPECT_FALSE(
+          validator.DenySigninForUsersWithInvalidTokenHandles(CPUS_LOGON));
+      EXPECT_FALSE(validator.IsUserAccessBlockedForTesting(OLE2W(sid)));
+    }
+
+    EXPECT_FALSE(
+        validator.DenySigninForUsersWithInvalidTokenHandles(CPUS_LOGON));
+    EXPECT_FALSE(validator.IsUserAccessBlockedForTesting(OLE2W(sid)));
+  }
+  // Unblock deny access. User should not be blocked.
+  EXPECT_TRUE(validator.DenySigninForUsersWithInvalidTokenHandles(CPUS_LOGON));
+  EXPECT_TRUE(validator.IsUserAccessBlockedForTesting(OLE2W(sid)));
+
+  EXPECT_EQ(1u, fake_http_url_fetcher_factory()->requests_created());
+}
+
 // Tests various scenarios where user access is blocked.
 // Parameters are:
 // 1. CREDENTIAL_PROVIDER_USAGE_SCENARIO - Usage scenario.
@@ -319,12 +360,13 @@ TEST_P(AssociatedUserValidatorUserAccessBlockingTest, BlockUserAccessAsNeeded) {
   EXPECT_EQ(!internet_available || (!mdm_url_set && token_handle_valid) ||
                 (mdm_url_set && mdm_enrolled && token_handle_valid),
             validator.IsTokenHandleValidForUser(OLE2W(sid)));
-  EXPECT_EQ(should_user_be_blocked, validator.IsUserAccessBlocked(OLE2W(sid)));
+  EXPECT_EQ(should_user_be_blocked,
+            validator.IsUserAccessBlockedForTesting(OLE2W(sid)));
 
   // Unlock the user.
   validator.AllowSigninForUsersWithInvalidTokenHandles();
 
-  EXPECT_EQ(false, validator.IsUserAccessBlocked(OLE2W(sid)));
+  EXPECT_EQ(false, validator.IsUserAccessBlockedForTesting(OLE2W(sid)));
   EXPECT_NE(S_OK,
             GetMachineRegDWORD(kWinlogonUserListRegKey, username, &reg_value));
 }

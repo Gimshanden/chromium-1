@@ -41,6 +41,7 @@
 #include "components/sync/engine/sync_engine.h"
 #include "components/sync/engine/sync_engine_host.h"
 #include "components/sync/js/sync_js_controller.h"
+#include "components/version_info/channel.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "services/identity/public/cpp/identity_manager.h"
@@ -95,6 +96,7 @@ class ProfileSyncService : public SyncService,
     NetworkTimeUpdateCallback network_time_update_callback;
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory;
     network::NetworkConnectionTracker* network_connection_tracker = nullptr;
+    version_info::Channel channel = version_info::Channel::UNKNOWN;
     std::string debug_identifier;
     bool autofill_enable_account_wallet_storage = false;
 
@@ -120,39 +122,39 @@ class ProfileSyncService : public SyncService,
   CoreAccountInfo GetAuthenticatedAccountInfo() const override;
   bool IsAuthenticatedAccountPrimary() const override;
   GoogleServiceAuthError GetAuthError() const override;
+  base::Time GetAuthErrorTime() const override;
   bool RequiresClientUpgrade() const override;
   std::unique_ptr<SyncSetupInProgressHandle> GetSetupInProgressHandle()
       override;
   bool IsSetupInProgress() const override;
   ModelTypeSet GetRegisteredDataTypes() const override;
-  ModelTypeSet GetForcedDataTypes() const override;
   ModelTypeSet GetPreferredDataTypes() const override;
   ModelTypeSet GetActiveDataTypes() const override;
   void StopAndClear() override;
   void OnDataTypeRequestsSyncStartup(ModelType type) override;
   void TriggerRefresh(const ModelTypeSet& types) override;
-  void ReenableDatatype(ModelType type) override;
   void ReadyForStartChanged(ModelType type) override;
   void SetInvalidationsForSessionsEnabled(bool enabled) override;
   void AddObserver(SyncServiceObserver* observer) override;
   void RemoveObserver(SyncServiceObserver* observer) override;
   bool HasObserver(const SyncServiceObserver* observer) const override;
   UserShare* GetUserShare() const override;
-  SyncTokenStatus GetSyncTokenStatus() const override;
+  SyncTokenStatus GetSyncTokenStatusForDebugging() const override;
   bool QueryDetailedSyncStatusForDebugging(SyncStatus* result) const override;
-  base::Time GetLastSyncedTime() const override;
-  SyncCycleSnapshot GetLastCycleSnapshot() const override;
+  base::Time GetLastSyncedTimeForDebugging() const override;
+  SyncCycleSnapshot GetLastCycleSnapshotForDebugging() const override;
   std::unique_ptr<base::Value> GetTypeStatusMapForDebugging() override;
-  const GURL& sync_service_url() const override;
-  std::string unrecoverable_error_message() const override;
-  base::Location unrecoverable_error_location() const override;
+  const GURL& GetSyncServiceUrlForDebugging() const override;
+  std::string GetUnrecoverableErrorMessageForDebugging() const override;
+  base::Location GetUnrecoverableErrorLocationForDebugging() const override;
   void AddProtocolEventObserver(ProtocolEventObserver* observer) override;
   void RemoveProtocolEventObserver(ProtocolEventObserver* observer) override;
   void AddTypeDebugInfoObserver(TypeDebugInfoObserver* observer) override;
   void RemoveTypeDebugInfoObserver(TypeDebugInfoObserver* observer) override;
   base::WeakPtr<JsController> GetJsController() override;
-  void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
-                       callback) override;
+  void GetAllNodesForDebugging(
+      const base::Callback<void(std::unique_ptr<base::ListValue>)>& callback)
+      override;
 
   // SyncEngineHost implementation.
   void OnEngineInitialized(
@@ -160,7 +162,6 @@ class ProfileSyncService : public SyncService,
       const WeakHandle<JsBackend>& js_backend,
       const WeakHandle<DataTypeDebugInfoListener>& debug_info_listener,
       const std::string& cache_guid,
-      const std::string& session_name,
       const std::string& birthday,
       const std::string& bag_of_chips,
       bool success) override;
@@ -290,7 +291,6 @@ class ProfileSyncService : public SyncService,
 
   // Callbacks for SyncUserSettingsImpl.
   void SyncAllowedByPlatformChanged(bool allowed);
-  bool IsEncryptEverythingAllowed() const;
 
   bool IsEngineAllowedToStart() const;
 
@@ -382,6 +382,8 @@ class ProfileSyncService : public SyncService,
   // Only null after Shutdown().
   std::unique_ptr<SyncAuthManager> auth_manager_;
 
+  const version_info::Channel channel_;
+
   // An identifier representing this instance for debugging purposes.
   const std::string debug_identifier_;
 
@@ -410,11 +412,6 @@ class ProfileSyncService : public SyncService,
   // Cache of the last SyncCycleSnapshot received from the sync engine.
   SyncCycleSnapshot last_snapshot_;
 
-  // The time that OnConfigureStart is called. This member is zero if
-  // OnConfigureStart has not yet been called, and is reset to zero once
-  // OnConfigureDone is called.
-  base::Time sync_configure_start_time_;
-
   // Callback to update the network time; used for initializing the engine.
   NetworkTimeUpdateCallback network_time_update_callback_;
 
@@ -432,9 +429,6 @@ class ProfileSyncService : public SyncService,
   // Number of UIs currently configuring the Sync service. When this number
   // is decremented back to zero, Sync setup is marked no longer in progress.
   int outstanding_setup_in_progress_handles_ = 0;
-
-  // Whether the SyncEngine has been initialized.
-  bool engine_initialized_;
 
   // Set when sync receives STOP_SYNC_FOR_DISABLED_ACCOUNT error from server.
   // Prevents ProfileSyncService from starting engine till browser restarted

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/time/time.h"
 #include "chrome/browser/notifications/scheduler/notification_data.h"
 #include "chrome/browser/notifications/scheduler/notification_scheduler_types.h"
 #include "chrome/browser/notifications/scheduler/schedule_params.h"
@@ -16,8 +17,10 @@ namespace notifications {
 // Represents the in-memory counterpart of scheduled notification database
 // record.
 struct NotificationEntry {
+  NotificationEntry();
   NotificationEntry(SchedulerClientType type, const std::string& guid);
   NotificationEntry(const NotificationEntry& other);
+  bool operator==(const NotificationEntry& other) const;
   ~NotificationEntry();
 
   // The type of the notification.
@@ -25,6 +28,9 @@ struct NotificationEntry {
 
   // The unique id of the notification database entry.
   std::string guid;
+
+  // Creation timestamp.
+  base::Time create_time;
 
   // Contains information to construct the notification.
   NotificationData notification_data;

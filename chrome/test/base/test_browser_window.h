@@ -30,6 +30,11 @@ namespace extensions {
 class Extension;
 }
 
+namespace send_tab_to_self {
+class SendTabToSelfBubbleController;
+class SendTabToSelfBubbleView;
+}  // namespace send_tab_to_self
+
 // An implementation of BrowserWindow used for testing. TestBrowserWindow only
 // contains a valid LocationBar, all other getters return NULL.
 // See BrowserWithTestWindowTest for an example of using this class.
@@ -79,6 +84,7 @@ class TestBrowserWindow : public BrowserWindow {
   ui::WindowShowState GetRestoredState() const override;
   gfx::Rect GetBounds() const override;
   gfx::Size GetContentsSize() const override;
+  void SetContentsSize(const gfx::Size& size) override;
   bool IsMaximized() const override;
   bool IsMinimized() const override;
   void Maximize() override {}
@@ -88,9 +94,9 @@ class TestBrowserWindow : public BrowserWindow {
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
   LocationBar* GetLocationBar() const override;
-  PageActionIconContainer* GetPageActionIconContainer() override;
+  PageActionIconContainer* GetOmniboxPageActionIconContainer() override;
   PageActionIconContainer* GetToolbarPageActionIconContainer() override;
-  void SetFocusToLocationBar() override {}
+  void SetFocusToLocationBar(bool select_all) override {}
   void UpdateReloadStopState(bool is_loading, bool force) override {}
   void UpdateToolbar(content::WebContents* contents) override {}
   void UpdateToolbarVisibility(bool visible, bool animate) override {}
@@ -117,9 +123,9 @@ class TestBrowserWindow : public BrowserWindow {
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
 #if !defined(OS_ANDROID)
   void ShowIntentPickerBubble(std::vector<apps::IntentPickerAppInfo> app_info,
-                              bool disable_stay_in_chrome,
+                              bool show_stay_in_chrome,
+                              bool show_remember_selection,
                               IntentPickerResponse callback) override {}
-  void SetIntentPickerViewVisibility(bool visible) override {}
 #endif  //  !define(OS_ANDROID)
   autofill::SaveCardBubbleView* ShowSaveCreditCardBubble(
       content::WebContents* contents,
@@ -129,6 +135,10 @@ class TestBrowserWindow : public BrowserWindow {
       content::WebContents* contents,
       autofill::LocalCardMigrationBubbleController* controller,
       bool user_gesture) override;
+  send_tab_to_self::SendTabToSelfBubbleView* ShowSendTabToSelfBubble(
+      content::WebContents* contents,
+      send_tab_to_self::SendTabToSelfBubbleController* controller,
+      bool is_user_gesture) override;
   ShowTranslateBubbleResult ShowTranslateBubble(
       content::WebContents* contents,
       translate::TranslateStep step,
@@ -195,7 +205,7 @@ class TestBrowserWindow : public BrowserWindow {
     base::TimeTicks GetMatchSelectionTimestamp() const override;
     void AcceptInput() override {}
     void AcceptInput(base::TimeTicks match_selection_timestamp) override {}
-    void FocusLocation() override {}
+    void FocusLocation(bool select_all) override {}
     void FocusSearch() override {}
     void UpdateContentSettingsIcons() override {}
     void UpdateSaveCreditCardIcon() override {}
@@ -211,21 +221,21 @@ class TestBrowserWindow : public BrowserWindow {
     DISALLOW_COPY_AND_ASSIGN(TestLocationBar);
   };
 
-  class TestPageActionIconContainer : public PageActionIconContainer {
+  class TestOmniboxPageActionIconContainer : public PageActionIconContainer {
    public:
-    TestPageActionIconContainer() {}
-    ~TestPageActionIconContainer() override {}
+    TestOmniboxPageActionIconContainer() {}
+    ~TestOmniboxPageActionIconContainer() override {}
 
     // PageActionIconContainer:
     void UpdatePageActionIcon(PageActionIconType type) override {}
 
    private:
-    DISALLOW_COPY_AND_ASSIGN(TestPageActionIconContainer);
+    DISALLOW_COPY_AND_ASSIGN(TestOmniboxPageActionIconContainer);
   };
 
   TestDownloadShelf download_shelf_;
   TestLocationBar location_bar_;
-  TestPageActionIconContainer page_action_icon_container_;
+  TestOmniboxPageActionIconContainer omnibox_page_action_icon_container_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserWindow);
 };

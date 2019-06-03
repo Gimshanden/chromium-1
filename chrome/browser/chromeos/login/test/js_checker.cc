@@ -153,6 +153,17 @@ std::unique_ptr<TestConditionWaiter> JSChecker::CreateEnabledWaiter(
   return CreateWaiter(js_condition);
 }
 
+std::unique_ptr<TestConditionWaiter> JSChecker::CreateHasClassWaiter(
+    bool has_class,
+    const std::string& css_class,
+    std::initializer_list<base::StringPiece> element_ids) {
+  std::string js_condition = ElementHasClassCondition(css_class, element_ids);
+  if (!has_class) {
+    js_condition = "!(" + js_condition + ")";
+  }
+  return CreateWaiter(js_condition);
+}
+
 void JSChecker::GetBoolImpl(const std::string& expression, bool* result) {
   CHECK(web_contents_);
   ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
@@ -223,16 +234,30 @@ void JSChecker::ExpectHasNoClass(
   ExpectFalse(ElementHasClassCondition(css_class, element_ids));
 }
 
+void JSChecker::ClickOnPath(
+    std::initializer_list<base::StringPiece> element_ids) {
+  ExpectVisiblePath(element_ids);
+  Evaluate(GetOobeElementPath(element_ids) + ".click()");
+}
+
+void JSChecker::ClickOn(const std::string& element_id) {
+  ClickOnPath({element_id});
+}
+
 void JSChecker::TapOnPath(
     std::initializer_list<base::StringPiece> element_ids) {
   ExpectVisiblePath(element_ids);
-  // All OOBE UI should be mobile-friendly, so use "tap" instead of "click".
+  // TODO(crbug.com/949377): Switch to always firing 'click' events when
+  // missing OOBE UI components are migrated to handle 'click' events.
   if (polymer_ui_) {
     Evaluate(GetOobeElementPath(element_ids) + ".fire('tap')");
   } else {
-    // Old test-only UI (fake GAIA, fake SAML) only support "click".
     Evaluate(GetOobeElementPath(element_ids) + ".click()");
   }
+}
+
+void JSChecker::TapOn(const std::string& element_id) {
+  TapOnPath({element_id});
 }
 
 void JSChecker::SelectRadioPath(
@@ -240,10 +265,6 @@ void JSChecker::SelectRadioPath(
   ExpectVisiblePath(element_ids);
   // Polymer radio buttons only support click events.
   Evaluate(GetOobeElementPath(element_ids) + ".fire('click')");
-}
-
-void JSChecker::TapOn(const std::string& element_id) {
-  TapOnPath({element_id});
 }
 
 void JSChecker::TypeIntoPath(

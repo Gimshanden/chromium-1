@@ -214,6 +214,7 @@ void FidoBleConnection::Connect(ConnectionCallback callback) {
   }
 
   pending_connection_callback_ = std::move(callback);
+  FIDO_LOG(DEBUG) << "Creating a GATT connection...";
   device->CreateGattConnection(
       base::Bind(&FidoBleConnection::OnCreateGattConnection,
                  weak_factory_.GetWeakPtr()),
@@ -246,6 +247,7 @@ void FidoBleConnection::ReadControlPointLength(
     return;
   }
 
+  FIDO_LOG(DEBUG) << "Read Control Point Length";
   // Work around legacy APIs. Only one of the callbacks to
   // ReadRemoteCharacteristic() gets invoked, but we don't know which one.
   auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
@@ -291,6 +293,7 @@ void FidoBleConnection::WriteControlPoint(const std::vector<uint8_t>& data,
   }
 #endif  // defined(OS_MACOSX)
 
+  FIDO_LOG(DEBUG) << "Wrote Control Point.";
   auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
   control_point->WriteRemoteCharacteristic(
       data, base::Bind(OnWriteRemoteCharacteristic, copyable_callback),
@@ -441,10 +444,12 @@ void FidoBleConnection::WriteServiceRevision(ServiceRevision service_revision) {
 void FidoBleConnection::OnServiceRevisionWritten(bool success) {
   DCHECK(pending_connection_callback_);
   if (success) {
+    FIDO_LOG(DEBUG) << "Service Revision successfully written.";
     StartNotifySession();
     return;
   }
 
+  FIDO_LOG(ERROR) << "Failed to write Service Revision.";
   std::move(pending_connection_callback_).Run(false);
 }
 

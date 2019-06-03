@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/screens/app_downloading_screen.h"
 
+#include "chrome/browser/ui/webui/chromeos/login/app_downloading_screen_handler.h"
+
 namespace chromeos {
 namespace {
 
@@ -17,7 +19,7 @@ constexpr const char kUserActionButtonContinueSetup[] =
 AppDownloadingScreen::AppDownloadingScreen(
     AppDownloadingScreenView* view,
     const base::RepeatingClosure& exit_callback)
-    : BaseScreen(OobeScreen::SCREEN_APP_DOWNLOADING),
+    : BaseScreen(AppDownloadingScreenView::kScreenId),
       view_(view),
       exit_callback_(exit_callback) {
   DCHECK(view_);

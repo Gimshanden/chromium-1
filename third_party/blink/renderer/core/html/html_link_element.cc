@@ -44,7 +44,8 @@
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/link_loader.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
@@ -52,19 +53,14 @@ namespace blink {
 
 using namespace html_names;
 
-inline HTMLLinkElement::HTMLLinkElement(Document& document,
-                                        const CreateElementFlags flags)
+HTMLLinkElement::HTMLLinkElement(Document& document,
+                                 const CreateElementFlags flags)
     : HTMLElement(kLinkTag, document),
       link_loader_(LinkLoader::Create(this)),
       referrer_policy_(network::mojom::ReferrerPolicy::kDefault),
       sizes_(MakeGarbageCollected<DOMTokenList>(*this, html_names::kSizesAttr)),
       rel_list_(MakeGarbageCollected<RelList>(this)),
       created_by_parser_(flags.IsCreatedByParser()) {}
-
-HTMLLinkElement* HTMLLinkElement::Create(Document& document,
-                                         const CreateElementFlags flags) {
-  return MakeGarbageCollected<HTMLLinkElement>(document, flags);
-}
 
 HTMLLinkElement::~HTMLLinkElement() = default;
 
@@ -81,7 +77,7 @@ void HTMLLinkElement::ParseAttribute(
   if (name == kRelAttr) {
     rel_attribute_ = LinkRelAttribute(value);
     if (rel_attribute_.IsImport()) {
-      Deprecation::CountDeprecation(GetDocument(), WebFeature::kHTMLImports);
+      Deprecation::CountDeprecation(&GetDocument(), WebFeature::kHTMLImports);
     }
     rel_list_->DidUpdateAttributeValue(params.old_value, value);
     Process();
@@ -119,7 +115,7 @@ void HTMLLinkElement::ParseAttribute(
   } else if (name == kIntegrityAttr) {
     integrity_ = value;
   } else if (name == kImportanceAttr &&
-             origin_trials::PriorityHintsEnabled(&GetDocument())) {
+             RuntimeEnabledFeatures::PriorityHintsEnabled(&GetDocument())) {
     UseCounter::Count(GetDocument(), WebFeature::kPriorityHints);
     importance_ = value;
   } else if (name == kDisabledAttr) {
@@ -199,7 +195,8 @@ LinkResource* HTMLLinkElement::LinkResourceToProcess() {
         // Ensure the origin trial context is created, as the enabled check will
         // return false if the context doesn't exist yet.
         OriginTrialContext::FromOrCreate(&GetDocument());
-        imports_enabled = origin_trials::HTMLImportsEnabled(&GetDocument());
+        imports_enabled =
+            RuntimeEnabledFeatures::HTMLImportsEnabled(&GetDocument());
       }
       if (imports_enabled) {
         link_ = MakeGarbageCollected<LinkImport>(this);
@@ -207,7 +204,7 @@ LinkResource* HTMLLinkElement::LinkResourceToProcess() {
         return nullptr;
       }
     } else if (rel_attribute_.IsManifest()) {
-      link_ = LinkManifest::Create(this);
+      link_ = MakeGarbageCollected<LinkManifest>(this);
     } else {
       auto* link = MakeGarbageCollected<LinkStyle>(this);
       if (FastHasAttribute(kDisabledAttr)) {

@@ -5,6 +5,8 @@
 #ifndef ASH_MEDIA_MEDIA_NOTIFICATION_BACKGROUND_H_
 #define ASH_MEDIA_MEDIA_NOTIFICATION_BACKGROUND_H_
 
+#include <vector>
+
 #include "ash/ash_export.h"
 #include "base/optional.h"
 #include "ui/gfx/image/image_skia.h"
@@ -39,6 +41,9 @@ class ASH_EXPORT MediaNotificationBackground : public views::Background {
   void UpdateArtwork(const gfx::ImageSkia& image);
   void UpdateArtworkMaxWidthPct(double max_width_pct);
 
+  SkColor GetBackgroundColor() const;
+  SkColor GetForegroundColor() const;
+
  private:
   friend class MediaNotificationBackgroundTest;
   friend class MediaNotificationViewTest;
@@ -63,6 +68,7 @@ class ASH_EXPORT MediaNotificationBackground : public views::Background {
   double artwork_max_width_pct_;
 
   base::Optional<SkColor> background_color_;
+  base::Optional<SkColor> foreground_color_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaNotificationBackground);
 };

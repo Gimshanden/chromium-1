@@ -16,12 +16,6 @@
 
 namespace autofill_assistant {
 
-namespace {
-// Waiting period between two checks.
-static constexpr base::TimeDelta kCheckDelay =
-    base::TimeDelta::FromMilliseconds(100);
-}  // namespace
-
 ElementArea::ElementArea(ScriptExecutorDelegate* delegate)
     : delegate_(delegate), scheduled_update_(false), weak_ptr_factory_(this) {
   DCHECK(delegate_);
@@ -45,7 +39,7 @@ void ElementArea::SetFromProto(const ElementAreaProto& proto) {
     for (const auto& element_proto : rectangle_proto.elements()) {
       rectangle.positions.emplace_back();
       ElementPosition& position = rectangle.positions.back();
-      position.selector = Selector(element_proto);
+      position.selector = Selector(element_proto).MustBeVisible();
       DVLOG(3) << "  " << position.selector;
     }
   }
@@ -142,7 +136,7 @@ void ElementArea::KeepUpdatingElementPositions() {
       FROM_HERE,
       base::BindOnce(&ElementArea::KeepUpdatingElementPositions,
                      weak_ptr_factory_.GetWeakPtr()),
-      kCheckDelay);
+      delegate_->GetSettings().element_position_update_interval);
 }
 
 void ElementArea::OnGetElementPosition(const Selector& selector,

@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/scroll_paint_property_node.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
+#include "third_party/blink/renderer/platform/wtf/allocator.h"
 
 namespace blink {
 
@@ -46,6 +47,8 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
   // Stores a transform and origin with an optimization for the identity and
   // 2d translation cases that avoids allocating a full matrix and origin.
   class TransformAndOrigin {
+    DISALLOW_NEW();
+
    public:
     TransformAndOrigin() {}
     // These constructors are not explicit so that we can use FloatSize or
@@ -92,6 +95,17 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
                matrix_and_origin_->matrix == other.matrix_and_origin_->matrix));
     }
 
+    bool ChangePreserves2dAxisAlignment(const TransformAndOrigin& other) const {
+      if (IsIdentityOr2DTranslation() && other.IsIdentityOr2DTranslation())
+        return true;
+      if (IsIdentityOr2DTranslation())
+        return other.Matrix().Preserves2dAxisAlignment();
+      if (other.IsIdentityOr2DTranslation())
+        return Matrix().Preserves2dAxisAlignment();
+      // TODO(crbug.com/960481): Consider more rare corner cases.
+      return (Matrix().Inverse() * other.Matrix()).Preserves2dAxisAlignment();
+    }
+
    private:
     struct MatrixAndOrigin {
       TransformationMatrix matrix;
@@ -113,6 +127,7 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
     scoped_refptr<const ScrollPaintPropertyNode> scroll;
     bool flattens_inherited_transform = false;
     bool affected_by_outer_viewport_bounds_delta = false;
+    bool in_subtree_of_page_scale = true;
     BackfaceVisibility backface_visibility = BackfaceVisibility::kInherited;
     unsigned rendering_context_id = 0;
     CompositingReasons direct_compositing_reasons = CompositingReason::kNone;
@@ -122,28 +137,42 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
     PaintPropertyChangeType ComputeChange(
         const State& other,
         const AnimationState& animation_state) const {
-      if (transform_and_origin.Origin() !=
-              other.transform_and_origin.Origin() ||
-          flattens_inherited_transform != other.flattens_inherited_transform ||
+      if (flattens_inherited_transform != other.flattens_inherited_transform ||
           affected_by_outer_viewport_bounds_delta !=
               other.affected_by_outer_viewport_bounds_delta ||
+          in_subtree_of_page_scale != other.in_subtree_of_page_scale ||
           backface_visibility != other.backface_visibility ||
           rendering_context_id != other.rendering_context_id ||
           compositor_element_id != other.compositor_element_id ||
-          scroll != other.scroll ||
-          !StickyConstraintEquals(other)) {
+          scroll != other.scroll || !StickyConstraintEquals(other)) {
         return PaintPropertyChangeType::kChangedOnlyValues;
       }
-      bool transform_changed =
+
+      bool matrix_changed =
           !transform_and_origin.TransformEquals(other.transform_and_origin);
-      bool transform_change_is_simple =
-          transform_changed &&
-          !animation_state.is_running_animation_on_compositor &&
-          transform_and_origin.IsIdentityOr2DTranslation() &&
-          other.transform_and_origin.IsIdentityOr2DTranslation();
+      bool origin_changed =
+          transform_and_origin.Origin() != other.transform_and_origin.Origin();
+      bool transform_changed = matrix_changed || origin_changed;
+
+      bool transform_has_simple_change = true;
+      if (!transform_changed) {
+        transform_has_simple_change = false;
+      } else if (animation_state.is_running_animation_on_compositor) {
+        transform_has_simple_change = false;
+      } else if (matrix_changed &&
+                 !transform_and_origin.ChangePreserves2dAxisAlignment(
+                     other.transform_and_origin)) {
+        // An additional cc::EffectNode may be required if
+        // blink::TransformPaintPropertyNode is not axis-aligned (see:
+        // PropertyTreeManager::NeedsSyntheticEffect). Changes to axis alignment
+        // are therefore treated as non-simple. We do not need to check origin
+        // because axis alignment is not affected by transform origin.
+        transform_has_simple_change = false;
+      }
+
       // If the transform changed, and it's not simple then we need to report
       // values change.
-      if (transform_changed && !transform_change_is_simple &&
+      if (transform_changed && !transform_has_simple_change &&
           !animation_state.is_running_animation_on_compositor) {
         return PaintPropertyChangeType::kChangedOnlyValues;
       }
@@ -152,11 +181,11 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
           direct_compositing_reasons != other.direct_compositing_reasons;
       // Both simple value change and non-reraster change is upgraded to value
       // change.
-      if (non_reraster_values_changed && transform_change_is_simple)
+      if (non_reraster_values_changed && transform_has_simple_change)
         return PaintPropertyChangeType::kChangedOnlyValues;
       if (non_reraster_values_changed)
         return PaintPropertyChangeType::kChangedOnlyNonRerasterValues;
-      if (transform_change_is_simple)
+      if (transform_has_simple_change)
         return PaintPropertyChangeType::kChangedOnlySimpleValues;
       // At this point, our transform change isn't simple, and the above checks
       // didn't return a values change, so it must mean that we're running a
@@ -246,6 +275,12 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
     return state_.affected_by_outer_viewport_bounds_delta;
   }
 
+  // If true, this node is a descendant of the page scale transform. This is
+  // important for avoiding raster during pinch-zoom (see: crbug.com/951861).
+  bool IsInSubtreeOfPageScale() const {
+    return state_.in_subtree_of_page_scale;
+  }
+
   const cc::LayerStickyPositionConstraint* GetStickyConstraint() const {
     return state_.sticky_constraint.get();
   }
@@ -262,11 +297,33 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
     return state_.flattens_inherited_transform;
   }
 
-  // Returns the local BackfaceVisibility value set on this node.
-  // See |IsBackfaceHidden()| for computing whether this transform node is
-  // hidden or not.
-  BackfaceVisibility GetBackfaceVisibility() const {
+  // Returns the local BackfaceVisibility value set on this node. To be used
+  // for testing only; use |BackfaceVisibilitySameAsParent()| or
+  // |IsBackfaceHidden()| for production code.
+  BackfaceVisibility GetBackfaceVisibilityForTesting() const {
     return state_.backface_visibility;
+  }
+
+  // Returns true if the backface visibility for this node is the same as that
+  // of its parent. This will be true for the Root node.
+  bool BackfaceVisibilitySameAsParent() const {
+    if (IsRoot())
+      return true;
+    if (state_.backface_visibility == BackfaceVisibility::kInherited)
+      return true;
+    if (state_.backface_visibility ==
+        Parent()->Unalias().state_.backface_visibility)
+      return true;
+    return IsBackfaceHidden() == Parent()->Unalias().IsBackfaceHidden();
+  }
+
+  // Returns true if the flattens inherited transform setting for this node is
+  // the same as that of its parent. This will be true for the Root node.
+  bool FlattensInheritedTransformSameAsParent() const {
+    if (IsRoot())
+      return true;
+    return state_.flattens_inherited_transform ==
+           Parent()->Unalias().state_.flattens_inherited_transform;
   }
 
   // Returns the first non-inherited BackefaceVisibility value along the
@@ -276,13 +333,18 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
   bool IsBackfaceHidden() const {
     const auto* node = this;
     while (node &&
-           node->GetBackfaceVisibility() == BackfaceVisibility::kInherited)
+           node->state_.backface_visibility == BackfaceVisibility::kInherited)
       node = node->Parent();
-    return node && node->GetBackfaceVisibility() == BackfaceVisibility::kHidden;
+    return node &&
+           node->state_.backface_visibility == BackfaceVisibility::kHidden;
   }
 
   bool HasDirectCompositingReasons() const {
     return DirectCompositingReasons() != CompositingReason::kNone;
+  }
+
+  bool HasDirectCompositingReasonsOtherThan3dTransform() const {
+    return DirectCompositingReasons() & ~CompositingReason::k3DTransform;
   }
 
   // TODO(crbug.com/900241): Use HaveActiveTransformAnimation() instead of this
@@ -292,7 +354,7 @@ class PLATFORM_EXPORT TransformPaintPropertyNode
            CompositingReason::kComboActiveAnimation;
   }
   bool HasActiveTransformAnimation() const {
-    return DirectCompositingReasons() &
+    return state_.direct_compositing_reasons &
            CompositingReason::kActiveTransformAnimation;
   }
 

@@ -21,8 +21,10 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "components/url_formatter/top_domains/top_domain_util.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 
 namespace {
 
@@ -72,12 +74,17 @@ class LookalikeUrlServiceFactory : public BrowserContextKeyedServiceFactory {
 
 namespace lookalikes {
 
+std::string GetETLDPlusOne(const std::string& hostname) {
+  return net::registry_controlled_domains::GetDomainAndRegistry(
+      hostname, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
+}
+
 DomainInfo::DomainInfo(const std::string& arg_domain_and_registry,
-                       const std::string& arg_full_domain,
+                       const std::string& arg_domain_without_registry,
                        const url_formatter::IDNConversionResult& arg_idn_result,
                        const url_formatter::Skeletons& arg_skeletons)
     : domain_and_registry(arg_domain_and_registry),
-      full_domain(arg_full_domain),
+      domain_without_registry(arg_domain_without_registry),
       idn_result(arg_idn_result),
       skeletons(arg_skeletons) {}
 
@@ -86,18 +93,22 @@ DomainInfo::~DomainInfo() = default;
 DomainInfo::DomainInfo(const DomainInfo&) = default;
 
 DomainInfo GetDomainInfo(const GURL& url) {
-  // Perform all computations on eTLD+1. This excludes private registries, and
-  // returns "blogspot.com" for "test.blogspot.com" (blogspot.com is
-  // listed as a private registry). We do this to be consistent with
-  // url_formatter's top domain list which doesn't have a notion of private
-  // registries.
-  const std::string domain_and_registry =
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
+  if (net::IsLocalhost(url) || net::IsHostnameNonUnique(url.host())) {
+    return DomainInfo(std::string(), std::string(),
+                      url_formatter::IDNConversionResult(),
+                      url_formatter::Skeletons());
+  }
+  // Perform all computations on eTLD+1.
+  const std::string domain_and_registry = GetETLDPlusOne(url.host());
+  const std::string domain_without_registry =
+      domain_and_registry.empty()
+          ? std::string()
+          : url_formatter::top_domains::HostnameWithoutRegistry(
+                domain_and_registry);
 
   // eTLD+1 can be empty for private domains.
   if (domain_and_registry.empty()) {
-    return DomainInfo(domain_and_registry, url.host(),
+    return DomainInfo(domain_and_registry, domain_without_registry,
                       url_formatter::IDNConversionResult(),
                       url_formatter::Skeletons());
   }
@@ -109,7 +120,8 @@ DomainInfo GetDomainInfo(const GURL& url) {
       url_formatter::UnsafeIDNToUnicodeWithDetails(domain_and_registry);
   const url_formatter::Skeletons skeletons =
       url_formatter::GetSkeletons(idn_result.result);
-  return DomainInfo(domain_and_registry, url.host(), idn_result, skeletons);
+  return DomainInfo(domain_and_registry, domain_without_registry, idn_result,
+                    skeletons);
 }
 
 LookalikeUrlService::LookalikeUrlService(Profile* profile)

@@ -304,9 +304,7 @@ storage::WatcherManager* FileSystemBackend::GetWatcherManager(
   if (type == storage::kFileSystemTypeProvided)
     return file_system_provider_delegate_->GetWatcherManager(type);
 
-  if (type == storage::kFileSystemTypeDeviceMediaAsFileStorage &&
-      !base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableMtpWriteSupport)) {
+  if (type == storage::kFileSystemTypeDeviceMediaAsFileStorage) {
     return mtp_delegate_->GetWatcherManager(type);
   }
 
@@ -380,8 +378,10 @@ bool FileSystemBackend::HasInplaceCopyImplementation(
     case storage::kFileSystemTypeProvided:
     case storage::kFileSystemTypeDeviceMediaAsFileStorage:
     case storage::kFileSystemTypeDriveFs:
-    case storage::kFileSystemTypeArcDocumentsProvider:
       return true;
+    // TODO(fukino): Support in-place copy for DocumentsProvider.
+    // crbug.com/953603.
+    case storage::kFileSystemTypeArcDocumentsProvider:
     case storage::kFileSystemTypeNativeLocal:
     case storage::kFileSystemTypeRestrictedNativeLocal:
     case storage::kFileSystemTypeArcContent:

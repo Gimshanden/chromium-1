@@ -109,6 +109,7 @@ class IndefiniteSizeStrategy final : public GridTrackSizingAlgorithmStrategy {
   LayoutUnit FreeSpaceForStretchAutoTracksStep() const override;
   LayoutUnit MinContentForChild(LayoutBox&) const override;
   LayoutUnit MaxContentForChild(LayoutBox&) const override;
+  bool IsComputingSizeContainment() const override;
 };
 
 class DefiniteSizeStrategy final : public GridTrackSizingAlgorithmStrategy {
@@ -134,6 +135,7 @@ class DefiniteSizeStrategy final : public GridTrackSizingAlgorithmStrategy {
     return false;
   }
   LayoutUnit FreeSpaceForStretchAutoTracksStep() const override;
+  bool IsComputingSizeContainment() const override { return false; }
 };
 
 GridTrackSizingAlgorithmStrategy::~GridTrackSizingAlgorithmStrategy() = default;
@@ -294,8 +296,7 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::LogicalHeightForChild(
           *GetLayoutGrid(), child, child_block_direction)) {
     SetOverrideContainingBlockContentSizeForChild(child, child_block_direction,
                                                   LayoutUnit(-1));
-    child.SetNeedsLayout(layout_invalidation_reason::kGridChanged,
-                         kMarkOnlyThis);
+    child.SetSelfNeedsLayoutForAvailableSpace(true);
   }
 
   child.LayoutIfNeeded();
@@ -325,8 +326,7 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::MinContentForChild(
 
   if (UpdateOverrideContainingBlockContentSizeForChild(
           child, child_inline_direction)) {
-    child.SetNeedsLayout(layout_invalidation_reason::kGridChanged,
-                         kMarkOnlyThis);
+    child.SetSelfNeedsLayoutForAvailableSpace(true);
   }
   return LogicalHeightForChild(child);
 }
@@ -350,8 +350,7 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::MaxContentForChild(
 
   if (UpdateOverrideContainingBlockContentSizeForChild(
           child, child_inline_direction)) {
-    child.SetNeedsLayout(layout_invalidation_reason::kGridChanged,
-                         kMarkOnlyThis);
+    child.SetSelfNeedsLayoutForAvailableSpace(true);
   }
   return LogicalHeightForChild(child);
 }
@@ -540,8 +539,7 @@ void DefiniteSizeStrategy::LayoutGridItemForMinSizeComputation(
     LayoutBox& child,
     bool override_size_has_changed) const {
   if (override_size_has_changed) {
-    child.SetNeedsLayout(layout_invalidation_reason::kGridChanged,
-                         kMarkOnlyThis);
+    child.SetSelfNeedsLayoutForAvailableSpace(true);
     child.LayoutIfNeeded();
   }
 }
@@ -583,8 +581,7 @@ void IndefiniteSizeStrategy::LayoutGridItemForMinSizeComputation(
     LayoutBox& child,
     bool override_size_has_changed) const {
   if (override_size_has_changed && Direction() != kForColumns) {
-    child.SetNeedsLayout(layout_invalidation_reason::kGridChanged,
-                         kMarkOnlyThis);
+    child.SetSelfNeedsLayoutForAvailableSpace(true);
     child.LayoutIfNeeded();
   }
 }
@@ -729,6 +726,10 @@ LayoutUnit IndefiniteSizeStrategy::MaxContentForChild(LayoutBox& child) const {
          GridLayoutUtils::MarginLogicalHeightForChild(*GetLayoutGrid(), child);
 }
 
+bool IndefiniteSizeStrategy::IsComputingSizeContainment() const {
+  return GetLayoutGrid()->ShouldApplySizeContainment();
+}
+
 base::Optional<LayoutUnit> GridTrackSizingAlgorithm::FreeSpace(
     GridTrackSizingDirection direction) const {
   return direction == kForRows ? free_space_rows_ : free_space_columns_;
@@ -865,6 +866,9 @@ GridTrackSize GridTrackSizingAlgorithm::GetGridTrackSize(
 
   GridLength min_track_breadth = track_size.MinTrackBreadth();
   GridLength max_track_breadth = track_size.MaxTrackBreadth();
+  if (strategy_->IsComputingSizeContainment())
+    return GridTrackSize(min_track_breadth, max_track_breadth);
+
   // If the logical width/height of the grid container is indefinite, percentage
   // values are treated as <auto>.
   if (IsRelativeSizedTrackAsAuto(track_size, direction)) {
@@ -1400,9 +1404,11 @@ void GridTrackSizingAlgorithm::ComputeGridContainerIntrinsicSizes() {
 
   Vector<GridTrack>& all_tracks = Tracks(direction_);
   for (auto& track : all_tracks) {
-    DCHECK(!track.InfiniteGrowthPotential());
+    DCHECK(strategy_->IsComputingSizeContainment() ||
+           !track.InfiniteGrowthPotential());
     min_content_size_ += track.BaseSize();
-    max_content_size_ += track.GrowthLimit();
+    max_content_size_ +=
+        track.GrowthLimitIsInfinite() ? track.BaseSize() : track.GrowthLimit();
     // The growth limit caps must be cleared now in order to properly sort
     // tracks by growth potential on an eventual "Maximize Tracks".
     track.SetGrowthLimitCap(base::nullopt);
@@ -1413,8 +1419,10 @@ LayoutUnit GridTrackSizingAlgorithm::ComputeTrackBasedSize() const {
   LayoutUnit size;
 
   const Vector<GridTrack>& all_tracks = Tracks(direction_);
-  for (auto& track : all_tracks)
-    size += track.BaseSize();
+  for (auto& track : all_tracks) {
+    size +=
+        track.GrowthLimitIsInfinite() ? track.BaseSize() : track.GrowthLimit();
+  }
 
   size += layout_grid_->GuttersSize(grid_, direction_, 0, all_tracks.size(),
                                     AvailableSpace());
@@ -1571,7 +1579,8 @@ void GridTrackSizingAlgorithm::AdvanceNextState() {
       sizing_state_ = kRowSizingFirstIteration;
       return;
     case kRowSizingFirstIteration:
-      sizing_state_ = kColumnSizingSecondIteration;
+      if (!strategy_->IsComputingSizeContainment())
+        sizing_state_ = kColumnSizingSecondIteration;
       return;
     case kColumnSizingSecondIteration:
       sizing_state_ = kRowSizingSecondIteration;
@@ -1659,6 +1668,11 @@ void GridTrackSizingAlgorithm::Run() {
   // Step 1.
   base::Optional<LayoutUnit> initial_free_space = FreeSpace(direction_);
   InitializeTrackSizes();
+
+  if (strategy_->IsComputingSizeContainment()) {
+    ComputeGridContainerIntrinsicSizes();
+    return;
+  }
 
   // Step 2.
   if (!content_sized_tracks_index_.IsEmpty())

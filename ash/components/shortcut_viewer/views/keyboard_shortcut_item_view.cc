@@ -195,14 +195,13 @@ void KeyboardShortcutItemView::MaybeCalculateAndDoLayout(int width) const {
   // |description_label_view_|.
   shortcut_label_view_->SetBounds(0, 0, shortcut_view_preferred_width,
                                   shortcut_view_height);
-  DCHECK(!shortcut_label_view_->children().empty());
+  const auto& children = shortcut_label_view_->children();
+  DCHECK(!children.empty());
   // Labels in |shortcut_label_view_| are right aligned, so we need to find the
-  // minimum left coordinates of all the lables.
+  // minimum left coordinates of all the labels.
   int min_left = shortcut_view_preferred_width;
-  for (int i = 0; i < shortcut_label_view_->child_count(); ++i) {
-    min_left =
-        std::min(min_left, shortcut_label_view_->child_at(i)->bounds().x());
-  }
+  for (const views::View* label : children)
+    min_left = std::min(min_left, label->bounds().x());
 
   // The width of |description_label_view_| will be dynamically adjusted to fill
   // the spacing.
@@ -228,9 +227,9 @@ void KeyboardShortcutItemView::MaybeCalculateAndDoLayout(int width) const {
   DCHECK(!shortcut_label_view_->children().empty() &&
          !description_label_view_->children().empty());
   const int description_view_top_line_center_offset_y =
-      description_label_view_->child_at(0)->bounds().CenterPoint().y();
+      description_label_view_->children().front()->bounds().CenterPoint().y();
   const int shortcut_view_top_line_center_offset_y =
-      shortcut_label_view_->child_at(0)->bounds().CenterPoint().y();
+      shortcut_label_view_->children().front()->bounds().CenterPoint().y();
   // |shortcut_label_view_| could have bubble view in the top line, whose
   // height is larger than normal text in |description_label_view_|. Otherwise,
   // the top line height in the two views should be equal.

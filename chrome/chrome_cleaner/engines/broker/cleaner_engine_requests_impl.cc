@@ -21,16 +21,12 @@ namespace chrome_cleaner {
 
 std::unique_ptr<chrome_cleaner::FileRemoverAPI>
 CreateFileRemoverWithDigestVerifier(
-    const std::vector<UwSId>& enabled_uws,
-    std::unique_ptr<SandboxedZipArchiver> archiver,
+    std::unique_ptr<ZipArchiver> archiver,
     const base::RepeatingClosure& reboot_needed_callback) {
   auto digest = GetDigestVerifier();
   auto lsp = chrome_cleaner::LayeredServiceProviderWrapper();
-  auto deletion_allowed_paths =
-      PUPData::GetFilesDetectedInServices(enabled_uws);
   return std::make_unique<chrome_cleaner::FileRemover>(
-      digest, std::move(archiver), lsp, deletion_allowed_paths,
-      reboot_needed_callback);
+      digest, std::move(archiver), lsp, reboot_needed_callback);
 }
 
 CleanerEngineRequestsImpl::CleanerEngineRequestsImpl(
@@ -58,10 +54,7 @@ void CleanerEngineRequestsImpl::SandboxDeleteFile(
   if (metadata_observer_)
     metadata_observer_->ObserveCall(CURRENT_FILE_AND_METHOD);
 
-  base::string16 expanded_path;
-  ConvertToLongPath(file_name.value(), &expanded_path);
-
-  file_remover_->RemoveNow(base::FilePath(expanded_path),
+  file_remover_->RemoveNow(base::FilePath(file_name),
                            std::move(result_callback));
 }
 
@@ -71,10 +64,7 @@ void CleanerEngineRequestsImpl::SandboxDeleteFilePostReboot(
   if (metadata_observer_)
     metadata_observer_->ObserveCall(CURRENT_FILE_AND_METHOD);
 
-  base::string16 expanded_path;
-  ConvertToLongPath(file_name.value(), &expanded_path);
-
-  file_remover_->RegisterPostRebootRemoval(base::FilePath(expanded_path),
+  file_remover_->RegisterPostRebootRemoval(base::FilePath(file_name),
                                            std::move(result_callback));
 }
 

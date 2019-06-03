@@ -115,7 +115,7 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
     base::RunLoop run_loop;
     std::unique_ptr<ui::MenuModel> menu;
     launcher_context_menu->GetMenuModel(base::BindLambdaForTesting(
-        [&](std::unique_ptr<ui::MenuModel> created_menu) {
+        [&](std::unique_ptr<ui::SimpleMenuModel> created_menu) {
           menu = std::move(created_menu);
           run_loop.Quit();
         }));
@@ -130,7 +130,7 @@ class LauncherContextMenuTest : public ChromeAshTestBase {
     std::unique_ptr<ui::MenuModel> menu;
     item_delegate->GetContextMenu(
         display_id, base::BindLambdaForTesting(
-                        [&](std::unique_ptr<ui::MenuModel> created_menu) {
+                        [&](std::unique_ptr<ui::SimpleMenuModel> created_menu) {
                           menu = std::move(created_menu);
                           run_loop.Quit();
                         }));
@@ -227,7 +227,6 @@ TEST_F(LauncherContextMenuTest,
 
 // Verifies context menu and app menu items for ARC app.
 TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 1));
@@ -263,10 +262,9 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 
   item_delegate = model()->GetShelfItemDelegate(shelf_id);
   ASSERT_TRUE(item_delegate);
-  ash::MenuItemList menu_list =
-      item_delegate->GetAppMenuItems(0 /* event_flags */);
+  auto menu_list = item_delegate->GetAppMenuItems(0 /* event_flags */);
   ASSERT_EQ(1U, menu_list.size());
-  EXPECT_EQ(base::UTF8ToUTF16(app_name), menu_list[0]->label);
+  EXPECT_EQ(base::UTF8ToUTF16(app_name), menu_list[0].first);
 
   menu = GetContextMenu(item_delegate, display_id);
   ASSERT_TRUE(menu);
@@ -292,7 +290,7 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 
   menu_list = item_delegate2->GetAppMenuItems(0 /* event_flags */);
   ASSERT_EQ(1U, menu_list.size());
-  EXPECT_EQ(base::UTF8ToUTF16(app_name2), menu_list[0]->label);
+  EXPECT_EQ(base::UTF8ToUTF16(app_name2), menu_list[0].first);
 
   menu = GetContextMenu(item_delegate2, display_id);
   ASSERT_TRUE(menu);
@@ -349,7 +347,7 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
     // in reverse order, based on activation order.
     for (uint32_t j = 0; j <= i; ++j) {
       EXPECT_EQ(base::UTF8ToUTF16(GetAppNameInShelfGroup(3 + j)),
-                menu_list[i - j]->label);
+                menu_list[i - j].first);
     }
   }
 }
@@ -357,7 +355,6 @@ TEST_F(LauncherContextMenuTest, ArcLauncherMenusCheck) {
 TEST_F(LauncherContextMenuTest, ArcLauncherSuspendAppMenu) {
   arc::mojom::AppInfo app = arc_test().fake_apps()[0];
   app.suspended = true;
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList({app});
   const std::string app_id = ArcAppTest::GetAppId(app);
 
@@ -382,7 +379,6 @@ TEST_F(LauncherContextMenuTest, ArcLauncherSuspendAppMenu) {
 }
 
 TEST_F(LauncherContextMenuTest, ArcDeferredLauncherContextMenuItemCheck) {
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 2));
@@ -448,7 +444,6 @@ TEST_F(LauncherContextMenuTest, ArcContextMenuOptions) {
   // adding a context menu option ensure that you have added the enum to
   // tools/metrics/enums.xml and that you haven't modified the order of the
   // existing enums.
-  arc_test().app_instance()->RefreshAppList();
   arc_test().app_instance()->SendRefreshAppList(
       std::vector<arc::mojom::AppInfo>(arc_test().fake_apps().begin(),
                                        arc_test().fake_apps().begin() + 1));

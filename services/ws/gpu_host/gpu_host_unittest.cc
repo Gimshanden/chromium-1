@@ -10,8 +10,8 @@
 #include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"
 #include "components/viz/host/gpu_client.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
@@ -113,7 +113,7 @@ class GpuHostTest : public testing::Test {
   int GetChannelRequests();
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   base::Thread io_thread_;
   TestGpuHostDelegate gpu_host_delegate_;
@@ -140,7 +140,7 @@ void GpuHostTest::ShutdownHost() {
 
 void GpuHostTest::SetUp() {
   testing::Test::SetUp();
-  gpu_host_ = std::make_unique<GpuHost>(&gpu_host_delegate_, nullptr,
+  gpu_host_ = std::make_unique<GpuHost>(&gpu_host_delegate_,
                                         &discardable_memory_manager_);
   viz::mojom::GpuServicePtr gpu_service_ptr;
   gpu_service_->Bind(mojo::MakeRequest(&gpu_service_ptr));

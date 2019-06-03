@@ -54,6 +54,7 @@ const char kDefaultStartupCategories[] =
 const char kTraceConfigParam[] = "trace_config";
 const char kStartupDurationParam[] = "startup_duration";
 const char kResultFileParam[] = "result_file";
+const char kResultDirectoryParam[] = "result_directory";
 
 }  // namespace
 
@@ -80,13 +81,14 @@ TraceStartupConfig::GetDefaultBrowserStartupConfig() {
   return trace_config;
 }
 
-TraceStartupConfig::TraceStartupConfig()
-    : is_enabled_(false),
-      is_enabled_from_background_tracing_(false),
-      trace_config_(base::trace_event::TraceConfig()),
-      startup_duration_(0),
-      should_trace_to_result_file_(false),
-      finished_writing_to_file_(false) {
+TraceStartupConfig::TraceStartupConfig() {
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switches::kDisablePerfetto) &&
+      command_line->GetSwitchValueASCII(switches::kTraceStartupOwner) ==
+          "devtools") {
+    session_owner_ = SessionOwner::kDevToolsTracingHandler;
+  }
+
   if (EnableFromCommandLine()) {
     DCHECK(IsEnabled());
   } else if (EnableFromConfigFile()) {
@@ -115,7 +117,8 @@ void TraceStartupConfig::SetDisabled() {
 }
 
 bool TraceStartupConfig::IsTracingStartupForDuration() const {
-  return IsEnabled() && startup_duration_ > 0;
+  return IsEnabled() && startup_duration_ > 0 &&
+         session_owner_ == SessionOwner::kTracingController;
 }
 
 base::trace_event::TraceConfig TraceStartupConfig::GetTraceConfig() const {
@@ -155,6 +158,20 @@ void TraceStartupConfig::SetBackgroundStartupTracingEnabled(bool enabled) {
 #if defined(OS_ANDROID)
   base::android::SetBackgroundStartupTracingFlag(enabled);
 #endif
+}
+
+TraceStartupConfig::SessionOwner TraceStartupConfig::GetSessionOwner() const {
+  DCHECK(IsEnabled());
+  return session_owner_;
+}
+
+bool TraceStartupConfig::AttemptAdoptBySessionOwner(SessionOwner owner) {
+  if (IsEnabled() && GetSessionOwner() == owner && !session_adopted_) {
+    // The session can only be adopted once.
+    session_adopted_ = true;
+    return true;
+  }
+  return false;
 }
 
 bool TraceStartupConfig::EnableFromCommandLine() {
@@ -225,10 +242,12 @@ bool TraceStartupConfig::EnableFromConfigFile() {
 
 bool TraceStartupConfig::EnableFromBackgroundTracing() {
 #if defined(OS_ANDROID)
+  // Tests can enable this value.
   is_enabled_from_background_tracing_ =
+      is_enabled_from_background_tracing_ ||
       base::android::GetBackgroundStartupTracingFlag();
 #else
-  is_enabled_from_background_tracing_ = false;
+  // TODO(ssid): Implement saving setting to preference for next startup.
 #endif
   // Do not set the flag to false if it's not enabled unnecessarily.
   if (!is_enabled_from_background_tracing_)
@@ -265,9 +284,16 @@ bool TraceStartupConfig::ParseTraceConfigFileContent(
   if (startup_duration_ < 0)
     startup_duration_ = 0;
 
-  base::FilePath::StringType result_file_str;
-  if (dict->GetString(kResultFileParam, &result_file_str))
-    result_file_ = base::FilePath(result_file_str);
+  base::FilePath::StringType result_file_or_dir_str;
+  if (dict->GetString(kResultFileParam, &result_file_or_dir_str))
+    result_file_ = base::FilePath(result_file_or_dir_str);
+  else if (dict->GetString(kResultDirectoryParam, &result_file_or_dir_str)) {
+    result_file_ = base::FilePath(result_file_or_dir_str);
+    // Java time to get an int instead of a double.
+    result_file_ = result_file_.AppendASCII(
+        base::NumberToString(base::Time::Now().ToJavaTime()) +
+        "_chrometrace.log");
+  }
 
   return true;
 }

@@ -87,8 +87,8 @@ bool IsContentSecure(content::WebContents* web_contents) {
   // Check those explicitly, using the VisibleURL to match what
   // SecurityStateTabHelper looks at.
   if (net::IsLocalhost(url) ||
-      network::IsAllowlistedAsSecureOrigin(
-          url::Origin::Create(url), network::GetSecureOriginAllowlist())) {
+      network::SecureOriginAllowlist::GetInstance().IsOriginAllowlisted(
+          url::Origin::Create(url))) {
     return true;
   }
 
@@ -664,7 +664,7 @@ void InstallableManager::CheckAndFetchBestIcon(int ideal_icon_size_in_px,
   IconProperty& icon = icons_[purpose];
   icon.fetched = true;
 
-  GURL icon_url = blink::ManifestIconSelector::FindBestMatchingIcon(
+  GURL icon_url = blink::ManifestIconSelector::FindBestMatchingSquareIcon(
       manifest().icons, ideal_icon_size_in_px, minimum_icon_size_in_px,
       purpose);
 

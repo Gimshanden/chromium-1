@@ -23,6 +23,7 @@ import org.chromium.chrome.browser.appmenu.AppMenuButtonHelper;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tasks.ReturnToChromeExperimentsUtil;
 import org.chromium.chrome.browser.toolbar.IncognitoStateProvider;
 import org.chromium.chrome.browser.toolbar.IncognitoToggleTabLayout;
 import org.chromium.chrome.browser.toolbar.MenuButton;
@@ -94,8 +95,7 @@ public class TabSwitcherModeTTPhone extends OptimizedFrameLayout
             mNewTabButton.setOnClickListener(this);
         }
 
-        if ((usingHorizontalTabSwitcher() || FeatureUtilities.isGridTabSwitcherEnabled()
-                    || FeatureUtilities.isTabGroupsAndroidEnabled())
+        if ((usingHorizontalTabSwitcher() || FeatureUtilities.isGridTabSwitcherEnabled())
                 && PrefServiceBridge.getInstance().isIncognitoModeEnabled()) {
             updateTabSwitchingElements(true);
         }
@@ -158,6 +158,12 @@ public class TabSwitcherModeTTPhone extends OptimizedFrameLayout
             if (mIncognitoToggleTabLayout != null) mIncognitoToggleTabLayout.setClickable(false);
         } else {
             if (mNewTabButton != null) mNewTabButton.setEnabled(true);
+            if (ReturnToChromeExperimentsUtil.shouldShowOmniboxOnTabSwitcher()) {
+                // Bump this down by the height of the toolbar so the omnibox can be visible.
+                MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
+                params.topMargin =
+                        getResources().getDimensionPixelSize(R.dimen.toolbar_height_no_shadow);
+            }
         }
 
         mVisiblityAnimator.addListener(new CancelAwareAnimatorListener() {
@@ -189,7 +195,8 @@ public class TabSwitcherModeTTPhone extends OptimizedFrameLayout
         if (mMenuButton == null) return;
 
         mMenuButton.getImageButton().setOnTouchListener(appMenuButtonHelper);
-        mMenuButton.getImageButton().setAccessibilityDelegate(appMenuButtonHelper);
+        mMenuButton.getImageButton().setAccessibilityDelegate(
+                appMenuButtonHelper.getAccessibilityDelegate());
     }
 
     /**
@@ -307,8 +314,7 @@ public class TabSwitcherModeTTPhone extends OptimizedFrameLayout
     private int getToolbarColorForCurrentState() {
         // TODO(huayinz): Split tab switcher background color from primary background color.
         if (DeviceClassManager.enableAccessibilityLayout()
-                || FeatureUtilities.isGridTabSwitcherEnabled()
-                || FeatureUtilities.isTabGroupsAndroidEnabled()) {
+                || FeatureUtilities.isGridTabSwitcherEnabled()) {
             return ColorUtils.getPrimaryBackgroundColor(getResources(), mIsIncognito);
         }
 

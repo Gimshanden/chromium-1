@@ -20,12 +20,12 @@
 
 namespace gfx {
 class FontList;
+class Range;
 }  // namespace gfx
 
 namespace ui {
 class ComboboxModel;
 class Event;
-class NativeTheme;
 }  // namespace ui
 
 namespace views {
@@ -80,6 +80,9 @@ class VIEWS_EXPORT EditableCombobox : public View,
     listener_ = listener;
   }
 
+  // Selects the specified logical text range for the textfield.
+  void SelectRange(const gfx::Range& range);
+
   // Sets the accessible name. Use SetAssociatedLabel instead if there is a
   // label associated with this combobox.
   void SetAccessibleName(const base::string16& name);
@@ -102,14 +105,13 @@ class VIEWS_EXPORT EditableCombobox : public View,
  private:
   class EditableComboboxMenuModel;
 
+  void CloseMenu();
+
   // Called when an item is selected from the menu.
   void OnItemSelected(int index);
 
   // Notifies listener of new content and updates the menu items to show.
   void HandleNewContent(const base::string16& new_content);
-
-  // Cleans up after the menu is closed.
-  void OnMenuClosed();
 
   // Shows the drop-down menu.
   void ShowDropDownMenu(ui::MenuSourceType source_type = ui::MENU_SOURCE_NONE);
@@ -117,11 +119,15 @@ class VIEWS_EXPORT EditableCombobox : public View,
   // Overridden from View:
   const char* GetClassName() const override;
   void Layout() override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
   // Overridden from TextfieldController:
   void ContentsChanged(Textfield* sender,
                        const base::string16& new_contents) override;
+  bool HandleMouseEvent(Textfield* sender,
+                        const ui::MouseEvent& mouse_event) override;
+  bool HandleGestureEvent(Textfield* sender,
+                          const ui::GestureEvent& gesture_event) override;
 
   // Overridden from ViewObserver:
   void OnViewFocused(View* observed_view) override;
@@ -131,9 +137,7 @@ class VIEWS_EXPORT EditableCombobox : public View,
   void ButtonPressed(Button* sender, const ui::Event& event) override;
 
   Textfield* textfield_;
-
   Button* arrow_ = nullptr;
-
   std::unique_ptr<ui::ComboboxModel> combobox_model_;
 
   // The EditableComboboxMenuModel used by |menu_runner_|.
@@ -148,6 +152,10 @@ class VIEWS_EXPORT EditableCombobox : public View,
   const int text_style_;
 
   const Type type_;
+
+  // True between mouse press and release, used to avoid opening the menu and
+  // interrupting textfield selection interactions.
+  bool mouse_pressed_ = false;
 
   // Set while the drop-down is showing.
   std::unique_ptr<MenuRunner> menu_runner_;

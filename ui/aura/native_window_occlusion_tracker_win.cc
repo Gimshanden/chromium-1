@@ -16,6 +16,8 @@
 #include "base/win/windows_version.h"
 #include "ui/aura/window_tree_host.h"
 
+#include "dwmapi.h"
+
 namespace aura {
 
 namespace {
@@ -159,6 +161,17 @@ bool NativeWindowOcclusionTrackerWin::IsWindowVisibleAndFullyOpaque(
   if (GetWindowRgn(hwnd, region.get()) == COMPLEXREGION)
     return false;
 
+  // Windows 10 has cloaked windows, windows with WS_VISIBLE attribute but
+  // not displayed. explorer.exe, in particular has one that's the
+  // size of the desktop. It's usually behind Chrome windows in the z-order,
+  // but using a remote desktop can move it up in the z-order. So, ignore them.
+  DWORD reason;
+  if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &reason,
+                                      sizeof(reason))) &&
+      reason != 0) {
+    return false;
+  }
+
   RECT win_rect;
   // Filter out windows that take up zero area. The call to GetWindowRect is one
   // of the most expensive parts of this function, so it is last.
@@ -220,10 +233,9 @@ NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
         scoped_refptr<base::SequencedTaskRunner> task_runner,
         scoped_refptr<base::SequencedTaskRunner> ui_thread_task_runner)
     : task_runner_(task_runner), ui_thread_task_runner_(ui_thread_task_runner) {
-  if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
-    CHECK(SUCCEEDED(
-        ::CoCreateInstance(__uuidof(VirtualDesktopManager), nullptr, CLSCTX_ALL,
-                           IID_PPV_ARGS(&virtual_desktop_manager_))));
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
+    ::CoCreateInstance(__uuidof(VirtualDesktopManager), nullptr, CLSCTX_ALL,
+                       IID_PPV_ARGS(&virtual_desktop_manager_));
   }
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
@@ -587,7 +599,7 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
   // up the thread sequence. In order to prevent DCHECK failures with the
   // |occlusion_update_timer_, we need to call
   // ScheduleOcclusionCalculationIfNeeded from a task.
-  // See SchedulerWorkerCOMDelegate::GetWorkFromWindowsMessageQueue().
+  // See WorkerThreadCOMDelegate::GetWorkFromWindowsMessageQueue().
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(

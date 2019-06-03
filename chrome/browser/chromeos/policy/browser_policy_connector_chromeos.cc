@@ -243,7 +243,7 @@ void BrowserPolicyConnectorChromeOS::Init(
 
   tpm_auto_update_mode_policy_handler_ =
       std::make_unique<TPMAutoUpdateModePolicyHandler>(
-          chromeos::CrosSettings::Get());
+          chromeos::CrosSettings::Get(), local_state);
 }
 
 void BrowserPolicyConnectorChromeOS::PreShutdown() {
@@ -345,6 +345,13 @@ std::string BrowserPolicyConnectorChromeOS::GetDirectoryApiID() const {
   const em::PolicyData* policy = GetDevicePolicy();
   if (policy && policy->has_directory_api_id())
     return policy->directory_api_id();
+  return std::string();
+}
+
+std::string BrowserPolicyConnectorChromeOS::GetCustomerLogoURL() const {
+  const em::PolicyData* policy = GetDevicePolicy();
+  if (policy && policy->has_customer_logo())
+    return policy->customer_logo().logo_url();
   return std::string();
 }
 

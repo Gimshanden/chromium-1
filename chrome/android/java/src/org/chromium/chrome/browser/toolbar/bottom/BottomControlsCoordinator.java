@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.toolbar.bottom;
 
 import android.support.annotation.Nullable;
+import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.view.ViewStub;
@@ -24,6 +25,7 @@ import org.chromium.chrome.browser.toolbar.IncognitoStateProvider;
 import org.chromium.chrome.browser.toolbar.MenuButton;
 import org.chromium.chrome.browser.toolbar.TabCountProvider;
 import org.chromium.chrome.browser.toolbar.bottom.BottomControlsViewBinder.ViewHolder;
+import org.chromium.chrome.browser.ui.ImmersiveModeManager;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -76,17 +78,40 @@ public class BottomControlsCoordinator {
         PropertyModelChangeProcessor.create(
                 model, new ViewHolder(root), BottomControlsViewBinder::bind);
 
-        mMediator = new BottomControlsMediator(model, fullscreenManager,
-                root.getResources().getDimensionPixelOffset(R.dimen.bottom_toolbar_height));
+        int bottomToolbarHeightId;
+        int bottomToolbarHeightWithShadowId;
 
-        if (FeatureUtilities.isTabGroupsAndroidEnabled()) {
-            mTabGroupUi = TabManagementModuleProvider.getTabManagementModule().createTabGroupUi(
+        if (FeatureUtilities.isLabeledBottomToolbarEnabled()) {
+            bottomToolbarHeightId = R.dimen.labeled_bottom_toolbar_height;
+            bottomToolbarHeightWithShadowId = R.dimen.labeled_bottom_toolbar_height_with_shadow;
+        } else {
+            bottomToolbarHeightId = R.dimen.bottom_toolbar_height;
+            bottomToolbarHeightWithShadowId = R.dimen.bottom_toolbar_height_with_shadow;
+        }
+
+        View toolbar = root.findViewById(R.id.bottom_container_slot);
+        ViewGroup.LayoutParams params = toolbar.getLayoutParams();
+        params.height = root.getResources().getDimensionPixelOffset(bottomToolbarHeightId);
+        mMediator = new BottomControlsMediator(model, fullscreenManager,
+                root.getResources().getDimensionPixelOffset(bottomToolbarHeightId),
+                root.getResources().getDimensionPixelOffset(bottomToolbarHeightWithShadowId));
+
+        if (TabManagementModuleProvider.getDelegate() != null
+                && FeatureUtilities.isTabGroupsAndroidEnabled()) {
+            mTabGroupUi = TabManagementModuleProvider.getDelegate().createTabGroupUi(
                     root.findViewById(R.id.bottom_container_slot), themeColorProvider);
         } else {
             mBottomToolbarCoordinator = new BottomToolbarCoordinator(
                     root.findViewById(R.id.bottom_toolbar_stub), tabProvider, homeButtonListener,
                     searchAcceleratorListener, shareButtonListener, themeColorProvider);
         }
+    }
+
+    /**
+     * @param immersiveModeManager The {@link ImmersiveModeManager} for the containing activity.
+     */
+    public void setImmersiveModeManager(ImmersiveModeManager immersiveModeManager) {
+        mMediator.setImmersiveModeManager(immersiveModeManager);
     }
 
     /**
